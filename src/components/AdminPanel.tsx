@@ -30,7 +30,7 @@ interface UploadedTrack {
 
 const AdminPanel: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'schedule' | 'uploads' | 'analytics'>('dashboard');
-  const [schedules, setSchedules] = useState<ScheduleItem[]>([
+  const [schedules, _setSchedules] = useState<ScheduleItem[]>([
     {
       id: '1',
       title: 'Morning Mix',
@@ -62,7 +62,7 @@ const AdminPanel: React.FC = () => {
     ]
   });
 
-  const [uploads, setUploads] = useState<UploadedTrack[]>([
+  const [uploads, _setUploads] = useState<UploadedTrack[]>([
     {
       id: '1',
       title: 'Summer Nights',
@@ -86,7 +86,7 @@ const AdminPanel: React.FC = () => {
   ]);
 
   const [isLive, setIsLive] = useState(false);
-  const [currentDJ, setCurrentDJ] = useState('DJ Luna');
+  const [currentDJ, _setCurrentDJ] = useState('DJ Luna');
 
   const TabButton: React.FC<{ tab: string; label: string; icon: string }> = ({ tab, label, icon }) => (
     <button

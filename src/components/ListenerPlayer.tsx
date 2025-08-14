@@ -20,7 +20,7 @@ interface StreamStatus {
 
 const ListenerPlayer: React.FC = () => {
   const [isPlaying, setIsPlaying] = useState(false);
-  const [currentMetadata, setCurrentMetadata] = useState<StreamMetadata | null>(null);
+  const [currentMetadata, _setCurrentMetadata] = useState<StreamMetadata | null>(null);
   const [streamStatus, setStreamStatus] = useState<StreamStatus | null>(null);
   const [volume, setVolume] = useState(0.8);
   const [error, setError] = useState<string>("");
