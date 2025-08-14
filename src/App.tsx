@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import DJClient from "./components/DJClient";
 import AdminPanel from "./components/AdminPanel";
 import ListenerPlayer from "./components/ListenerPlayer";
+import VirtualMixer from "./components/VirtualMixer";
 
 const NowPlayingCard: React.FC = () => (
   <div className="bg-surface rounded-2xl shadow-card p-6 flex items-center gap-6 max-w-md w-full mx-auto mb-8">
@@ -21,10 +22,12 @@ const NowPlayingCard: React.FC = () => (
 );
 
 const App: React.FC = () => {
-  const [currentView, setCurrentView] = useState<'home' | 'dj' | 'admin' | 'listener'>('home');
+  const [currentView, setCurrentView] = useState<'home' | 'dj' | 'admin' | 'listener' | 'mixer'>('mixer');
 
   const renderContent = () => {
     switch (currentView) {
+      case 'mixer':
+        return <VirtualMixer />;
       case 'dj':
         return <DJClient />;
       case 'admin':
@@ -52,6 +55,12 @@ const App: React.FC = () => {
             className={`hover:underline ${currentView === 'home' ? 'text-brand' : 'text-surface-light'}`}
           >
             Home
+          </button>
+          <button
+            onClick={() => setCurrentView('mixer')}
+            className={`hover:underline ${currentView === 'mixer' ? 'text-brand' : 'text-surface-light'}`}
+          >
+            Virtual Mixer
           </button>
           <button
             onClick={() => setCurrentView('dj')}

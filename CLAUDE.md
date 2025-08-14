@@ -8,157 +8,149 @@ Sendin Beats is a comprehensive, multi-phased radio streaming platform designed 
 
 ## Current Implementation Status
 
-**Phase**: Early development - Basic streaming client with foundational UI components
+**Phase**: Early development - Virtual mixer UI implementation with backend infrastructure
 **Architecture**: Tauri (Rust backend) + React TypeScript frontend
-**Current Features**: Basic DJ streaming interface, listener player, admin panel mockups
+**Current Features**: Professional virtual mixer interface, audio device enumeration, streaming client foundation
 
-## Development Phases (Revised Priority Order)
+## URGENT ISSUES TO FIX (Next Session Priority)
 
-### Phase 1: Core Local Audio Functionality
-**Focus**: Get essential audio mixing and streaming working on local machine
-- [ ] Virtual audio mixer implementation (Ladiocast/Loopback equivalent)
-- [ ] Multi-channel input support (mic, system audio, applications, audio interfaces)
-- [ ] Multi-channel output routing (headphones, speakers, stream output)
-- [ ] Real-time audio processing and mixing
-- [ ] Icecast connection and streaming (non-persistent configuration initially)
-- [ ] DJ controller integration
-- [ ] Audio device management and routing
+### Critical Audio Issues
+1. **NO ACTUAL AUDIO CAPTURE**: Currently only generating test/animated levels - need to implement real audio input capture from selected devices
+2. **NO ACTUAL AUDIO OUTPUT**: No sound playing through selected output devices (speakers/headphones) - need cpal output stream implementation
+3. **NO REAL AUDIO PROCESSING**: VU meters show test animation instead of actual audio levels from captured audio
+4. **HORIZONTAL LAYOUT**: UI successfully converted to horizontal layout as requested, but needs audio functionality
 
-### Phase 2: Enhanced UI/UX & Local Persistence
-**Focus**: Professional interface and local configuration storage
-- [ ] Modern, sleek UI design system overhaul
-- [ ] Local storage for stream configurations and mixer settings
-- [ ] Advanced audio controls and visualization
-- [ ] Recording and playback functionality
-- [ ] Preset management for different streaming scenarios
+### What's Currently Working
+- ✅ Virtual mixer UI with horizontal layout
+- ✅ Professional channel strips with gain, pan, EQ, compressor, limiter controls
+- ✅ Master section with output device selection and master VU meters
+- ✅ Audio device enumeration (detects devices correctly)
+- ✅ VU meter components with animated test levels
+- ✅ Backend generates test audio levels and frontend displays them
+- ✅ Tauri commands for mixer control and real-time data polling
 
-### Phase 3: Multi-User & Cloud Integration
-**Focus**: Supabase integration and multi-organization features
-- [ ] User authentication and authorization
-- [ ] Multi-organization, multi-user support with permissioning
-- [ ] Cloud-synced configurations and settings
-- [ ] Schedule management system (radio.co replacement)
-- [ ] Fallback content automation and management
+### What Needs Immediate Attention
+- 🚨 **Audio Input Streams**: Implement cpal input stream creation for selected input devices
+- 🚨 **Audio Output Streams**: Implement cpal output stream for master audio output to speakers
+- 🚨 **Real Audio Processing**: Replace test level generation with actual audio level calculation from captured samples
+- 🚨 **Audio Threading**: Proper audio processing thread with input → effects → output chain
+- 🚨 **Buffer Management**: Implement proper audio buffer management for low-latency processing
 
-## Core Application Features (Target)
+## Recent Progress (Previous Session)
 
-### Virtual Audio Mixer (Priority 1)
-- **Multi-Channel Input Support**:
-  - Microphone inputs
-  - Application audio capture (Spotify, iTunes, system audio)
-  - Audio interfaces and DJ controllers
-  - Virtual audio devices (BlackHole 2CH equivalent)
-  
-- **Multi-Channel Output Routing**:
-  - Headphone monitoring
-  - System speakers
-  - Main output to Icecast stream
-  - Cue/preview channels
+### Successfully Implemented
+1. **Full Virtual Mixer Interface**: Professional mixing console with:
+   - Channel strips in horizontal layout (as requested by user)
+   - Gain, pan, input device selection, mute/solo controls per channel
+   - 3-band EQ (high/mid/low) with ±12dB range
+   - Compressor with threshold, ratio, attack, release controls
+   - Limiter with threshold control
+   - Real-time VU meters (currently test data, need real audio)
 
-### Stream Management (Priority 1)
-- **Basic Connection**: Direct Icecast streaming with configurable settings
-- **Audio Quality**: Multiple bitrate and encoding options
-- **Real-time Monitoring**: Connection status, listener counts, audio levels
+2. **Master Section**: 
+   - Master output device selection
+   - Master gain control
+   - Stereo master VU meters (L/R)
+   - Audio metrics display (CPU, sample rate, latency, channels)
 
-### Future Features (Phase 3)
-- **Schedule System**: Time-based programming with user permissions
-- **Fallback Behavior**: Automated content during off-hours
-- **Multi-Organization**: Role-based access control across organizations
+3. **Backend Infrastructure**:
+   - Comprehensive audio device enumeration with device filtering
+   - Real-time VU meter data polling (100ms intervals)
+   - Professional audio effects chain structures (EQ, compressor, limiter)
+   - Tauri commands for all mixer operations
+
+4. **UI/UX Improvements**:
+   - Converted from vertical to horizontal layout as requested
+   - Professional color coding for VU meters (green/yellow/red)
+   - Responsive grid layout that adapts to screen size
+   - Clean, professional mixer aesthetic
+
+### User Feedback Addressed
+- ✅ Fixed horizontal layout issue (was reverted to vertical, now corrected)
+- ⚠️ **Still need to fix**: No actual audio capture or output (critical issue)
+- ⚠️ **Still need to fix**: VU meters show test animation instead of real levels
 
 ## Development Commands
 
 ```bash
-# Start development server (both frontend and backend)
-pnpm dev
+# Start development server (CORRECT COMMAND - user specified)
+pnpm tauri dev
 
-# Build the application
-pnpm build
+# NOTE: User specifically said "Don't ever use npm unless it's installing global dependencies"
+# Always use pnpm for this project
 
 # Type checking
 tsc
 
-# Preview built application
-pnpm preview
-
-# Tauri-specific commands
-pnpm tauri dev      # Development with hot reload
-pnpm tauri build    # Production build
+# Build for production
+pnpm tauri build
 ```
 
-## Current Architecture
+## Architecture Status
 
 ### Frontend (React + TypeScript)
-- **App.tsx**: Main application with view routing
-- **DJClient.tsx**: Basic streaming interface (to be enhanced with virtual mixer)
-- **ListenerPlayer.tsx**: Audio playback interface
-- **AdminPanel.tsx**: Management dashboard (will be simplified for Phase 1)
+- **App.tsx**: Routes to Virtual Mixer as default (changed from 'home' to 'mixer')
+- **VirtualMixer.tsx**: Complete professional mixer interface
+  - ChannelStrip component with full controls
+  - VUMeter component with professional visualization
+  - Master section with output routing
+  - Real-time polling for VU meter updates
+- **Tauri Window**: Configured for full-screen (maximized: true, 1400x1000)
 
 ### Backend (Rust via Tauri)
-- **Streaming Engine**: Core Icecast integration
-- **Audio Processing**: LAME encoding, real-time audio handling
-- **API Layer**: Tauri commands for frontend-backend communication
+- **audio.rs**: 
+  - AudioDeviceManager with device enumeration and filtering
+  - VirtualMixer structure with effects chains
+  - Currently generates test levels - NEEDS REAL AUDIO IMPLEMENTATION
+  - Professional audio effects structures (ThreeBandEqualizer, Compressor, Limiter)
+- **lib.rs**: All Tauri commands implemented for mixer control
 
-### Current Dependencies
-```json
-// Audio Processing (to be expanded)
-"lamejs": "^1.2.1",           // MP3 encoding
-"opus-recorder": "^8.0.5",    // Audio recording
-"hls.js": "^1.5.0",          // Streaming support
+### Critical Code Locations
+- **VU Meter Implementation**: `/src/components/VirtualMixer.tsx:65-121`
+- **Channel Strip Layout**: `/src/components/VirtualMixer.tsx:123-200+`
+- **Audio Backend**: `/src-tauri/src/audio.rs` (needs input/output stream implementation)
+- **Test Level Generation**: `/src-tauri/src/audio.rs:~800+` (replace with real audio capture)
 
-// UI Framework
-"@headlessui/react": "^1.7.0", // UI components
-"@heroicons/react": "^2.0.0",  // Icons
-"tailwindcss": "^3.4.0",      // Styling (needs design overhaul)
+## Next Session Goals
 
-// State Management
-"zustand": "^4.4.0",          // React state
-"axios": "^1.6.0",           // HTTP client
-"socket.io-client": "^4.7.0" // Real-time communication
-```
+### Phase 1: Get Real Audio Working
+1. **Fix Audio Input Capture**:
+   - Implement cpal input stream creation in VirtualMixer::add_input_stream()
+   - Connect selected input devices to actual audio capture
+   - Process captured samples through audio buffer system
 
-## Phase 1 Development Priorities
+2. **Fix Audio Output**:
+   - Implement cpal output stream in VirtualMixer::set_output_stream()
+   - Route mixed audio to selected output device (speakers/headphones)
+   - Ensure audio flows from input → processing → output
 
-### Core Audio System
-1. **Audio Device Enumeration**: Detect all available input/output devices
-2. **Virtual Mixer Engine**: Real-time audio mixing with multiple channels
-3. **Input Processing**: Handle microphone, system audio, and application audio
-4. **Output Routing**: Route mixed audio to stream and monitoring outputs
-5. **Audio Quality Control**: Gain, EQ, compression per channel
+3. **Fix VU Meter Levels**:
+   - Replace test animation with real audio level calculation
+   - Calculate peak/RMS from captured audio samples
+   - Update VU meters with actual audio data instead of sine wave test
 
-### Streaming Integration
-1. **Icecast Connection**: Robust connection handling with reconnection logic
-2. **Audio Encoding**: High-quality MP3/OGG encoding for streaming
-3. **Metadata Management**: Song title, artist, show information
-4. **Connection Monitoring**: Real-time status and listener statistics
+4. **Audio Processing Chain**:
+   - Connect input audio through effects (EQ, compressor, limiter)
+   - Apply channel settings (gain, pan, mute, solo) to real audio
+   - Mix multiple channels to master output
 
-### UI/UX for Phase 1
-1. **Professional Audio Interface**: Channel strips, faders, VU meters
-2. **Device Selection**: Easy audio device routing interface
-3. **Stream Configuration**: Simple, clear connection setup
-4. **Real-time Feedback**: Visual audio levels, connection status, stream health
+### Success Criteria for Next Session
+- [ ] User can select input device and hear their microphone/system audio
+- [ ] User can select output device and hear audio through speakers/headphones
+- [ ] VU meters respond to actual audio levels, not test animation
+- [ ] Audio flows: Input Device → Channel Processing → Master Mix → Output Device
+- [ ] Channel controls (gain, pan, EQ) affect the actual audio output
 
-## Technical Considerations for Phase 1
+### Technical Implementation Notes
+- User has BlackHole 2CH, microphone, MacBook speakers, and BenQ monitor available
+- Focus on macOS Core Audio implementation first
+- Use cpal for cross-platform audio stream management
+- Audio processing should happen in separate thread from UI
+- Maintain horizontal layout that user requested
 
-### Audio Engineering Requirements
-- Ultra-low latency audio processing (< 10ms)
-- Cross-platform audio subsystem integration
-- Real-time mixing with multiple simultaneous inputs
-- Professional-grade audio quality maintenance
-
-### Cross-Platform Audio Challenges
-- **macOS**: Core Audio integration, potential BlackHole integration
-- **Windows**: WASAPI/DirectSound integration, virtual audio cables
-- **Linux**: ALSA/PulseAudio integration, JACK compatibility
-
-### Performance Requirements
-- Real-time audio processing without dropouts
-- Efficient CPU usage for sustained streaming
-- Memory management for continuous operation
-- Thread safety for audio and UI operations
-
-## Testing Strategy for Phase 1
-- Audio latency testing across different buffer sizes
-- Multi-input stress testing (simultaneous sources)
-- Stream stability testing with various Icecast servers
-- Cross-platform audio device compatibility
-- Long-running stability tests
+## Known Working Components
+- Device enumeration and filtering works correctly
+- UI polling and updates work at 10 FPS (100ms intervals)
+- Professional mixer interface is complete and responsive
+- Backend-frontend communication is solid
+- Effects parameter structures are implemented
