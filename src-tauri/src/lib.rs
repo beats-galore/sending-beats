@@ -3,7 +3,11 @@ pub mod audio;
 
 use streaming::{StreamConfig, StreamManager, StreamMetadata, StreamStatus};
 // Re-export audio types for testing and external use
-pub use audio::{AudioDeviceManager, VirtualMixer, MixerConfig, AudioDeviceInfo, AudioChannel, AudioMetrics, MixerCommand, AudioConfigFactory, EQBand, ThreeBandEqualizer, Compressor, Limiter, PeakDetector, RmsDetector};
+pub use audio::{
+    AudioDeviceManager, VirtualMixer, MixerConfig, AudioDeviceInfo, AudioChannel, 
+    AudioMetrics, MixerCommand, AudioConfigFactory, EQBand, ThreeBandEqualizer, 
+    Compressor, Limiter, PeakDetector, RmsDetector
+};
 use std::sync::{Arc, Mutex};
 use tauri::State;
 use tokio::sync::Mutex as AsyncMutex;
