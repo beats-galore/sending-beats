@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
-use cpal::{SampleFormat, StreamConfig};
-use cpal::traits::{DeviceTrait, StreamTrait};
+use cpal::SampleFormat;
+use cpal::traits::DeviceTrait;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -9,6 +9,7 @@ use super::effects::AudioEffectsChain;
 use super::types::AudioChannel;
 
 // Audio stream management structures
+#[derive(Debug)]
 pub struct AudioInputStream {
     pub device_id: String,
     pub device_name: String,
@@ -83,6 +84,7 @@ impl AudioInputStream {
     }
 }
 
+#[derive(Debug)]
 pub struct AudioOutputStream {
     pub device_id: String,
     pub device_name: String,
@@ -121,6 +123,14 @@ impl AudioOutputStream {
 // Stream management handles the actual cpal streams in a separate synchronous context
 pub struct StreamManager {
     streams: HashMap<String, cpal::Stream>,
+}
+
+impl std::fmt::Debug for StreamManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamManager")
+            .field("streams", &format!("{} streams", self.streams.len()))
+            .finish()
+    }
 }
 
 impl StreamManager {
@@ -302,6 +312,7 @@ pub fn get_stream_manager() -> &'static std::sync::mpsc::Sender<StreamCommand> {
 }
 
 // Helper structure for processing thread
+#[derive(Debug)]
 pub struct VirtualMixerHandle {
     pub input_streams: Arc<Mutex<HashMap<String, Arc<AudioInputStream>>>>,
     pub output_stream: Arc<Mutex<Option<Arc<AudioOutputStream>>>>,

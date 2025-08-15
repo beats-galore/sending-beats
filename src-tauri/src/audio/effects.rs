@@ -1,4 +1,5 @@
 /// Real-time audio analysis
+#[derive(Debug)]
 pub struct AudioAnalyzer {
     peak_detector: PeakDetector,
     rms_detector: RmsDetector,
@@ -27,6 +28,7 @@ impl AudioAnalyzer {
 }
 
 /// Peak level detector with decay
+#[derive(Debug)]
 pub struct PeakDetector {
     peak: f32,
     decay_factor: f32,
@@ -55,6 +57,7 @@ impl PeakDetector {
 }
 
 /// RMS level detector for average loudness
+#[derive(Debug)]
 pub struct RmsDetector {
     window_size: usize,
     sample_buffer: Vec<f32>,
@@ -92,6 +95,7 @@ impl RmsDetector {
 }
 
 /// Basic spectrum analyzer for frequency analysis
+#[derive(Debug)]
 pub struct SpectrumAnalyzer {
     sample_rate: u32,
     fft_size: usize,
@@ -131,6 +135,7 @@ impl SpectrumAnalyzer {
 }
 
 /// Real-time audio effects chain
+#[derive(Debug)]
 pub struct AudioEffectsChain {
     equalizer: ThreeBandEqualizer,
     compressor: Compressor,
@@ -187,6 +192,7 @@ pub enum EQBand {
     High,
 }
 
+#[derive(Debug)]
 pub struct ThreeBandEqualizer {
     sample_rate: u32,
     low_shelf: BiquadFilter,
@@ -228,6 +234,7 @@ impl ThreeBandEqualizer {
 }
 
 /// Biquad IIR filter for EQ
+#[derive(Debug)]
 pub struct BiquadFilter {
     a0: f32,
     a1: f32,
@@ -338,6 +345,7 @@ impl BiquadFilter {
 }
 
 /// Dynamic range compressor
+#[derive(Debug)]
 pub struct Compressor {
     sample_rate: u32,
     threshold: f32,
@@ -422,6 +430,7 @@ impl Compressor {
 }
 
 /// Brick-wall limiter
+#[derive(Debug)]
 pub struct Limiter {
     sample_rate: u32,
     threshold: f32,

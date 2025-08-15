@@ -13,6 +13,15 @@ pub struct AudioDeviceManager {
     devices_cache: Arc<Mutex<HashMap<String, AudioDeviceInfo>>>,
 }
 
+impl std::fmt::Debug for AudioDeviceManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AudioDeviceManager")
+            .field("host", &"Host(cpal)")
+            .field("devices_cache", &self.devices_cache)
+            .finish()
+    }
+}
+
 impl AudioDeviceManager {
     pub fn new() -> Result<Self> {
         // Try to use CoreAudio host explicitly on macOS for better device detection
@@ -192,6 +201,11 @@ impl AudioDeviceManager {
 
     fn get_device_info(&self, device: &Device, is_input: bool, is_output: bool, is_default: bool) -> Result<AudioDeviceInfo> {
         let name = device.name().unwrap_or_else(|_| "Unknown Device".to_string());
+        
+        // Validate device name
+        if name.len() > 512 {
+            return Err(anyhow::anyhow!("Device name too long: {}", name.len()));
+        }
         
         // Temporarily disable device filtering for debugging
         // if self.is_device_unavailable(&name) {
@@ -390,9 +404,9 @@ impl AudioDeviceManager {
                 let device_name = device.name().unwrap_or_else(|_| "Unknown".to_string());
                 let name_lower = device_name.to_lowercase();
                 
-                // Check if device name contains any of the target name parts
+                // Check if device name contains any of the target name parts (must be at least 3 characters)
                 let matches = target_name_parts.iter().any(|&part| {
-                    !part.is_empty() && name_lower.contains(part)
+                    !part.is_empty() && part.len() >= 3 && name_lower.contains(part)
                 });
                 
                 if matches {
@@ -408,9 +422,9 @@ impl AudioDeviceManager {
                 let device_name = device.name().unwrap_or_else(|_| "Unknown".to_string());
                 let name_lower = device_name.to_lowercase();
                 
-                // Check if device name contains any of the target name parts
+                // Check if device name contains any of the target name parts (must be at least 3 characters)
                 let matches = target_name_parts.iter().any(|&part| {
-                    !part.is_empty() && name_lower.contains(part)
+                    !part.is_empty() && part.len() >= 3 && name_lower.contains(part)
                 });
                 
                 if matches {
@@ -420,20 +434,8 @@ impl AudioDeviceManager {
             }
         }
         
-        // As a last resort, try to use default device
-        if is_input {
-            if let Some(default_device) = self.host.default_input_device() {
-                let default_name = default_device.name().unwrap_or_else(|_| "Default Input".to_string());
-                println!("No device found for '{}', using default input device: {}", device_id, default_name);
-                return Ok(default_device);
-            }
-        } else {
-            if let Some(default_device) = self.host.default_output_device() {
-                let default_name = default_device.name().unwrap_or_else(|_| "Default Output".to_string());
-                println!("No device found for '{}', using default output device: {}", device_id, default_name);
-                return Ok(default_device);
-            }
-        }
+        // Device not found - don't fall back to default devices automatically
+        println!("No device found for '{}' after all matching attempts", device_id);
         
         Err(anyhow::anyhow!("No suitable {} device found for ID: {}", 
             if is_input { "input" } else { "output" }, device_id))
