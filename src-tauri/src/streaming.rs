@@ -117,7 +117,7 @@ impl StreamManager {
         // Channel for MP3 data from encoder thread to async
         let (mp3_tx, mut mp3_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(100);
         // Channel for controlling the stream (stop signal)
-        let (control_tx, mut control_rx) = tokio::sync::mpsc::channel::<()>(1);
+        let (_control_tx, mut control_rx) = tokio::sync::mpsc::channel::<()>(1);
 
         // Forward PCM data from Tokio receiver to std sender (encoding thread)
         std::thread::spawn(move || {

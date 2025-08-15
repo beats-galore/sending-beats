@@ -32,5 +32,30 @@ url = "2"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 urlencoding = "2"
+
+# Audio processing and streaming
 lame = "0.1"
+cpal = "0.15"              # Cross-platform audio I/O
+rtrb = "0.2"               # Real-time ring buffer
+rubato = "0.15"            # High-quality sample rate conversion
+
+# Platform-specific audio system integration
+[target.'cfg(target_os = "macos")'.dependencies]
+coreaudio-rs = "0.11"     # macOS Core Audio integration
+coreaudio-sys = "0.2"     # Low-level Core Audio bindings
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.52", features = ["Win32_Media_Audio"] }  # WASAPI integration
+
+[target.'cfg(target_os = "linux")'.dependencies]
+alsa = "0.7"              # ALSA integration for Linux
+pulse = "0.5"             # PulseAudio integration
+
+[dev-dependencies]
+# Testing framework and utilities
+tokio-test = "0.4"        # Utilities for testing async code
+mockall = "0.12"          # Mock generation framework
+proptest = "1.0"          # Property-based testing
+serial_test = "3.0"       # Run tests serially when needed
+tempfile = "3.0"          # Temporary files for testing
 

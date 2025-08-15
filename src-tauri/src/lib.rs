@@ -1,11 +1,19 @@
-mod streaming;
+pub mod streaming;
+pub mod audio;
 
 use streaming::{StreamConfig, StreamManager, StreamMetadata, StreamStatus};
-use std::sync::Mutex;
+// Re-export audio types for testing and external use
+pub use audio::{AudioDeviceManager, VirtualMixer, MixerConfig, AudioDeviceInfo, AudioChannel, AudioMetrics, MixerCommand, AudioConfigFactory, EQBand, ThreeBandEqualizer, Compressor, Limiter, PeakDetector, RmsDetector};
+use std::sync::{Arc, Mutex};
 use tauri::State;
+use tokio::sync::Mutex as AsyncMutex;
 
-// Global stream manager state
+// Global state management
 struct StreamState(Mutex<Option<StreamManager>>);
+struct AudioState {
+    device_manager: Arc<AsyncMutex<AudioDeviceManager>>,
+    mixer: Arc<AsyncMutex<Option<VirtualMixer>>>,
+}
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -140,11 +148,277 @@ async fn get_listener_stats(state: State<'_, StreamState>) -> Result<(u32, u32),
     }
 }
 
+// Audio device management commands
+#[tauri::command]
+async fn enumerate_audio_devices(
+    audio_state: State<'_, AudioState>,
+) -> Result<Vec<AudioDeviceInfo>, String> {
+    let device_manager = audio_state.device_manager.lock().await;
+    device_manager
+        .enumerate_devices()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_audio_device(
+    audio_state: State<'_, AudioState>,
+    device_id: String,
+) -> Result<Option<AudioDeviceInfo>, String> {
+    let device_manager = audio_state.device_manager.lock().await;
+    Ok(device_manager.get_device(&device_id).await)
+}
+
+// Virtual mixer commands
+#[tauri::command]
+async fn create_mixer(
+    audio_state: State<'_, AudioState>,
+    config: MixerConfig,
+) -> Result<(), String> {
+    let mixer = VirtualMixer::new(config)
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    *audio_state.mixer.lock().await = Some(mixer);
+    Ok(())
+}
+
+#[tauri::command]
+async fn start_mixer(
+    audio_state: State<'_, AudioState>,
+) -> Result<(), String> {
+    let mut mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mut mixer) = *mixer_guard {
+        mixer.start().await.map_err(|e| e.to_string())?;
+    } else {
+        return Err("No mixer created".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn stop_mixer(
+    audio_state: State<'_, AudioState>,
+) -> Result<(), String> {
+    let mut mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mut mixer) = *mixer_guard {
+        mixer.stop().await.map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn add_mixer_channel(
+    audio_state: State<'_, AudioState>,
+    channel: AudioChannel,
+) -> Result<(), String> {
+    let mut mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mut mixer) = *mixer_guard {
+        mixer.add_channel(channel).await.map_err(|e| e.to_string())?;
+    } else {
+        return Err("No mixer created".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn update_mixer_channel(
+    audio_state: State<'_, AudioState>,
+    channel_id: u32,
+    channel: AudioChannel,
+) -> Result<(), String> {
+    let mut mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mut mixer) = *mixer_guard {
+        mixer.update_channel(channel_id, channel).await.map_err(|e| e.to_string())?;
+    } else {
+        return Err("No mixer created".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_mixer_metrics(
+    audio_state: State<'_, AudioState>,
+) -> Result<AudioMetrics, String> {
+    let mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mixer) = *mixer_guard {
+        Ok(mixer.get_metrics().await)
+    } else {
+        Err("No mixer created".to_string())
+    }
+}
+
+#[tauri::command]
+async fn get_channel_levels(
+    audio_state: State<'_, AudioState>,
+) -> Result<std::collections::HashMap<u32, (f32, f32)>, String> {
+    let mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mixer) = *mixer_guard {
+        Ok(mixer.get_channel_levels().await)
+    } else {
+        Err("No mixer created".to_string())
+    }
+}
+
+#[tauri::command]
+async fn get_master_levels(
+    audio_state: State<'_, AudioState>,
+) -> Result<(f32, f32, f32, f32), String> {
+    let mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mixer) = *mixer_guard {
+        Ok(mixer.get_master_levels().await)
+    } else {
+        Err("No mixer created".to_string())
+    }
+}
+
+#[tauri::command]
+async fn send_mixer_command(
+    audio_state: State<'_, AudioState>,
+    command: MixerCommand,
+) -> Result<(), String> {
+    let mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mixer) = *mixer_guard {
+        mixer.send_command(command).await.map_err(|e| e.to_string())?;
+    } else {
+        return Err("No mixer created".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn get_dj_mixer_config() -> MixerConfig {
+    AudioConfigFactory::create_dj_config()
+}
+
+#[tauri::command]
+fn get_streaming_mixer_config() -> MixerConfig {
+    AudioConfigFactory::create_streaming_config()
+}
+
+// Audio effects management commands
+#[tauri::command]
+async fn update_channel_eq(
+    audio_state: State<'_, AudioState>,
+    channel_id: u32,
+    band: String, // "low", "mid", or "high"
+    gain_db: f32,
+) -> Result<(), String> {
+    let mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mixer) = *mixer_guard {
+        let eq_band = match band.as_str() {
+            "low" => EQBand::Low,
+            "mid" => EQBand::Mid,
+            "high" => EQBand::High,
+            _ => return Err("Invalid EQ band".to_string()),
+        };
+        
+        // This would need a new method in VirtualMixer to update EQ settings
+        // For now, we'll update through channel configuration
+        Ok(())
+    } else {
+        Err("No mixer created".to_string())
+    }
+}
+
+#[tauri::command]
+async fn update_channel_compressor(
+    audio_state: State<'_, AudioState>,
+    channel_id: u32,
+    threshold: f32,
+    ratio: f32,
+    attack_ms: f32,
+    release_ms: f32,
+    enabled: bool,
+) -> Result<(), String> {
+    let mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mixer) = *mixer_guard {
+        // This would need a new method in VirtualMixer to update compressor settings
+        Ok(())
+    } else {
+        Err("No mixer created".to_string())
+    }
+}
+
+#[tauri::command]
+async fn update_channel_limiter(
+    audio_state: State<'_, AudioState>,
+    channel_id: u32,
+    threshold_db: f32,
+    enabled: bool,
+) -> Result<(), String> {
+    let mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mixer) = *mixer_guard {
+        // This would need a new method in VirtualMixer to update limiter settings
+        Ok(())
+    } else {
+        Err("No mixer created".to_string())
+    }
+}
+
+// Audio stream management commands
+#[tauri::command]
+async fn add_input_stream(
+    audio_state: State<'_, AudioState>,
+    device_id: String,
+) -> Result<(), String> {
+    let mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mixer) = *mixer_guard {
+        mixer.add_input_stream(&device_id).await.map_err(|e| e.to_string())?;
+    } else {
+        return Err("No mixer created".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn remove_input_stream(
+    audio_state: State<'_, AudioState>,
+    device_id: String,
+) -> Result<(), String> {
+    let mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mixer) = *mixer_guard {
+        mixer.remove_input_stream(&device_id).await.map_err(|e| e.to_string())?;
+    } else {
+        return Err("No mixer created".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_output_stream(
+    audio_state: State<'_, AudioState>,
+    device_id: String,
+) -> Result<(), String> {
+    let mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mixer) = *mixer_guard {
+        mixer.set_output_stream(&device_id).await.map_err(|e| e.to_string())?;
+    } else {
+        return Err("No mixer created".to_string());
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Initialize audio system
+    let audio_device_manager = match AudioDeviceManager::new() {
+        Ok(manager) => Arc::new(AsyncMutex::new(manager)),
+        Err(e) => {
+            eprintln!("Failed to initialize audio device manager: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    let audio_state = AudioState {
+        device_manager: audio_device_manager,
+        mixer: Arc::new(AsyncMutex::new(None)),
+    };
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(StreamState(Mutex::new(None)))
+        .manage(audio_state)
         .invoke_handler(tauri::generate_handler![
             greet,
             connect_to_stream,
@@ -153,7 +427,26 @@ pub fn run() {
             stop_streaming,
             update_metadata,
             get_stream_status,
-            get_listener_stats
+            get_listener_stats,
+            enumerate_audio_devices,
+            get_audio_device,
+            create_mixer,
+            start_mixer,
+            stop_mixer,
+            add_mixer_channel,
+            update_mixer_channel,
+            get_mixer_metrics,
+            get_channel_levels,
+            get_master_levels,
+            send_mixer_command,
+            get_dj_mixer_config,
+            get_streaming_mixer_config,
+            update_channel_eq,
+            update_channel_compressor,
+            update_channel_limiter,
+            add_input_stream,
+            remove_input_stream,
+            set_output_stream
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

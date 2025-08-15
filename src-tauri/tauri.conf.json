@@ -13,9 +13,13 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "sendin-beats",
-        "width": 800,
-        "height": 600
+        "title": "Sendin Beats - Virtual Audio Mixer",
+        "width": 1400,
+        "height": 1000,
+        "minWidth": 1200,
+        "minHeight": 800,
+        "maximized": true,
+        "resizable": true
       }
     ],
     "security": {
@@ -31,6 +35,13 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "entitlements": null,
+      "exceptionDomain": null,
+      "frameworks": ["AudioUnit", "CoreAudio", "AudioToolbox"],
+      "providerShortName": null,
+      "signingIdentity": null
+    }
   }
 }
