@@ -255,28 +255,22 @@ impl StreamManager {
                         let peak_level = data.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
                         let rms_level = (data.iter().map(|&s| s * s).sum::<f32>() / data.len() as f32).sqrt();
                         
-                        // Convert to mono samples
-                        let mono_samples: Vec<f32> = if config.channels == 1 {
-                            data.to_vec()
-                        } else {
-                            data.chunks(config.channels as usize)
-                                .map(|frame| frame.iter().sum::<f32>() / frame.len() as f32)
-                                .collect()
-                        };
+                        // Keep stereo data as-is to prevent pitch shifting - don't convert to mono
+                        let audio_samples: Vec<f32> = data.to_vec();
                         
-                        total_samples_captured += mono_samples.len() as u64;
+                        total_samples_captured += audio_samples.len() as u64;
                         
                         // Debug logging every 2 seconds (approximately)
                         if callback_count % 200 == 0 || (peak_level > 0.01 && callback_count % 50 == 0) {
                             println!("🔊 INPUT [{}] Callback #{}: {} samples, peak: {:.4}, rms: {:.4}", 
                                 debug_device_id_for_callback, callback_count, data.len(), peak_level, rms_level);
-                            println!("   Total samples captured: {}, mono samples: {}", total_samples_captured, mono_samples.len());
+                            println!("   Total samples captured: {}, stereo samples: {}", total_samples_captured, audio_samples.len());
                         }
                         
                         // Store in buffer with additional debugging
                         if let Ok(mut buffer) = audio_buffer.try_lock() {
                             let buffer_size_before = buffer.len();
-                            buffer.extend_from_slice(&mono_samples);
+                            buffer.extend_from_slice(&audio_samples);
                             let buffer_size_after = buffer.len();
                             
                             // Debug significant buffer changes
@@ -331,13 +325,8 @@ impl StreamManager {
                         let peak_level = f32_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
                         let rms_level = (f32_samples.iter().map(|&s| s * s).sum::<f32>() / f32_samples.len() as f32).sqrt();
                             
-                        let mono_samples: Vec<f32> = if config.channels == 1 {
-                            f32_samples
-                        } else {
-                            f32_samples.chunks(config.channels as usize)
-                                .map(|frame| frame.iter().sum::<f32>() / frame.len() as f32)
-                                .collect()
-                        };
+                        // Keep stereo data as-is to prevent pitch shifting - don't convert to mono
+                        let audio_samples = f32_samples;
                         
                         if callback_count % 200 == 0 || (peak_level > 0.01 && callback_count % 50 == 0) {
                             println!("🔊 INPUT I16 [{}] Callback #{}: {} samples, peak: {:.4}, rms: {:.4}", 
@@ -346,7 +335,7 @@ impl StreamManager {
                         
                         if let Ok(mut buffer) = audio_buffer.try_lock() {
                             let buffer_size_before = buffer.len();
-                            buffer.extend_from_slice(&mono_samples);
+                            buffer.extend_from_slice(&audio_samples);
                             
                             if buffer_size_before == 0 && buffer.len() > 0 {
                                 println!("📦 BUFFER I16: First audio data stored for {}: {} samples", debug_device_id_i16, buffer.len());
@@ -377,16 +366,11 @@ impl StreamManager {
                             .map(|&sample| (sample as f32 - 32768.0) / 32768.0)
                             .collect();
                             
-                        let mono_samples: Vec<f32> = if config.channels == 1 {
-                            f32_samples
-                        } else {
-                            f32_samples.chunks(config.channels as usize)
-                                .map(|frame| frame.iter().sum::<f32>() / frame.len() as f32)
-                                .collect()
-                        };
+                        // Keep stereo data as-is to prevent pitch shifting - don't convert to mono
+                        let audio_samples = f32_samples;
                         
                         if let Ok(mut buffer) = audio_buffer.try_lock() {
-                            buffer.extend_from_slice(&mono_samples);
+                            buffer.extend_from_slice(&audio_samples);
                             let max_buffer_size = target_sample_rate as usize / 10; // 100ms max for real-time audio
                             if buffer.len() > max_buffer_size {
                                 let excess = buffer.len() - max_buffer_size;
