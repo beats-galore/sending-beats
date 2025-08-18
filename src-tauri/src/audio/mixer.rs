@@ -410,13 +410,13 @@ impl VirtualMixer {
             // **CRITICAL FIX**: Start the output stream with proper error handling
             match output_stream_handle.play() {
                 Ok(()) => {
-                    println!(\"Successfully started cpal output stream\");
+                    println!("Successfully started cpal output stream");
                     // Store the handle to prevent it from being dropped (avoids Send issues)
                     std::mem::forget(output_stream_handle);
                 }
                 Err(e) => {
-                    eprintln!(\"Failed to start cpal output stream: {}\", e);
-                    return Err(anyhow::anyhow!(\"Failed to start output stream: {}\", e));
+                    eprintln!("Failed to start cpal output stream: {}", e);
+                    return Err(anyhow::anyhow!("Failed to start output stream: {}", e));
                 }
             }
         }
@@ -446,11 +446,11 @@ impl VirtualMixer {
         // **CRITICAL FIX**: Start the CoreAudio stream with proper error handling
         match coreaudio_stream.start() {
             Ok(()) => {
-                println!(\"Successfully started CoreAudio stream\");
+                println!("Successfully started CoreAudio stream");
             }
             Err(e) => {
-                eprintln!(\"Failed to start CoreAudio stream: {}\", e);
-                return Err(anyhow::anyhow!(\"Failed to start CoreAudio stream: {}\", e));
+                eprintln!("Failed to start CoreAudio stream: {}", e);
+                return Err(anyhow::anyhow!("Failed to start CoreAudio stream: {}", e));
             }
         }
         

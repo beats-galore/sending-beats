@@ -395,12 +395,12 @@ impl StreamManager {
     
     pub fn remove_stream(&mut self, device_id: &str) -> bool {
         if let Some(stream) = self.streams.remove(device_id) {
-            println!(\"Stopping and removing stream for device: {}\", device_id);
+            println!("Stopping and removing stream for device: {}", device_id);
             // Stream will be automatically dropped and stopped here
             drop(stream);
             true
         } else {
-            println!(\"Stream not found for removal: {}\", device_id);
+            println!("Stream not found for removal: {}", device_id);
             false
         }
     }
