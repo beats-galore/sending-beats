@@ -13,11 +13,17 @@ pub mod effects;
 pub mod streams;
 pub mod mixer;
 
+#[cfg(target_os = "macos")]
+pub mod coreaudio_stream;
+
 // Re-export commonly used types for easier imports
 pub use types::{
     AudioChannel, AudioDeviceInfo, AudioMetrics, MixerCommand, MixerConfig,
-    AudioConfigFactory,
+    AudioConfigFactory, AudioDeviceHandle, 
 };
+
+#[cfg(target_os = "macos")]
+pub use types::CoreAudioDevice;
 
 pub use devices::AudioDeviceManager;
 

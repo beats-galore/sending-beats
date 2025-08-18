@@ -716,6 +716,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "coreaudio-rs"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aae284fbaf7d27aa0e292f7677dfbe26503b0d555026f702940805a630eac17"
+dependencies = [
+ "bitflags 1.3.2",
+ "libc",
+ "objc2-audio-toolbox",
+ "objc2-core-audio",
+ "objc2-core-audio-types",
+ "objc2-core-foundation",
+]
+
+[[package]]
 name = "coreaudio-sys"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -732,7 +746,7 @@ checksum = "873dab07c8f743075e57f524c583985fbaf745602acbe916a01539364369a779"
 dependencies = [
  "alsa 0.9.1",
  "core-foundation-sys",
- "coreaudio-rs",
+ "coreaudio-rs 0.11.3",
  "dasp_sample",
  "jni",
  "js-sys",
@@ -2673,6 +2687,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-audio-toolbox"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "10cbe18d879e20a4aea544f8befe38bcf52255eb63d3f23eca2842f3319e4c07"
+dependencies = [
+ "bitflags 2.9.1",
+ "libc",
+ "objc2 0.6.1",
+ "objc2-core-audio",
+ "objc2-core-audio-types",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.1",
+]
+
+[[package]]
 name = "objc2-cloud-kit"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2681,6 +2710,28 @@ dependencies = [
  "bitflags 2.9.1",
  "objc2 0.6.1",
  "objc2-foundation 0.3.1",
+]
+
+[[package]]
+name = "objc2-core-audio"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca44961e888e19313b808f23497073e3f6b3c22bb485056674c8b49f3b025c82"
+dependencies = [
+ "dispatch2",
+ "objc2 0.6.1",
+ "objc2-core-audio-types",
+ "objc2-core-foundation",
+]
+
+[[package]]
+name = "objc2-core-audio-types"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0f1cc99bb07ad2ddb6527ddf83db6a15271bb036b3eb94b801cd44fdc666ee1"
+dependencies = [
+ "bitflags 2.9.1",
+ "objc2 0.6.1",
 ]
 
 [[package]]
@@ -3943,7 +3994,8 @@ dependencies = [
  "anyhow",
  "base64 0.21.7",
  "chrono",
- "coreaudio-rs",
+ "core-foundation 0.9.4",
+ "coreaudio-rs 0.13.0",
  "coreaudio-sys",
  "cpal",
  "futures",
@@ -3954,6 +4006,7 @@ dependencies = [
  "reqwest 0.11.27",
  "rtrb",
  "rubato",
+ "rustfft",
  "serde",
  "serde_json",
  "serial_test",

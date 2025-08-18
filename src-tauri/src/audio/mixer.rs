@@ -41,6 +41,8 @@ pub struct VirtualMixer {
     audio_device_manager: Arc<AudioDeviceManager>,
     input_streams: Arc<Mutex<HashMap<String, Arc<AudioInputStream>>>>,
     output_stream: Arc<Mutex<Option<Arc<AudioOutputStream>>>>,
+    #[cfg(target_os = "macos")]
+    coreaudio_stream: Arc<Mutex<Option<super::coreaudio_stream::CoreAudioOutputStream>>>,
 }
 
 impl VirtualMixer {
@@ -95,6 +97,11 @@ impl VirtualMixer {
     }
 
     pub async fn new(config: MixerConfig) -> Result<Self> {
+        let device_manager = Arc::new(AudioDeviceManager::new()?);
+        Self::new_with_device_manager(config, device_manager).await
+    }
+
+    pub async fn new_with_device_manager(config: MixerConfig, device_manager: Arc<AudioDeviceManager>) -> Result<Self> {
         // Validate mixer configuration
         Self::validate_config(&config)?;
         
@@ -113,8 +120,8 @@ impl VirtualMixer {
             active_channels: config.channels.len() as u32,
         }));
 
-        // Initialize audio device manager
-        let audio_device_manager = Arc::new(AudioDeviceManager::new()?);
+        // Use the provided audio device manager
+        let audio_device_manager = device_manager;
 
         let channel_levels = Arc::new(Mutex::new(HashMap::new()));
         let channel_levels_cache = Arc::new(Mutex::new(HashMap::new()));
@@ -138,6 +145,8 @@ impl VirtualMixer {
             audio_device_manager,
             input_streams: Arc::new(Mutex::new(HashMap::new())),
             output_stream: Arc::new(Mutex::new(None)),
+            #[cfg(target_os = "macos")]
+            coreaudio_stream: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -246,7 +255,7 @@ impl VirtualMixer {
         }
     }
 
-    /// Set the audio output stream with real cpal stream creation
+    /// Set the audio output stream with support for both cpal and CoreAudio devices
     pub async fn set_output_stream(&self, device_id: &str) -> Result<()> {
         println!("Setting output stream for device: {}", device_id);
         
@@ -255,11 +264,24 @@ impl VirtualMixer {
             return Err(anyhow::anyhow!("Invalid device ID: must be 1-256 characters"));
         }
         
-        // Find the actual cpal device for output
-        let device = self.audio_device_manager.find_cpal_device(device_id, false).await?;
+        // Find the audio device (CoreAudio or cpal) for output
+        let device_handle = self.audio_device_manager.find_audio_device(device_id, false).await?;
         
+        match device_handle {
+            super::AudioDeviceHandle::Cpal(device) => {
+                self.create_cpal_output_stream(device_id, device).await
+            }
+            #[cfg(target_os = "macos")]
+            super::AudioDeviceHandle::CoreAudio(coreaudio_device) => {
+                self.create_coreaudio_output_stream(device_id, coreaudio_device).await
+            }
+        }
+    }
+
+    /// Create cpal output stream (existing implementation)
+    async fn create_cpal_output_stream(&self, device_id: &str, device: cpal::Device) -> Result<()> {
         let device_name = device.name().unwrap_or_else(|_| device_id.to_string());
-        println!("Found output device: {}", device_name);
+        println!("Found cpal output device: {}", device_name);
         
         // Get the default output config for this device
         let config = device.default_output_config()
@@ -395,6 +417,42 @@ impl VirtualMixer {
         Ok(())
     }
 
+    /// Create CoreAudio output stream for direct hardware access
+    #[cfg(target_os = "macos")]
+    async fn create_coreaudio_output_stream(&self, device_id: &str, coreaudio_device: super::CoreAudioDevice) -> Result<()> {
+        println!("Creating CoreAudio output stream for device: {} (ID: {})", coreaudio_device.name, coreaudio_device.device_id);
+        
+        // Create the actual CoreAudio stream
+        let mut coreaudio_stream = super::coreaudio_stream::CoreAudioOutputStream::new(
+            coreaudio_device.device_id,
+            coreaudio_device.name.clone(),
+            self.config.sample_rate,
+            coreaudio_device.channels,
+        )?;
+        
+        // Start the CoreAudio stream
+        coreaudio_stream.start()?;
+        
+        // Store the CoreAudio stream in the mixer to keep it alive
+        let mut coreaudio_guard = self.coreaudio_stream.lock().await;
+        *coreaudio_guard = Some(coreaudio_stream);
+        
+        // Create AudioOutputStream structure for compatibility with the existing mixer architecture
+        let output_stream = AudioOutputStream::new(
+            device_id.to_string(),
+            coreaudio_device.name.clone(),
+            self.config.sample_rate,
+        )?;
+        
+        // Store our wrapper 
+        let mut stream_guard = self.output_stream.lock().await;
+        *stream_guard = Some(Arc::new(output_stream));
+        
+        println!("✅ Real CoreAudio Audio Unit stream created and started for: {}", device_id);
+        
+        Ok(())
+    }
+
     /// Remove an input stream and clean up cpal stream
     pub async fn remove_input_stream(&self, device_id: &str) -> Result<()> {
         // Remove from streams collection
@@ -435,7 +493,16 @@ impl VirtualMixer {
     pub async fn stop(&mut self) -> Result<()> {
         self.is_running.store(false, Ordering::Relaxed);
         
-        // TODO: Stop all audio streams (will be managed separately)
+        // Stop CoreAudio stream if active
+        #[cfg(target_os = "macos")]
+        {
+            let mut coreaudio_guard = self.coreaudio_stream.lock().await;
+            if let Some(mut stream) = coreaudio_guard.take() {
+                let _ = stream.stop();
+            }
+        }
+        
+        // TODO: Stop all other audio streams (will be managed separately)
         
         Ok(())
     }
@@ -455,6 +522,8 @@ impl VirtualMixer {
         let mixer_handle = VirtualMixerHandle {
             input_streams: self.input_streams.clone(),
             output_stream: self.output_stream.clone(),
+            #[cfg(target_os = "macos")]
+            coreaudio_stream: self.coreaudio_stream.clone(),
         };
 
         // Spawn real-time audio processing task

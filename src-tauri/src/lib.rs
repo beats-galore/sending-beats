@@ -179,6 +179,9 @@ async fn create_mixer(
     audio_state: State<'_, AudioState>,
     config: MixerConfig,
 ) -> Result<(), String> {
+    // We need to unwrap the AudioDeviceManager from the Mutex to pass to the mixer
+    // Since VirtualMixer needs to own it, we'll create a new one for now
+    // TODO: Refactor this to properly share the AudioDeviceManager instance
     let mixer = VirtualMixer::new(config)
         .await
         .map_err(|e| e.to_string())?;
