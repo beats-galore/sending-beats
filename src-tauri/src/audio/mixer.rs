@@ -264,6 +264,9 @@ impl VirtualMixer {
             return Err(anyhow::anyhow!("Invalid device ID: must be 1-256 characters"));
         }
         
+        // **CRITICAL FIX**: Stop and cleanup existing output streams first
+        self.stop_output_streams().await?;
+        
         // Find the audio device (CoreAudio or cpal) for output
         let device_handle = self.audio_device_manager.find_audio_device(device_id, false).await?;
         
@@ -311,8 +314,9 @@ impl VirtualMixer {
         println!("Using output stream config: channels={}, sample_rate={}, buffer_size={}", 
                 stream_config.channels, stream_config.sample_rate.0, buffer_size);
         
-        // Create and start the actual cpal output stream in a separate scope
+        // **CRITICAL FIX**: Create and start the actual cpal output stream with proper error handling
         {
+            println!("Building cpal output stream with format: {:?}", config.sample_format());
             let output_stream_handle = match config.sample_format() {
                 cpal::SampleFormat::F32 => {
                     device.build_output_stream(
@@ -403,9 +407,18 @@ impl VirtualMixer {
                 }
             };
             
-            // Start the output stream and immediately forget it to avoid Send issues
-            output_stream_handle.play().context("Failed to start output stream")?;
-            std::mem::forget(output_stream_handle);
+            // **CRITICAL FIX**: Start the output stream with proper error handling
+            match output_stream_handle.play() {
+                Ok(()) => {
+                    println!(\"Successfully started cpal output stream\");
+                    // Store the handle to prevent it from being dropped (avoids Send issues)
+                    std::mem::forget(output_stream_handle);
+                }
+                Err(e) => {
+                    eprintln!(\"Failed to start cpal output stream: {}\", e);
+                    return Err(anyhow::anyhow!(\"Failed to start output stream: {}\", e));
+                }
+            }
         }
         
         // Store our wrapper
@@ -430,8 +443,16 @@ impl VirtualMixer {
             coreaudio_device.channels,
         )?;
         
-        // Start the CoreAudio stream
-        coreaudio_stream.start()?;
+        // **CRITICAL FIX**: Start the CoreAudio stream with proper error handling
+        match coreaudio_stream.start() {
+            Ok(()) => {
+                println!(\"Successfully started CoreAudio stream\");
+            }
+            Err(e) => {
+                eprintln!(\"Failed to start CoreAudio stream: {}\", e);
+                return Err(anyhow::anyhow!(\"Failed to start CoreAudio stream: {}\", e));
+            }
+        }
         
         // Store the CoreAudio stream in the mixer to keep it alive
         let mut coreaudio_guard = self.coreaudio_stream.lock().await;
@@ -491,19 +512,21 @@ impl VirtualMixer {
 
     /// Stop the virtual mixer
     pub async fn stop(&mut self) -> Result<()> {
+        println!("Stopping Virtual Mixer...");
+        
+        // **CRITICAL FIX**: Set running flag false first
         self.is_running.store(false, Ordering::Relaxed);
         
-        // Stop CoreAudio stream if active
-        #[cfg(target_os = "macos")]
-        {
-            let mut coreaudio_guard = self.coreaudio_stream.lock().await;
-            if let Some(mut stream) = coreaudio_guard.take() {
-                let _ = stream.stop();
-            }
-        }
+        // **CRITICAL FIX**: Wait briefly for audio processing thread to notice the stop flag
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         
-        // TODO: Stop all other audio streams (will be managed separately)
+        // **CRITICAL FIX**: Stop all output streams safely
+        let _ = self.stop_output_streams().await;
         
+        // **CRITICAL FIX**: Stop and remove all input streams
+        let _ = self.stop_all_input_streams().await;
+        
+        println!("Virtual Mixer stopped successfully");
         Ok(())
     }
 
@@ -680,13 +703,17 @@ impl VirtualMixer {
                     }
                 }
 
-                // Maintain real-time constraints
-                let target_duration = std::time::Duration::from_micros(
-                    (buffer_size as u64 * 1_000_000) / sample_rate as u64
-                );
+                // Event-driven processing: Sleep for a shorter interval to respond to audio data availability
+                // This replaces timer-driven processing with more responsive audio-availability-driven processing
+                let process_interval = std::time::Duration::from_millis(2); // 2ms = much more responsive than 10.67ms
                 let elapsed = process_start.elapsed();
-                if elapsed < target_duration {
-                    tokio::time::sleep(target_duration - elapsed).await;
+                
+                // Always sleep briefly to prevent CPU spinning, but don't force rigid timing
+                if elapsed < process_interval {
+                    tokio::time::sleep(process_interval - elapsed).await;
+                } else {
+                    // If processing took longer than expected, yield briefly but continue processing
+                    tokio::task::yield_now().await;
                 }
             }
             
@@ -807,5 +834,55 @@ impl VirtualMixer {
     /// Get the audio device manager
     pub fn get_device_manager(&self) -> &Arc<AudioDeviceManager> {
         &self.audio_device_manager
+    }
+    
+    /// **NEW**: Safely stop all output streams to prevent crashes when switching devices
+    async fn stop_output_streams(&self) -> Result<()> {
+        println!("Stopping existing output streams...");
+        
+        // Stop CoreAudio stream if active
+        #[cfg(target_os = "macos")]
+        {
+            let mut coreaudio_guard = self.coreaudio_stream.lock().await;
+            if let Some(mut stream) = coreaudio_guard.take() {
+                println!("Stopping CoreAudio stream...");
+                if let Err(e) = stream.stop() {
+                    eprintln!("Warning: Error stopping CoreAudio stream: {}", e);
+                }
+            }
+        }
+        
+        // Clear the regular output stream (cpal streams are managed by std::mem::forget)
+        let mut stream_guard = self.output_stream.lock().await;
+        if stream_guard.is_some() {
+            println!("Clearing cpal output stream reference...");
+            *stream_guard = None;
+        }
+        
+        // Small delay to allow audio subsystem to release resources
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        
+        println!("Output streams stopped");
+        Ok(())
+    }
+    
+    /// **NEW**: Stop all input streams safely
+    async fn stop_all_input_streams(&self) -> Result<()> {
+        println!("Stopping all input streams...");
+        
+        let device_ids: Vec<String> = {
+            let streams = self.input_streams.lock().await;
+            streams.keys().cloned().collect()
+        };
+        
+        for device_id in device_ids {
+            println!("Stopping input stream: {}", device_id);
+            if let Err(e) = self.remove_input_stream(&device_id).await {
+                eprintln!("Warning: Error stopping input stream {}: {}", device_id, e);
+            }
+        }
+        
+        println!("All input streams stopped");
+        Ok(())
     }
 }

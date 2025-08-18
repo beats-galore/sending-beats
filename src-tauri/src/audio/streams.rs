@@ -273,8 +273,8 @@ impl StreamManager {
                             buffer.extend_from_slice(&audio_samples);
                             let buffer_size_after = buffer.len();
                             
-                            // Debug significant buffer changes
-                            if buffer_size_before == 0 && buffer_size_after > 0 {
+                            // Only log buffer state changes when significant or debug needed
+                            if buffer_size_before == 0 && buffer_size_after > 0 && callback_count < 10 {
                                 println!("📦 BUFFER: First audio data stored in buffer for {}: {} samples", debug_device_id, buffer_size_after);
                             }
                             
@@ -337,7 +337,7 @@ impl StreamManager {
                             let buffer_size_before = buffer.len();
                             buffer.extend_from_slice(&audio_samples);
                             
-                            if buffer_size_before == 0 && buffer.len() > 0 {
+                            if buffer_size_before == 0 && buffer.len() > 0 && callback_count < 10 {
                                 println!("📦 BUFFER I16: First audio data stored for {}: {} samples", debug_device_id_i16, buffer.len());
                             }
                             
@@ -394,7 +394,15 @@ impl StreamManager {
     }
     
     pub fn remove_stream(&mut self, device_id: &str) -> bool {
-        self.streams.remove(device_id).is_some()
+        if let Some(stream) = self.streams.remove(device_id) {
+            println!(\"Stopping and removing stream for device: {}\", device_id);
+            // Stream will be automatically dropped and stopped here
+            drop(stream);
+            true
+        } else {
+            println!(\"Stream not found for removal: {}\", device_id);
+            false
+        }
     }
 }
 
