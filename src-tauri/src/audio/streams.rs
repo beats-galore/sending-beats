@@ -228,6 +228,8 @@ impl StreamManager {
         // Add debugging context
         let device_name_for_debug = device.name().unwrap_or_else(|_| "Unknown Device".to_string());
         let debug_device_id = device_id.clone();
+        let debug_device_id_for_callback = debug_device_id.clone();
+        let debug_device_id_for_error = debug_device_id.clone();
         
         let stream = match device_config.sample_format() {
             SampleFormat::F32 => {
@@ -267,7 +269,7 @@ impl StreamManager {
                         // Debug logging every 2 seconds (approximately)
                         if callback_count % 200 == 0 || (peak_level > 0.01 && callback_count % 50 == 0) {
                             println!("🔊 INPUT [{}] Callback #{}: {} samples, peak: {:.4}, rms: {:.4}", 
-                                debug_device_id, callback_count, data.len(), peak_level, rms_level);
+                                debug_device_id_for_callback, callback_count, data.len(), peak_level, rms_level);
                             println!("   Total samples captured: {}, mono samples: {}", total_samples_captured, mono_samples.len());
                         }
                         
@@ -282,7 +284,7 @@ impl StreamManager {
                                 println!("📦 BUFFER: First audio data stored in buffer for {}: {} samples", debug_device_id, buffer_size_after);
                             }
                             
-                            let max_buffer_size = target_sample_rate as usize * 2; // 2 seconds max
+                            let max_buffer_size = target_sample_rate as usize / 10; // 100ms max for real-time audio
                             if buffer.len() > max_buffer_size {
                                 let excess = buffer.len() - max_buffer_size;
                                 buffer.drain(0..excess);
@@ -304,7 +306,7 @@ impl StreamManager {
                         }
                     },
                     {
-                        let error_device_id = debug_device_id.clone();
+                        let error_device_id = debug_device_id_for_error.clone();
                         move |err| eprintln!("❌ Audio input error [{}]: {}", error_device_id, err)
                     },
                     None
@@ -315,6 +317,7 @@ impl StreamManager {
                 
                 let mut callback_count = 0u64;
                 let debug_device_id_i16 = debug_device_id.clone();
+                let debug_device_id_i16_error = debug_device_id.clone();
                 
                 device.build_input_stream(
                     &config,
@@ -349,7 +352,7 @@ impl StreamManager {
                                 println!("📦 BUFFER I16: First audio data stored for {}: {} samples", debug_device_id_i16, buffer.len());
                             }
                             
-                            let max_buffer_size = target_sample_rate as usize * 2;
+                            let max_buffer_size = target_sample_rate as usize / 10; // 100ms max for real-time audio
                             if buffer.len() > max_buffer_size {
                                 let excess = buffer.len() - max_buffer_size;
                                 buffer.drain(0..excess);
@@ -360,7 +363,7 @@ impl StreamManager {
                         }
                     },
                     {
-                        let error_device_id = debug_device_id.clone();
+                        let error_device_id = debug_device_id_i16_error.clone();
                         move |err| eprintln!("❌ Audio input error I16 [{}]: {}", error_device_id, err)
                     },
                     None
@@ -384,7 +387,7 @@ impl StreamManager {
                         
                         if let Ok(mut buffer) = audio_buffer.try_lock() {
                             buffer.extend_from_slice(&mono_samples);
-                            let max_buffer_size = target_sample_rate as usize * 2;
+                            let max_buffer_size = target_sample_rate as usize / 10; // 100ms max for real-time audio
                             if buffer.len() > max_buffer_size {
                                 let excess = buffer.len() - max_buffer_size;
                                 buffer.drain(0..excess);
