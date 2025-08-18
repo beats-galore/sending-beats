@@ -530,9 +530,8 @@ impl VirtualMixer {
         tokio::spawn(async move {
             let mut frame_count = 0u64;
             
-            // Pre-allocate buffers to reduce allocations during real-time processing
+            // Pre-allocate stereo buffers to reduce allocations during real-time processing
             let mut reusable_output_buffer = vec![0.0f32; (buffer_size * 2) as usize];
-            let mut reusable_mixed_samples = vec![0.0f32; buffer_size as usize];
             let mut reusable_left_samples = Vec::with_capacity(buffer_size as usize);
             let mut reusable_right_samples = Vec::with_capacity(buffer_size as usize);
             
@@ -544,9 +543,8 @@ impl VirtualMixer {
                 // Collect input samples from all active input streams with effects processing
                 let input_samples = mixer_handle.collect_input_samples_with_effects(&config_channels).await;
                 
-                // Clear and reuse pre-allocated buffers
+                // Clear and reuse pre-allocated stereo buffers
                 reusable_output_buffer.fill(0.0);
-                reusable_mixed_samples.fill(0.0);
                 reusable_left_samples.clear();
                 reusable_right_samples.clear();
                 
@@ -579,10 +577,10 @@ impl VirtualMixer {
                                 }
                             }
                             
-                            // Simple mixing: add samples together using reusable buffer
-                            let mix_length = reusable_mixed_samples.len().min(samples.len());
+                            // Professional stereo mixing: add samples together preserving L/R channels
+                            let mix_length = reusable_output_buffer.len().min(samples.len());
                             for i in 0..mix_length {
-                                reusable_mixed_samples[i] += samples[i];
+                                reusable_output_buffer[i] += samples[i];
                             }
                         }
                     }
@@ -590,18 +588,13 @@ impl VirtualMixer {
                     // Normalize by number of active channels to prevent clipping
                     if active_channels > 0 {
                         let gain = 1.0 / active_channels as f32;
-                        for sample in reusable_mixed_samples.iter_mut() {
+                        for sample in reusable_output_buffer.iter_mut() {
                             *sample *= gain;
                         }
                     }
                     
-                    // Convert mono mixed samples to stereo output using reusable buffer
-                    for (i, &sample) in reusable_mixed_samples.iter().enumerate() {
-                        if i * 2 + 1 < reusable_output_buffer.len() {
-                            reusable_output_buffer[i * 2] = sample;     // Left channel
-                            reusable_output_buffer[i * 2 + 1] = sample; // Right channel
-                        }
-                    }
+                    // Stereo audio is already mixed directly into reusable_output_buffer
+                    // No conversion needed - stereo data preserved throughout mixing process
                     
                     // Apply basic gain (master volume)
                     let master_gain = 0.5f32; // Reduce volume to prevent clipping
