@@ -1,18 +1,12 @@
-// Grid layout for channel strips - Professional horizontal mixer layout
-import { Stack, Title, Paper, Text, Center, Group, ScrollArea } from '@mantine/core';
-import { memo, useMemo } from 'react';
+// Grid layout for channel strips - Horizontal rows layout
+import { Stack, Title, Paper, Text, Center } from '@mantine/core';
+import { memo } from 'react';
 
 import { ChannelStrip } from '../channel';
 import { useChannelsData } from '../../hooks';
 
 export const ChannelGrid = memo(() => {
   const { channels } = useChannelsData();
-  const groupStyle = useMemo(
-    () => ({
-      minWidth: `${channels.length * 280}px`,
-    }),
-    [channels.length]
-  );
   if (channels.length === 0) {
     return (
       <Paper p="lg" withBorder>
@@ -34,13 +28,11 @@ export const ChannelGrid = memo(() => {
         Channel Strips
       </Title>
       <Paper p="md" withBorder radius="md" w="100%">
-        <ScrollArea scrollbars="x" offsetScrollbars>
-          <Group gap="sm" align="flex-start" wrap="nowrap" style={groupStyle}>
-            {channels.map((channel) => (
-              <ChannelStrip key={channel.id} channel={channel} />
-            ))}
-          </Group>
-        </ScrollArea>
+        <Stack gap="xs">
+          {channels.map((channel) => (
+            <ChannelStrip key={channel.id} channel={channel} />
+          ))}
+        </Stack>
       </Paper>
     </Stack>
   );

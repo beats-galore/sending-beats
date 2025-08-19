@@ -22,17 +22,16 @@ export const ChannelVUMeter = memo<ChannelVUMeterProps>(
 
     return (
       <Center>
-        <div className={classes.textCenter}>
-          <VUMeter
-            peakLevel={peakLevel}
-            rmsLevel={rmsLevel}
-            height={120}
-            width={16}
-            vertical={true}
-          />
-          <Text size="xs" c="dimmed" mt="xs">
-            {peakLevel.toFixed(3)}
-          </Text>
+        <div style={{ width: '100%', minWidth: '200px', display: 'flex', justifyContent: 'center' }}>
+          <div style={{ flexGrow: 1, minWidth: '200px', maxWidth: '400px' }}>
+            <VUMeter
+              peakLevel={peakLevel}
+              rmsLevel={rmsLevel}
+              height={16}
+              width={300}
+              vertical={false}
+            />
+          </div>
         </div>
       </Center>
     );

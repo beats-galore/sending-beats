@@ -1,5 +1,5 @@
 // Professional Virtual Mixer - Refactored with modern architecture
-import { Container, Title, Stack, Alert, Button, Group } from '@mantine/core';
+import { Box, Title, Stack, Alert, Button, Group } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { IconAlertCircle, IconRefresh } from '@tabler/icons-react';
 import { memo, useEffect, useCallback } from 'react';
@@ -19,14 +19,17 @@ import { MixerControls } from './MixerControls';
 const useStyles = createStyles(() => ({
   container: {
     minHeight: '100vh',
-    maxWidth: '100%',
+    width: '100vw',
+    padding: '16px',
   },
 
   errorContainer: {
     minHeight: '100vh',
+    width: '100vw',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
+    padding: '16px',
   },
 
   errorAlert: {
@@ -64,7 +67,7 @@ const VirtualMixer = memo(() => {
 
   if (devicesError) {
     return (
-      <Container fluid p="md" className={classes.errorContainer}>
+      <Box className={classes.errorContainer}>
         <Alert
           icon={<IconAlertCircle size={16} />}
           title="Device Error"
@@ -73,13 +76,13 @@ const VirtualMixer = memo(() => {
         >
           {devicesError}
         </Alert>
-      </Container>
+      </Box>
     );
   }
 
   if (mixerError) {
     return (
-      <Container fluid p="md" className={classes.errorContainer}>
+      <Box className={classes.errorContainer}>
         <Alert
           icon={<IconAlertCircle size={16} />}
           title="Mixer Error"
@@ -93,12 +96,12 @@ const VirtualMixer = memo(() => {
             </Button>
           </Group>
         </Alert>
-      </Container>
+      </Box>
     );
   }
 
   return (
-    <Container fluid p="md" className={classes.container}>
+    <Box className={classes.container}>
       <Stack gap="lg" w="100%">
         <Title order={1} c="blue">
           Virtual Mixer
@@ -113,7 +116,7 @@ const VirtualMixer = memo(() => {
         {/* Master Section */}
         {isReady && <MasterSection />}
       </Stack>
-    </Container>
+    </Box>
   );
 });
 
