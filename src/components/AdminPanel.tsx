@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useState } from 'react';
 
-interface ScheduleItem {
+type ScheduleItem = {
   id: string;
   title: string;
   dj: string;
@@ -8,16 +8,16 @@ interface ScheduleItem {
   endTime: string;
   day: string;
   isActive: boolean;
-}
+};
 
-interface AnalyticsData {
+type AnalyticsData = {
   currentListeners: number;
   peakListeners: number;
   totalStreamTime: string;
-  topTracks: Array<{ title: string; artist: string; plays: number }>;
-}
+  topTracks: { title: string; artist: string; plays: number }[];
+};
 
-interface UploadedTrack {
+type UploadedTrack = {
   id: string;
   title: string;
   artist: string;
@@ -26,10 +26,12 @@ interface UploadedTrack {
   fileSize: string;
   uploadDate: string;
   status: 'processing' | 'ready' | 'error';
-}
+};
 
 const AdminPanel: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'schedule' | 'uploads' | 'analytics'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'schedule' | 'uploads' | 'analytics'>(
+    'dashboard'
+  );
   const [schedules, _setSchedules] = useState<ScheduleItem[]>([
     {
       id: '1',
@@ -38,7 +40,7 @@ const AdminPanel: React.FC = () => {
       startTime: '08:00',
       endTime: '10:00',
       day: 'Monday',
-      isActive: true
+      isActive: true,
     },
     {
       id: '2',
@@ -47,8 +49,8 @@ const AdminPanel: React.FC = () => {
       startTime: '14:00',
       endTime: '16:00',
       day: 'Wednesday',
-      isActive: true
-    }
+      isActive: true,
+    },
   ]);
 
   const [analytics] = useState<AnalyticsData>({
@@ -58,8 +60,8 @@ const AdminPanel: React.FC = () => {
     topTracks: [
       { title: 'Midnight Groove', artist: 'Luna & The Stars', plays: 156 },
       { title: 'Electric Dreams', artist: 'Neon Pulse', plays: 134 },
-      { title: 'Ocean Waves', artist: 'Chill Collective', plays: 98 }
-    ]
+      { title: 'Ocean Waves', artist: 'Chill Collective', plays: 98 },
+    ],
   });
 
   const [uploads, _setUploads] = useState<UploadedTrack[]>([
@@ -71,7 +73,7 @@ const AdminPanel: React.FC = () => {
       duration: '3:45',
       fileSize: '8.2 MB',
       uploadDate: '2024-01-15',
-      status: 'ready'
+      status: 'ready',
     },
     {
       id: '2',
@@ -81,14 +83,18 @@ const AdminPanel: React.FC = () => {
       duration: '4:12',
       fileSize: '9.1 MB',
       uploadDate: '2024-01-14',
-      status: 'processing'
-    }
+      status: 'processing',
+    },
   ]);
 
   const [isLive, setIsLive] = useState(false);
   const [currentDJ, _setCurrentDJ] = useState('DJ Luna');
 
-  const TabButton: React.FC<{ tab: string; label: string; icon: string }> = ({ tab, label, icon }) => (
+  const TabButton: React.FC<{ tab: string; label: string; icon: string }> = ({
+    tab,
+    label,
+    icon,
+  }) => (
     <button
       onClick={() => setActiveTab(tab as any)}
       className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
@@ -107,7 +113,9 @@ const AdminPanel: React.FC = () => {
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-xl font-display text-brand">Live Status</h3>
           <div className="flex items-center gap-2">
-            <div className={`w-3 h-3 rounded-full ${isLive ? 'bg-accent animate-pulse' : 'bg-surface-light'}`}></div>
+            <div
+              className={`w-3 h-3 rounded-full ${isLive ? 'bg-accent animate-pulse' : 'bg-surface-light'}`}
+            />
             <span className="text-sm text-surface-light">{isLive ? 'ON AIR' : 'OFF AIR'}</span>
           </div>
         </div>
@@ -128,8 +136,8 @@ const AdminPanel: React.FC = () => {
         <button
           onClick={() => setIsLive(!isLive)}
           className={`mt-4 px-6 py-2 rounded-lg font-medium transition-colors ${
-            isLive 
-              ? 'bg-accent hover:bg-accent-light text-white' 
+            isLive
+              ? 'bg-accent hover:bg-accent-light text-white'
               : 'bg-brand hover:bg-brand-light text-white'
           }`}
         >
@@ -174,7 +182,7 @@ const AdminPanel: React.FC = () => {
           + Add Show
         </button>
       </div>
-      
+
       <div className="bg-surface rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -200,11 +208,13 @@ const AdminPanel: React.FC = () => {
                     {schedule.startTime} - {schedule.endTime}
                   </td>
                   <td className="p-4">
-                    <span className={`px-2 py-1 rounded-full text-xs ${
-                      schedule.isActive 
-                        ? 'bg-brand/20 text-brand' 
-                        : 'bg-surface-light text-surface-light'
-                    }`}>
+                    <span
+                      className={`px-2 py-1 rounded-full text-xs ${
+                        schedule.isActive
+                          ? 'bg-brand/20 text-brand'
+                          : 'bg-surface-light text-surface-light'
+                      }`}
+                    >
                       {schedule.isActive ? 'Active' : 'Inactive'}
                     </span>
                   </td>
@@ -229,7 +239,7 @@ const AdminPanel: React.FC = () => {
           + Upload Track
         </button>
       </div>
-      
+
       <div className="bg-surface rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -255,13 +265,15 @@ const AdminPanel: React.FC = () => {
                   <td className="p-4 text-surface-light">{track.duration}</td>
                   <td className="p-4 text-surface-light">{track.fileSize}</td>
                   <td className="p-4">
-                    <span className={`px-2 py-1 rounded-full text-xs ${
-                      track.status === 'ready' 
-                        ? 'bg-brand/20 text-brand'
-                        : track.status === 'processing'
-                        ? 'bg-accent/20 text-accent'
-                        : 'bg-surface-light text-surface-light'
-                    }`}>
+                    <span
+                      className={`px-2 py-1 rounded-full text-xs ${
+                        track.status === 'ready'
+                          ? 'bg-brand/20 text-brand'
+                          : track.status === 'processing'
+                            ? 'bg-accent/20 text-accent'
+                            : 'bg-surface-light text-surface-light'
+                      }`}
+                    >
                       {track.status}
                     </span>
                   </td>
@@ -281,13 +293,16 @@ const AdminPanel: React.FC = () => {
   const AnalyticsTab: React.FC = () => (
     <div className="space-y-6">
       <h3 className="text-xl font-display text-brand">Analytics</h3>
-      
+
       {/* Top Tracks */}
       <div className="bg-surface rounded-xl p-6">
         <h4 className="text-lg font-display text-brand mb-4">Top Tracks</h4>
         <div className="space-y-3">
           {analytics.topTracks.map((track, index) => (
-            <div key={index} className="flex items-center justify-between p-3 bg-surface-light rounded-lg">
+            <div
+              key={index}
+              className="flex items-center justify-between p-3 bg-surface-light rounded-lg"
+            >
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 bg-brand rounded-full flex items-center justify-center text-white font-bold text-sm">
                   {index + 1}
@@ -325,10 +340,10 @@ const AdminPanel: React.FC = () => {
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-display text-brand">Admin Panel</h2>
         <div className="flex items-center gap-2">
-          <div className={`w-3 h-3 rounded-full ${isLive ? 'bg-accent animate-pulse' : 'bg-surface-light'}`}></div>
-          <span className="text-sm text-surface-light">
-            {isLive ? 'Live' : 'Offline'}
-          </span>
+          <div
+            className={`w-3 h-3 rounded-full ${isLive ? 'bg-accent animate-pulse' : 'bg-surface-light'}`}
+          />
+          <span className="text-sm text-surface-light">{isLive ? 'Live' : 'Offline'}</span>
         </div>
       </div>
 
@@ -349,4 +364,4 @@ const AdminPanel: React.FC = () => {
   );
 };
 
-export default AdminPanel; 
+export default AdminPanel;

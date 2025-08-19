@@ -1,0 +1,272 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "ui": "tui",
+  "tasks": {
+    "build": {
+      "dependsOn": ["type-check", "lint", "format:check"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "!**/*.test.{ts,tsx,js,jsx}",
+        "!**/*.spec.{ts,tsx,js,jsx}",
+        "!**/__tests__/**",
+        "!**/test/**",
+        "!**/tests/**"
+      ],
+      "outputs": ["dist/**", "src-tauri/target/release/**", "src-tauri/target/debug/**"],
+      "env": ["NODE_ENV", "TAURI_ENV_*", "VITE_*"],
+      "outputLogs": "new-only"
+    },
+    "build:tauri": {
+      "dependsOn": ["type-check", "lint", "format:check", "clippy"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "src-tauri/**/*.rs",
+        "src-tauri/Cargo.toml",
+        "src-tauri/Cargo.lock",
+        "src-tauri/tauri.conf.json",
+        "!src-tauri/target/**"
+      ],
+      "outputs": ["src-tauri/target/release/**"],
+      "env": ["NODE_ENV", "TAURI_ENV_*", "VITE_*", "RUST_BACKTRACE"]
+    },
+    "type-check": {
+      "dependsOn": [],
+      "inputs": [
+        "src/**/*.{ts,tsx}",
+        "tsconfig.json",
+        "tsconfig.node.json",
+        "package.json",
+        "vite.config.ts"
+      ],
+      "outputs": [],
+      "cache": true
+    },
+    "lint": {
+      "dependsOn": [],
+      "inputs": [
+        "src/**/*.{js,jsx,ts,tsx}",
+        "*.{js,jsx,ts,tsx}",
+        "eslint.config.{js,mjs}",
+        "tsconfig.json",
+        "tsconfig.node.json",
+        "!node_modules/**",
+        "!dist/**",
+        "!build/**",
+        "!src-tauri/target/**"
+      ],
+      "outputs": [],
+      "cache": true
+    },
+    "lint:fix": {
+      "dependsOn": [],
+      "inputs": [
+        "src/**/*.{js,jsx,ts,tsx}",
+        "*.{js,jsx,ts,tsx}",
+        "eslint.config.{js,mjs}",
+        "tsconfig.json",
+        "tsconfig.node.json",
+        "!node_modules/**",
+        "!dist/**",
+        "!build/**",
+        "!src-tauri/target/**"
+      ],
+      "outputs": [],
+      "cache": false
+    },
+    "format": {
+      "dependsOn": [],
+      "inputs": [
+        "src/**/*.{js,jsx,ts,tsx,json,css,scss,md}",
+        "*.{js,jsx,ts,tsx,json,css,scss,md}",
+        ".prettierrc*",
+        "prettier.config.*",
+        ".prettierignore",
+        "!node_modules/**",
+        "!dist/**",
+        "!build/**",
+        "!src-tauri/target/**"
+      ],
+      "outputs": [],
+      "cache": false
+    },
+    "format:check": {
+      "dependsOn": [],
+      "inputs": [
+        "src/**/*.{js,jsx,ts,tsx,json,css,scss,md}",
+        "*.{js,jsx,ts,tsx,json,css,scss,md}",
+        ".prettierrc*",
+        "prettier.config.*",
+        ".prettierignore",
+        "!node_modules/**",
+        "!dist/**",
+        "!build/**",
+        "!src-tauri/target/**"
+      ],
+      "outputs": [],
+      "cache": true
+    },
+    "rust:check": {
+      "dependsOn": [],
+      "inputs": [
+        "src-tauri/src/**/*.rs",
+        "src-tauri/Cargo.toml",
+        "src-tauri/Cargo.lock",
+        "src-tauri/build.rs"
+      ],
+      "outputs": ["src-tauri/target/debug/deps/**/*.d", "src-tauri/target/debug/.fingerprint/**"],
+      "cache": true
+    },
+    "rust:fmt": {
+      "dependsOn": [],
+      "inputs": ["src-tauri/src/**/*.rs", "src-tauri/Cargo.toml", "src-tauri/build.rs"],
+      "outputs": [],
+      "cache": false
+    },
+    "rust:fmt:check": {
+      "dependsOn": [],
+      "inputs": ["src-tauri/src/**/*.rs", "src-tauri/Cargo.toml", "src-tauri/build.rs"],
+      "outputs": [],
+      "cache": true
+    },
+    "rust:clippy": {
+      "dependsOn": ["rust:check"],
+      "inputs": [
+        "src-tauri/src/**/*.rs",
+        "src-tauri/Cargo.toml",
+        "src-tauri/Cargo.lock",
+        "src-tauri/build.rs"
+      ],
+      "outputs": [],
+      "cache": true
+    },
+    "test": {
+      "dependsOn": ["type-check", "rust:check"],
+      "inputs": [
+        "src-tauri/src/**/*.rs",
+        "src-tauri/tests/**/*.rs",
+        "src-tauri/Cargo.toml",
+        "src-tauri/Cargo.lock"
+      ],
+      "outputs": ["src-tauri/target/debug/deps/**"],
+      "cache": true
+    },
+    "test:rust": {
+      "dependsOn": ["rust:check"],
+      "inputs": [
+        "src-tauri/src/**/*.rs",
+        "src-tauri/tests/**/*.rs",
+        "src-tauri/Cargo.toml",
+        "src-tauri/Cargo.lock"
+      ],
+      "outputs": ["src-tauri/target/debug/deps/**"],
+      "cache": true
+    },
+    "test:audio": {
+      "dependsOn": ["rust:check"],
+      "inputs": [
+        "src-tauri/src/audio/**/*.rs",
+        "src-tauri/tests/*audio*.rs",
+        "src-tauri/Cargo.toml",
+        "src-tauri/Cargo.lock"
+      ],
+      "outputs": ["src-tauri/target/debug/deps/**"],
+      "cache": true
+    },
+    "test:watch": {
+      "dependsOn": ["rust:check"],
+      "inputs": [
+        "src-tauri/src/**/*.rs",
+        "src-tauri/tests/**/*.rs",
+        "src-tauri/Cargo.toml",
+        "src-tauri/Cargo.lock"
+      ],
+      "outputs": [],
+      "cache": false,
+      "persistent": true
+    },
+    "dev": {
+      "dependsOn": [],
+      "inputs": ["$TURBO_DEFAULT$"],
+      "outputs": [],
+      "cache": false,
+      "persistent": true,
+      "env": ["NODE_ENV", "VITE_*", "TAURI_ENV_*"]
+    },
+    "preview": {
+      "dependsOn": ["build"],
+      "inputs": ["dist/**"],
+      "outputs": [],
+      "cache": false,
+      "persistent": true
+    },
+    "quality": {
+      "dependsOn": ["type-check", "lint", "format:check", "rust:fmt:check", "rust:clippy"],
+      "inputs": [],
+      "outputs": [],
+      "cache": false
+    },
+    "quality:fix": {
+      "dependsOn": ["type-check", "lint:fix", "format", "rust:fmt"],
+      "inputs": [],
+      "outputs": [],
+      "cache": false
+    },
+    "pre-commit": {
+      "dependsOn": ["quality", "test"],
+      "inputs": [],
+      "outputs": [],
+      "cache": false
+    },
+    "clean": {
+      "dependsOn": [],
+      "inputs": [],
+      "outputs": [],
+      "cache": false
+    },
+
+    "check": {
+      "dependsOn": ["rust:check"],
+      "inputs": ["src-tauri/src/**/*.rs", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock"],
+      "outputs": [],
+      "cache": true
+    },
+    "fmt": {
+      "dependsOn": ["rust:fmt"],
+      "inputs": ["src-tauri/src/**/*.rs", "src-tauri/Cargo.toml"],
+      "outputs": [],
+      "cache": false
+    },
+    "clippy": {
+      "dependsOn": ["rust:clippy"],
+      "inputs": ["src-tauri/src/**/*.rs", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock"],
+      "outputs": [],
+      "cache": true
+    },
+    "tauri": {
+      "dependsOn": [],
+      "inputs": ["$TURBO_DEFAULT$"],
+      "outputs": [],
+      "cache": false,
+      "persistent": true
+    }
+  },
+  "globalEnv": [
+    "NODE_ENV",
+    "CI",
+    "GITHUB_ACTIONS",
+    "VERCEL_ENV",
+    "RUST_BACKTRACE",
+    "CARGO_TERM_COLOR"
+  ],
+  "globalPassThroughEnv": [
+    "NODE_ENV",
+    "CI",
+    "GITHUB_TOKEN",
+    "GITHUB_ACTIONS",
+    "npm_lifecycle_event",
+    "RUST_BACKTRACE",
+    "CARGO_*",
+    "RUSTFLAGS",
+    "RUSTDOCFLAGS"
+  ]
+}

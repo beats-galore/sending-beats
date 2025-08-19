@@ -1,14 +1,14 @@
-import React, { useState, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from '@tauri-apps/api/core';
+import React, { useState, useEffect, useRef } from 'react';
 
-interface StreamMetadata {
+type StreamMetadata = {
   title: string;
   artist: string;
   album?: string;
   genre?: string;
-}
+};
 
-interface StreamStatus {
+type StreamStatus = {
   is_connected: boolean;
   is_streaming: boolean;
   current_listeners: number;
@@ -16,27 +16,27 @@ interface StreamStatus {
   stream_duration: number;
   bitrate: number;
   error_message?: string;
-}
+};
 
 const ListenerPlayer: React.FC = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentMetadata, _setCurrentMetadata] = useState<StreamMetadata | null>(null);
   const [streamStatus, setStreamStatus] = useState<StreamStatus | null>(null);
   const [volume, setVolume] = useState(0.8);
-  const [error, setError] = useState<string>("");
+  const [error, setError] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
-  
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const streamUrl = "http://localhost:8000/live"; // Icecast stream URL
+  const streamUrl = 'http://localhost:8000/live'; // Icecast stream URL
 
   // Update stream status periodically
   useEffect(() => {
     const updateStatus = async () => {
       try {
-        const status = await invoke<StreamStatus>("get_stream_status");
+        const status = await invoke<StreamStatus>('get_stream_status');
         setStreamStatus(status);
       } catch (err) {
-        console.error("Failed to get stream status:", err);
+        console.error('Failed to get stream status:', err);
       }
     };
 
@@ -51,14 +51,14 @@ const ListenerPlayer: React.FC = () => {
 
     try {
       setIsLoading(true);
-      setError("");
+      setError('');
 
       // Set the stream URL
       audioRef.current.src = streamUrl;
-      
+
       // Set volume
       audioRef.current.volume = volume;
-      
+
       // Start playing
       await audioRef.current.play();
       setIsPlaying(true);
@@ -85,7 +85,7 @@ const ListenerPlayer: React.FC = () => {
   };
 
   const handleAudioError = () => {
-    setError("Failed to load audio stream. Please check your connection.");
+    setError('Failed to load audio stream. Please check your connection.');
     setIsPlaying(false);
   };
 
@@ -101,7 +101,7 @@ const ListenerPlayer: React.FC = () => {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
-    
+
     if (hours > 0) {
       return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
     }
@@ -113,7 +113,9 @@ const ListenerPlayer: React.FC = () => {
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-display text-brand">Sendin Beats Radio</h2>
         <div className="flex items-center gap-2">
-          <div className={`w-3 h-3 rounded-full ${streamStatus?.is_streaming ? 'bg-accent animate-pulse' : 'bg-surface-light'}`}></div>
+          <div
+            className={`w-3 h-3 rounded-full ${streamStatus?.is_streaming ? 'bg-accent animate-pulse' : 'bg-surface-light'}`}
+          />
           <span className="text-sm text-surface-light">
             {streamStatus?.is_streaming ? 'LIVE' : 'OFFLINE'}
           </span>
@@ -131,7 +133,9 @@ const ListenerPlayer: React.FC = () => {
         <div className="bg-surface-light rounded-lg p-4 mb-6">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
             <div>
-              <div className="text-2xl font-display text-brand">{streamStatus.current_listeners}</div>
+              <div className="text-2xl font-display text-brand">
+                {streamStatus.current_listeners}
+              </div>
               <div className="text-sm text-surface-light">Current Listeners</div>
             </div>
             <div>
@@ -139,7 +143,9 @@ const ListenerPlayer: React.FC = () => {
               <div className="text-sm text-surface-light">Peak Listeners</div>
             </div>
             <div>
-              <div className="text-2xl font-display text-brand">{formatTime(streamStatus.stream_duration)}</div>
+              <div className="text-2xl font-display text-brand">
+                {formatTime(streamStatus.stream_duration)}
+              </div>
               <div className="text-sm text-surface-light">Stream Duration</div>
             </div>
             <div>
@@ -153,11 +159,13 @@ const ListenerPlayer: React.FC = () => {
       {/* Now Playing */}
       <div className="bg-surface rounded-xl p-6 mb-6">
         <h3 className="text-lg font-display text-brand mb-4">Now Playing</h3>
-        
+
         {currentMetadata ? (
           <div className="flex items-center gap-6">
             <div className="w-20 h-20 bg-brand/80 rounded-xl flex items-center justify-center text-white text-3xl font-display">
-              <span role="img" aria-label="music">🎵</span>
+              <span role="img" aria-label="music">
+                🎵
+              </span>
             </div>
             <div className="flex-1">
               <div className="text-white font-display text-xl leading-tight mb-1">
@@ -170,7 +178,7 @@ const ListenerPlayer: React.FC = () => {
             </div>
             <div className="flex flex-col items-end">
               <span className="text-xs text-surface-light">Live</span>
-              <span className="w-2 h-2 bg-accent rounded-full animate-pulse mt-1"></span>
+              <span className="w-2 h-2 bg-accent rounded-full animate-pulse mt-1" />
             </div>
           </div>
         ) : (
@@ -189,15 +197,15 @@ const ListenerPlayer: React.FC = () => {
             onClick={isPlaying ? handlePause : handlePlay}
             disabled={isLoading || !streamStatus?.is_streaming}
             className={`w-16 h-16 rounded-full flex items-center justify-center text-white font-medium transition-colors ${
-              isLoading 
-                ? 'bg-surface-light cursor-not-allowed' 
-                : isPlaying 
-                ? 'bg-accent hover:bg-accent-light' 
-                : 'bg-brand hover:bg-brand-light'
+              isLoading
+                ? 'bg-surface-light cursor-not-allowed'
+                : isPlaying
+                  ? 'bg-accent hover:bg-accent-light'
+                  : 'bg-brand hover:bg-brand-light'
             }`}
           >
             {isLoading ? (
-              <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+              <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
             ) : isPlaying ? (
               <span className="text-2xl">⏸️</span>
             ) : (
@@ -210,10 +218,10 @@ const ListenerPlayer: React.FC = () => {
         <div className="flex items-center gap-4">
           <span className="text-sm text-surface-light w-16">Volume</span>
           <div className="flex-1 bg-surface-light rounded-full h-2">
-            <div 
+            <div
               className="bg-brand h-2 rounded-full transition-all"
               style={{ width: `${volume * 100}%` }}
-            ></div>
+            />
           </div>
           <input
             type="range"
@@ -224,9 +232,7 @@ const ListenerPlayer: React.FC = () => {
             onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
             className="w-20"
           />
-          <span className="text-sm text-surface-light w-12">
-            {Math.round(volume * 100)}%
-          </span>
+          <span className="text-sm text-surface-light w-12">{Math.round(volume * 100)}%</span>
         </div>
       </div>
 
@@ -240,7 +246,9 @@ const ListenerPlayer: React.FC = () => {
           </div>
           <div>
             <span className="text-surface-light">Status:</span>
-            <div className={`font-medium ${streamStatus?.is_streaming ? 'text-brand' : 'text-surface-light'}`}>
+            <div
+              className={`font-medium ${streamStatus?.is_streaming ? 'text-brand' : 'text-surface-light'}`}
+            >
               {streamStatus?.is_streaming ? 'Live' : 'Offline'}
             </div>
           </div>
@@ -250,7 +258,9 @@ const ListenerPlayer: React.FC = () => {
           </div>
           <div>
             <span className="text-surface-light">Listeners:</span>
-            <div className="font-medium">{streamStatus?.current_listeners || 0} / {streamStatus?.peak_listeners || 0}</div>
+            <div className="font-medium">
+              {streamStatus?.current_listeners || 0} / {streamStatus?.peak_listeners || 0}
+            </div>
           </div>
         </div>
       </div>
@@ -267,4 +277,4 @@ const ListenerPlayer: React.FC = () => {
   );
 };
 
-export default ListenerPlayer; 
+export default ListenerPlayer;

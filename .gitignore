@@ -3,3 +3,4 @@ node_modules
 .specstory/*
 *.DS_Store
 dist
+.turbo/
