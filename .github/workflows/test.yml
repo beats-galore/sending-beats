@@ -2,9 +2,9 @@ name: Tests
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main, develop ]
+    branches: [main, develop]
 
 env:
   CARGO_TERM_COLOR: always
@@ -16,112 +16,112 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        
+
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Setup Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        components: clippy, rustfmt
-    
-    # Platform-specific dependencies
-    - name: Install Linux dependencies
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          libasound2-dev \
-          libpulse-dev \
-          libgtk-3-dev \
-          webkit2gtk-4.0 \
-          libayatana-appindicator3-dev \
-          librsvg2-dev
-    
-    - name: Install macOS dependencies
-      if: matrix.os == 'macos-latest'
-      run: |
-        # macOS dependencies are typically available by default
-        # Core Audio framework should be available
-        echo "macOS dependencies check"
-    
-    - name: Install Windows dependencies
-      if: matrix.os == 'windows-latest'
-      run: |
-        # Windows dependencies for WASAPI
-        echo "Windows dependencies check"
-    
-    - name: Cache Rust dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          src-tauri/target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-
-    
-    - name: Check Rust formatting
-      run: |
-        cd src-tauri
-        cargo fmt --all -- --check
-    
-    - name: Run Clippy (linting)
-      run: |
-        cd src-tauri
-        cargo clippy --all-targets --all-features -- -D warnings
-    
-    - name: Build Rust project
-      run: |
-        cd src-tauri
-        cargo build --verbose
-    
-    - name: Run Rust tests
-      run: |
-        cd src-tauri
-        cargo test --verbose
-      env:
-        # Some tests might need this for audio device access
-        RUST_BACKTRACE: 1
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      # Platform-specific dependencies
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libpulse-dev \
+            libgtk-3-dev \
+            webkit2gtk-4.0 \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install macOS dependencies
+        if: matrix.os == 'macos-latest'
+        run: |
+          # macOS dependencies are typically available by default
+          # Core Audio framework should be available
+          echo "macOS dependencies check"
+
+      - name: Install Windows dependencies
+        if: matrix.os == 'windows-latest'
+        run: |
+          # Windows dependencies for WASAPI
+          echo "Windows dependencies check"
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check Rust formatting
+        run: |
+          cd src-tauri
+          cargo fmt --all -- --check
+
+      - name: Run Clippy (linting)
+        run: |
+          cd src-tauri
+          cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Build Rust project
+        run: |
+          cd src-tauri
+          cargo build --verbose
+
+      - name: Run Rust tests
+        run: |
+          cd src-tauri
+          cargo test --verbose
+        env:
+          # Some tests might need this for audio device access
+          RUST_BACKTRACE: 1
 
   frontend-tests:
     name: Frontend Tests
     runs-on: ubuntu-latest
-    
+
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '18'
-        
-    - name: Setup pnpm
-      uses: pnpm/action-setup@v2
-      with:
-        version: 8
-        run_install: false
-    
-    - name: Get pnpm store directory
-      shell: bash
-      run: |
-        echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
-    
-    - name: Setup pnpm cache
-      uses: actions/cache@v4
-      with:
-        path: ${{ env.STORE_PATH }}
-        key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-        restore-keys: |
-          ${{ runner.os }}-pnpm-store-
-    
-    - name: Install dependencies
-      run: pnpm install
-    
-    - name: Type check
-      run: pnpm run build
-    
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+          run_install: false
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Type check
+        run: pnpm run build
+
     # Note: Add actual frontend tests when they exist
     # - name: Run frontend tests
     #   run: pnpm test
@@ -132,91 +132,91 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-    
+
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Setup Rust
-      uses: dtolnay/rust-toolchain@stable
-    
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '18'
-        
-    - name: Setup pnpm
-      uses: pnpm/action-setup@v2
-      with:
-        version: 8
-        run_install: false
-    
-    # Platform-specific dependencies for Tauri
-    - name: Install Linux dependencies
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          libasound2-dev \
-          libpulse-dev \
-          libgtk-3-dev \
-          webkit2gtk-4.0 \
-          libayatana-appindicator3-dev \
-          librsvg2-dev
-    
-    - name: Cache dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          src-tauri/target
-          node_modules
-        key: ${{ runner.os }}-build-${{ hashFiles('src-tauri/Cargo.lock', 'pnpm-lock.yaml') }}
-        restore-keys: |
-          ${{ runner.os }}-build-
-    
-    - name: Install frontend dependencies
-      run: pnpm install
-    
-    - name: Build application (no bundle)
-      run: pnpm tauri build --no-bundle
-      env:
-        # Disable bundle creation for faster CI builds
-        TAURI_SKIP_BUNDLE: true
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+          run_install: false
+
+      # Platform-specific dependencies for Tauri
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libpulse-dev \
+            libgtk-3-dev \
+            webkit2gtk-4.0 \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+            node_modules
+          key: ${{ runner.os }}-build-${{ hashFiles('src-tauri/Cargo.lock', 'pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-build-
+
+      - name: Install frontend dependencies
+        run: pnpm install
+
+      - name: Build application (no bundle)
+        run: pnpm tauri build --no-bundle
+        env:
+          # Disable bundle creation for faster CI builds
+          TAURI_SKIP_BUNDLE: true
 
   audio-tests:
     name: Audio System Tests (macOS Only)
     runs-on: macos-latest
-    
+
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Setup Rust
-      uses: dtolnay/rust-toolchain@stable
-    
-    - name: Cache Rust dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          src-tauri/target
-        key: macos-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
-        restore-keys: |
-          macos-cargo-
-    
-    - name: Run audio-specific tests
-      run: |
-        cd src-tauri
-        # Run tests that specifically test audio functionality
-        cargo test audio -- --nocapture
-      env:
-        RUST_BACKTRACE: 1
-    
-    - name: Run CoreAudio tests
-      run: |
-        cd src-tauri
-        # Run macOS-specific CoreAudio tests
-        cargo test coreaudio -- --nocapture
-      env:
-        RUST_BACKTRACE: 1
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: macos-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            macos-cargo-
+
+      - name: Run audio-specific tests
+        run: |
+          cd src-tauri
+          # Run tests that specifically test audio functionality
+          cargo test audio -- --nocapture
+        env:
+          RUST_BACKTRACE: 1
+
+      - name: Run CoreAudio tests
+        run: |
+          cd src-tauri
+          # Run macOS-specific CoreAudio tests
+          cargo test coreaudio -- --nocapture
+        env:
+          RUST_BACKTRACE: 1

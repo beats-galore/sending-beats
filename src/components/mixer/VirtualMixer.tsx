@@ -1,43 +1,78 @@
 // Professional Virtual Mixer - Refactored with modern architecture
-import { memo, useEffect } from 'react';
 import { Container, Title, Stack, Alert, Button, Group } from '@mantine/core';
+import { createStyles } from '@mantine/styles';
 import { IconAlertCircle, IconRefresh } from '@tabler/icons-react';
+import { memo, useEffect, useCallback } from 'react';
+
+import { 
+  useAudioDevices, 
+  useMixerInitialization, 
+  useMixerRunningState, 
+  useVUMeterData 
+} from '../../hooks';
 import { ErrorBoundary, FullScreenLoader } from '../layout';
-import { useAudioDevices, useMixerState, useVUMeterData } from '../../hooks';
+
 import { ChannelGrid } from './ChannelGrid';
 import { MasterSection } from './MasterSection';
 import { MixerControls } from './MixerControls';
 
+const useStyles = createStyles(() => ({
+  container: {
+    minHeight: '100vh',
+    maxWidth: '100%',
+  },
+
+  errorContainer: {
+    minHeight: '100vh',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  errorAlert: {
+    maxWidth: 400,
+  },
+}));
+
 const VirtualMixer = memo(() => {
-  const { 
-    inputDevices, 
-    outputDevices, 
-    isLoading: devicesLoading, 
+  const { classes } = useStyles();
+
+  const {
+    inputDevices,
+    outputDevices,
+    isLoading: devicesLoading,
     error: devicesError,
-    refreshDevices 
+    refreshDevices,
   } = useAudioDevices();
 
-  
-  const { 
-    config, 
-    isRunning,
-    isReady, 
+
+  const {
+    isReady,
     error: mixerError,
     initialize,
-    start,
-    stop,
-    createChannel
-  } = useMixerState();
+  } = useMixerInitialization();
   
+  const isRunning = useMixerRunningState();
+
+
+
   // Start VU meter polling when running
   useVUMeterData(isRunning);
 
-  // Initialize mixer on mount
-  useEffect(() => {
-    if (!config && !devicesLoading && !mixerError) {
-      initialize();
+  const handleInitialize = useCallback(() => {
+    void initialize();
+  }, [initialize]);
+
+  // Initialize mixer on mount - memoize the effect callback
+  const initializeEffect = useCallback(() => {
+    if (!isReady && !devicesLoading && !mixerError) {
+      void initialize();
     }
-  }, [config, devicesLoading, mixerError, initialize]);
+  }, [isReady, devicesLoading, mixerError, initialize]);
+
+  useEffect(() => {
+    initializeEffect();
+  }, [initializeEffect]);
 
   // Handle loading states
   if (devicesLoading) {
@@ -46,20 +81,16 @@ const VirtualMixer = memo(() => {
 
   if (devicesError) {
     return (
-      <Container fluid p="md" style={{ minHeight: "100vh", display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <Alert 
-          icon={<IconAlertCircle size={16} />} 
-          title="Device Error" 
+      <Container fluid p="md" className={classes.errorContainer}>
+        <Alert
+          icon={<IconAlertCircle size={16} />}
+          title="Device Error"
           color="red"
-          style={{ maxWidth: 400 }}
+          className={classes.errorAlert}
         >
           {devicesError}
           <Group mt="md">
-            <Button 
-              color="red" 
-              leftSection={<IconRefresh size={16} />}
-              onClick={refreshDevices}
-            >
+            <Button color="red" leftSection={<IconRefresh size={16} />} onClick={refreshDevices}>
               Retry
             </Button>
           </Group>
@@ -70,20 +101,16 @@ const VirtualMixer = memo(() => {
 
   if (mixerError) {
     return (
-      <Container fluid p="md" style={{ minHeight: "100vh", display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <Alert 
-          icon={<IconAlertCircle size={16} />} 
-          title="Mixer Error" 
+      <Container fluid p="md" className={classes.errorContainer}>
+        <Alert
+          icon={<IconAlertCircle size={16} />}
+          title="Mixer Error"
           color="red"
-          style={{ maxWidth: 400 }}
+          className={classes.errorAlert}
         >
           {mixerError}
           <Group mt="md">
-            <Button 
-              color="red" 
-              leftSection={<IconRefresh size={16} />}
-              onClick={initialize}
-            >
+            <Button color="red" leftSection={<IconRefresh size={16} />} onClick={handleInitialize}>
               Retry
             </Button>
           </Group>
@@ -93,32 +120,26 @@ const VirtualMixer = memo(() => {
   }
 
   return (
-    <Container fluid p="md" style={{ minHeight: "100vh", maxWidth: "100%" }}>
+    <Container fluid p="md" className={classes.container}>
       <Stack gap="lg" w="100%">
-        <Title order={1} c="blue">Virtual Mixer</Title>
-        
+        <Title order={1} c="blue">
+          Virtual Mixer
+        </Title>
+
         {/* Mixer Controls */}
-        <MixerControls
-          isReady={isReady}
-          isRunning={isRunning}
-          onStart={start}
-          onStop={stop}
-          onAddChannel={createChannel}
-        />
-        
+        <MixerControls />
+
         {/* Channel Grid */}
-        {config && (
+        {isReady && (
           <ChannelGrid
-            channels={config.channels}
             inputDevices={inputDevices}
             onRefreshDevices={refreshDevices}
           />
         )}
-        
+
         {/* Master Section */}
-        {config && (
+        {isReady && (
           <MasterSection
-            mixerConfig={config}
             outputDevices={outputDevices}
             onRefreshDevices={refreshDevices}
           />

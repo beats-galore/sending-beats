@@ -11,18 +11,18 @@ export type AudioChannel = {
   effects_enabled: boolean;
   peak_level: number;
   rms_level: number;
-  
+
   // Effects (keeping original property names for Tauri compatibility)
   eq_low_gain: number;
   eq_mid_gain: number;
   eq_high_gain: number;
-  
+
   comp_threshold: number;
   comp_ratio: number;
   comp_attack: number;
   comp_release: number;
   comp_enabled: boolean;
-  
+
   limiter_threshold: number;
   limiter_enabled: boolean;
 };
@@ -47,19 +47,19 @@ export const DEFAULT_CHANNEL: Omit<AudioChannel, 'id' | 'name'> = {
   effects_enabled: false,
   peak_level: 0,
   rms_level: 0,
-  
+
   // EQ defaults (flat response)
   eq_low_gain: 0,
   eq_mid_gain: 0,
   eq_high_gain: 0,
-  
+
   // Compressor defaults (disabled)
   comp_threshold: -12,
   comp_ratio: 4,
   comp_attack: 10,
   comp_release: 100,
   comp_enabled: false,
-  
+
   // Limiter defaults (disabled)
   limiter_threshold: -3,
   limiter_enabled: false,
@@ -71,7 +71,7 @@ export enum MixerState {
   STARTING = 'starting',
   RUNNING = 'running',
   STOPPING = 'stopping',
-  ERROR = 'error'
+  ERROR = 'error',
 }
 
 // Channel operation types

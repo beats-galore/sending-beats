@@ -17,13 +17,18 @@ export const audioCalculations = {
 
   // Convert dB to VU meter position (0-1 range)
   dbToVuPosition(db: number): number {
-    return Math.max(0, Math.min(1, (db - AUDIO_CONSTANTS.MIN_DB) / (AUDIO_CONSTANTS.MAX_DB - AUDIO_CONSTANTS.MIN_DB)));
+    return Math.max(
+      0,
+      Math.min(1, (db - AUDIO_CONSTANTS.MIN_DB) / (AUDIO_CONSTANTS.MAX_DB - AUDIO_CONSTANTS.MIN_DB))
+    );
   },
 
   // Convert VU meter position (0-1) back to dB
   vuPositionToDb(position: number): number {
     const clampedPosition = Math.max(0, Math.min(1, position));
-    return AUDIO_CONSTANTS.MIN_DB + (clampedPosition * (AUDIO_CONSTANTS.MAX_DB - AUDIO_CONSTANTS.MIN_DB));
+    return (
+      AUDIO_CONSTANTS.MIN_DB + clampedPosition * (AUDIO_CONSTANTS.MAX_DB - AUDIO_CONSTANTS.MIN_DB)
+    );
   },
 
   // Gain conversions
@@ -40,24 +45,24 @@ export const audioCalculations = {
   panToGains(pan: number): { left: number; right: number } {
     const clampedPan = Math.max(-1, Math.min(1, pan));
     const panRadians = (clampedPan * Math.PI) / 4; // -45° to +45°
-    
+
     return {
       left: Math.cos(panRadians),
-      right: Math.sin(panRadians)
+      right: Math.sin(panRadians),
     };
   },
 
   // Level processing
   calculateRms(samples: number[]): number {
     if (samples.length === 0) return 0;
-    
-    const squareSum = samples.reduce((sum, sample) => sum + (sample * sample), 0);
+
+    const squareSum = samples.reduce((sum, sample) => sum + sample * sample, 0);
     return Math.sqrt(squareSum / samples.length);
   },
 
   calculatePeak(samples: number[]): number {
     if (samples.length === 0) return 0;
-    
+
     return Math.max(...samples.map(Math.abs));
   },
 
@@ -70,25 +75,25 @@ export const audioCalculations = {
   // Compressor calculations
   calculateCompressionGain(inputDb: number, threshold: number, ratio: number): number {
     if (inputDb <= threshold) return 0; // No compression below threshold
-    
+
     const overThreshold = inputDb - threshold;
     const compressedOver = overThreshold / ratio;
-    
+
     return compressedOver - overThreshold; // Gain reduction in dB
   },
 
-  // Limiter calculations  
+  // Limiter calculations
   calculateLimiterGain(inputDb: number, threshold: number): number {
     if (inputDb <= threshold) return 0;
     return threshold - inputDb; // Hard limiting
   },
 
   // EQ calculations (simplified)
-  calculateEqGain(frequency: number, centerFreq: number, gain: number, q: number = 1): number {
+  calculateEqGain(frequency: number, centerFreq: number, gain: number, q = 1): number {
     const freqRatio = frequency / centerFreq;
     const bandwidth = Math.log2(freqRatio) * q;
-    const response = Math.pow(10, (gain / 20) / (1 + Math.pow(bandwidth, 2)));
-    
+    const response = Math.pow(10, gain / 20 / (1 + Math.pow(bandwidth, 2)));
+
     return 20 * Math.log10(response);
   },
 
@@ -126,5 +131,5 @@ export const audioCalculations = {
     if (pan === 0) return 'C';
     if (pan < 0) return `L${Math.abs(pan * 100).toFixed(0)}`;
     return `R${(pan * 100).toFixed(0)}`;
-  }
+  },
 } as const;

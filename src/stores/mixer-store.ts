@@ -1,16 +1,19 @@
 // Zustand store for mixer state management
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
-import { 
-  MixerConfig, 
-  AudioChannel, 
-  AudioMetrics, 
-  MasterLevels, 
-  MixerState, 
-  DEFAULT_CHANNEL,
-  ChannelUpdate 
-} from '../types';
+import isEqual from 'fast-deep-equal';
+
 import { mixerService, audioService } from '../services';
+import { MixerState, DEFAULT_CHANNEL } from '../types';
+import { updateArrayItems, hasLevelChanges } from '../utils/store-helpers';
+
+import type {
+  MixerConfig,
+  AudioChannel,
+  AudioMetrics,
+  MasterLevels,
+  ChannelUpdate,
+} from '../types';
 
 type MixerStore = {
   // State
@@ -19,7 +22,7 @@ type MixerStore = {
   error: string | null;
   metrics: AudioMetrics | null;
   masterLevels: MasterLevels;
-  
+
   // Actions
   initializeMixer: () => Promise<void>;
   startMixer: () => Promise<void>;
@@ -27,16 +30,16 @@ type MixerStore = {
   addChannel: () => Promise<void>;
   updateChannel: (channelId: number, updates: ChannelUpdate) => Promise<void>;
   updateMasterGain: (gain: number) => Promise<void>;
-  
+
   // Real-time data updates
   updateChannelLevels: (levels: Record<number, [number, number]>) => void;
   updateMasterLevels: (levels: MasterLevels) => void;
   updateMetrics: (metrics: AudioMetrics) => void;
-  
+
   // Error handling
   setError: (error: string | null) => void;
   clearError: () => void;
-  
+
   // Batch updates for performance
   batchUpdate: (updates: {
     channelLevels?: Record<number, [number, number]>;
@@ -54,7 +57,7 @@ export const useMixerStore = create<MixerStore>()(
     metrics: null,
     masterLevels: {
       left: { peak_level: 0, rms_level: 0 },
-      right: { peak_level: 0, rms_level: 0 }
+      right: { peak_level: 0, rms_level: 0 },
     },
 
     // Initialize mixer
@@ -62,38 +65,37 @@ export const useMixerStore = create<MixerStore>()(
       console.debug('🎛️ Initializing mixer...');
       try {
         set({ state: MixerState.STARTING, error: null });
-        
+
         // Get DJ-optimized configuration
         console.debug('📋 Getting DJ mixer config...');
         const djConfig = await mixerService.getDjMixerConfig();
         console.debug('📋 DJ Config loaded:', {
           channels: djConfig.channels.length,
           sampleRate: djConfig.sample_rate,
-          bufferSize: djConfig.buffer_size
+          bufferSize: djConfig.buffer_size,
         });
-        
+
         // Create mixer with config
         console.debug('🔧 Creating mixer...');
         const result = await mixerService.safeCreateMixer(djConfig);
-        
+
         if (!result.success) {
           throw new Error(result.error || 'Failed to create mixer');
         }
         console.debug('✅ Mixer created successfully');
-        
-        set({ 
+
+        set({
           config: djConfig,
           state: MixerState.STOPPED,
-          error: null 
+          error: null,
         });
         console.debug('🎛️ Mixer initialized successfully');
-        
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         console.error('❌ Failed to initialize mixer:', errorMessage);
-        set({ 
+        set({
           state: MixerState.ERROR,
-          error: `Failed to initialize mixer: ${errorMessage}`
+          error: `Failed to initialize mixer: ${errorMessage}`,
         });
         throw error;
       }
@@ -103,23 +105,22 @@ export const useMixerStore = create<MixerStore>()(
     startMixer: async () => {
       try {
         set({ state: MixerState.STARTING, error: null });
-        
+
         const result = await mixerService.safeStartMixer();
-        
+
         if (!result.success) {
           throw new Error(result.error || 'Failed to start mixer');
         }
-        
-        set({ 
+
+        set({
           state: MixerState.RUNNING,
-          error: null 
+          error: null,
         });
-        
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        set({ 
+        set({
           state: MixerState.ERROR,
-          error: `Failed to start mixer: ${errorMessage}`
+          error: `Failed to start mixer: ${errorMessage}`,
         });
         throw error;
       }
@@ -129,23 +130,22 @@ export const useMixerStore = create<MixerStore>()(
     stopMixer: async () => {
       try {
         set({ state: MixerState.STOPPING, error: null });
-        
+
         const result = await mixerService.safeStopMixer();
-        
+
         if (!result.success) {
           throw new Error(result.error || 'Failed to stop mixer');
         }
-        
-        set({ 
+
+        set({
           state: MixerState.STOPPED,
-          error: null 
+          error: null,
         });
-        
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        set({ 
+        set({
           state: MixerState.ERROR,
-          error: `Failed to stop mixer: ${errorMessage}`
+          error: `Failed to stop mixer: ${errorMessage}`,
         });
         throw error;
       }
@@ -163,18 +163,19 @@ export const useMixerStore = create<MixerStore>()(
         const newChannel: AudioChannel = {
           ...DEFAULT_CHANNEL,
           id: newChannelId,
-          name: `Channel ${newChannelId}`
+          name: `Channel ${newChannelId}`,
         };
 
         await mixerService.addMixerChannel(newChannel);
 
-        set(state => ({
-          config: state.config ? {
-            ...state.config,
-            channels: [...state.config.channels, newChannel]
-          } : null
+        set((state) => ({
+          config: state.config
+            ? {
+                ...state.config,
+                channels: [...state.config.channels, newChannel],
+              }
+            : null,
         }));
-
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         set({ error: `Failed to add channel: ${errorMessage}` });
@@ -190,55 +191,59 @@ export const useMixerStore = create<MixerStore>()(
       }
 
       try {
-        const channelIndex = config.channels.findIndex(c => c.id === channelId);
+        const channelIndex = config.channels.findIndex((c) => c.id === channelId);
         if (channelIndex === -1) {
           throw new Error(`Channel ${channelId} not found`);
         }
 
         const previousChannel = config.channels[channelIndex];
         const updatedChannel = { ...previousChannel, ...updates };
-        
+
         // Get previous and new input device IDs for stream management
         const previousInputDeviceId = previousChannel.input_device_id;
         const newInputDeviceId = updatedChannel.input_device_id;
-        
+
         // Update channel configuration first
         await mixerService.updateMixerChannel(channelId, updatedChannel);
-        
+
         // Handle input stream management (critical missing functionality)
         if (newInputDeviceId && newInputDeviceId !== previousInputDeviceId) {
-          console.log(`🎤 Adding input stream for device: ${newInputDeviceId}`);
+          console.debug(`🎤 Adding input stream for device: ${newInputDeviceId}`);
           try {
             await audioService.addInputStream(newInputDeviceId);
-            console.log(`✅ Successfully added input stream for: ${newInputDeviceId}`);
+            console.debug(`✅ Successfully added input stream for: ${newInputDeviceId}`);
           } catch (streamErr) {
             console.error(`❌ Failed to add input stream for ${newInputDeviceId}:`, streamErr);
             throw new Error(`Failed to add input stream: ${streamErr}`);
           }
         }
-        
+
         // If input device was removed, remove input stream
         if (previousInputDeviceId && !newInputDeviceId) {
-          console.log(`🗑️ Removing input stream for device: ${previousInputDeviceId}`);
+          console.debug(`🗑️ Removing input stream for device: ${previousInputDeviceId}`);
           try {
             await audioService.removeInputStream(previousInputDeviceId);
-            console.log(`✅ Successfully removed input stream for: ${previousInputDeviceId}`);
+            console.debug(`✅ Successfully removed input stream for: ${previousInputDeviceId}`);
           } catch (streamErr) {
-            console.error(`❌ Failed to remove input stream for ${previousInputDeviceId}:`, streamErr);
+            console.error(
+              `❌ Failed to remove input stream for ${previousInputDeviceId}:`,
+              streamErr
+            );
             // Don't throw here - removal failure shouldn't block the update
           }
         }
 
         // Update local state
-        set(state => ({
-          config: state.config ? {
-            ...state.config,
-            channels: state.config.channels.map(channel =>
-              channel.id === channelId ? updatedChannel : channel
-            )
-          } : null
+        set((state) => ({
+          config: state.config
+            ? {
+                ...state.config,
+                channels: state.config.channels.map((channel) =>
+                  channel.id === channelId ? updatedChannel : channel
+                ),
+              }
+            : null,
         }));
-
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         set({ error: `Failed to update channel: ${errorMessage}` });
@@ -253,34 +258,61 @@ export const useMixerStore = create<MixerStore>()(
         throw new Error('Mixer not initialized');
       }
 
-      set(state => ({
-        config: state.config ? {
-          ...state.config,
-          master_gain: gain
-        } : null
+      set((state) => ({
+        config: state.config
+          ? {
+              ...state.config,
+              master_gain: gain,
+            }
+          : null,
       }));
     },
 
-    // Real-time level updates
+    // Real-time level updates - optimized to prevent unnecessary re-renders
     updateChannelLevels: (levels: Record<number, [number, number]>) => {
-      set(state => ({
-        config: state.config ? {
-          ...state.config,
-          channels: state.config.channels.map(channel => ({
-            ...channel,
-            peak_level: levels[channel.id]?.[0] || 0,
-            rms_level: levels[channel.id]?.[1] || 0
-          }))
-        } : null
-      }));
+      set((state) => {
+        if (!state.config) return {};
+        
+        const newChannels = updateArrayItems(state.config.channels, (channel) => {
+          const newPeak = levels[channel.id]?.[0] || 0;
+          const newRms = levels[channel.id]?.[1] || 0;
+          
+          if (channel.peak_level !== newPeak || channel.rms_level !== newRms) {
+            return {
+              ...channel,
+              peak_level: newPeak,
+              rms_level: newRms,
+            };
+          }
+          return channel;
+        });
+        
+        // Only update if channels array changed
+        if (newChannels === state.config.channels) return {};
+        
+        return {
+          config: {
+            ...state.config,
+            channels: newChannels,
+          },
+        };
+      });
     },
 
     updateMasterLevels: (levels: MasterLevels) => {
-      set({ masterLevels: levels });
+      set((state) => {
+        // Only update if levels actually changed
+        if (isEqual(state.masterLevels, levels)) return {};
+        return { masterLevels: levels };
+      });
     },
 
     updateMetrics: (metrics: AudioMetrics) => {
-      set({ metrics });
+      set((state) => {
+        // Only update if metrics actually changed
+        if (isEqual(state.metrics, metrics)) return {};
+        return { metrics };
+      });
     },
 
     // Error handling
@@ -292,33 +324,50 @@ export const useMixerStore = create<MixerStore>()(
       set({ error: null });
     },
 
-    // Batch updates for performance
+    // Batch updates for performance - optimized to prevent unnecessary re-renders
     batchUpdate: (updates) => {
-      set(state => {
+      set((state) => {
         const newState: Partial<MixerStore> = {};
 
-        if (updates.channelLevels) {
+        // Handle channel level updates
+        if (updates.channelLevels && state.config) {
           const levels = updates.channelLevels;
-          newState.config = state.config ? {
-            ...state.config,
-            channels: state.config.channels.map(channel => ({
-              ...channel,
-              peak_level: levels[channel.id]?.[0] || channel.peak_level,
-              rms_level: levels[channel.id]?.[1] || channel.rms_level
-            }))
-          } : null;
+          const newChannels = updateArrayItems(state.config.channels, (channel) => {
+            const newPeak = levels[channel.id]?.[0] || channel.peak_level;
+            const newRms = levels[channel.id]?.[1] || channel.rms_level;
+            
+            if (channel.peak_level !== newPeak || channel.rms_level !== newRms) {
+              return {
+                ...channel,
+                peak_level: newPeak,
+                rms_level: newRms,
+              };
+            }
+            return channel;
+          });
+          
+          // Only update config if channels array changed
+          if (newChannels !== state.config.channels) {
+            newState.config = {
+              ...state.config,
+              channels: newChannels,
+            };
+          }
         }
 
-        if (updates.masterLevels) {
+        // Handle master levels with deep equality check
+        if (updates.masterLevels && !isEqual(state.masterLevels, updates.masterLevels)) {
           newState.masterLevels = updates.masterLevels;
         }
 
-        if (updates.metrics) {
+        // Handle metrics with deep equality check
+        if (updates.metrics && !isEqual(state.metrics, updates.metrics)) {
           newState.metrics = updates.metrics;
         }
 
-        return newState;
+        // Only return changes if there are any
+        return Object.keys(newState).length > 0 ? newState : {};
       });
-    }
+    },
   }))
 );

@@ -1,13 +1,15 @@
 # Audio System Test Coverage
 
-This document outlines the comprehensive test coverage that has been implemented for the Sendin' Beats audio system.
+This document outlines the comprehensive test coverage that has been implemented
+for the Sendin' Beats audio system.
 
 ## Overview
 
-The missing test gaps have been addressed with four new comprehensive test suites:
+The missing test gaps have been addressed with four new comprehensive test
+suites:
 
 1. **Audio Callback Function Tests** (`audio_callback_tests.rs`)
-2. **Error Path Testing** (`audio_error_path_tests.rs`) 
+2. **Error Path Testing** (`audio_error_path_tests.rs`)
 3. **Performance/Latency Benchmarks** (`audio_performance_benchmarks.rs`)
 4. **Memory Leak Detection Tests** (`audio_memory_leak_tests.rs`)
 
@@ -15,12 +17,13 @@ The missing test gaps have been addressed with four new comprehensive test suite
 
 ### ✅ Audio Callback Function Tests
 
-**File:** `audio_callback_tests.rs`
-**Purpose:** Unit tests for audio callback functions and real-time processing
+**File:** `audio_callback_tests.rs` **Purpose:** Unit tests for audio callback
+functions and real-time processing
 
 **Test Cases:**
+
 - `test_audio_input_callback` - Basic input callback handling
-- `test_audio_output_callback` - Basic output callback handling  
+- `test_audio_output_callback` - Basic output callback handling
 - `test_callback_buffer_edge_cases` - Buffer underrun/overrun scenarios
 - `test_audio_stream_callback_flow` - Real audio stream data flow
 - `test_callback_threading_safety` - Concurrent callback execution
@@ -30,6 +33,7 @@ The missing test gaps have been addressed with four new comprehensive test suite
 - `test_callback_cleanup` - Resource cleanup verification
 
 **Key Coverage:**
+
 - Audio buffer processing with panic handling
 - Thread safety in concurrent environments
 - Format conversion between i16 and f32
@@ -38,10 +42,11 @@ The missing test gaps have been addressed with four new comprehensive test suite
 
 ### ✅ Error Path Testing
 
-**File:** `audio_error_path_tests.rs`
-**Purpose:** Testing error conditions and recovery scenarios
+**File:** `audio_error_path_tests.rs` **Purpose:** Testing error conditions and
+recovery scenarios
 
 **Test Cases:**
+
 - `test_device_disconnection_handling` - Device removal scenarios
 - `test_audio_format_changes` - Invalid sample rates and channel counts
 - `test_stream_creation_failures` - Invalid device IDs and stream setup
@@ -54,6 +59,7 @@ The missing test gaps have been addressed with four new comprehensive test suite
 - `test_graceful_shutdown` - Clean shutdown under error conditions
 
 **Key Coverage:**
+
 - Device disconnection and reconnection
 - Invalid audio format handling
 - Memory pressure scenarios
@@ -63,10 +69,11 @@ The missing test gaps have been addressed with four new comprehensive test suite
 
 ### ✅ Performance/Latency Benchmarks
 
-**File:** `audio_performance_benchmarks.rs`
-**Purpose:** Performance testing and latency measurement
+**File:** `audio_performance_benchmarks.rs` **Purpose:** Performance testing and
+latency measurement
 
 **Test Cases:**
+
 - `benchmark_audio_buffer_processing` - Buffer processing at different sizes
 - `benchmark_device_enumeration` - Device discovery performance
 - `benchmark_audio_level_calculation` - Peak/RMS calculation speed
@@ -77,6 +84,7 @@ The missing test gaps have been addressed with four new comprehensive test suite
 - `performance_regression_detection` - Baseline performance validation
 
 **Key Metrics:**
+
 - Processing speed (samples/second)
 - CPU usage estimation
 - Memory allocation performance
@@ -85,6 +93,7 @@ The missing test gaps have been addressed with four new comprehensive test suite
 - Format conversion throughput
 
 **Performance Baselines:**
+
 - Single channel: >50x real-time processing
 - Multi-channel: >10x real-time per channel
 - Device enumeration: <100ms average
@@ -92,19 +101,21 @@ The missing test gaps have been addressed with four new comprehensive test suite
 
 ### ✅ Memory Leak Detection Tests
 
-**File:** `audio_memory_leak_tests.rs`
-**Purpose:** Memory leak detection and resource management validation
+**File:** `audio_memory_leak_tests.rs` **Purpose:** Memory leak detection and
+resource management validation
 
 **Test Cases:**
+
 - `test_audio_buffer_memory_leaks` - Buffer allocation/deallocation tracking
 - `test_audio_stream_memory_leaks` - Virtual mixer lifecycle testing
 - `test_concurrent_processing_memory_leaks` - Multi-threaded memory safety
-- `test_device_enumeration_memory_leaks` - Device manager memory stability  
+- `test_device_enumeration_memory_leaks` - Device manager memory stability
 - `test_audio_effects_memory_leaks` - Effects processing memory management
 - `test_long_running_memory_stability` - Continuous processing stability
 - `test_audio_resource_cleanup` - Resource cleanup verification
 
 **Memory Tracking:**
+
 - Custom `MemoryTracker` for allocation/deallocation counting
 - Platform-specific memory usage monitoring (macOS/Linux)
 - Resource lifecycle verification with Drop trait
@@ -112,27 +123,33 @@ The missing test gaps have been addressed with four new comprehensive test suite
 - Concurrent memory access patterns
 
 **Memory Limits:**
+
 - Stream management: <10MB growth limit
-- Device enumeration: <5MB growth limit  
+- Device enumeration: <5MB growth limit
 - Memory variance: <50MB during continuous operation
 - Final growth: <20MB for long-running scenarios
 
 ## Test Infrastructure
 
 ### Dependencies
+
 All tests use the following testing infrastructure:
+
 - `tokio-test` - Async testing utilities
 - `serial_test` - Sequential test execution when needed
 - `std::panic::catch_unwind` - Panic handling testing
 - Custom timing and memory tracking utilities
 
 ### Cross-Platform Support
+
 Tests are designed to work across:
+
 - **macOS** - Uses `ps` command for memory monitoring
 - **Linux** - Uses `/proc/self/status` for memory tracking
 - **Fallback** - Reasonable estimates for other platforms
 
 ### Performance Testing
+
 - Benchmarks provide quantitative metrics
 - Regression detection with baseline thresholds
 - Stress testing with high iteration counts
@@ -165,6 +182,7 @@ All tests successfully compile and execute, providing:
 5. **Cross-Platform** compatibility validation
 
 The test suite ensures the audio system meets professional requirements for:
+
 - **Real-time Performance** - Low latency, high throughput
 - **Stability** - Memory management, error recovery
 - **Scalability** - Multi-channel, concurrent processing
@@ -173,6 +191,7 @@ The test suite ensures the audio system meets professional requirements for:
 ## Integration with CI/CD
 
 These tests are designed to integrate with automated testing pipelines:
+
 - Fast execution for most tests (<30 seconds)
 - Clear pass/fail criteria with quantitative thresholds
 - Detailed output for performance regression detection

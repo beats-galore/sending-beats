@@ -1,34 +1,52 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with
+code in this repository.
 
 ## Project Vision
 
-Sendin Beats is a comprehensive, multi-phased radio streaming platform designed to be a fully-fledged application for DJs to livestream to Icecast internet radio streaming providers. The project aims to replace and enhance functionality found in tools like Ladiocast/Loopback and radio.co, providing an all-in-one solution for professional radio streaming.
+Sendin Beats is a comprehensive, multi-phased radio streaming platform designed
+to be a fully-fledged application for DJs to livestream to Icecast internet
+radio streaming providers. The project aims to replace and enhance functionality
+found in tools like Ladiocast/Loopback and radio.co, providing an all-in-one
+solution for professional radio streaming.
 
 ## Implementation guidance
-- Approach things in small chunks. Work iteratively towards a simple goal before spreading out into different feature areas.
-- Find logical breaking points when working, and commit before the scope of changes is before long with a detailed description of the work done so far. Make sure you check the diff of code before committing.
-- Don't be afraid to ask questions about suggested solutions. You don't necessarily need to work completely isolated until the goal is achieved. It's good to ask for feedback
 
+- Approach things in small chunks. Work iteratively towards a simple goal before
+  spreading out into different feature areas.
+- Find logical breaking points when working, and commit before the scope of
+  changes is before long with a detailed description of the work done so far.
+  Make sure you check the diff of code before committing.
+- Don't be afraid to ask questions about suggested solutions. You don't
+  necessarily need to work completely isolated until the goal is achieved. It's
+  good to ask for feedback
 
 ## Current Implementation Status
 
-**Phase**: Early development - Virtual mixer UI implementation with backend infrastructure
-**Architecture**: Tauri (Rust backend) + React TypeScript frontend
-**Current Features**: Professional virtual mixer interface, audio device enumeration, streaming client foundation
+**Phase**: Early development - Virtual mixer UI implementation with backend
+infrastructure **Architecture**: Tauri (Rust backend) + React TypeScript
+frontend **Current Features**: Professional virtual mixer interface, audio
+device enumeration, streaming client foundation
 
 ## URGENT ISSUES TO FIX (Next Session Priority)
 
 ### Critical Audio Issues
-1. **NO ACTUAL AUDIO CAPTURE**: Currently only generating test/animated levels - need to implement real audio input capture from selected devices
-2. **NO ACTUAL AUDIO OUTPUT**: No sound playing through selected output devices (speakers/headphones) - need cpal output stream implementation
-3. **NO REAL AUDIO PROCESSING**: VU meters show test animation instead of actual audio levels from captured audio
-4. **HORIZONTAL LAYOUT**: UI successfully converted to horizontal layout as requested, but needs audio functionality
+
+1. **NO ACTUAL AUDIO CAPTURE**: Currently only generating test/animated levels -
+   need to implement real audio input capture from selected devices
+2. **NO ACTUAL AUDIO OUTPUT**: No sound playing through selected output devices
+   (speakers/headphones) - need cpal output stream implementation
+3. **NO REAL AUDIO PROCESSING**: VU meters show test animation instead of actual
+   audio levels from captured audio
+4. **HORIZONTAL LAYOUT**: UI successfully converted to horizontal layout as
+   requested, but needs audio functionality
 
 ### What's Currently Working
+
 - ✅ Virtual mixer UI with horizontal layout
-- ✅ Professional channel strips with gain, pan, EQ, compressor, limiter controls
+- ✅ Professional channel strips with gain, pan, EQ, compressor, limiter
+  controls
 - ✅ Master section with output device selection and master VU meters
 - ✅ Audio device enumeration (detects devices correctly)
 - ✅ VU meter components with animated test levels
@@ -36,15 +54,22 @@ Sendin Beats is a comprehensive, multi-phased radio streaming platform designed 
 - ✅ Tauri commands for mixer control and real-time data polling
 
 ### What Needs Immediate Attention
-- 🚨 **Audio Input Streams**: Implement cpal input stream creation for selected input devices
-- 🚨 **Audio Output Streams**: Implement cpal output stream for master audio output to speakers
-- 🚨 **Real Audio Processing**: Replace test level generation with actual audio level calculation from captured samples
-- 🚨 **Audio Threading**: Proper audio processing thread with input → effects → output chain
-- 🚨 **Buffer Management**: Implement proper audio buffer management for low-latency processing
+
+- 🚨 **Audio Input Streams**: Implement cpal input stream creation for selected
+  input devices
+- 🚨 **Audio Output Streams**: Implement cpal output stream for master audio
+  output to speakers
+- 🚨 **Real Audio Processing**: Replace test level generation with actual audio
+  level calculation from captured samples
+- 🚨 **Audio Threading**: Proper audio processing thread with input → effects →
+  output chain
+- 🚨 **Buffer Management**: Implement proper audio buffer management for
+  low-latency processing
 
 ## Recent Progress (Previous Session)
 
 ### Successfully Implemented
+
 1. **Full Virtual Mixer Interface**: Professional mixing console with:
    - Channel strips in horizontal layout (as requested by user)
    - Gain, pan, input device selection, mute/solo controls per channel
@@ -53,7 +78,7 @@ Sendin Beats is a comprehensive, multi-phased radio streaming platform designed 
    - Limiter with threshold control
    - Real-time VU meters (currently test data, need real audio)
 
-2. **Master Section**: 
+2. **Master Section**:
    - Master output device selection
    - Master gain control
    - Stereo master VU meters (L/R)
@@ -72,6 +97,7 @@ Sendin Beats is a comprehensive, multi-phased radio streaming platform designed 
    - Clean, professional mixer aesthetic
 
 ### User Feedback Addressed
+
 - ✅ Fixed horizontal layout issue (was reverted to vertical, now corrected)
 - ⚠️ **Still need to fix**: No actual audio capture or output (critical issue)
 - ⚠️ **Still need to fix**: VU meters show test animation instead of real levels
@@ -95,7 +121,9 @@ pnpm tauri build
 ## Architecture Status
 
 ### Frontend (React + TypeScript)
-- **App.tsx**: Routes to Virtual Mixer as default (changed from 'home' to 'mixer')
+
+- **App.tsx**: Routes to Virtual Mixer as default (changed from 'home' to
+  'mixer')
 - **VirtualMixer.tsx**: Complete professional mixer interface
   - ChannelStrip component with full controls
   - VUMeter component with professional visualization
@@ -104,22 +132,28 @@ pnpm tauri build
 - **Tauri Window**: Configured for full-screen (maximized: true, 1400x1000)
 
 ### Backend (Rust via Tauri)
-- **audio.rs**: 
+
+- **audio.rs**:
   - AudioDeviceManager with device enumeration and filtering
   - VirtualMixer structure with effects chains
   - Currently generates test levels - NEEDS REAL AUDIO IMPLEMENTATION
-  - Professional audio effects structures (ThreeBandEqualizer, Compressor, Limiter)
+  - Professional audio effects structures (ThreeBandEqualizer, Compressor,
+    Limiter)
 - **lib.rs**: All Tauri commands implemented for mixer control
 
 ### Critical Code Locations
+
 - **VU Meter Implementation**: `/src/components/VirtualMixer.tsx:65-121`
 - **Channel Strip Layout**: `/src/components/VirtualMixer.tsx:123-200+`
-- **Audio Backend**: `/src-tauri/src/audio.rs` (needs input/output stream implementation)
-- **Test Level Generation**: `/src-tauri/src/audio.rs:~800+` (replace with real audio capture)
+- **Audio Backend**: `/src-tauri/src/audio.rs` (needs input/output stream
+  implementation)
+- **Test Level Generation**: `/src-tauri/src/audio.rs:~800+` (replace with real
+  audio capture)
 
 ## Next Session Goals
 
 ### Phase 1: Get Real Audio Working
+
 1. **Fix Audio Input Capture**:
    - Implement cpal input stream creation in VirtualMixer::add_input_stream()
    - Connect selected input devices to actual audio capture
@@ -141,20 +175,25 @@ pnpm tauri build
    - Mix multiple channels to master output
 
 ### Success Criteria for Next Session
+
 - [ ] User can select input device and hear their microphone/system audio
 - [ ] User can select output device and hear audio through speakers/headphones
 - [ ] VU meters respond to actual audio levels, not test animation
-- [ ] Audio flows: Input Device → Channel Processing → Master Mix → Output Device
+- [ ] Audio flows: Input Device → Channel Processing → Master Mix → Output
+      Device
 - [ ] Channel controls (gain, pan, EQ) affect the actual audio output
 
 ### Technical Implementation Notes
-- User has BlackHole 2CH, microphone, MacBook speakers, and BenQ monitor available
+
+- User has BlackHole 2CH, microphone, MacBook speakers, and BenQ monitor
+  available
 - Focus on macOS Core Audio implementation first
 - Use cpal for cross-platform audio stream management
 - Audio processing should happen in separate thread from UI
 - Maintain horizontal layout that user requested
 
 ## Known Working Components
+
 - Device enumeration and filtering works correctly
 - UI polling and updates work at 10 FPS (100ms intervals)
 - Professional mixer interface is complete and responsive
@@ -164,9 +203,13 @@ pnpm tauri build
 ## React TypeScript UI Refactoring Plan
 
 ### Current Architecture Issues
-- **Monolithic Component**: VirtualMixer.tsx is 806 lines - violates single responsibility principle
-- **No State Management**: All state lives in one component with no separation of concerns
-- **Performance Issues**: No memoization, excessive re-renders on real-time audio updates
+
+- **Monolithic Component**: VirtualMixer.tsx is 806 lines - violates single
+  responsibility principle
+- **No State Management**: All state lives in one component with no separation
+  of concerns
+- **Performance Issues**: No memoization, excessive re-renders on real-time
+  audio updates
 - **Poor Component Reusability**: Tightly coupled components prevent reuse
 - **No Custom Hooks**: Business logic mixed with UI logic
 - **No Error Boundaries**: Risk of entire mixer crashing on component errors
@@ -176,11 +219,12 @@ pnpm tauri build
 ### Proposed Modern React Architecture
 
 #### New Component Hierarchy
+
 ```
 src/
 ├── hooks/
 │   ├── useAudioDevices.ts        # Device enumeration & management
-│   ├── useAudioMetrics.ts        # Real-time metrics polling  
+│   ├── useAudioMetrics.ts        # Real-time metrics polling
 │   ├── useMixerState.ts          # Core mixer state management
 │   ├── useChannelEffects.ts      # Audio effects management
 │   └── useVUMeterData.ts         # VU meter data processing
@@ -202,7 +246,7 @@ src/
 │   │   └── ChannelVUMeter.tsx    # Channel VU visualization
 │   ├── effects/
 │   │   ├── Compressor.tsx        # Standalone compressor
-│   │   ├── Limiter.tsx          # Standalone limiter  
+│   │   ├── Limiter.tsx          # Standalone limiter
 │   │   └── ThreeBandEQ.tsx      # Standalone EQ
 │   ├── ui/
 │   │   ├── VUMeter.tsx          # Reusable VU meter
@@ -227,28 +271,39 @@ src/
 ```
 
 #### State Management Strategy
+
 - **Zustand Store**: Central mixer state with actions for mixer operations
-- **Custom Hooks**: Business logic separation (useAudioDevices, useMixerState, useVUMeterData)
+- **Custom Hooks**: Business logic separation (useAudioDevices, useMixerState,
+  useVUMeterData)
 - **Performance Optimization**: Memoized components, batched VU meter updates
 
 #### Implementation Phases
-1. **Foundation & Services** (Week 1): Service layer abstractions, Zustand store, error boundaries
-2. **Core Hooks & State Management** (Week 1-2): Custom hooks, optimized polling, performance optimizations
-3. **Component Decomposition** (Week 2-3): Break down monolith, reusable components, audio effects
-4. **Performance & Polish** (Week 3-4): Memoization, lazy loading, accessibility, responsive design
-5. **Testing & Documentation** (Week 4): Unit tests, integration tests, Storybook, performance audit
+
+1. **Foundation & Services** (Week 1): Service layer abstractions, Zustand
+   store, error boundaries
+2. **Core Hooks & State Management** (Week 1-2): Custom hooks, optimized
+   polling, performance optimizations
+3. **Component Decomposition** (Week 2-3): Break down monolith, reusable
+   components, audio effects
+4. **Performance & Polish** (Week 3-4): Memoization, lazy loading,
+   accessibility, responsive design
+5. **Testing & Documentation** (Week 4): Unit tests, integration tests,
+   Storybook, performance audit
 
 #### Recommended Libraries
-- **@mantine/core, @mantine/hooks**: Professional UI components for audio interfaces
+
+- **@mantine/core, @mantine/hooks**: Professional UI components for audio
+  interfaces
 - **zustand**: Lightweight state management
-- **zod**: Runtime type validation for audio parameters  
+- **zod**: Runtime type validation for audio parameters
 - **react-hook-form**: Form handling for mixer settings
 - **@tanstack/react-query**: Server state management for device polling
 - **framer-motion**: Smooth VU meter animations
 
 #### Benefits
+
 - **50% reduction** in component complexity (806 → ~400 lines total)
-- **Improved performance** with memoized components and optimized re-renders  
+- **Improved performance** with memoized components and optimized re-renders
 - **Better testing** with isolated, mockable components
 - **Enhanced maintainability** with clear separation of concerns
 - **Professional design system** with Mantine integration

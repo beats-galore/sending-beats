@@ -1,95 +1,106 @@
 // Professional audio slider component
-import React, { memo, useCallback } from 'react';
-import { AudioSliderProps } from '../../types';
+import { Stack, Text, Box, Slider } from '@mantine/core';
+import { createStyles } from '@mantine/styles';
+import { memo, useCallback, useMemo } from 'react';
+
 import { useDebounce } from '../../utils/performance-helpers';
 
-export const AudioSlider = memo<AudioSliderProps>(({
-  label,
-  value,
-  min,
-  max,
-  step = 0.1,
-  unit = '',
-  onChange,
-  disabled = false
-}) => {
-  // Debounce changes to prevent excessive updates during dragging
-  const debouncedOnChange = useDebounce(onChange, 50);
+import type { AudioSliderProps } from '../../types';
 
-  const handleChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    const newValue = parseFloat(event.target.value);
-    debouncedOnChange(newValue);
-  }, [debouncedOnChange]);
-
-  // Calculate percentage for visual representation
-  const percentage = ((value - min) / (max - min)) * 100;
+const useStyles = createStyles((theme) => ({
+  container: {
+    alignItems: 'center',
+    width: '100%',
+  },
   
-  // Format display value
-  const displayValue = `${value.toFixed(step < 1 ? 1 : 0)}${unit}`;
+  label: {
+    fontSize: '10px',
+    color: theme.colors.gray[3],
+    fontWeight: 500,
+    textAlign: 'center',
+  },
+  
+  valueDisplay: {
+    fontSize: '10px',
+    color: theme.colors.gray[4],
+    fontFamily: 'monospace',
+    minWidth: '4rem',
+    textAlign: 'center',
+  },
+  
+  sliderContainer: {
+    height: 120,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+}));
 
-  return (
-    <div className="flex flex-col items-center space-y-2 w-full">
-      {/* Label */}
-      <label className="text-xs text-gray-300 font-medium text-center">
-        {label}
-      </label>
+export const AudioSlider = memo<AudioSliderProps>(
+  ({ label, value, min, max, step = 0.1, unit = '', onChange, disabled = false }) => {
+    const { classes } = useStyles();
+    
+    // Debounce changes to prevent excessive updates during dragging
+    const debouncedOnChange = useDebounce(onChange, 50);
+
+    const handleChange = useCallback(
+      (newValue: number) => {
+        debouncedOnChange(newValue);
+      },
+      [debouncedOnChange]
+    );
+
+    // Format display value
+    const displayValue = useMemo(() => 
+      `${value.toFixed(step < 1 ? 1 : 0)}${unit}`,
+      [value, step, unit]
+    );
+
+    // Create marks for the slider
+    const marks = useMemo(() => {
+      const marksArray = [
+        { value: min, label: `${min}${unit}` },
+        { value: max, label: `${max}${unit}` },
+      ];
       
-      {/* Value display */}
-      <div className="text-xs text-gray-400 font-mono min-w-[4rem] text-center">
-        {displayValue}
-      </div>
+      // Add center mark for gain controls
+      if (min < 0 && max > 0) {
+        marksArray.splice(1, 0, { value: 0, label: '0' });
+      }
       
-      {/* Slider container */}
-      <div className="relative w-full h-32 flex items-center justify-center">
-        <input
-          type="range"
-          min={min}
-          max={max}
-          step={step}
-          value={value}
-          onChange={handleChange}
-          disabled={disabled}
-          className="slider-vertical h-28 w-1"
-          style={{
-            writingMode: 'vertical-lr' as any,
-            WebkitAppearance: 'slider-vertical',
-          }}
-        />
-        
-        {/* Custom slider track for better visual */}
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <div className="w-1 h-28 bg-gray-700 rounded-full relative overflow-hidden">
-            {/* Active track */}
-            <div 
-              className="absolute bottom-0 w-full bg-blue-500 transition-all duration-150 rounded-full"
-              style={{ height: `${percentage}%` }}
-            />
-            
-            {/* Center mark (for gain controls) */}
-            {min < 0 && max > 0 && (
-              <div 
-                className="absolute w-2 h-0.5 bg-gray-400 left-1/2 transform -translate-x-1/2"
-                style={{ 
-                  bottom: `${((0 - min) / (max - min)) * 100}%`,
-                  transform: 'translateX(-50%) translateY(50%)'
-                }}
-              />
-            )}
-          </div>
-        </div>
-        
-        {/* Tick marks */}
-        <div className="absolute right-2 h-28 flex flex-col justify-between text-xs text-gray-500">
-          <span>{max}{unit}</span>
-          {min < 0 && max > 0 && <span>0</span>}
-          <span>{min}{unit}</span>
-        </div>
-      </div>
-    </div>
-  );
-}, (prevProps, nextProps) =>
-  prevProps.value === nextProps.value &&
-  prevProps.disabled === nextProps.disabled &&
-  prevProps.min === nextProps.min &&
-  prevProps.max === nextProps.max
+      return marksArray;
+    }, [min, max, unit]);
+
+    return (
+      <Stack gap="xs" className={classes.container}>
+        {/* Label */}
+        <Text className={classes.label}>{label}</Text>
+
+        {/* Value display */}
+        <Text className={classes.valueDisplay}>{displayValue}</Text>
+
+        {/* Slider */}
+        <Box className={classes.sliderContainer}>
+          <Slider
+            orientation="vertical"
+            min={min}
+            max={max}
+            step={step}
+            value={value}
+            onChange={handleChange}
+            disabled={disabled}
+            marks={marks}
+            size="sm"
+            style={{ height: '100px' }}
+          />
+        </Box>
+      </Stack>
+    );
+  },
+  (prevProps, nextProps) =>
+    prevProps.value === nextProps.value &&
+    prevProps.disabled === nextProps.disabled &&
+    prevProps.min === nextProps.min &&
+    prevProps.max === nextProps.max
 );

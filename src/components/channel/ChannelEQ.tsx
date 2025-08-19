@@ -1,21 +1,17 @@
 // Channel EQ controls (3-band equalizer)
-import { memo } from 'react';
 import { Stack, Button } from '@mantine/core';
-import { AudioSlider } from '../ui';
+import { memo } from 'react';
+
 import { useChannelEffects } from '../../hooks';
+import { AudioSlider } from '../ui';
 
 type ChannelEQProps = {
   channelId: number;
 };
 
 export const ChannelEQ = memo<ChannelEQProps>(({ channelId }) => {
-  const {
-    setEQLowGain,
-    setEQMidGain,
-    setEQHighGain,
-    resetEQ,
-    getEQValues
-  } = useChannelEffects(channelId);
+  const { setEQLowGain, setEQMidGain, setEQHighGain, resetEQ, getEQValues } =
+    useChannelEffects(channelId);
 
   const eqValues = getEQValues();
 
@@ -57,12 +53,7 @@ export const ChannelEQ = memo<ChannelEQProps>(({ channelId }) => {
       />
 
       {/* Reset Button */}
-      <Button 
-        size="xs" 
-        variant="subtle" 
-        onClick={resetEQ}
-        color="gray"
-      >
+      <Button size="xs" variant="subtle" onClick={resetEQ} color="gray">
         Reset EQ
       </Button>
     </Stack>

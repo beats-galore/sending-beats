@@ -1,10 +1,9 @@
 // Professional channel strip component - Compressed horizontal layout
-import { memo, useCallback, useMemo, useState } from 'react';
-import { 
-  Paper, 
-  Group, 
-  Stack, 
-  Title, 
+import {
+  Paper,
+  Group,
+  Stack,
+  Title,
   Text,
   Button,
   Select,
@@ -12,19 +11,62 @@ import {
   Collapse,
   ActionIcon,
   Divider,
-  Box
+  Box,
 } from '@mantine/core';
-import { 
-  IconChevronDown,
-  IconChevronRight,
-  IconRefresh,
-  IconSettings
-} from '@tabler/icons-react';
-import { AudioChannel, AudioDeviceInfo } from '../../types';
+import { createStyles } from '@mantine/styles';
+import { IconChevronDown, IconChevronRight, IconRefresh, IconSettings } from '@tabler/icons-react';
+import { memo, useCallback, useMemo, useState } from 'react';
+
 import { useMixerState, useVUMeterData } from '../../hooks';
-import { ChannelEQ } from './ChannelEQ';
+
 import { ChannelEffects } from './ChannelEffects';
+import { ChannelEQ } from './ChannelEQ';
 import { ChannelVUMeter } from './ChannelVUMeter';
+
+import type { AudioChannel, AudioDeviceInfo } from '../../types';
+
+const useStyles = createStyles((theme) => ({
+  channelPaper: {
+    width: 260,
+    minWidth: 260,
+    maxWidth: 260,
+    backgroundColor: 'var(--mantine-color-dark-7)',
+    borderColor: 'var(--mantine-color-dark-4)',
+  },
+  
+  vuMeterBox: {
+    height: 80,
+    display: 'flex',
+    justifyContent: 'center',
+  },
+  
+  sliderContainer: {
+    margin: '8px 0',
+  },
+  
+  effectsBox: {
+    backgroundColor: 'var(--mantine-color-dark-8)',
+    borderRadius: 4,
+  },
+}));
+
+// Separate style objects for Mantine components styles prop
+const selectStyles = {
+  input: { 
+    fontSize: '10px', 
+    height: 24 
+  },
+};
+
+const buttonStyles = {
+  root: { 
+    height: 24, 
+    fontSize: '10px' 
+  },
+  inner: { 
+    justifyContent: 'center' as const
+  },
+};
 
 type ChannelStripProps = {
   channel: AudioChannel;
@@ -32,241 +74,254 @@ type ChannelStripProps = {
   onRefreshDevices: () => void;
 };
 
-export const ChannelStrip = memo<ChannelStripProps>(({
-  channel,
-  inputDevices,
-  onRefreshDevices
-}) => {
-  const { 
-    toggleChannelMute,
-    toggleChannelSolo,
-    setChannelInputDevice,
-    updateChannelGain,
-    updateChannelPan
-  } = useMixerState();
+export const ChannelStrip = memo<ChannelStripProps>(
+  ({ channel, inputDevices, onRefreshDevices }) => {
+    const { classes } = useStyles();
+    
+    const {
+      toggleChannelMute,
+      toggleChannelSolo,
+      setChannelInputDevice,
+      updateChannelGain,
+      updateChannelPan,
+    } = useMixerState();
 
-  const { getChannelLevels } = useVUMeterData();
-  
-  // State for expandable sections
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [showEQ, setShowEQ] = useState(false);
-  const [showEffects, setShowEffects] = useState(false);
-  
-  // Memoize levels to prevent infinite re-renders from new object creation
-  const levels = useMemo(() => {
-    return getChannelLevels(channel.id);
-  }, [getChannelLevels, channel.id, channel.peak_level, channel.rms_level]);
+    const { getChannelLevels } = useVUMeterData();
 
-  const handleMuteToggle = useCallback(() => {
-    toggleChannelMute(channel.id);
-  }, [channel.id, toggleChannelMute]);
+    // State for expandable sections
+    const [showAdvanced, setShowAdvanced] = useState(false);
+    const [showEQ, setShowEQ] = useState(false);
+    const [showEffects, setShowEffects] = useState(false);
 
-  const handleSoloToggle = useCallback(() => {
-    toggleChannelSolo(channel.id);
-  }, [channel.id, toggleChannelSolo]);
+    // Memoize levels to prevent infinite re-renders from new object creation
+    const levels = useMemo(() => {
+      return getChannelLevels(channel.id);
+    }, [getChannelLevels, channel.id]);
 
-  const handleInputDeviceChange = useCallback((deviceId: string | null) => {
-    if (deviceId) {
-      setChannelInputDevice(channel.id, deviceId);
-    }
-  }, [channel.id, setChannelInputDevice]);
+    const handleMuteToggle = useCallback(() => {
+      toggleChannelMute(channel.id);
+    }, [channel.id, toggleChannelMute]);
 
-  const handleGainChange = useCallback((gain: number) => {
-    updateChannelGain(channel.id, gain);
-  }, [channel.id, updateChannelGain]);
+    const handleSoloToggle = useCallback(() => {
+      toggleChannelSolo(channel.id);
+    }, [channel.id, toggleChannelSolo]);
 
-  const handlePanChange = useCallback((pan: number) => {
-    updateChannelPan(channel.id, pan);
-  }, [channel.id, updateChannelPan]);
+    const handleInputDeviceChange = useCallback(
+      (deviceId: string | null) => {
+        if (deviceId) {
+          setChannelInputDevice(channel.id, deviceId);
+        }
+      },
+      [channel.id, setChannelInputDevice]
+    );
 
-  // Convert gain to dB for display
-  const gainDb = 20 * Math.log10(Math.max(0.01, channel.gain));
-  
-  // Format pan display
-  const panDisplay = channel.pan === 0 ? "CENTER" :
-    channel.pan > 0 ? `R${Math.round(channel.pan * 100)}` :
-    `L${Math.round(Math.abs(channel.pan) * 100)}`;
+    const handleGainChange = useCallback(
+      (gain: number) => {
+        updateChannelGain(channel.id, gain);
+      },
+      [channel.id, updateChannelGain]
+    );
 
-  return (
-    <Paper 
-      p="sm" 
-      withBorder 
-      radius="md" 
-      style={{ 
-        width: 260, 
-        minWidth: 260, 
-        maxWidth: 260,
-        backgroundColor: 'var(--mantine-color-dark-7)',
-        borderColor: 'var(--mantine-color-dark-4)'
-      }}
-    >
-      <Stack gap="xs" h="100%">
-        {/* Channel Header - Compact */}
-        <Group justify="space-between" align="center">
-          <Box>
-            <Title order={5} size="sm" c="blue" lh={1}>CH {channel.id}</Title>
-            <Text size="xs" c="dimmed" lh={1}>{channel.name}</Text>
-          </Box>
-          
-          {/* Advanced Controls Toggle */}
-          <ActionIcon 
-            size="sm" 
-            variant="subtle"
-            onClick={() => setShowAdvanced(!showAdvanced)}
-            c={showAdvanced ? "blue" : "gray"}
-          >
-            <IconSettings size={14} />
-          </ActionIcon>
-        </Group>
+    const handlePanChange = useCallback(
+      (pan: number) => {
+        updateChannelPan(channel.id, pan);
+      },
+      [channel.id, updateChannelPan]
+    );
 
-        {/* VU Meter - Compact Vertical */}
-        <Box style={{ height: 80, display: 'flex', justifyContent: 'center' }}>
-          <ChannelVUMeter
-            peakLevel={levels.peak}
-            rmsLevel={levels.rms}
-          />
-        </Box>
+    // Convert gain to dB for display
+    const gainDb = 20 * Math.log10(Math.max(0.01, channel.gain));
 
-        {/* Essential Controls - Always Visible */}
-        <Stack gap="xs">
-          {/* Input Device Selection - Compact */}
-          <Group gap={4} align="center">
-            <Select
-              size="xs"
-              placeholder="No Input"
-              value={channel.input_device_id || null}
-              onChange={handleInputDeviceChange}
-              data={inputDevices.map(device => ({
-                value: device.id,
-                label: device.name.length > 20 ? device.name.substring(0, 20) + "..." : device.name
-              }))}
-              style={{ flex: 1 }}
-              styles={{
-                input: { fontSize: '10px', height: 24 }
-              }}
-            />
-            <ActionIcon size="xs" onClick={onRefreshDevices} variant="subtle">
-              <IconRefresh size={10} />
+    // Format pan display
+    const panDisplay = channel.pan === 0
+      ? 'CENTER'
+      : channel.pan > 0
+        ? `R${Math.round(channel.pan * 100)}`
+        : `L${Math.round(Math.abs(channel.pan) * 100)}`;
+
+    // Memoize input device options to prevent re-renders
+    const inputDeviceOptions = useMemo(() => {
+      return inputDevices.map((device) => ({
+        value: device.id,
+        label: device.name.length > 20 ? `${device.name.substring(0, 20)}...` : device.name,
+      }));
+    }, [inputDevices]);
+
+    return (
+      <Paper
+        p="sm"
+        withBorder
+        radius="md"
+        className={classes.channelPaper}
+      >
+        <Stack gap="xs" h="100%">
+          {/* Channel Header - Compact */}
+          <Group justify="space-between" align="center">
+            <Box>
+              <Title order={5} size="sm" c="blue" lh={1}>
+                CH {channel.id}
+              </Title>
+              <Text size="xs" c="dimmed" lh={1}>
+                {channel.name}
+              </Text>
+            </Box>
+
+            {/* Advanced Controls Toggle */}
+            <ActionIcon
+              size="sm"
+              variant="subtle"
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              c={showAdvanced ? 'blue' : 'gray'}
+            >
+              <IconSettings size={14} />
             </ActionIcon>
           </Group>
 
-          {/* Gain Control - Horizontal Slider */}
-          <Box>
-            <Text size="xs" c="dimmed" ta="center" lh={1}>
-              Gain: {gainDb.toFixed(1)}dB
-            </Text>
-            <Slider
-              size="xs"
-              min={-20}
-              max={6}
-              step={0.5}
-              value={gainDb}
-              onChange={(value) => handleGainChange(Math.pow(10, value / 20))}
-              marks={[
-                { value: -20, label: '-20' },
-                { value: 0, label: '0' },
-                { value: 6, label: '+6' }
-              ]}
-              style={{ margin: '8px 0' }}
-            />
+          {/* VU Meter - Compact Vertical */}
+          <Box className={classes.vuMeterBox}>
+            <ChannelVUMeter peakLevel={levels.peak} rmsLevel={levels.rms} />
           </Box>
 
-          {/* Mute/Solo Buttons - Compact */}
-          <Group gap="xs" grow>
-            <Button
-              size="xs"
-              color={channel.muted ? "red" : "gray"}
-              variant={channel.muted ? "filled" : "outline"}
-              onClick={handleMuteToggle}
-              fullWidth
-              styles={{
-                root: { height: 24, fontSize: '10px' },
-                inner: { justifyContent: 'center' }
-              }}
-            >
-              {channel.muted ? "MUTE" : "MUTE"}
-            </Button>
+          {/* Essential Controls - Always Visible */}
+          <Stack gap="xs">
+            {/* Input Device Selection - Compact */}
+            <Group gap={4} align="center">
+              <Select
+                size="xs"
+                placeholder="No Input"
+                value={channel.input_device_id || null}
+                onChange={handleInputDeviceChange}
+                data={inputDeviceOptions}
+                style={{ flex: 1 }}
+                styles={selectStyles}
+              />
+              <ActionIcon size="xs" onClick={onRefreshDevices} variant="subtle">
+                <IconRefresh size={10} />
+              </ActionIcon>
+            </Group>
 
-            <Button
-              size="xs"
-              color={channel.solo ? "orange" : "gray"}
-              variant={channel.solo ? "filled" : "outline"}
-              onClick={handleSoloToggle}
-              fullWidth
-              styles={{
-                root: { height: 24, fontSize: '10px' },
-                inner: { justifyContent: 'center' }
-              }}
-            >
-              {channel.solo ? "SOLO" : "SOLO"}
-            </Button>
-          </Group>
-        </Stack>
-
-        {/* Expandable Advanced Controls */}
-        <Collapse in={showAdvanced}>
-          <Stack gap="xs" mt="xs">
-            <Divider size="xs" />
-            
-            {/* Pan Control */}
+            {/* Gain Control - Horizontal Slider */}
             <Box>
               <Text size="xs" c="dimmed" ta="center" lh={1}>
-                Pan: {panDisplay}
+                Gain: {gainDb.toFixed(1)}dB
               </Text>
               <Slider
                 size="xs"
-                min={-1}
-                max={1}
-                step={0.05}
-                value={channel.pan}
-                onChange={handlePanChange}
+                min={-20}
+                max={6}
+                step={0.5}
+                value={gainDb}
+                onChange={(value) => handleGainChange(Math.pow(10, value / 20))}
                 marks={[
-                  { value: -1, label: 'L' },
-                  { value: 0, label: 'C' },
-                  { value: 1, label: 'R' }
+                  { value: -20, label: '-20' },
+                  { value: 0, label: '0' },
+                  { value: 6, label: '+6' },
                 ]}
-                style={{ margin: '8px 0' }}
+                className={classes.sliderContainer}
               />
             </Box>
 
-            {/* EQ Section Toggle */}
-            <Button
-              size="xs"
-              variant="subtle"
-              onClick={() => setShowEQ(!showEQ)}
-              rightSection={showEQ ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}
-              justify="flex-start"
-              c="blue"
-            >
-              3-Band EQ
-            </Button>
-            
-            <Collapse in={showEQ}>
-              <Box p="xs" style={{ backgroundColor: 'var(--mantine-color-dark-8)', borderRadius: 4 }}>
-                <ChannelEQ channelId={channel.id} />
-              </Box>
-            </Collapse>
+            {/* Mute/Solo Buttons - Compact */}
+            <Group gap="xs" grow>
+              <Button
+                size="xs"
+                color={channel.muted ? 'red' : 'gray'}
+                variant={channel.muted ? 'filled' : 'outline'}
+                onClick={handleMuteToggle}
+                fullWidth
+                styles={buttonStyles}
+              >
+                {channel.muted ? 'MUTE' : 'MUTE'}
+              </Button>
 
-            {/* Effects Section Toggle */}
-            <Button
-              size="xs"
-              variant="subtle"
-              onClick={() => setShowEffects(!showEffects)}
-              rightSection={showEffects ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />}
-              justify="flex-start"
-              c="blue"
-            >
-              Effects
-            </Button>
-            
-            <Collapse in={showEffects}>
-              <Box p="xs" style={{ backgroundColor: 'var(--mantine-color-dark-8)', borderRadius: 4 }}>
-                <ChannelEffects channelId={channel.id} />
-              </Box>
-            </Collapse>
+              <Button
+                size="xs"
+                color={channel.solo ? 'orange' : 'gray'}
+                variant={channel.solo ? 'filled' : 'outline'}
+                onClick={handleSoloToggle}
+                fullWidth
+                styles={buttonStyles}
+              >
+                {channel.solo ? 'SOLO' : 'SOLO'}
+              </Button>
+            </Group>
           </Stack>
-        </Collapse>
-      </Stack>
-    </Paper>
-  );
-});
+
+          {/* Expandable Advanced Controls */}
+          <Collapse in={showAdvanced}>
+            <Stack gap="xs" mt="xs">
+              <Divider size="xs" />
+
+              {/* Pan Control */}
+              <Box>
+                <Text size="xs" c="dimmed" ta="center" lh={1}>
+                  Pan: {panDisplay}
+                </Text>
+                <Slider
+                  size="xs"
+                  min={-1}
+                  max={1}
+                  step={0.05}
+                  value={channel.pan}
+                  onChange={handlePanChange}
+                  marks={[
+                    { value: -1, label: 'L' },
+                    { value: 0, label: 'C' },
+                    { value: 1, label: 'R' },
+                  ]}
+                  className={classes.sliderContainer}
+                />
+              </Box>
+
+              {/* EQ Section Toggle */}
+              <Button
+                size="xs"
+                variant="subtle"
+                onClick={() => setShowEQ(!showEQ)}
+                rightSection={
+                  showEQ ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />
+                }
+                justify="flex-start"
+                c="blue"
+              >
+                3-Band EQ
+              </Button>
+
+              <Collapse in={showEQ}>
+                <Box
+                  p="xs"
+                  className={classes.effectsBox}
+                >
+                  <ChannelEQ channelId={channel.id} />
+                </Box>
+              </Collapse>
+
+              {/* Effects Section Toggle */}
+              <Button
+                size="xs"
+                variant="subtle"
+                onClick={() => setShowEffects(!showEffects)}
+                rightSection={
+                  showEffects ? <IconChevronDown size={12} /> : <IconChevronRight size={12} />
+                }
+                justify="flex-start"
+                c="blue"
+              >
+                Effects
+              </Button>
+
+              <Collapse in={showEffects}>
+                <Box
+                  p="xs"
+                  className={classes.effectsBox}
+                >
+                  <ChannelEffects channelId={channel.id} />
+                </Box>
+              </Collapse>
+            </Stack>
+          </Collapse>
+        </Stack>
+      </Paper>
+    );
+  }
+);

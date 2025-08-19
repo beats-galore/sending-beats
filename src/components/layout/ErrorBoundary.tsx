@@ -1,27 +1,29 @@
 // Professional Error Boundary using react-error-boundary with Mantine UI
-import { ErrorBoundary as ReactErrorBoundary, FallbackProps } from 'react-error-boundary';
-import { ErrorInfo } from 'react';
-import { 
-  Container, 
-  Title, 
-  Text, 
-  Button, 
-  Group, 
-  Stack, 
-  Alert, 
-  Code, 
+import {
+  Container,
+  Title,
+  Text,
+  Button,
+  Group,
+  Stack,
+  Alert,
+  Code,
   Collapse,
   Paper,
-  Divider
+  Divider,
 } from '@mantine/core';
-import { 
-  IconAlertTriangle, 
-  IconRefresh, 
+import {
+  IconAlertTriangle,
+  IconRefresh,
   IconBug,
   IconChevronDown,
-  IconChevronUp 
+  IconChevronUp,
 } from '@tabler/icons-react';
+import { ErrorBoundary as ReactErrorBoundary } from 'react-error-boundary';
+
 import { useState } from 'react';
+import type { ErrorInfo } from 'react';
+import type { FallbackProps } from 'react-error-boundary';
 
 // Error fallback component with professional Mantine styling
 function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
@@ -36,25 +38,25 @@ function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
   };
 
   return (
-    <Container 
-      fluid 
-      style={{ 
-        minHeight: '100vh', 
-        display: 'flex', 
-        alignItems: 'center', 
+    <Container
+      fluid
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
         justifyContent: 'center',
-        background: 'linear-gradient(135deg, #1a1b23 0%, #2d1b69 100%)'
+        background: 'linear-gradient(135deg, #1a1b23 0%, #2d1b69 100%)',
       }}
       p="xl"
     >
-      <Paper 
-        p="xl" 
-        radius="lg" 
+      <Paper
+        p="xl"
+        radius="lg"
         shadow="xl"
-        style={{ 
-          maxWidth: 800, 
+        style={{
+          maxWidth: 800,
           width: '100%',
-          border: '1px solid #e03131'
+          border: '1px solid #e03131',
         }}
       >
         <Stack gap="lg">
@@ -62,7 +64,7 @@ function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
           <Group justify="center">
             <IconAlertTriangle size={48} color="#e03131" />
           </Group>
-          
+
           <Stack gap="md" align="center">
             <Title order={1} c="red" ta="center">
               Audio Mixer Error
@@ -75,24 +77,20 @@ function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
           <Divider />
 
           {/* Error Details Section */}
-          <Alert 
+          <Alert
             icon={<IconBug size={20} />}
             title="Technical Information"
             color="red"
             variant="light"
           >
             <Stack gap="sm">
-              <Group 
-                justify="space-between" 
+              <Group
+                justify="space-between"
                 style={{ cursor: 'pointer' }}
                 onClick={() => setShowDetails(!showDetails)}
               >
                 <Text fw={500}>Error Details</Text>
-                {showDetails ? (
-                  <IconChevronUp size={16} />
-                ) : (
-                  <IconChevronDown size={16} />
-                )}
+                {showDetails ? <IconChevronUp size={16} /> : <IconChevronDown size={16} />}
               </Group>
 
               <Collapse in={showDetails}>
@@ -102,14 +100,14 @@ function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
                     <Text size="sm" fw={500} c="red.7">
                       Error Message:
                     </Text>
-                    <Code 
-                      block 
+                    <Code
+                      block
                       p="md"
-                      style={{ 
+                      style={{
                         background: '#1a1b23',
                         color: '#ff6b6b',
                         fontSize: '14px',
-                        lineHeight: 1.4
+                        lineHeight: 1.4,
                       }}
                     >
                       {error.message}
@@ -122,16 +120,16 @@ function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
                       <Text size="sm" fw={500} c="red.7">
                         Stack Trace:
                       </Text>
-                      <Code 
-                        block 
+                      <Code
+                        block
                         p="md"
-                        style={{ 
+                        style={{
                           background: '#1a1b23',
                           color: '#c1c2c5',
                           fontSize: '12px',
                           lineHeight: 1.3,
                           maxHeight: '300px',
-                          overflowY: 'auto'
+                          overflowY: 'auto',
                         }}
                       >
                         {error.stack}
@@ -166,7 +164,7 @@ function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
             >
               Try Again
             </Button>
-            
+
             <Button
               leftSection={<IconRefresh size={16} />}
               color="gray"
@@ -180,8 +178,8 @@ function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
 
           {/* Additional Help */}
           <Text size="sm" c="dimmed" ta="center">
-            If this problem persists, please check the console for more details
-            or restart the application.
+            If this problem persists, please check the console for more details or restart the
+            application.
           </Text>
         </Stack>
       </Paper>
@@ -208,7 +206,7 @@ export function ErrorBoundary({ children }: { children: React.ReactNode }) {
       onError={logError}
       onReset={() => {
         // Optional: Add any cleanup logic here
-        console.log('ErrorBoundary reset triggered');
+        console.debug('ErrorBoundary reset triggered');
       }}
     >
       {children}

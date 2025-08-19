@@ -1,14 +1,24 @@
 // Channel effects controls (compressor and limiter)
-import { memo } from 'react';
 import { Stack, Button, Accordion, Switch, Group } from '@mantine/core';
-import { AudioSlider } from '../ui';
+import { createStyles } from '@mantine/styles';
+import { memo } from 'react';
+
 import { useChannelEffects } from '../../hooks';
+import { AudioSlider } from '../ui';
+
+const useStyles = createStyles((theme) => ({
+  fullWidth: {
+    width: '100%',
+  },
+}));
 
 type ChannelEffectsProps = {
   channelId: number;
 };
 
 export const ChannelEffects = memo<ChannelEffectsProps>(({ channelId }) => {
+  const { classes } = useStyles();
+  
   const {
     // Compressor
     setCompressorThreshold,
@@ -18,15 +28,15 @@ export const ChannelEffects = memo<ChannelEffectsProps>(({ channelId }) => {
     toggleCompressor,
     resetCompressor,
     getCompressorValues,
-    
+
     // Limiter
     setLimiterThreshold,
     toggleLimiter,
     resetLimiter,
     getLimiterValues,
-    
+
     // Combined
-    resetAllEffects
+    resetAllEffects,
   } = useChannelEffects(channelId);
 
   const compressor = getCompressorValues();
@@ -40,7 +50,7 @@ export const ChannelEffects = memo<ChannelEffectsProps>(({ channelId }) => {
         {/* Compressor */}
         <Accordion.Item value="compressor">
           <Accordion.Control>
-            <Group justify="space-between" style={{ width: '100%' }}>
+            <Group justify="space-between" className={classes.fullWidth}>
               <span>Compressor</span>
               <Switch
                 checked={compressor.enabled}
@@ -62,7 +72,7 @@ export const ChannelEffects = memo<ChannelEffectsProps>(({ channelId }) => {
                 onChange={setCompressorThreshold}
                 disabled={!compressor.enabled}
               />
-              
+
               <AudioSlider
                 label="Ratio"
                 value={compressor.ratio.value}
@@ -73,7 +83,7 @@ export const ChannelEffects = memo<ChannelEffectsProps>(({ channelId }) => {
                 onChange={setCompressorRatio}
                 disabled={!compressor.enabled}
               />
-              
+
               <AudioSlider
                 label="Attack"
                 value={compressor.attack.value}
@@ -84,7 +94,7 @@ export const ChannelEffects = memo<ChannelEffectsProps>(({ channelId }) => {
                 onChange={setCompressorAttack}
                 disabled={!compressor.enabled}
               />
-              
+
               <AudioSlider
                 label="Release"
                 value={compressor.release.value}
@@ -95,7 +105,7 @@ export const ChannelEffects = memo<ChannelEffectsProps>(({ channelId }) => {
                 onChange={setCompressorRelease}
                 disabled={!compressor.enabled}
               />
-              
+
               <Button size="xs" variant="subtle" onClick={resetCompressor} color="gray">
                 Reset
               </Button>
@@ -106,7 +116,7 @@ export const ChannelEffects = memo<ChannelEffectsProps>(({ channelId }) => {
         {/* Limiter */}
         <Accordion.Item value="limiter">
           <Accordion.Control>
-            <Group justify="space-between" style={{ width: '100%' }}>
+            <Group justify="space-between" className={classes.fullWidth}>
               <span>Limiter</span>
               <Switch
                 checked={limiter.enabled}
@@ -128,7 +138,7 @@ export const ChannelEffects = memo<ChannelEffectsProps>(({ channelId }) => {
                 onChange={setLimiterThreshold}
                 disabled={!limiter.enabled}
               />
-              
+
               <Button size="xs" variant="subtle" onClick={resetLimiter} color="gray">
                 Reset
               </Button>
@@ -138,12 +148,7 @@ export const ChannelEffects = memo<ChannelEffectsProps>(({ channelId }) => {
       </Accordion>
 
       {/* Reset All Effects */}
-      <Button 
-        size="xs" 
-        variant="outline" 
-        onClick={resetAllEffects}
-        color="red"
-      >
+      <Button size="xs" variant="outline" onClick={resetAllEffects} color="red">
         Reset All Effects
       </Button>
     </Stack>

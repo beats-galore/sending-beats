@@ -30,28 +30,26 @@ export type MasterLevels = {
   right: AudioLevels;
 };
 
-export type ChannelLevels = {
-  [channelId: number]: [number, number]; // [left, right] or [mono, mono]
-};
+export type ChannelLevels = Record<number, [number, number]>;
 
 // Audio processing types
 export type ThreeBandEqualizer = {
-  low_gain: number;    // dB (-12 to +12)
-  mid_gain: number;    // dB (-12 to +12)  
-  high_gain: number;   // dB (-12 to +12)
+  low_gain: number; // dB (-12 to +12)
+  mid_gain: number; // dB (-12 to +12)
+  high_gain: number; // dB (-12 to +12)
   enabled: boolean;
 };
 
 export type Compressor = {
-  threshold: number;   // dB (-40 to 0)
-  ratio: number;       // 1.0 to 10.0
-  attack: number;      // ms (0.1 to 100)
-  release: number;     // ms (10 to 1000)
+  threshold: number; // dB (-40 to 0)
+  ratio: number; // 1.0 to 10.0
+  attack: number; // ms (0.1 to 100)
+  release: number; // ms (10 to 1000)
   enabled: boolean;
 };
 
 export type Limiter = {
-  threshold: number;   // dB (-12 to 0)
+  threshold: number; // dB (-12 to 0)
   enabled: boolean;
 };
 
