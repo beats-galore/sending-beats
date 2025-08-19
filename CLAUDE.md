@@ -160,3 +160,95 @@ pnpm tauri build
 - Professional mixer interface is complete and responsive
 - Backend-frontend communication is solid
 - Effects parameter structures are implemented
+
+## React TypeScript UI Refactoring Plan
+
+### Current Architecture Issues
+- **Monolithic Component**: VirtualMixer.tsx is 806 lines - violates single responsibility principle
+- **No State Management**: All state lives in one component with no separation of concerns
+- **Performance Issues**: No memoization, excessive re-renders on real-time audio updates
+- **Poor Component Reusability**: Tightly coupled components prevent reuse
+- **No Custom Hooks**: Business logic mixed with UI logic
+- **No Error Boundaries**: Risk of entire mixer crashing on component errors
+- **No Testing Structure**: Components too coupled to test effectively
+- **Direct Tauri Coupling**: Makes components untestable and hard to mock
+
+### Proposed Modern React Architecture
+
+#### New Component Hierarchy
+```
+src/
+├── hooks/
+│   ├── useAudioDevices.ts        # Device enumeration & management
+│   ├── useAudioMetrics.ts        # Real-time metrics polling  
+│   ├── useMixerState.ts          # Core mixer state management
+│   ├── useChannelEffects.ts      # Audio effects management
+│   └── useVUMeterData.ts         # VU meter data processing
+├── stores/
+│   ├── mixerStore.ts             # Zustand store for mixer state
+│   └── audioDeviceStore.ts       # Device state management
+├── components/
+│   ├── mixer/
+│   │   ├── VirtualMixer.tsx      # Main container (< 100 lines)
+│   │   ├── MixerControls.tsx     # Start/stop/add channel
+│   │   ├── MasterSection.tsx     # Master controls & VU meters
+│   │   └── ChannelGrid.tsx       # Channel layout container
+│   ├── channel/
+│   │   ├── ChannelStrip.tsx      # Individual channel (< 150 lines)
+│   │   ├── ChannelHeader.tsx     # Mute/Solo/VU meter
+│   │   ├── ChannelInputs.tsx     # Device selection & gain
+│   │   ├── ChannelEQ.tsx         # 3-band equalizer
+│   │   ├── ChannelEffects.tsx    # Compressor & limiter
+│   │   └── ChannelVUMeter.tsx    # Channel VU visualization
+│   ├── effects/
+│   │   ├── Compressor.tsx        # Standalone compressor
+│   │   ├── Limiter.tsx          # Standalone limiter  
+│   │   └── ThreeBandEQ.tsx      # Standalone EQ
+│   ├── ui/
+│   │   ├── VUMeter.tsx          # Reusable VU meter
+│   │   ├── Slider.tsx           # Audio slider component
+│   │   ├── ToggleButton.tsx     # On/off toggle
+│   │   └── DeviceSelector.tsx   # Device dropdown
+│   └── layout/
+│       ├── ErrorBoundary.tsx    # Error handling
+│       └── LoadingSpinner.tsx   # Loading states
+├── services/
+│   ├── audioService.ts          # Tauri API abstraction
+│   ├── mixerService.ts          # Mixer operations
+│   └── deviceService.ts         # Device management
+├── types/
+│   ├── audio.types.ts           # Core audio interfaces
+│   ├── mixer.types.ts           # Mixer-specific types
+│   └── ui.types.ts              # UI component types
+└── utils/
+    ├── audioCalculations.ts     # dB conversions, level calc
+    ├── performanceHelpers.ts    # Memoization utilities
+    └── constants.ts             # Audio constants
+```
+
+#### State Management Strategy
+- **Zustand Store**: Central mixer state with actions for mixer operations
+- **Custom Hooks**: Business logic separation (useAudioDevices, useMixerState, useVUMeterData)
+- **Performance Optimization**: Memoized components, batched VU meter updates
+
+#### Implementation Phases
+1. **Foundation & Services** (Week 1): Service layer abstractions, Zustand store, error boundaries
+2. **Core Hooks & State Management** (Week 1-2): Custom hooks, optimized polling, performance optimizations
+3. **Component Decomposition** (Week 2-3): Break down monolith, reusable components, audio effects
+4. **Performance & Polish** (Week 3-4): Memoization, lazy loading, accessibility, responsive design
+5. **Testing & Documentation** (Week 4): Unit tests, integration tests, Storybook, performance audit
+
+#### Recommended Libraries
+- **@mantine/core, @mantine/hooks**: Professional UI components for audio interfaces
+- **zustand**: Lightweight state management
+- **zod**: Runtime type validation for audio parameters  
+- **react-hook-form**: Form handling for mixer settings
+- **@tanstack/react-query**: Server state management for device polling
+- **framer-motion**: Smooth VU meter animations
+
+#### Benefits
+- **50% reduction** in component complexity (806 → ~400 lines total)
+- **Improved performance** with memoized components and optimized re-renders  
+- **Better testing** with isolated, mockable components
+- **Enhanced maintainability** with clear separation of concerns
+- **Professional design system** with Mantine integration
