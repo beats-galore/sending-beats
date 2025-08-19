@@ -3,22 +3,15 @@ import { Paper, Grid, Stack, Title, Text, Group, Select, ActionIcon, Center } fr
 import { IconRefresh } from '@tabler/icons-react';
 import { memo, useCallback, useMemo } from 'react';
 
-import { useMasterSectionData, useMasterLevels, useAudioMetrics } from '../../hooks';
+import { useMasterSectionData, useMasterLevels, useAudioMetrics, useAudioDevices } from '../../hooks';
 import { audioService } from '../../services';
 import { VUMeter, AudioSlider } from '../ui';
 
-import type { AudioDeviceInfo } from '../../types';
-
-type MasterSectionProps = {
-  outputDevices: AudioDeviceInfo[];
-  onRefreshDevices: () => void;
-};
-
-export const MasterSection = memo<MasterSectionProps>(
-  ({ outputDevices, onRefreshDevices }) => {
-    const { mixerConfig, setMasterGain } = useMasterSectionData();
-    const masterLevels = useMasterLevels();
-    const metrics = useAudioMetrics();
+export const MasterSection = memo(() => {
+  const { mixerConfig, setMasterGain } = useMasterSectionData();
+  const masterLevels = useMasterLevels();
+  const metrics = useAudioMetrics();
+  const { outputDevices, refreshDevices } = useAudioDevices();
 
     const handleOutputDeviceChange = useCallback(async (deviceId: string) => {
       try {
@@ -135,7 +128,7 @@ export const MasterSection = memo<MasterSectionProps>(
                     </Text>
                     <ActionIcon
                       variant="light"
-                      onClick={onRefreshDevices}
+                      onClick={refreshDevices}
                       title="Refresh devices"
                       size="sm"
                     >

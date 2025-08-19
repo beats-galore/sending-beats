@@ -38,11 +38,8 @@ const VirtualMixer = memo(() => {
   const { classes } = useStyles();
 
   const {
-    inputDevices,
-    outputDevices,
     isLoading: devicesLoading,
     error: devicesError,
-    refreshDevices,
   } = useAudioDevices();
 
 
@@ -89,11 +86,6 @@ const VirtualMixer = memo(() => {
           className={classes.errorAlert}
         >
           {devicesError}
-          <Group mt="md">
-            <Button color="red" leftSection={<IconRefresh size={16} />} onClick={refreshDevices}>
-              Retry
-            </Button>
-          </Group>
         </Alert>
       </Container>
     );
@@ -130,20 +122,10 @@ const VirtualMixer = memo(() => {
         <MixerControls />
 
         {/* Channel Grid */}
-        {isReady && (
-          <ChannelGrid
-            inputDevices={inputDevices}
-            onRefreshDevices={refreshDevices}
-          />
-        )}
+        {isReady && <ChannelGrid />}
 
         {/* Master Section */}
-        {isReady && (
-          <MasterSection
-            outputDevices={outputDevices}
-            onRefreshDevices={refreshDevices}
-          />
-        )}
+        {isReady && <MasterSection />}
       </Stack>
     </Container>
   );
