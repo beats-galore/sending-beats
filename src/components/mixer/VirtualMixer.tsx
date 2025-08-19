@@ -36,8 +36,9 @@ const useStyles = createStyles(() => ({
 
 const VirtualMixer = memo(() => {
   const { classes } = useStyles();
+  console.log('re-rendered virtual mixer');
 
-  const { isLoading: devicesLoading, error: devicesError } = useAudioDevicesStatus();
+  const { error: devicesError } = useAudioDevicesStatus();
 
   const { isReady, error: mixerError, initialize } = useMixerInitialization();
 
@@ -52,19 +53,14 @@ const VirtualMixer = memo(() => {
 
   // Initialize mixer on mount - memoize the effect callback
   const initializeEffect = useCallback(() => {
-    if (!isReady && !devicesLoading && !mixerError) {
+    if (!isReady && !mixerError) {
       void initialize();
     }
-  }, [isReady, devicesLoading, mixerError, initialize]);
+  }, [isReady, mixerError, initialize]);
 
   useEffect(() => {
     initializeEffect();
   }, [initializeEffect]);
-
-  // Handle loading states
-  if (devicesLoading) {
-    return <FullScreenLoader message="Loading audio devices..." />;
-  }
 
   if (devicesError) {
     return (

@@ -1,4 +1,5 @@
 // Hook specifically for mixer initialization - only what VirtualMixer needs for initialization
+import { useMemo } from 'react';
 import { useMixerStore } from '../stores';
 
 export const useMixerInitialization = () => {
@@ -7,9 +8,12 @@ export const useMixerInitialization = () => {
   const mixerError = useMixerStore((state) => state.error);
   const initialize = useMixerStore((state) => state.initializeMixer);
 
-  return {
-    isReady: hasConfig,
-    error: mixerError,
-    initialize,
-  };
+  return useMemo(
+    () => ({
+      isReady: hasConfig,
+      error: mixerError,
+      initialize,
+    }),
+    [hasConfig, mixerError, initialize]
+  );
 };

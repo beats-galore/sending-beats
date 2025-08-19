@@ -1,5 +1,5 @@
 // Custom hook for VU meter data management with optimized real-time updates
-import { useEffect, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 
 import { audioService } from '../services';
 import { useMixerStore } from '../stores';
@@ -8,43 +8,17 @@ import { useThrottle } from '../utils/performance-helpers';
 
 export const useVUMeterData = (isEnabled = true) => {
   const intervalRef = useRef<ReturnType<typeof setTimeout>>();
-  const {
-    config,
-    metrics,
-    masterLevels,
-    batchUpdate,
-    updateChannelLevels,
-    updateMasterLevels,
-    updateMetrics,
-  } = useMixerStore();
+  // Only read what we need for polling logic - no data that changes from polling
+  const hasConfig = useMixerStore((state) => state.config !== null);
+  const batchUpdate = useMixerStore((state) => state.batchUpdate);
 
   useEffect(() => {
-    console.log('[use-vu-meter-data] config changed', config);
-  }, [config]);
-
-  useEffect(() => {
-    console.log('[use-vu-meter-data] metrics changed', metrics);
-  }, [metrics]);
-
-  useEffect(() => {
-    console.log('[use-vu-meter-data] masterLevels changed', masterLevels);
-  }, [masterLevels]);
+    console.log('[use-vu-meter-data] hasConfig changed', hasConfig);
+  }, [hasConfig]);
 
   useEffect(() => {
     console.log('[use-vu-meter-data] batchUpdate changed');
   }, [batchUpdate]);
-
-  useEffect(() => {
-    console.log('[use-vu-meter-data] updateChannelLevels changed');
-  }, [updateChannelLevels]);
-
-  useEffect(() => {
-    console.log('[use-vu-meter-data] updateMasterLevels changed');
-  }, [updateMasterLevels]);
-
-  useEffect(() => {
-    console.log('[use-vu-meter-data] updateMetrics changed');
-  }, [updateMetrics]);
 
   // Throttled batch update to prevent excessive re-renders - memoized
   const throttledBatchUpdate = useThrottle(
@@ -113,9 +87,9 @@ export const useVUMeterData = (isEnabled = true) => {
 
   // Start/stop polling based on mixer state
   useEffect(() => {
-    console.debug('📊 VU meter useEffect triggered:', { isEnabled, hasConfig: !!config });
+    console.debug('📊 VU meter useEffect triggered:', { isEnabled, hasConfig });
 
-    if (isEnabled && config) {
+    if (isEnabled && hasConfig) {
       console.debug('🔄 Starting VU meter polling...');
 
       // Start immediate poll
@@ -140,7 +114,7 @@ export const useVUMeterData = (isEnabled = true) => {
         intervalRef.current = undefined;
       }
     }
-  }, [isEnabled, !!config]); // Remove pollVUData from deps to prevent infinite loop
+  }, [isEnabled, hasConfig, pollVUData]);
 
   // Clean up on unmount
   useEffect(() => {
@@ -151,61 +125,6 @@ export const useVUMeterData = (isEnabled = true) => {
     };
   }, []);
 
-  // Get channel levels by ID
-  const getChannelLevels = useCallback(
-    (channelId: number) => {
-      const channel = config?.channels.find((c) => c.id === channelId);
-      return {
-        peak: channel?.peak_level || 0,
-        rms: channel?.rms_level || 0,
-      };
-    },
-    [config?.channels]
-  );
-
-  // Get all channel levels
-  const getAllChannelLevels = useCallback(() => {
-    if (!config) return {};
-
-    return config.channels.reduce(
-      (acc, channel) => ({
-        ...acc,
-        [channel.id]: {
-          peak: channel.peak_level,
-          rms: channel.rms_level,
-        },
-      }),
-      {}
-    );
-  }, [config]);
-
-  return useMemo(
-    () => ({
-      // State
-      metrics,
-      masterLevels,
-
-      // Channel level helpers
-      getChannelLevels,
-      getAllChannelLevels,
-
-      // Manual update functions (for testing)
-      updateChannelLevels,
-      updateMasterLevels,
-      updateMetrics,
-
-      // Control polling
-      pollVUData,
-    }),
-    [
-      metrics,
-      masterLevels,
-      getChannelLevels,
-      getAllChannelLevels,
-      updateChannelLevels,
-      updateMasterLevels,
-      updateMetrics,
-      pollVUData,
-    ]
-  );
+  // This hook only manages polling, doesn't return data
+  // Components should use focused hooks to read specific data they need
 };

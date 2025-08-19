@@ -103,7 +103,6 @@ const App: React.FC = () => {
         </nav>
       </header>
       <main className="flex-1 flex flex-col items-center justify-center px-4 py-8">
-        {console.log('????')}
         {renderContent()}
       </main>
       <footer className="p-2 bg-surface text-center text-xs text-surface-light">

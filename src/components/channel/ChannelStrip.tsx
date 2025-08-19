@@ -17,7 +17,7 @@ import { createStyles } from '@mantine/styles';
 import { IconChevronDown, IconChevronRight, IconRefresh, IconSettings } from '@tabler/icons-react';
 import { memo, useCallback, useMemo, useState } from 'react';
 
-import { useMixerState, useVUMeterData, useAudioDevices } from '../../hooks';
+import { useMixerState, useAudioDevices, useChannelLevels } from '../../hooks';
 
 import { ChannelEffects } from './ChannelEffects';
 import { ChannelEQ } from './ChannelEQ';
@@ -84,18 +84,13 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
   } = useMixerState();
 
   const { inputDevices, refreshDevices } = useAudioDevices();
-
-  const { getChannelLevels } = useVUMeterData();
+  
+  const levels = useChannelLevels(channel.id);
 
   // State for expandable sections
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showEQ, setShowEQ] = useState(false);
   const [showEffects, setShowEffects] = useState(false);
-
-  // Memoize levels to prevent infinite re-renders from new object creation
-  const levels = useMemo(() => {
-    return getChannelLevels(channel.id);
-  }, [getChannelLevels, channel.id]);
 
   const handleMuteToggle = useCallback(() => {
     toggleChannelMute(channel.id);
