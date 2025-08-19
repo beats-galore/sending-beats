@@ -76,6 +76,8 @@ export const useVUMeterData = (isEnabled: boolean = true) => {
 
   // Start/stop polling based on mixer state
   useEffect(() => {
+    console.debug('📊 VU meter useEffect triggered:', { isEnabled, hasConfig: !!config });
+    
     if (isEnabled && config) {
       console.log('🔄 Starting VU meter polling...');
       
@@ -93,13 +95,15 @@ export const useVUMeterData = (isEnabled: boolean = true) => {
         }
       };
     } else {
+      console.debug('🚫 VU polling disabled or no config');
       // Clean up if disabled
       if (intervalRef.current) {
+        console.log('🛑 Cleaning up VU meter polling...');
         clearInterval(intervalRef.current);
         intervalRef.current = undefined;
       }
     }
-  }, [isEnabled, config, pollVUData]);
+  }, [isEnabled, !!config]); // Remove pollVUData from deps to prevent infinite loop
 
   // Clean up on unmount
   useEffect(() => {

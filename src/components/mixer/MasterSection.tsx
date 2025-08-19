@@ -1,5 +1,5 @@
 // Master section with output routing and master VU meters
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 import { 
   Paper, 
   Grid, 
@@ -43,10 +43,30 @@ export const MasterSection = memo<MasterSectionProps>(({
     setMasterGain(gain);
   }, [setMasterGain]);
 
-  const outputDeviceOptions = outputDevices.map(device => ({
-    value: device.id,
-    label: device.name + (device.is_default ? ' (Default)' : '')
-  }));
+  const outputDeviceOptions = useMemo(() => {
+    // Check for duplicates and deduplication if needed
+    const deviceMap = new Map();
+    const duplicateIds: string[] = [];
+    
+    outputDevices.forEach(device => {
+      if (deviceMap.has(device.id)) {
+        duplicateIds.push(device.id);
+        console.warn('🚨 Duplicate output device ID detected:', device.id, device.name);
+      }
+      deviceMap.set(device.id, device);
+    });
+    
+    if (duplicateIds.length > 0) {
+      console.error('🚨 Found duplicate output device IDs:', duplicateIds);
+    }
+    
+    // Return unique devices only
+    const uniqueDevices = Array.from(deviceMap.values());
+    return uniqueDevices.map(device => ({
+      value: device.id,
+      label: device.name + (device.is_default ? ' (Default)' : '')
+    }));
+  }, [outputDevices]);
 
   return (
     <Paper p="lg" withBorder radius="md">
@@ -118,7 +138,7 @@ export const MasterSection = memo<MasterSectionProps>(({
                     title="Refresh devices"
                     size="sm"
                   >
-                    <IconRefresh size="1rem" />
+                    <IconRefresh size={16} />
                   </ActionIcon>
                 </Group>
                 <Select

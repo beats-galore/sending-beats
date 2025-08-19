@@ -2,7 +2,7 @@
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import { AudioDeviceInfo } from '../types';
-import { deviceService } from '../services';
+import { audioService, deviceService } from '../services';
 
 type AudioDeviceStore = {
   // State
@@ -10,7 +10,7 @@ type AudioDeviceStore = {
   isLoading: boolean;
   error: string | null;
   
-  // Computed values
+  // Computed values (these will be updated when devices change)
   inputDevices: AudioDeviceInfo[];
   outputDevices: AudioDeviceInfo[];
   defaultInputDevice: AudioDeviceInfo | null;
@@ -35,36 +35,39 @@ export const useAudioDeviceStore = create<AudioDeviceStore>()(
     isLoading: false,
     error: null,
     
-    // Computed values (getters)
-    get inputDevices() {
-      return deviceService.getInputDevices(get().devices);
-    },
-    
-    get outputDevices() {
-      return deviceService.getOutputDevices(get().devices);
-    },
-    
-    get defaultInputDevice() {
-      return deviceService.getDefaultInputDevice(get().devices) || null;
-    },
-    
-    get defaultOutputDevice() {
-      return deviceService.getDefaultOutputDevice(get().devices) || null;
-    },
+    // Computed values (updated whenever devices change)
+    inputDevices: [],
+    outputDevices: [],
+    defaultInputDevice: null,
+    defaultOutputDevice: null,
 
     // Load devices initially
     loadDevices: async () => {
+      console.debug('🎧 Loading audio devices...');
       set({ isLoading: true, error: null });
       
       try {
-        const devices = await deviceService.getAllDevices();
+        const devices = await audioService.enumerateAudioDevices();
+        console.debug('🎧 Loaded devices:', {
+          total: devices.length,
+          input: devices.filter(d => d.is_input).length,
+          output: devices.filter(d => d.is_output).length,
+          devices: devices.map(d => ({ id: d.id, name: d.name, is_input: d.is_input, is_output: d.is_output }))
+        });
+        
+        // Update devices and compute derived values
         set({ 
           devices,
+          inputDevices: deviceService.getInputDevices(devices),
+          outputDevices: deviceService.getOutputDevices(devices),
+          defaultInputDevice: deviceService.getDefaultInputDevice(devices) || null,
+          defaultOutputDevice: deviceService.getDefaultOutputDevice(devices) || null,
           isLoading: false,
           error: null 
         });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.error('❌ Failed to load audio devices:', errorMessage);
         set({ 
           isLoading: false,
           error: `Failed to load audio devices: ${errorMessage}`
@@ -74,17 +77,30 @@ export const useAudioDeviceStore = create<AudioDeviceStore>()(
 
     // Refresh devices
     refreshDevices: async () => {
+      console.debug('🔄 Refreshing audio devices...');
       set({ isLoading: true, error: null });
       
       try {
-        const devices = await deviceService.refreshDevices();
+        const devices = await audioService.refreshAudioDevices();
+        console.debug('🔄 Refreshed devices:', {
+          total: devices.length,
+          input: devices.filter(d => d.is_input).length,
+          output: devices.filter(d => d.is_output).length
+        });
+        
+        // Update devices and compute derived values
         set({ 
           devices,
+          inputDevices: deviceService.getInputDevices(devices),
+          outputDevices: deviceService.getOutputDevices(devices),
+          defaultInputDevice: deviceService.getDefaultInputDevice(devices) || null,
+          defaultOutputDevice: deviceService.getDefaultOutputDevice(devices) || null,
           isLoading: false,
           error: null 
         });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.error('❌ Failed to refresh audio devices:', errorMessage);
         set({ 
           isLoading: false,
           error: `Failed to refresh audio devices: ${errorMessage}`

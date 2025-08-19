@@ -10,7 +10,7 @@ import {
   DEFAULT_CHANNEL,
   ChannelUpdate 
 } from '../types';
-import { mixerService } from '../services';
+import { mixerService, audioService } from '../services';
 
 type MixerStore = {
   // State
@@ -59,27 +59,38 @@ export const useMixerStore = create<MixerStore>()(
 
     // Initialize mixer
     initializeMixer: async () => {
+      console.debug('🎛️ Initializing mixer...');
       try {
         set({ state: MixerState.STARTING, error: null });
         
         // Get DJ-optimized configuration
+        console.debug('📋 Getting DJ mixer config...');
         const djConfig = await mixerService.getDjMixerConfig();
+        console.debug('📋 DJ Config loaded:', {
+          channels: djConfig.channels.length,
+          sampleRate: djConfig.sample_rate,
+          bufferSize: djConfig.buffer_size
+        });
         
         // Create mixer with config
+        console.debug('🔧 Creating mixer...');
         const result = await mixerService.safeCreateMixer(djConfig);
         
         if (!result.success) {
           throw new Error(result.error || 'Failed to create mixer');
         }
+        console.debug('✅ Mixer created successfully');
         
         set({ 
           config: djConfig,
           state: MixerState.STOPPED,
           error: null 
         });
+        console.debug('🎛️ Mixer initialized successfully');
         
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.error('❌ Failed to initialize mixer:', errorMessage);
         set({ 
           state: MixerState.ERROR,
           error: `Failed to initialize mixer: ${errorMessage}`
@@ -171,7 +182,7 @@ export const useMixerStore = create<MixerStore>()(
       }
     },
 
-    // Update channel
+    // Update channel (with input stream management like original)
     updateChannel: async (channelId: number, updates: ChannelUpdate) => {
       const { config } = get();
       if (!config) {
@@ -184,10 +195,41 @@ export const useMixerStore = create<MixerStore>()(
           throw new Error(`Channel ${channelId} not found`);
         }
 
-        const updatedChannel = { ...config.channels[channelIndex], ...updates };
+        const previousChannel = config.channels[channelIndex];
+        const updatedChannel = { ...previousChannel, ...updates };
         
+        // Get previous and new input device IDs for stream management
+        const previousInputDeviceId = previousChannel.input_device_id;
+        const newInputDeviceId = updatedChannel.input_device_id;
+        
+        // Update channel configuration first
         await mixerService.updateMixerChannel(channelId, updatedChannel);
+        
+        // Handle input stream management (critical missing functionality)
+        if (newInputDeviceId && newInputDeviceId !== previousInputDeviceId) {
+          console.log(`🎤 Adding input stream for device: ${newInputDeviceId}`);
+          try {
+            await audioService.addInputStream(newInputDeviceId);
+            console.log(`✅ Successfully added input stream for: ${newInputDeviceId}`);
+          } catch (streamErr) {
+            console.error(`❌ Failed to add input stream for ${newInputDeviceId}:`, streamErr);
+            throw new Error(`Failed to add input stream: ${streamErr}`);
+          }
+        }
+        
+        // If input device was removed, remove input stream
+        if (previousInputDeviceId && !newInputDeviceId) {
+          console.log(`🗑️ Removing input stream for device: ${previousInputDeviceId}`);
+          try {
+            await audioService.removeInputStream(previousInputDeviceId);
+            console.log(`✅ Successfully removed input stream for: ${previousInputDeviceId}`);
+          } catch (streamErr) {
+            console.error(`❌ Failed to remove input stream for ${previousInputDeviceId}:`, streamErr);
+            // Don't throw here - removal failure shouldn't block the update
+          }
+        }
 
+        // Update local state
         set(state => ({
           config: state.config ? {
             ...state.config,

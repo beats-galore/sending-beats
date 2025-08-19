@@ -21,7 +21,7 @@ export const MixerControls = memo<MixerControlsProps>(({
   return (
     <Group>
       <Button
-        leftSection={isRunning ? <IconPlayerStop size="1rem" /> : <IconPlayerPlay size="1rem" />}
+        leftSection={isRunning ? <IconPlayerStop size={16} /> : <IconPlayerPlay size={16} />}
         color={isRunning ? "red" : "green"}
         onClick={isRunning ? onStop : onStart}
         disabled={!isReady}
@@ -31,7 +31,7 @@ export const MixerControls = memo<MixerControlsProps>(({
       </Button>
       
       <Button
-        leftSection={<IconPlus size="1rem" />}
+        leftSection={<IconPlus size={16} />}
         onClick={onAddChannel}
         disabled={!isReady}
         variant="outline"

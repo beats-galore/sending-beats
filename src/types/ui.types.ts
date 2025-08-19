@@ -99,11 +99,6 @@ export type LoadingSpinnerProps = {
   color?: string;
 };
 
-export type ErrorBoundaryState = {
-  hasError: boolean;
-  error?: Error;
-};
-
 // Color scheme for VU meters
 export const VU_METER_COLORS = {
   BACKGROUND: '#374151', // gray-700

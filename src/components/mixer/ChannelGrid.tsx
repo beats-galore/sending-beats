@@ -1,6 +1,6 @@
-// Grid layout for channel strips
+// Grid layout for channel strips - Professional horizontal mixer layout
 import { memo } from 'react';
-import { Stack, Title, Paper, Text, Center } from '@mantine/core';
+import { Stack, Title, Paper, Text, Center, Group, ScrollArea } from '@mantine/core';
 import { AudioChannel, AudioDeviceInfo } from '../../types';
 import { ChannelStrip } from '../channel';
 
@@ -29,18 +29,22 @@ export const ChannelGrid = memo<ChannelGridProps>(({
   }
 
   return (
-    <Stack>
+    <Stack gap="sm" w="100%">
       <Title order={3} c="blue">Channel Strips</Title>
-      <Stack gap="md">
-        {channels.map(channel => (
-          <ChannelStrip
-            key={channel.id}
-            channel={channel}
-            inputDevices={inputDevices}
-            onRefreshDevices={onRefreshDevices}
-          />
-        ))}
-      </Stack>
+      <Paper p="md" withBorder radius="md" w="100%">
+        <ScrollArea scrollbars="x" offsetScrollbars>
+          <Group gap="sm" align="flex-start" wrap="nowrap" style={{ minWidth: `${channels.length * 280}px` }}>
+            {channels.map(channel => (
+              <ChannelStrip
+                key={channel.id}
+                channel={channel}
+                inputDevices={inputDevices}
+                onRefreshDevices={onRefreshDevices}
+              />
+            ))}
+          </Group>
+        </ScrollArea>
+      </Paper>
     </Stack>
   );
 });

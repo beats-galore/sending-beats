@@ -16,6 +16,7 @@ const VirtualMixer = memo(() => {
     error: devicesError,
     refreshDevices 
   } = useAudioDevices();
+
   
   const { 
     config, 
@@ -45,9 +46,9 @@ const VirtualMixer = memo(() => {
 
   if (devicesError) {
     return (
-      <Container fluid h="100vh" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <Container fluid p="md" style={{ minHeight: "100vh", display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <Alert 
-          icon={<IconAlertCircle size="1rem" />} 
+          icon={<IconAlertCircle size={16} />} 
           title="Device Error" 
           color="red"
           style={{ maxWidth: 400 }}
@@ -56,7 +57,7 @@ const VirtualMixer = memo(() => {
           <Group mt="md">
             <Button 
               color="red" 
-              leftSection={<IconRefresh size="1rem" />}
+              leftSection={<IconRefresh size={16} />}
               onClick={refreshDevices}
             >
               Retry
@@ -69,9 +70,9 @@ const VirtualMixer = memo(() => {
 
   if (mixerError) {
     return (
-      <Container fluid h="100vh" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <Container fluid p="md" style={{ minHeight: "100vh", display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <Alert 
-          icon={<IconAlertCircle size="1rem" />} 
+          icon={<IconAlertCircle size={16} />} 
           title="Mixer Error" 
           color="red"
           style={{ maxWidth: 400 }}
@@ -80,7 +81,7 @@ const VirtualMixer = memo(() => {
           <Group mt="md">
             <Button 
               color="red" 
-              leftSection={<IconRefresh size="1rem" />}
+              leftSection={<IconRefresh size={16} />}
               onClick={initialize}
             >
               Retry
@@ -92,8 +93,8 @@ const VirtualMixer = memo(() => {
   }
 
   return (
-    <Container fluid p="md" h="100vh">
-      <Stack gap="lg">
+    <Container fluid p="md" style={{ minHeight: "100vh", maxWidth: "100%" }}>
+      <Stack gap="lg" w="100%">
         <Title order={1} c="blue">Virtual Mixer</Title>
         
         {/* Mixer Controls */}

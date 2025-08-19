@@ -22,6 +22,7 @@ export const useAudioDevices = () => {
 
   // Load devices on mount
   useEffect(() => {
+    console.log('🎧 useAudioDevices: Loading devices on mount...');
     loadDevices();
   }, [loadDevices]);
 
@@ -42,6 +43,7 @@ export const useAudioDevices = () => {
   const validateOutputDevice = (deviceId: string): boolean => {
     return isValidOutput(deviceId);
   };
+
 
   return {
     // State
