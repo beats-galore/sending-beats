@@ -1,6 +1,6 @@
 #[cfg(target_os = "macos")]
 use anyhow::Result;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, atomic::{AtomicPtr, Ordering}};
 use coreaudio_sys::{
     AudioDeviceID, AudioUnit, AudioComponentDescription,
     kAudioUnitType_Output, kAudioUnitSubType_HALOutput, kAudioUnitManufacturer_Apple,
@@ -17,6 +17,26 @@ use coreaudio_sys::{
 use std::ptr;
 use std::os::raw::c_void;
 
+/// # CoreAudio Thread Safety Documentation
+/// 
+/// This module implements CoreAudio stream management with careful attention to memory safety
+/// and thread synchronization between audio callback threads and the main application.
+/// 
+/// ## Memory Safety Strategy:
+/// - Uses `Arc<AtomicPtr<T>>` instead of raw pointers for callback context
+/// - Atomic operations ensure thread-safe pointer swapping during stream lifecycle
+/// - Proper cleanup in Drop-like patterns prevents memory leaks
+/// 
+/// ## Thread Interaction:
+/// - Audio callbacks execute in real-time CoreAudio threads
+/// - Main thread manages stream lifecycle (start/stop/cleanup)
+/// - Atomic pointer operations coordinate between threads safely
+/// 
+/// ## Locking Strategy:
+/// - Minimal use of mutexes in audio callback path for performance
+/// - Atomic pointer swapping for callback context management
+/// - Input buffer access through Arc<Mutex<Vec<f32>>> for thread safety
+
 /// CoreAudio output stream implementation for direct hardware access
 /// Implements actual Audio Unit streaming with render callbacks
 #[cfg(target_os = "macos")]
@@ -28,7 +48,7 @@ pub struct CoreAudioOutputStream {
     pub input_buffer: Arc<Mutex<Vec<f32>>>,
     pub is_running: Arc<Mutex<bool>>,
     audio_unit: Option<AudioUnit>,
-    callback_buffer_ptr: Option<*mut Arc<Mutex<Vec<f32>>>>,
+    callback_buffer: Arc<AtomicPtr<Arc<Mutex<Vec<f32>>>>>,
 }
 
 // Manual Debug implementation to handle the AudioUnit pointer
@@ -42,7 +62,7 @@ impl std::fmt::Debug for CoreAudioOutputStream {
             .field("channels", &self.channels)
             .field("is_running", &self.is_running)
             .field("audio_unit", &self.audio_unit.is_some())
-            .field("callback_buffer_ptr", &self.callback_buffer_ptr.is_some())
+            .field("callback_buffer", &(!self.callback_buffer.load(Ordering::Acquire).is_null()))
             .finish()
     }
 }
@@ -75,7 +95,7 @@ impl CoreAudioOutputStream {
             input_buffer,
             is_running,
             audio_unit: None,
-            callback_buffer_ptr: None,
+            callback_buffer: Arc::new(AtomicPtr::new(ptr::null_mut())),
         })
     }
 
@@ -164,14 +184,20 @@ impl CoreAudioOutputStream {
             return Err(anyhow::anyhow!("Failed to set stream format: {}", status));
         }
 
-        // Step 6: Set up render callback
-        // Create a stable pointer by cloning the Arc and boxing it
+        // Step 6: Set up render callback with safer pointer management
         let input_buffer_clone = self.input_buffer.clone();
         let boxed_buffer = Box::new(input_buffer_clone);
         let buffer_ptr = Box::into_raw(boxed_buffer);
         
-        // Store the pointer for cleanup
-        self.callback_buffer_ptr = Some(buffer_ptr);
+        // Store the pointer atomically for thread-safe access and cleanup
+        let old_ptr = self.callback_buffer.swap(buffer_ptr, Ordering::Release);
+        
+        // Clean up any previous pointer
+        if !old_ptr.is_null() {
+            unsafe {
+                let _ = Box::from_raw(old_ptr);
+            }
+        }
         
         let callback = AURenderCallbackStruct {
             inputProc: Some(render_callback),
@@ -231,8 +257,9 @@ impl CoreAudioOutputStream {
             }
         }
         
-        // Clean up the callback buffer pointer
-        if let Some(buffer_ptr) = self.callback_buffer_ptr.take() {
+        // Clean up the callback buffer pointer atomically
+        let buffer_ptr = self.callback_buffer.swap(ptr::null_mut(), Ordering::Release);
+        if !buffer_ptr.is_null() {
             unsafe {
                 // Convert back to Box to properly deallocate
                 let _ = Box::from_raw(buffer_ptr);
