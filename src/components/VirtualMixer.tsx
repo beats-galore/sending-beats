@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect,  useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 // Type definitions for the audio system 
@@ -84,7 +84,7 @@ const VUMeter: React.FC<{
   }, [peakLevel, rmsLevel, dbPeak, dbRms, peakPosition, rmsPosition]);
 
   const segments = 30;
-  const segmentHeight = height / segments;
+  // const segmentHeight = height / segments;
 
   return (
     <div className={`flex ${vertical ? 'flex-col-reverse' : 'flex-row'} gap-0.5`}>
