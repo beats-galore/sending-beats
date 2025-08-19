@@ -68,10 +68,10 @@ export const useAudioDeviceStore = create<AudioDeviceStore>()(
         const outputDevices = deviceService.getOutputDevices(devices);
         const defaultInputDevice = deviceService.getDefaultInputDevice(devices) || null;
         const defaultOutputDevice = deviceService.getDefaultOutputDevice(devices) || null;
-        
+
         set((state) => {
           const updates: Partial<AudioDeviceStore> = {};
-          
+
           if (!isEqual(state.devices, devices)) {
             updates.devices = devices;
           }
@@ -87,7 +87,7 @@ export const useAudioDeviceStore = create<AudioDeviceStore>()(
           if (!isEqual(state.defaultOutputDevice, defaultOutputDevice)) {
             updates.defaultOutputDevice = defaultOutputDevice;
           }
-          
+
           return {
             ...updates,
             isLoading: false,
@@ -122,10 +122,10 @@ export const useAudioDeviceStore = create<AudioDeviceStore>()(
         const outputDevices = deviceService.getOutputDevices(devices);
         const defaultInputDevice = deviceService.getDefaultInputDevice(devices) || null;
         const defaultOutputDevice = deviceService.getDefaultOutputDevice(devices) || null;
-        
+
         set((state) => {
           const updates: Partial<AudioDeviceStore> = {};
-          
+
           if (!isEqual(state.devices, devices)) {
             updates.devices = devices;
           }
@@ -141,7 +141,7 @@ export const useAudioDeviceStore = create<AudioDeviceStore>()(
           if (!isEqual(state.defaultOutputDevice, defaultOutputDevice)) {
             updates.defaultOutputDevice = defaultOutputDevice;
           }
-          
+
           return {
             ...updates,
             isLoading: false,

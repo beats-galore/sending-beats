@@ -7,9 +7,9 @@ export const useMixerControls = () => {
   const isReady = useMixerStore((state) => {
     return state.config !== null && state.state === 'stopped';
   });
-  
+
   const isRunning = useMixerStore((state) => state.state === 'running');
-  
+
   // Only select the specific actions needed
   const start = useMixerStore((state) => state.startMixer);
   const stop = useMixerStore((state) => state.stopMixer);

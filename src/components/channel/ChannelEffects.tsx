@@ -18,7 +18,7 @@ type ChannelEffectsProps = {
 
 export const ChannelEffects = memo<ChannelEffectsProps>(({ channelId }) => {
   const { classes } = useStyles();
-  
+
   const {
     // Compressor
     setCompressorThreshold,

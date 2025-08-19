@@ -19,7 +19,7 @@ type ChannelVUMeterProps = {
 export const ChannelVUMeter = memo<ChannelVUMeterProps>(
   ({ peakLevel, rmsLevel }) => {
     const { classes } = useStyles();
-    
+
     return (
       <Center>
         <div className={classes.textCenter}>

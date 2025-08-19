@@ -272,11 +272,11 @@ export const useMixerStore = create<MixerStore>()(
     updateChannelLevels: (levels: Record<number, [number, number]>) => {
       set((state) => {
         if (!state.config) return {};
-        
+
         const newChannels = updateArrayItems(state.config.channels, (channel) => {
           const newPeak = levels[channel.id]?.[0] || 0;
           const newRms = levels[channel.id]?.[1] || 0;
-          
+
           if (channel.peak_level !== newPeak || channel.rms_level !== newRms) {
             return {
               ...channel,
@@ -286,10 +286,10 @@ export const useMixerStore = create<MixerStore>()(
           }
           return channel;
         });
-        
+
         // Only update if channels array changed
         if (newChannels === state.config.channels) return {};
-        
+
         return {
           config: {
             ...state.config,
@@ -335,7 +335,7 @@ export const useMixerStore = create<MixerStore>()(
           const newChannels = updateArrayItems(state.config.channels, (channel) => {
             const newPeak = levels[channel.id]?.[0] || channel.peak_level;
             const newRms = levels[channel.id]?.[1] || channel.rms_level;
-            
+
             if (channel.peak_level !== newPeak || channel.rms_level !== newRms) {
               return {
                 ...channel,
@@ -345,7 +345,7 @@ export const useMixerStore = create<MixerStore>()(
             }
             return channel;
           });
-          
+
           // Only update config if channels array changed
           if (newChannels !== state.config.channels) {
             newState.config = {

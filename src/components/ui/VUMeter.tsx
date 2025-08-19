@@ -16,34 +16,34 @@ const useStyles = createStyles((theme) => ({
     position: 'relative',
     userSelect: 'none',
   },
-  
+
   segmentContainer: {
     height: '100%',
     width: '100%',
   },
-  
+
   segmentContainerVertical: {
     display: 'flex',
     flexDirection: 'column-reverse',
     gap: 0,
   },
-  
+
   segmentContainerHorizontal: {
     display: 'flex',
     flexDirection: 'row',
     gap: 0,
   },
-  
+
   segment: {
     transition: 'background-color 75ms',
   },
-  
+
   label: {
     position: 'absolute',
     fontSize: '10px',
     color: '#9ca3af',
   },
-  
+
   peakHold: {
     position: 'absolute',
     width: '100%',
@@ -56,7 +56,7 @@ const useStyles = createStyles((theme) => ({
 export const VUMeter = memo<VUMeterProps>(
   ({ peakLevel, rmsLevel, vertical = true, height = 200, width = 20, showLabels = true }) => {
     const { classes } = useStyles();
-    
+
     // Convert levels to dB
     const dbPeak = peakLevel > 0 ? audioCalculations.linearToDb(peakLevel) : -60;
     const dbRms = rmsLevel > 0 ? audioCalculations.linearToDb(rmsLevel) : -60;
@@ -69,10 +69,13 @@ export const VUMeter = memo<VUMeterProps>(
     const segmentSize = vertical ? height / segments : width / segments;
 
     // Memoize container style
-    const containerStyle = useMemo(() => ({
-      width: `${width}px`,
-      height: vertical ? `${height}px` : '20px',
-    }), [width, height, vertical]);
+    const containerStyle = useMemo(
+      () => ({
+        width: `${width}px`,
+        height: vertical ? `${height}px` : '20px',
+      }),
+      [width, height, vertical]
+    );
 
     const renderSegments = () => {
       return Array.from({ length: segments }, (_, i) => {
@@ -117,13 +120,7 @@ export const VUMeter = memo<VUMeterProps>(
               marginRight: '1px',
             };
 
-        return (
-          <div 
-            key={i} 
-            className={classes.segment} 
-            style={segmentStyle} 
-          />
-        );
+        return <div key={i} className={classes.segment} style={segmentStyle} />;
       });
     };
 
@@ -157,34 +154,29 @@ export const VUMeter = memo<VUMeterProps>(
     };
 
     // Memoize peak hold style
-    const peakHoldStyle = useMemo(() => ({
-      [vertical ? 'top' : 'left']: `${
-        vertical ? height - peakPosition * height : peakPosition * width
-      }px`,
-    }), [vertical, height, width, peakPosition]);
+    const peakHoldStyle = useMemo(
+      () => ({
+        [vertical ? 'top' : 'left']: `${
+          vertical ? height - peakPosition * height : peakPosition * width
+        }px`,
+      }),
+      [vertical, height, width, peakPosition]
+    );
 
     return (
-      <Box 
-        className={classes.container}
-        style={containerStyle}
-      >
-        <div 
+      <Box className={classes.container} style={containerStyle}>
+        <div
           className={`${classes.segmentContainer} ${
             vertical ? classes.segmentContainerVertical : classes.segmentContainerHorizontal
           }`}
         >
           {renderSegments()}
         </div>
-        
+
         {renderLabels()}
 
         {/* Peak hold indicator */}
-        {peakPosition > 0.8 && (
-          <div
-            className={classes.peakHold}
-            style={peakHoldStyle}
-          />
-        )}
+        {peakPosition > 0.8 && <div className={classes.peakHold} style={peakHoldStyle} />}
       </Box>
     );
   },

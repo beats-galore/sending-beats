@@ -12,14 +12,14 @@ const useStyles = createStyles((theme) => ({
     alignItems: 'center',
     width: '100%',
   },
-  
+
   label: {
     fontSize: '10px',
     color: theme.colors.gray[3],
     fontWeight: 500,
     textAlign: 'center',
   },
-  
+
   valueDisplay: {
     fontSize: '10px',
     color: theme.colors.gray[4],
@@ -27,7 +27,7 @@ const useStyles = createStyles((theme) => ({
     minWidth: '4rem',
     textAlign: 'center',
   },
-  
+
   sliderContainer: {
     height: 120,
     display: 'flex',
@@ -40,7 +40,7 @@ const useStyles = createStyles((theme) => ({
 export const AudioSlider = memo<AudioSliderProps>(
   ({ label, value, min, max, step = 0.1, unit = '', onChange, disabled = false }) => {
     const { classes } = useStyles();
-    
+
     // Debounce changes to prevent excessive updates during dragging
     const debouncedOnChange = useDebounce(onChange, 50);
 
@@ -52,8 +52,8 @@ export const AudioSlider = memo<AudioSliderProps>(
     );
 
     // Format display value
-    const displayValue = useMemo(() => 
-      `${value.toFixed(step < 1 ? 1 : 0)}${unit}`,
+    const displayValue = useMemo(
+      () => `${value.toFixed(step < 1 ? 1 : 0)}${unit}`,
       [value, step, unit]
     );
 
@@ -63,12 +63,12 @@ export const AudioSlider = memo<AudioSliderProps>(
         { value: min, label: `${min}${unit}` },
         { value: max, label: `${max}${unit}` },
       ];
-      
+
       // Add center mark for gain controls
       if (min < 0 && max > 0) {
         marksArray.splice(1, 0, { value: 0, label: '0' });
       }
-      
+
       return marksArray;
     }, [min, max, unit]);
 

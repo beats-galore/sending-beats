@@ -4,6 +4,6 @@ import { useMixerStore } from '../stores';
 export const useMasterLevels = () => {
   // Only select master levels, nothing else
   const masterLevels = useMixerStore((state) => state.masterLevels);
-  
+
   return masterLevels;
 };

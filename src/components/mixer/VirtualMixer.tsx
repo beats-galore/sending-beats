@@ -4,11 +4,11 @@ import { createStyles } from '@mantine/styles';
 import { IconAlertCircle, IconRefresh } from '@tabler/icons-react';
 import { memo, useEffect, useCallback } from 'react';
 
-import { 
-  useAudioDevices, 
-  useMixerInitialization, 
-  useMixerRunningState, 
-  useVUMeterData 
+import {
+  useAudioDevicesStatus,
+  useMixerInitialization,
+  useMixerRunningState,
+  useVUMeterData,
 } from '../../hooks';
 import { ErrorBoundary, FullScreenLoader } from '../layout';
 
@@ -37,21 +37,11 @@ const useStyles = createStyles(() => ({
 const VirtualMixer = memo(() => {
   const { classes } = useStyles();
 
-  const {
-    isLoading: devicesLoading,
-    error: devicesError,
-  } = useAudioDevices();
+  const { isLoading: devicesLoading, error: devicesError } = useAudioDevicesStatus();
 
+  const { isReady, error: mixerError, initialize } = useMixerInitialization();
 
-  const {
-    isReady,
-    error: mixerError,
-    initialize,
-  } = useMixerInitialization();
-  
   const isRunning = useMixerRunningState();
-
-
 
   // Start VU meter polling when running
   useVUMeterData(isRunning);
