@@ -62,3 +62,43 @@ jobs:
           # claude_env: |
           #   NODE_ENV: test
 
+  claude-review:
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude review')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude review')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude review'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code Review
+        id: claude-review
+        uses: anthropics/claude-code-action@beta
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+          # Optional: Specify model (defaults to Claude Sonnet 4, uncomment for Claude Opus 4.1)
+          # model: "claude-opus-4-1-20250805"
+
+          # Direct prompt for automated review (triggered by @claude review)
+          direct_prompt: |
+            Please review this pull request and provide feedback on:
+            - Code quality and best practices
+            - Potential bugs or issues
+            - Performance considerations
+            - Security concerns
+            - Test coverage
+            
+            Be constructive and helpful in your feedback.
+
+          # Optional: Use sticky comments to make Claude reuse the same comment on subsequent pushes to the same PR
+          # use_sticky_comment: true
+

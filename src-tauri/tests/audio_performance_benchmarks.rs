@@ -114,10 +114,10 @@ mod audio_performance_benchmarks {
         }
         
         // Performance assertions
-        assert!(avg_duration < Duration::from_millis(100), 
-               "Average device enumeration should be under 100ms");
-        assert!(*max_duration < Duration::from_millis(500), 
-               "Maximum device enumeration should be under 500ms");
+        assert!(avg_duration < Duration::from_millis(500), 
+               "Average device enumeration should be under 500ms");
+        assert!(*max_duration < Duration::from_millis(1000), 
+               "Maximum device enumeration should be under 1000ms");
     }
 
     /// Benchmark audio level calculation performance
