@@ -125,7 +125,9 @@ const ChannelStrip: React.FC<{
   channel: AudioChannel;
   audioDevices: AudioDeviceInfo[];
   onChannelUpdate: (channel: AudioChannel) => void;
-}> = ({ channel, audioDevices, onChannelUpdate }) => {
+  onRefreshDevices: () => void;
+  isRefreshingDevices: boolean;
+}> = ({ channel, audioDevices, onChannelUpdate, onRefreshDevices, isRefreshingDevices }) => {
   const inputDevices = audioDevices.filter(device => device.is_input);
 
   const updateChannel = (updates: Partial<AudioChannel>) => {
@@ -178,7 +180,19 @@ const ChannelStrip: React.FC<{
       <div className="grid grid-cols-6 gap-4 mb-3">
         {/* Input Device Selection */}
         <div className="col-span-2">
-          <label className="block text-xs text-surface-light mb-1">Input Device</label>
+          <div className="flex items-center justify-between mb-1">
+            <label className="block text-xs text-surface-light">Input Device</label>
+            <button
+              onClick={onRefreshDevices}
+              disabled={isRefreshingDevices}
+              className="p-1 text-xs bg-surface border border-surface-light hover:bg-surface-light text-surface-light hover:text-white rounded disabled:opacity-50 transition-colors"
+              title="Refresh audio devices"
+            >
+              <span className={isRefreshingDevices ? 'animate-spin' : ''}>
+                {isRefreshingDevices ? '⟳' : '↻'}
+              </span>
+            </button>
+          </div>
           <select
             value={channel.input_device_id || ''}
             onChange={(e) => updateChannel({ input_device_id: e.target.value || undefined })}
@@ -385,6 +399,7 @@ const VirtualMixer: React.FC = () => {
   const [isRunning, setIsRunning] = useState(false);
   const [nextChannelId, setNextChannelId] = useState(1);
   const [error, setError] = useState<string>("");
+  const [isRefreshingDevices, setIsRefreshingDevices] = useState(false);
   
   const metricsIntervalRef = useRef<number | null>(null);
 
@@ -582,6 +597,20 @@ const VirtualMixer: React.FC = () => {
     }
   };
 
+  const refreshAudioDevices = async () => {
+    setIsRefreshingDevices(true);
+    try {
+      const refreshedDevices = await invoke<AudioDeviceInfo[]>("refresh_audio_devices");
+      setAudioDevices(refreshedDevices);
+      console.log(`🔄 Refreshed audio devices: ${refreshedDevices.length} devices found`);
+    } catch (err) {
+      setError(`Failed to refresh audio devices: ${err}`);
+      console.error("❌ Failed to refresh audio devices:", err);
+    } finally {
+      setIsRefreshingDevices(false);
+    }
+  };
+
   if (!mixerConfig) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -636,6 +665,8 @@ const VirtualMixer: React.FC = () => {
                   channel={channel}
                   audioDevices={audioDevices}
                   onChannelUpdate={handleChannelUpdate}
+                  onRefreshDevices={refreshAudioDevices}
+                  isRefreshingDevices={isRefreshingDevices}
                 />
               ))}
             </div>
@@ -650,7 +681,19 @@ const VirtualMixer: React.FC = () => {
               
               {/* Master Output Device Selection */}
               <div>
-                <label className="block text-sm text-surface-light mb-2">Master Output Device</label>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm text-surface-light">Master Output Device</label>
+                  <button
+                    onClick={refreshAudioDevices}
+                    disabled={isRefreshingDevices}
+                    className="p-2 text-sm bg-surface border border-surface-light hover:bg-surface-light text-surface-light hover:text-white rounded disabled:opacity-50 transition-colors"
+                    title="Refresh audio devices"
+                  >
+                    <span className={isRefreshingDevices ? 'animate-spin' : ''}>
+                      {isRefreshingDevices ? '⟳' : '↻'}
+                    </span>
+                  </button>
+                </div>
                 <select
                   value={mixerConfig.master_output_device_id || ''}
                   onChange={async (e) => {

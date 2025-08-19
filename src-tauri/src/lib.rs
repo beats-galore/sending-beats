@@ -165,6 +165,18 @@ async fn enumerate_audio_devices(
 }
 
 #[tauri::command]
+async fn refresh_audio_devices(
+    audio_state: State<'_, AudioState>,
+) -> Result<Vec<AudioDeviceInfo>, String> {
+    let device_manager = audio_state.device_manager.lock().await;
+    // Force a fresh device enumeration
+    device_manager
+        .enumerate_devices()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn get_audio_device(
     audio_state: State<'_, AudioState>,
     device_id: String,
@@ -436,6 +448,7 @@ pub fn run() {
             get_stream_status,
             get_listener_stats,
             enumerate_audio_devices,
+            refresh_audio_devices,
             get_audio_device,
             create_mixer,
             start_mixer,
