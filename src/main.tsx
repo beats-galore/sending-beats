@@ -7,7 +7,7 @@ import '@mantine/core/styles.css';
 
 console.log('REACT_SCAN_ENABLED', import.meta.env.REACT_SCAN_ENABLED);
 // React Scan setup for development performance monitoring
-if (typeof window !== 'undefined' && import.meta.env.REACT_SCAN_ENABLED === 'true') {
+if (typeof window !== 'undefined' && import.meta.env.REACT_SCAN_ENABLED !== 'true') {
   import('react-scan')
     .then((ReactScan) => {
       ReactScan.scan({
