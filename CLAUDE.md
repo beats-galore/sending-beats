@@ -6,6 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Sendin Beats is a comprehensive, multi-phased radio streaming platform designed to be a fully-fledged application for DJs to livestream to Icecast internet radio streaming providers. The project aims to replace and enhance functionality found in tools like Ladiocast/Loopback and radio.co, providing an all-in-one solution for professional radio streaming.
 
+## Implementation guidance
+- Approach things in small chunks. Work iteratively towards a simple goal before spreading out into different feature areas.
+- Find logical breaking points when working, and commit before the scope of changes is before long with a detailed description of the work done so far. Make sure you check the diff of code before committing.
+- Don't be afraid to ask questions about suggested solutions. You don't necessarily need to work completely isolated until the goal is achieved. It's good to ask for feedback
+
+
 ## Current Implementation Status
 
 **Phase**: Early development - Virtual mixer UI implementation with backend infrastructure

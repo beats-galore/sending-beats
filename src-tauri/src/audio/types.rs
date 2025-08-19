@@ -1,4 +1,10 @@
 use serde::{Deserialize, Serialize};
+use cpal::traits::DeviceTrait;
+
+#[cfg(target_os = "macos")]
+use coreaudio_sys::AudioDeviceID;
+#[cfg(target_os = "macos")]
+use crate::audio::coreaudio_stream::CoreAudioOutputStream;
 
 /// Audio device information
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -11,6 +17,42 @@ pub struct AudioDeviceInfo {
     pub supported_sample_rates: Vec<u32>,
     pub supported_channels: Vec<u16>,
     pub host_api: String,
+}
+
+/// Cross-platform audio device handle
+pub enum AudioDeviceHandle {
+    Cpal(cpal::Device),
+    #[cfg(target_os = "macos")]
+    CoreAudio(CoreAudioDevice),
+}
+
+impl std::fmt::Debug for AudioDeviceHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AudioDeviceHandle::Cpal(device) => {
+                f.debug_struct("AudioDeviceHandle::Cpal")
+                    .field("name", &device.name().unwrap_or_else(|_| "Unknown".to_string()))
+                    .finish()
+            }
+            #[cfg(target_os = "macos")]
+            AudioDeviceHandle::CoreAudio(device) => {
+                f.debug_struct("AudioDeviceHandle::CoreAudio")
+                    .field("device", device)
+                    .finish()
+            }
+        }
+    }
+}
+
+/// CoreAudio specific device for direct hardware access
+#[cfg(target_os = "macos")]
+#[derive(Debug)]
+pub struct CoreAudioDevice {
+    pub device_id: AudioDeviceID,
+    pub name: String,
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub stream: Option<CoreAudioOutputStream>,
 }
 
 /// Audio channel configuration

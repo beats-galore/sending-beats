@@ -27,6 +27,7 @@ tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 anyhow = "1"
 thiserror = "1"
+tracing = "0.1"
 base64 = "0.21"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
@@ -38,10 +39,12 @@ lame = "0.1"
 cpal = "0.15"              # Cross-platform audio I/O
 rtrb = "0.2"               # Real-time ring buffer
 rubato = "0.15"            # High-quality sample rate conversion
+rustfft = "6.2"            # Fast Fourier Transform for spectrum analysis
 
 # Platform-specific audio system integration
 [target.'cfg(target_os = "macos")'.dependencies]
-coreaudio-rs = "0.11"     # macOS Core Audio integration
+coreaudio-rs = "0.13"     # macOS Core Audio integration
+core-foundation = "0.9"   # Core Foundation framework  
 coreaudio-sys = "0.2"     # Low-level Core Audio bindings
 
 [target.'cfg(target_os = "windows")'.dependencies]

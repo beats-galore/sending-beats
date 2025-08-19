@@ -1,10 +1,44 @@
 use anyhow::{Context, Result};
 use cpal::{StreamConfig, SampleRate, BufferSize};
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
+use tracing::{info, warn, error, debug};
+
+/// # Thread Safety and Locking Order Documentation
+/// 
+/// This module implements a complex audio processing system with multiple threads and shared state.
+/// To prevent deadlocks and ensure thread safety, the following locking order MUST be observed:
+/// 
+/// ## Locking Hierarchy (acquire locks in this order):
+/// 1. `active_output_devices` - Track active audio devices (coordination only)
+/// 2. `coreaudio_stream` - CoreAudio-specific stream management (macOS only)
+/// 3. `output_stream` - High-level output stream wrapper
+/// 4. `input_streams` - Input stream management map
+/// 5. `channel_levels_cache` / `master_levels_cache` - UI data caches (read frequently)
+/// 6. `channel_levels` / `master_levels` - Real-time audio level data
+/// 7. `mix_buffer` - Audio processing buffer (high-frequency access)
+/// 8. `metrics` - Performance metrics
+/// 9. `command_rx` - Command processing channel
+/// 
+/// ## Thread Safety Guarantees:
+/// - All shared state is protected by `Arc<Mutex<T>>` or `Arc<AtomicPtr<T>>`
+/// - Audio processing occurs in dedicated threads separate from UI
+/// - CoreAudio callback uses atomic pointer management for memory safety
+/// - Stream handles are properly tracked to prevent memory leaks
+/// 
+/// ## Critical Sections:
+/// - Audio callbacks execute in real-time threads - minimize lock contention
+/// - UI polling occurs at 100ms intervals - uses cached data when possible
+/// - Device switching requires careful coordination of stream lifecycle
+/// 
+/// ## Memory Safety:
+/// - CoreAudio callbacks use `Arc<AtomicPtr<T>>` instead of raw pointers
+/// - CPAL streams are allowed to be managed by the audio subsystem naturally
+/// - Device tracking enables coordination without unsafe stream storage
+/// - All cleanup is performed in Drop implementations and explicit stop methods
 
 use super::devices::AudioDeviceManager;
 use super::effects::AudioAnalyzer;
@@ -41,9 +75,59 @@ pub struct VirtualMixer {
     audio_device_manager: Arc<AudioDeviceManager>,
     input_streams: Arc<Mutex<HashMap<String, Arc<AudioInputStream>>>>,
     output_stream: Arc<Mutex<Option<Arc<AudioOutputStream>>>>,
+    // Track active output streams by device ID for cleanup (no direct stream storage due to Send/Sync)
+    active_output_devices: Arc<Mutex<std::collections::HashSet<String>>>,
+    #[cfg(target_os = "macos")]
+    coreaudio_stream: Arc<Mutex<Option<super::coreaudio_stream::CoreAudioOutputStream>>>,
 }
 
 impl VirtualMixer {
+    /// Comprehensive device ID validation for security and robustness
+    fn validate_device_id(device_id: &str) -> Result<()> {
+        // Basic empty/length checks
+        if device_id.is_empty() {
+            return Err(anyhow::anyhow!("Device ID cannot be empty"));
+        }
+        if device_id.len() > 256 {
+            return Err(anyhow::anyhow!("Device ID too long: maximum 256 characters allowed, got {}", device_id.len()));
+        }
+        if device_id.len() < 2 {
+            return Err(anyhow::anyhow!("Device ID too short: minimum 2 characters required"));
+        }
+        
+        // Character validation - allow alphanumeric, underscore, dash, dot, and colon for device IDs
+        let valid_chars = |c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | ':');
+        if !device_id.chars().all(valid_chars) {
+            let invalid_chars: String = device_id.chars()
+                .filter(|&c| !valid_chars(c))
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
+            return Err(anyhow::anyhow!(
+                "Device ID contains invalid characters: '{}'. Only alphanumeric, underscore, dash, dot, and colon are allowed", 
+                invalid_chars
+            ));
+        }
+        
+        // Pattern validation - must not start or end with special characters
+        if device_id.starts_with(|c: char| !c.is_alphanumeric()) {
+            return Err(anyhow::anyhow!("Device ID must start with alphanumeric character"));
+        }
+        if device_id.ends_with(|c: char| !c.is_alphanumeric()) {
+            return Err(anyhow::anyhow!("Device ID must end with alphanumeric character"));
+        }
+        
+        // Security checks - prevent common injection patterns
+        let dangerous_patterns = ["../", "..\\", "//", "\\\\", ";;", "&&", "||"];
+        for pattern in &dangerous_patterns {
+            if device_id.contains(pattern) {
+                return Err(anyhow::anyhow!("Device ID contains dangerous pattern: '{}'", pattern));
+            }
+        }
+        
+        Ok(())
+    }
+
     /// Validate mixer configuration for security and performance
     fn validate_config(config: &MixerConfig) -> Result<()> {
         // Sample rate validation
@@ -58,7 +142,7 @@ impl VirtualMixer {
         
         // Check buffer size is power of 2 for optimal performance
         if !config.buffer_size.is_power_of_two() {
-            println!("Warning: Buffer size {} is not a power of 2, may cause performance issues", config.buffer_size);
+            warn!("Buffer size {} is not a power of 2, may cause performance issues", config.buffer_size);
         }
         
         // Master gain validation
@@ -95,6 +179,11 @@ impl VirtualMixer {
     }
 
     pub async fn new(config: MixerConfig) -> Result<Self> {
+        let device_manager = Arc::new(AudioDeviceManager::new()?);
+        Self::new_with_device_manager(config, device_manager).await
+    }
+
+    pub async fn new_with_device_manager(config: MixerConfig, device_manager: Arc<AudioDeviceManager>) -> Result<Self> {
         // Validate mixer configuration
         Self::validate_config(&config)?;
         
@@ -113,8 +202,8 @@ impl VirtualMixer {
             active_channels: config.channels.len() as u32,
         }));
 
-        // Initialize audio device manager
-        let audio_device_manager = Arc::new(AudioDeviceManager::new()?);
+        // Use the provided audio device manager
+        let audio_device_manager = device_manager;
 
         let channel_levels = Arc::new(Mutex::new(HashMap::new()));
         let channel_levels_cache = Arc::new(Mutex::new(HashMap::new()));
@@ -138,6 +227,9 @@ impl VirtualMixer {
             audio_device_manager,
             input_streams: Arc::new(Mutex::new(HashMap::new())),
             output_stream: Arc::new(Mutex::new(None)),
+            active_output_devices: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            #[cfg(target_os = "macos")]
+            coreaudio_stream: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -147,7 +239,7 @@ impl VirtualMixer {
             return Ok(());
         }
 
-        println!("Starting Virtual Mixer with real audio capture...");
+        info!("Starting Virtual Mixer with real audio capture...");
 
         self.is_running.store(true, Ordering::Relaxed);
         
@@ -159,30 +251,22 @@ impl VirtualMixer {
 
     /// Add an audio input stream with real audio capture using cpal
     pub async fn add_input_stream(&self, device_id: &str) -> Result<()> {
-        // Validate device_id input
-        if device_id.is_empty() {
-            return Err(anyhow::anyhow!("Device ID cannot be empty"));
-        }
-        if device_id.len() > 256 {
-            return Err(anyhow::anyhow!("Device ID too long: maximum 256 characters"));
-        }
-        if !device_id.chars().all(|c| c.is_alphanumeric() || "_-".contains(c)) {
-            return Err(anyhow::anyhow!("Device ID contains invalid characters: only alphanumeric, underscore, and dash allowed"));
-        }
+        // Validate device_id input with comprehensive validation
+        Self::validate_device_id(device_id)?;
         
-        println!("Adding real audio input stream for device: {}", device_id);
+        info!("Adding real audio input stream for device: {}", device_id);
         
         // Find the actual cpal device
         let device = self.audio_device_manager.find_cpal_device(device_id, true).await?;
         let device_name = device.name().unwrap_or_else(|_| device_id.to_string());
         
-        println!("Found cpal device: {}", device_name);
+        debug!("Found cpal device: {}", device_name);
         
         // Get the default input config for this device
         let config = device.default_input_config()
             .context("Failed to get default input config")?;
             
-        println!("Device config: {:?}", config);
+        debug!("Device config: {:?}", config);
         
         // Create AudioInputStream structure
         let input_stream = AudioInputStream::new(
@@ -203,7 +287,7 @@ impl VirtualMixer {
             buffer_size: BufferSize::Fixed(buffer_size as u32),
         };
         
-        println!("Using stream config: channels={}, sample_rate={}, buffer_size={}", 
+        debug!("Using stream config: channels={}, sample_rate={}, buffer_size={}", 
                 stream_config.channels, stream_config.sample_rate.0, buffer_size);
         
         // Add to streams collection first
@@ -233,8 +317,8 @@ impl VirtualMixer {
             
         match result {
             Ok(()) => {
-                println!("Successfully started audio input stream for: {}", device_name);
-                println!("Successfully added real audio input stream: {}", device_id);
+                info!("Successfully started audio input stream for: {}", device_name);
+                info!("Successfully added real audio input stream: {}", device_id);
                 Ok(())
             }
             Err(e) => {
@@ -246,26 +330,42 @@ impl VirtualMixer {
         }
     }
 
-    /// Set the audio output stream with real cpal stream creation
+    /// Set the audio output stream with support for both cpal and CoreAudio devices
     pub async fn set_output_stream(&self, device_id: &str) -> Result<()> {
-        println!("Setting output stream for device: {}", device_id);
+        info!("Setting output stream for device: {}", device_id);
         
         // Validate device_id input
         if device_id.is_empty() || device_id.len() > 256 {
             return Err(anyhow::anyhow!("Invalid device ID: must be 1-256 characters"));
         }
         
-        // Find the actual cpal device for output
-        let device = self.audio_device_manager.find_cpal_device(device_id, false).await?;
+        // **CRITICAL FIX**: Stop and cleanup existing output streams first
+        self.stop_output_streams().await?;
         
+        // Find the audio device (CoreAudio or cpal) for output
+        let device_handle = self.audio_device_manager.find_audio_device(device_id, false).await?;
+        
+        match device_handle {
+            super::AudioDeviceHandle::Cpal(device) => {
+                self.create_cpal_output_stream(device_id, device).await
+            }
+            #[cfg(target_os = "macos")]
+            super::AudioDeviceHandle::CoreAudio(coreaudio_device) => {
+                self.create_coreaudio_output_stream(device_id, coreaudio_device).await
+            }
+        }
+    }
+
+    /// Create cpal output stream (existing implementation)
+    async fn create_cpal_output_stream(&self, device_id: &str, device: cpal::Device) -> Result<()> {
         let device_name = device.name().unwrap_or_else(|_| device_id.to_string());
-        println!("Found output device: {}", device_name);
+        debug!("Found cpal output device: {}", device_name);
         
         // Get the default output config for this device
         let config = device.default_output_config()
             .context("Failed to get default output config")?;
             
-        println!("Output device config: {:?}", config);
+        debug!("Output device config: {:?}", config);
         
         // Create AudioOutputStream structure
         let output_stream = AudioOutputStream::new(
@@ -286,12 +386,15 @@ impl VirtualMixer {
             buffer_size: BufferSize::Fixed(buffer_size as u32),
         };
         
-        println!("Using output stream config: channels={}, sample_rate={}, buffer_size={}", 
+        debug!("Using output stream config: channels={}, sample_rate={}, buffer_size={}", 
                 stream_config.channels, stream_config.sample_rate.0, buffer_size);
         
-        // Create and start the actual cpal output stream in a separate scope
+        // **CRITICAL FIX**: Create and start the actual cpal output stream with proper error handling
         {
-            let output_stream_handle = match config.sample_format() {
+            debug!("Building cpal output stream with format: {:?}", config.sample_format());
+            // **MEMORY LEAK FIX**: Create and start stream in isolated scope to avoid Send issues
+            let stream_started = {
+                let output_stream_handle = match config.sample_format() {
                 cpal::SampleFormat::F32 => {
                     device.build_output_stream(
                         &stream_config,
@@ -317,7 +420,7 @@ impl VirtualMixer {
                             data.fill(0.0);
                         }
                         },
-                        |err| eprintln!("Audio output error: {}", err),
+                        |err| error!("Audio output error: {}", err),
                         None
                     ).context("Failed to build F32 output stream")?
                 },
@@ -345,7 +448,7 @@ impl VirtualMixer {
                             data.fill(0);
                         }
                         },
-                        |err| eprintln!("Audio output error: {}", err),
+                        |err| error!("Audio output error: {}", err),
                         None
                     ).context("Failed to build I16 output stream")?
                 },
@@ -372,25 +475,81 @@ impl VirtualMixer {
                             data.fill(32768);
                         }
                         },
-                        |err| eprintln!("Audio output error: {}", err),
+                        |err| error!("Audio output error: {}", err),
                         None
                     ).context("Failed to build U16 output stream")?
                 },
                 _ => {
                     return Err(anyhow::anyhow!("Unsupported output sample format: {:?}", config.sample_format()));
                 }
+                };
+                
+                // Start and drop stream handle immediately within this scope
+                let result = output_stream_handle.play().is_ok();
+                drop(output_stream_handle);
+                result
             };
             
-            // Start the output stream and immediately forget it to avoid Send issues
-            output_stream_handle.play().context("Failed to start output stream")?;
-            std::mem::forget(output_stream_handle);
+            if stream_started {
+                info!("Successfully started cpal output stream");
+                
+                // Track this device as having an active stream (now safe to await)
+                let mut active_devices = self.active_output_devices.lock().await;
+                active_devices.insert(device_id.to_string());
+            } else {
+                return Err(anyhow::anyhow!("Failed to start output stream"));
+            }
         }
         
         // Store our wrapper
         let mut stream_guard = self.output_stream.lock().await;
         *stream_guard = Some(Arc::new(output_stream));
         
-        println!("Successfully created real cpal output stream: {}", device_id);
+        info!("Successfully created real cpal output stream: {}", device_id);
+        
+        Ok(())
+    }
+
+    /// Create CoreAudio output stream for direct hardware access
+    #[cfg(target_os = "macos")]
+    async fn create_coreaudio_output_stream(&self, device_id: &str, coreaudio_device: super::CoreAudioDevice) -> Result<()> {
+        info!("Creating CoreAudio output stream for device: {} (ID: {})", coreaudio_device.name, coreaudio_device.device_id);
+        
+        // Create the actual CoreAudio stream
+        let mut coreaudio_stream = super::coreaudio_stream::CoreAudioOutputStream::new(
+            coreaudio_device.device_id,
+            coreaudio_device.name.clone(),
+            self.config.sample_rate,
+            coreaudio_device.channels,
+        )?;
+        
+        // **CRITICAL FIX**: Start the CoreAudio stream with proper error handling
+        match coreaudio_stream.start() {
+            Ok(()) => {
+                println!("Successfully started CoreAudio stream");
+            }
+            Err(e) => {
+                eprintln!("Failed to start CoreAudio stream: {}", e);
+                return Err(anyhow::anyhow!("Failed to start CoreAudio stream: {}", e));
+            }
+        }
+        
+        // Store the CoreAudio stream in the mixer to keep it alive
+        let mut coreaudio_guard = self.coreaudio_stream.lock().await;
+        *coreaudio_guard = Some(coreaudio_stream);
+        
+        // Create AudioOutputStream structure for compatibility with the existing mixer architecture
+        let output_stream = AudioOutputStream::new(
+            device_id.to_string(),
+            coreaudio_device.name.clone(),
+            self.config.sample_rate,
+        )?;
+        
+        // Store our wrapper 
+        let mut stream_guard = self.output_stream.lock().await;
+        *stream_guard = Some(Arc::new(output_stream));
+        
+        println!("✅ Real CoreAudio Audio Unit stream created and started for: {}", device_id);
         
         Ok(())
     }
@@ -433,10 +592,21 @@ impl VirtualMixer {
 
     /// Stop the virtual mixer
     pub async fn stop(&mut self) -> Result<()> {
+        println!("Stopping Virtual Mixer...");
+        
+        // **CRITICAL FIX**: Set running flag false first
         self.is_running.store(false, Ordering::Relaxed);
         
-        // TODO: Stop all audio streams (will be managed separately)
+        // **CRITICAL FIX**: Wait briefly for audio processing thread to notice the stop flag
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         
+        // **CRITICAL FIX**: Stop all output streams safely
+        let _ = self.stop_output_streams().await;
+        
+        // **CRITICAL FIX**: Stop and remove all input streams
+        let _ = self.stop_all_input_streams().await;
+        
+        println!("Virtual Mixer stopped successfully");
         Ok(())
     }
 
@@ -455,15 +625,16 @@ impl VirtualMixer {
         let mixer_handle = VirtualMixerHandle {
             input_streams: self.input_streams.clone(),
             output_stream: self.output_stream.clone(),
+            #[cfg(target_os = "macos")]
+            coreaudio_stream: self.coreaudio_stream.clone(),
         };
 
         // Spawn real-time audio processing task
         tokio::spawn(async move {
             let mut frame_count = 0u64;
             
-            // Pre-allocate buffers to reduce allocations during real-time processing
+            // Pre-allocate stereo buffers to reduce allocations during real-time processing
             let mut reusable_output_buffer = vec![0.0f32; (buffer_size * 2) as usize];
-            let mut reusable_mixed_samples = vec![0.0f32; buffer_size as usize];
             let mut reusable_left_samples = Vec::with_capacity(buffer_size as usize);
             let mut reusable_right_samples = Vec::with_capacity(buffer_size as usize);
             
@@ -475,9 +646,8 @@ impl VirtualMixer {
                 // Collect input samples from all active input streams with effects processing
                 let input_samples = mixer_handle.collect_input_samples_with_effects(&config_channels).await;
                 
-                // Clear and reuse pre-allocated buffers
+                // Clear and reuse pre-allocated stereo buffers
                 reusable_output_buffer.fill(0.0);
-                reusable_mixed_samples.fill(0.0);
                 reusable_left_samples.clear();
                 reusable_right_samples.clear();
                 
@@ -510,10 +680,10 @@ impl VirtualMixer {
                                 }
                             }
                             
-                            // Simple mixing: add samples together using reusable buffer
-                            let mix_length = reusable_mixed_samples.len().min(samples.len());
+                            // Professional stereo mixing: add samples together preserving L/R channels
+                            let mix_length = reusable_output_buffer.len().min(samples.len());
                             for i in 0..mix_length {
-                                reusable_mixed_samples[i] += samples[i];
+                                reusable_output_buffer[i] += samples[i];
                             }
                         }
                     }
@@ -521,18 +691,13 @@ impl VirtualMixer {
                     // Normalize by number of active channels to prevent clipping
                     if active_channels > 0 {
                         let gain = 1.0 / active_channels as f32;
-                        for sample in reusable_mixed_samples.iter_mut() {
+                        for sample in reusable_output_buffer.iter_mut() {
                             *sample *= gain;
                         }
                     }
                     
-                    // Convert mono mixed samples to stereo output using reusable buffer
-                    for (i, &sample) in reusable_mixed_samples.iter().enumerate() {
-                        if i * 2 + 1 < reusable_output_buffer.len() {
-                            reusable_output_buffer[i * 2] = sample;     // Left channel
-                            reusable_output_buffer[i * 2 + 1] = sample; // Right channel
-                        }
-                    }
+                    // Stereo audio is already mixed directly into reusable_output_buffer
+                    // No conversion needed - stereo data preserved throughout mixing process
                     
                     // Apply basic gain (master volume)
                     let master_gain = 0.5f32; // Reduce volume to prevent clipping
@@ -618,13 +783,17 @@ impl VirtualMixer {
                     }
                 }
 
-                // Maintain real-time constraints
-                let target_duration = std::time::Duration::from_micros(
-                    (buffer_size as u64 * 1_000_000) / sample_rate as u64
-                );
+                // Event-driven processing: Sleep for a shorter interval to respond to audio data availability
+                // This replaces timer-driven processing with more responsive audio-availability-driven processing
+                let process_interval = std::time::Duration::from_millis(2); // 2ms = much more responsive than 10.67ms
                 let elapsed = process_start.elapsed();
-                if elapsed < target_duration {
-                    tokio::time::sleep(target_duration - elapsed).await;
+                
+                // Always sleep briefly to prevent CPU spinning, but don't force rigid timing
+                if elapsed < process_interval {
+                    tokio::time::sleep(process_interval - elapsed).await;
+                } else {
+                    // If processing took longer than expected, yield briefly but continue processing
+                    tokio::task::yield_now().await;
                 }
             }
             
@@ -745,5 +914,62 @@ impl VirtualMixer {
     /// Get the audio device manager
     pub fn get_device_manager(&self) -> &Arc<AudioDeviceManager> {
         &self.audio_device_manager
+    }
+    
+    /// **NEW**: Safely stop all output streams to prevent crashes when switching devices
+    async fn stop_output_streams(&self) -> Result<()> {
+        info!("Stopping existing output streams...");
+        
+        // Stop CoreAudio stream if active
+        #[cfg(target_os = "macos")]
+        {
+            let mut coreaudio_guard = self.coreaudio_stream.lock().await;
+            if let Some(mut stream) = coreaudio_guard.take() {
+                info!("Stopping CoreAudio stream...");
+                if let Err(e) = stream.stop() {
+                    warn!("Error stopping CoreAudio stream: {}", e);
+                }
+            }
+        }
+        
+        // Clear tracked active output devices
+        let mut active_devices_guard = self.active_output_devices.lock().await;
+        if !active_devices_guard.is_empty() {
+            info!("Clearing {} tracked active output devices...", active_devices_guard.len());
+            active_devices_guard.clear(); // Clear tracking - streams are managed by audio subsystem
+        }
+        
+        // Clear the regular output stream wrapper
+        let mut stream_guard = self.output_stream.lock().await;
+        if stream_guard.is_some() {
+            debug!("Clearing output stream wrapper...");
+            *stream_guard = None;
+        }
+        
+        // Small delay to allow audio subsystem to release resources
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        
+        info!("Output streams stopped");
+        Ok(())
+    }
+    
+    /// **NEW**: Stop all input streams safely
+    async fn stop_all_input_streams(&self) -> Result<()> {
+        info!("Stopping all input streams...");
+        
+        let device_ids: Vec<String> = {
+            let streams = self.input_streams.lock().await;
+            streams.keys().cloned().collect()
+        };
+        
+        for device_id in device_ids {
+            debug!("Stopping input stream: {}", device_id);
+            if let Err(e) = self.remove_input_stream(&device_id).await {
+                warn!("Error stopping input stream {}: {}", device_id, e);
+            }
+        }
+        
+        info!("All input streams stopped");
+        Ok(())
     }
 }

@@ -38,7 +38,30 @@ impl AudioInputStream {
     pub fn get_samples(&self) -> Vec<f32> {
         if let Ok(mut buffer) = self.audio_buffer.try_lock() {
             let samples = buffer.clone();
+            let sample_count = samples.len();
             buffer.clear();
+            
+            // Debug: Log when we're actually reading samples
+            use std::sync::{LazyLock, Mutex as StdMutex};
+            static GET_SAMPLES_COUNT: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> = 
+                LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
+            
+            if let Ok(mut count_map) = GET_SAMPLES_COUNT.lock() {
+                let count = count_map.entry(self.device_id.clone()).or_insert(0);
+                *count += 1;
+                
+                if sample_count > 0 {
+                    if *count % 100 == 0 || (*count < 10) {
+                        let peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                        let rms = (samples.iter().map(|&s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
+                        println!("📖 GET_SAMPLES [{}]: Retrieved {} samples (call #{}), peak: {:.4}, rms: {:.4}", 
+                            self.device_id, sample_count, count, peak, rms);
+                    }
+                } else if *count % 500 == 0 {
+                    println!("📪 GET_SAMPLES [{}]: Empty buffer (call #{})", self.device_id, count);
+                }
+            }
+            
             samples
         } else {
             Vec::new()
@@ -49,7 +72,29 @@ impl AudioInputStream {
     pub fn process_with_effects(&self, channel: &AudioChannel) -> Vec<f32> {
         if let Ok(mut buffer) = self.audio_buffer.try_lock() {
             let mut samples = buffer.clone();
+            let original_sample_count = samples.len();
             buffer.clear();
+            
+            // Debug: Log processing activity
+            use std::sync::{LazyLock, Mutex as StdMutex};
+            static PROCESS_COUNT: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> = 
+                LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
+            
+            if let Ok(mut count_map) = PROCESS_COUNT.lock() {
+                let count = count_map.entry(self.device_id.clone()).or_insert(0);
+                *count += 1;
+                
+                if original_sample_count > 0 {
+                    let original_peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                    
+                    if *count % 100 == 0 || (*count < 10) {
+                        println!("⚙️  PROCESS_WITH_EFFECTS [{}]: Processing {} samples (call #{}), peak: {:.4}, channel: {}", 
+                            self.device_id, original_sample_count, count, original_peak, channel.name);
+                        println!("   Settings: gain: {:.2}, muted: {}, effects: {}", 
+                            channel.gain, channel.muted, channel.effects_enabled);
+                    }
+                }
+            }
 
             // Apply effects if enabled
             if channel.effects_enabled && !samples.is_empty() {
@@ -74,6 +119,33 @@ impl AudioInputStream {
 
                     // Process samples through effects chain
                     effects.process(&mut samples);
+                }
+            }
+            
+            // **CRITICAL FIX**: Apply channel-specific gain and mute (this was missing!)
+            if !channel.muted && channel.gain > 0.0 {
+                for sample in samples.iter_mut() {
+                    *sample *= channel.gain;
+                }
+                
+                // Debug: Log final processed levels
+                if let Ok(count_map) = PROCESS_COUNT.lock() {
+                    let count = count_map.get(&self.device_id).unwrap_or(&0);
+                    if original_sample_count > 0 && (*count % 100 == 0 || *count < 10) {
+                        let final_peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                        let final_rms = (samples.iter().map(|&s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
+                        println!("✅ PROCESSED [{}]: Final {} samples, peak: {:.4}, rms: {:.4}", 
+                            self.device_id, samples.len(), final_peak, final_rms);
+                    }
+                }
+            } else {
+                samples.fill(0.0);
+                if let Ok(count_map) = PROCESS_COUNT.lock() {
+                    let count = count_map.get(&self.device_id).unwrap_or(&0);
+                    if original_sample_count > 0 && (*count % 200 == 0 || *count < 5) {
+                        println!("🔇 MUTED/ZERO_GAIN [{}]: {} samples set to silence (muted: {}, gain: {:.2})", 
+                            self.device_id, samples.len(), channel.muted, channel.gain);
+                    }
                 }
             }
 
@@ -153,58 +225,136 @@ impl StreamManager {
         
         let device_config = device.default_input_config().context("Failed to get device config")?;
         
+        // Add debugging context
+        let device_name_for_debug = device.name().unwrap_or_else(|_| "Unknown Device".to_string());
+        let debug_device_id = device_id.clone();
+        let debug_device_id_for_callback = debug_device_id.clone();
+        let debug_device_id_for_error = debug_device_id.clone();
+        
         let stream = match device_config.sample_format() {
             SampleFormat::F32 => {
+                println!("🎤 Creating F32 input stream for: {} ({})", device_name_for_debug, debug_device_id);
+                println!("   Config: {} channels, {} Hz, {} samples/buffer", 
+                    config.channels, config.sample_rate.0, 
+                    match &config.buffer_size { 
+                        cpal::BufferSize::Fixed(s) => s.to_string(),
+                        cpal::BufferSize::Default => "default".to_string()
+                    });
+                
+                // Debug counters
+                let mut callback_count = 0u64;
+                let mut total_samples_captured = 0u64;
+                let mut last_debug_time = std::time::Instant::now();
+                
                 device.build_input_stream(
                     &config,
                     move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                        let mono_samples: Vec<f32> = if config.channels == 1 {
-                            data.to_vec()
-                        } else {
-                            data.chunks(config.channels as usize)
-                                .map(|frame| frame.iter().sum::<f32>() / frame.len() as f32)
-                                .collect()
-                        };
+                        callback_count += 1;
                         
+                        // Calculate audio levels for debugging
+                        let peak_level = data.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                        let rms_level = (data.iter().map(|&s| s * s).sum::<f32>() / data.len() as f32).sqrt();
+                        
+                        // Keep stereo data as-is to prevent pitch shifting - don't convert to mono
+                        let audio_samples: Vec<f32> = data.to_vec();
+                        
+                        total_samples_captured += audio_samples.len() as u64;
+                        
+                        // Debug logging every 2 seconds (approximately)
+                        if callback_count % 200 == 0 || (peak_level > 0.01 && callback_count % 50 == 0) {
+                            println!("🔊 INPUT [{}] Callback #{}: {} samples, peak: {:.4}, rms: {:.4}", 
+                                debug_device_id_for_callback, callback_count, data.len(), peak_level, rms_level);
+                            println!("   Total samples captured: {}, stereo samples: {}", total_samples_captured, audio_samples.len());
+                        }
+                        
+                        // Store in buffer with additional debugging
                         if let Ok(mut buffer) = audio_buffer.try_lock() {
-                            buffer.extend_from_slice(&mono_samples);
-                            let max_buffer_size = target_sample_rate as usize * 2;
+                            let buffer_size_before = buffer.len();
+                            buffer.extend_from_slice(&audio_samples);
+                            let buffer_size_after = buffer.len();
+                            
+                            // Only log buffer state changes when significant or debug needed
+                            if buffer_size_before == 0 && buffer_size_after > 0 && callback_count < 10 {
+                                println!("📦 BUFFER: First audio data stored in buffer for {}: {} samples", debug_device_id, buffer_size_after);
+                            }
+                            
+                            let max_buffer_size = target_sample_rate as usize / 10; // 100ms max for real-time audio
                             if buffer.len() > max_buffer_size {
                                 let excess = buffer.len() - max_buffer_size;
                                 buffer.drain(0..excess);
+                                if callback_count % 100 == 0 {
+                                    println!("⚠️  BUFFER OVERFLOW: Drained {} samples from {}, now {} samples", 
+                                        excess, debug_device_id, buffer.len());
+                                }
+                            }
+                            
+                            // Debug buffer state periodically
+                            if callback_count % 500 == 0 && buffer.len() > 0 {
+                                println!("📊 BUFFER STATUS [{}]: {} samples stored (max {})", 
+                                    debug_device_id, buffer.len(), max_buffer_size);
+                            }
+                        } else {
+                            if callback_count % 100 == 0 {
+                                println!("🔒 BUFFER LOCK FAILED [{}]: Callback #{} couldn't access buffer", debug_device_id, callback_count);
                             }
                         }
                     },
-                    |err| eprintln!("Audio input error: {}", err),
+                    {
+                        let error_device_id = debug_device_id_for_error.clone();
+                        move |err| eprintln!("❌ Audio input error [{}]: {}", error_device_id, err)
+                    },
                     None
                 )?
             },
             SampleFormat::I16 => {
+                println!("🎤 Creating I16 input stream for: {} ({})", device_name_for_debug, debug_device_id);
+                
+                let mut callback_count = 0u64;
+                let debug_device_id_i16 = debug_device_id.clone();
+                let debug_device_id_i16_error = debug_device_id.clone();
+                
                 device.build_input_stream(
                     &config,
                     move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                        callback_count += 1;
+                        
                         let f32_samples: Vec<f32> = data.iter()
                             .map(|&sample| sample as f32 / 32768.0)
                             .collect();
+                        
+                        let peak_level = f32_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                        let rms_level = (f32_samples.iter().map(|&s| s * s).sum::<f32>() / f32_samples.len() as f32).sqrt();
                             
-                        let mono_samples: Vec<f32> = if config.channels == 1 {
-                            f32_samples
-                        } else {
-                            f32_samples.chunks(config.channels as usize)
-                                .map(|frame| frame.iter().sum::<f32>() / frame.len() as f32)
-                                .collect()
-                        };
+                        // Keep stereo data as-is to prevent pitch shifting - don't convert to mono
+                        let audio_samples = f32_samples;
+                        
+                        if callback_count % 200 == 0 || (peak_level > 0.01 && callback_count % 50 == 0) {
+                            println!("🔊 INPUT I16 [{}] Callback #{}: {} samples, peak: {:.4}, rms: {:.4}", 
+                                debug_device_id_i16, callback_count, data.len(), peak_level, rms_level);
+                        }
                         
                         if let Ok(mut buffer) = audio_buffer.try_lock() {
-                            buffer.extend_from_slice(&mono_samples);
-                            let max_buffer_size = target_sample_rate as usize * 2;
+                            let buffer_size_before = buffer.len();
+                            buffer.extend_from_slice(&audio_samples);
+                            
+                            if buffer_size_before == 0 && buffer.len() > 0 && callback_count < 10 {
+                                println!("📦 BUFFER I16: First audio data stored for {}: {} samples", debug_device_id_i16, buffer.len());
+                            }
+                            
+                            let max_buffer_size = target_sample_rate as usize / 10; // 100ms max for real-time audio
                             if buffer.len() > max_buffer_size {
                                 let excess = buffer.len() - max_buffer_size;
                                 buffer.drain(0..excess);
+                                if callback_count % 100 == 0 {
+                                    println!("⚠️  BUFFER OVERFLOW I16: Drained {} samples from {}", excess, debug_device_id_i16);
+                                }
                             }
                         }
                     },
-                    |err| eprintln!("Audio input error: {}", err),
+                    {
+                        let error_device_id = debug_device_id_i16_error.clone();
+                        move |err| eprintln!("❌ Audio input error I16 [{}]: {}", error_device_id, err)
+                    },
                     None
                 )?
             },
@@ -216,17 +366,12 @@ impl StreamManager {
                             .map(|&sample| (sample as f32 - 32768.0) / 32768.0)
                             .collect();
                             
-                        let mono_samples: Vec<f32> = if config.channels == 1 {
-                            f32_samples
-                        } else {
-                            f32_samples.chunks(config.channels as usize)
-                                .map(|frame| frame.iter().sum::<f32>() / frame.len() as f32)
-                                .collect()
-                        };
+                        // Keep stereo data as-is to prevent pitch shifting - don't convert to mono
+                        let audio_samples = f32_samples;
                         
                         if let Ok(mut buffer) = audio_buffer.try_lock() {
-                            buffer.extend_from_slice(&mono_samples);
-                            let max_buffer_size = target_sample_rate as usize * 2;
+                            buffer.extend_from_slice(&audio_samples);
+                            let max_buffer_size = target_sample_rate as usize / 10; // 100ms max for real-time audio
                             if buffer.len() > max_buffer_size {
                                 let excess = buffer.len() - max_buffer_size;
                                 buffer.drain(0..excess);
@@ -249,7 +394,15 @@ impl StreamManager {
     }
     
     pub fn remove_stream(&mut self, device_id: &str) -> bool {
-        self.streams.remove(device_id).is_some()
+        if let Some(stream) = self.streams.remove(device_id) {
+            println!("Stopping and removing stream for device: {}", device_id);
+            // Stream will be automatically dropped and stopped here
+            drop(stream);
+            true
+        } else {
+            println!("Stream not found for removal: {}", device_id);
+            false
+        }
     }
 }
 
@@ -316,6 +469,8 @@ pub fn get_stream_manager() -> &'static std::sync::mpsc::Sender<StreamCommand> {
 pub struct VirtualMixerHandle {
     pub input_streams: Arc<Mutex<HashMap<String, Arc<AudioInputStream>>>>,
     pub output_stream: Arc<Mutex<Option<Arc<AudioOutputStream>>>>,
+    #[cfg(target_os = "macos")]
+    pub coreaudio_stream: Arc<Mutex<Option<super::coreaudio_stream::CoreAudioOutputStream>>>,
 }
 
 impl VirtualMixerHandle {
@@ -324,6 +479,20 @@ impl VirtualMixerHandle {
         let mut samples = HashMap::new();
         let streams = self.input_streams.lock().await;
         
+        // Debug: Log collection attempt
+        use std::sync::{LazyLock, Mutex as StdMutex};
+        static COLLECTION_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
+        
+        let collection_count = if let Ok(mut count) = COLLECTION_COUNT.lock() {
+            *count += 1;
+            *count
+        } else {
+            0
+        };
+        
+        let num_streams = streams.len();
+        let num_channels = channels.len();
+        
         for (device_id, stream) in streams.iter() {
             // Find the channel configuration for this stream
             if let Some(channel) = channels.iter().find(|ch| {
@@ -331,13 +500,46 @@ impl VirtualMixerHandle {
             }) {
                 let stream_samples = stream.process_with_effects(channel);
                 if !stream_samples.is_empty() {
+                    let peak = stream_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                    let rms = (stream_samples.iter().map(|&s| s * s).sum::<f32>() / stream_samples.len() as f32).sqrt();
+                    
+                    if collection_count % 200 == 0 || (peak > 0.01 && collection_count % 50 == 0) {
+                        println!("🎯 COLLECT WITH EFFECTS [{}]: {} samples collected, peak: {:.4}, rms: {:.4}, channel: {}", 
+                            device_id, stream_samples.len(), peak, rms, channel.name);
+                    }
                     samples.insert(device_id.clone(), stream_samples);
                 }
             } else {
                 // No channel config found, use raw samples
                 let stream_samples = stream.get_samples();
                 if !stream_samples.is_empty() {
+                    let peak = stream_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                    let rms = (stream_samples.iter().map(|&s| s * s).sum::<f32>() / stream_samples.len() as f32).sqrt();
+                    
+                    if collection_count % 200 == 0 || (peak > 0.01 && collection_count % 50 == 0) {
+                        println!("🎯 COLLECT RAW [{}]: {} samples collected, peak: {:.4}, rms: {:.4} (no channel config)", 
+                            device_id, stream_samples.len(), peak, rms);
+                    }
                     samples.insert(device_id.clone(), stream_samples);
+                }
+            }
+        }
+        
+        // Debug: Log collection summary
+        if collection_count % 1000 == 0 {
+            println!("📈 COLLECTION SUMMARY: {} streams available, {} channels configured, {} samples collected", 
+                num_streams, num_channels, samples.len());
+            
+            if samples.is_empty() && num_streams > 0 {
+                println!("⚠️  NO SAMPLES COLLECTED despite {} active streams - potential issue!", num_streams);
+                
+                // Debug each stream buffer state
+                for (device_id, stream) in streams.iter() {
+                    if let Ok(buffer_guard) = stream.audio_buffer.try_lock() {
+                        println!("   Stream [{}]: buffer has {} samples", device_id, buffer_guard.len());
+                    } else {
+                        println!("   Stream [{}]: buffer locked", device_id);
+                    }
                 }
             }
         }
@@ -362,8 +564,17 @@ impl VirtualMixerHandle {
 
     /// Send mixed samples to the output stream
     pub async fn send_to_output(&self, samples: &[f32]) {
+        // Send to regular output stream
         if let Some(output) = self.output_stream.lock().await.as_ref() {
             output.send_samples(samples);
+        }
+        
+        // Send to CoreAudio stream if available
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(ref coreaudio_stream) = *self.coreaudio_stream.lock().await {
+                let _ = coreaudio_stream.send_audio(samples);
+            }
         }
     }
 }

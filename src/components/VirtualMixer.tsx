@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect,  useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 // Type definitions for the audio system 
@@ -84,7 +84,7 @@ const VUMeter: React.FC<{
   }, [peakLevel, rmsLevel, dbPeak, dbRms, peakPosition, rmsPosition]);
 
   const segments = 30;
-  const segmentHeight = height / segments;
+  // const segmentHeight = height / segments;
 
   return (
     <div className={`flex ${vertical ? 'flex-col-reverse' : 'flex-row'} gap-0.5`}>
@@ -536,10 +536,41 @@ const VirtualMixer: React.FC = () => {
 
   const handleChannelUpdate = async (updatedChannel: AudioChannel) => {
     try {
+      // Get the previous channel configuration
+      const previousChannel = mixerConfig?.channels.find(ch => ch.id === updatedChannel.id);
+      const previousInputDeviceId = previousChannel?.input_device_id;
+      const newInputDeviceId = updatedChannel.input_device_id;
+      
+      // Update channel configuration first
       await invoke("update_mixer_channel", { 
         channelId: updatedChannel.id, 
         channel: updatedChannel 
       });
+      
+      // If input device was added or changed, create/update input stream
+      if (newInputDeviceId && newInputDeviceId !== previousInputDeviceId) {
+        console.log(`🎤 Adding input stream for device: ${newInputDeviceId}`);
+        try {
+          await invoke("add_input_stream", { deviceId: newInputDeviceId });
+          console.log(`✅ Successfully added input stream for: ${newInputDeviceId}`);
+        } catch (streamErr) {
+          console.error(`❌ Failed to add input stream for ${newInputDeviceId}:`, streamErr);
+          setError(`Failed to add input stream: ${streamErr}`);
+        }
+      }
+      
+      // If input device was removed, remove input stream
+      if (previousInputDeviceId && !newInputDeviceId) {
+        console.log(`🗑️ Removing input stream for device: ${previousInputDeviceId}`);
+        try {
+          await invoke("remove_input_stream", { deviceId: previousInputDeviceId });
+          console.log(`✅ Successfully removed input stream for: ${previousInputDeviceId}`);
+        } catch (streamErr) {
+          console.error(`❌ Failed to remove input stream for ${previousInputDeviceId}:`, streamErr);
+        }
+      }
+      
+      // Update local state
       setMixerConfig(prev => prev ? {
         ...prev,
         channels: prev.channels.map(ch => 
