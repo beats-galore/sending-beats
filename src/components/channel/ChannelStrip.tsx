@@ -17,15 +17,15 @@ import { createStyles } from '@mantine/styles';
 import { IconChevronDown, IconChevronRight, IconRefresh, IconSettings } from '@tabler/icons-react';
 import { memo, useCallback, useMemo, useState } from 'react';
 
-import { useMixerState, useVUMeterData } from '../../hooks';
+import { useMixerState, useVUMeterData, useAudioDevices } from '../../hooks';
 
 import { ChannelEffects } from './ChannelEffects';
 import { ChannelEQ } from './ChannelEQ';
 import { ChannelVUMeter } from './ChannelVUMeter';
 
-import type { AudioChannel, AudioDeviceInfo } from '../../types';
+import type { AudioChannel } from '../../types';
 
-const useStyles = createStyles((theme) => ({
+const useStyles = createStyles(() => ({
   channelPaper: {
     width: 260,
     minWidth: 260,
@@ -70,12 +70,10 @@ const buttonStyles = {
 
 type ChannelStripProps = {
   channel: AudioChannel;
-  inputDevices: AudioDeviceInfo[];
-  onRefreshDevices: () => void;
 };
 
 export const ChannelStrip = memo<ChannelStripProps>(
-  ({ channel, inputDevices, onRefreshDevices }) => {
+  ({ channel }) => {
     const { classes } = useStyles();
     
     const {
@@ -85,6 +83,8 @@ export const ChannelStrip = memo<ChannelStripProps>(
       updateChannelGain,
       updateChannelPan,
     } = useMixerState();
+    
+    const { inputDevices, refreshDevices } = useAudioDevices();
 
     const { getChannelLevels } = useVUMeterData();
 
@@ -195,7 +195,7 @@ export const ChannelStrip = memo<ChannelStripProps>(
                 style={{ flex: 1 }}
                 styles={selectStyles}
               />
-              <ActionIcon size="xs" onClick={onRefreshDevices} variant="subtle">
+              <ActionIcon size="xs" onClick={refreshDevices} variant="subtle">
                 <IconRefresh size={10} />
               </ActionIcon>
             </Group>

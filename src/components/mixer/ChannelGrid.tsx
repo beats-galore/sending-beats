@@ -3,11 +3,10 @@ import { Stack, Title, Paper, Text, Center, Group, ScrollArea } from '@mantine/c
 import { memo, useMemo } from 'react';
 
 import { ChannelStrip } from '../channel';
-import { useChannelsData, useAudioDevices } from '../../hooks';
+import { useChannelsData } from '../../hooks';
 
 export const ChannelGrid = memo(() => {
   const { channels } = useChannelsData();
-  const { inputDevices, refreshDevices } = useAudioDevices();
     const groupStyle = useMemo(() => ({
       minWidth: `${channels.length * 280}px`
     }), [channels.length]);
@@ -43,8 +42,6 @@ export const ChannelGrid = memo(() => {
                 <ChannelStrip
                   key={channel.id}
                   channel={channel}
-                  inputDevices={inputDevices}
-                  onRefreshDevices={refreshDevices}
                 />
               ))}
             </Group>
