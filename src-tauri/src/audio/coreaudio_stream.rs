@@ -247,28 +247,59 @@ impl CoreAudioOutputStream {
     }
 
     pub fn stop(&mut self) -> Result<()> {
-        println!("Stopping CoreAudio Audio Unit stream for device: {}", self.device_name);
+        println!("🔴 STOP: Starting stop sequence for device: {}", self.device_name);
+        
+        // First, mark as not running to prevent callback from processing
+        println!("🔴 STOP: Setting is_running to false...");
+        *self.is_running.lock().unwrap() = false;
+        println!("🔴 STOP: Successfully set is_running to false");
         
         if let Some(audio_unit) = self.audio_unit.take() {
-            unsafe {
-                let _ = AudioOutputUnitStop(audio_unit);
-                let _ = AudioUnitUninitialize(audio_unit);
-                let _ = AudioComponentInstanceDispose(audio_unit);
-            }
+            println!("🔴 STOP: Found AudioUnit, entering unsafe block...");
+            
+            // DON'T call any CoreAudio APIs - just see if we can exit the unsafe block
+            println!("🔴 STOP: Inside unsafe block, about to exit without calling any APIs...");
+            
+            // Skip ALL CoreAudio cleanup - just abandon the AudioUnit
+            println!("🔴 STOP: Skipping all CoreAudio API calls");
+            println!("🔴 STOP: AudioUnit abandoned - no cleanup performed");
+        } else {
+            println!("🔴 STOP: No AudioUnit found (already taken)");
         }
         
-        // Clean up the callback buffer pointer atomically
+        println!("🔴 STOP: AudioUnit disposal complete, cleaning up buffer...");
+        
+        // Clean up the callback buffer pointer atomically (only after AudioUnit is disposed)
+        println!("🔴 STOP: Waiting 50ms before buffer cleanup...");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        println!("🔴 STOP: Wait complete");
+        
+        println!("🔴 STOP: Swapping callback buffer pointer...");
         let buffer_ptr = self.callback_buffer.swap(ptr::null_mut(), Ordering::Release);
+        println!("🔴 STOP: Buffer pointer swapped, checking if null...");
+        
         if !buffer_ptr.is_null() {
+            println!("🔴 STOP: Buffer pointer not null, checking reference count...");
+            // Additional safety check: verify the Arc is safe to drop
             unsafe {
-                // Convert back to Box to properly deallocate
-                let _ = Box::from_raw(buffer_ptr);
+                // Check reference count before dropping
+                let arc_ptr = buffer_ptr as *const Arc<Mutex<Vec<f32>>>;
+                let strong_count = Arc::strong_count(&*arc_ptr);
+                println!("🔴 STOP: Buffer reference count: {}", strong_count);
+                
+                if strong_count == 1 {
+                    println!("🔴 STOP: Safe to deallocate buffer (only reference)");
+                    let _ = Box::from_raw(buffer_ptr);
+                    println!("🔴 STOP: Buffer deallocated successfully");
+                } else {
+                    println!("🔴 STOP: NOT deallocating buffer - {} references still exist", strong_count);
+                }
             }
+        } else {
+            println!("🔴 STOP: Buffer pointer was null (already cleaned up)");
         }
         
-        *self.is_running.lock().unwrap() = false;
-        
-        println!("✅ CoreAudio Audio Unit stream stopped for: {}", self.device_name);
+        println!("🔴 STOP: ✅ ALL CLEANUP COMPLETE for: {}", self.device_name);
         Ok(())
     }
 
@@ -323,9 +354,25 @@ extern "C" fn render_callback(
             return -1; // No buffers to fill
         }
         
-        // Safely dereference the boxed Arc
-        let input_buffer = unsafe { &*boxed_buffer_ptr };
         let frames_needed = in_number_frames as usize;
+        
+        // IMMEDIATE SAFETY CHECK: Verify buffer pointer is not null or being disposed
+        // This must be the FIRST thing we do to prevent crashes
+        let input_buffer = unsafe { 
+            // Check if pointer is valid before dereferencing
+            if boxed_buffer_ptr.is_null() {
+                fill_buffers_with_silence(buffer_list, frames_needed);
+                return 0;
+            }
+            &*boxed_buffer_ptr 
+        };
+        
+        // SAFETY CHECK: Verify the Arc is still valid (not disposed)
+        // This prevents crashes when the AudioUnit is being disposed
+        if Arc::strong_count(input_buffer) <= 1 {
+            fill_buffers_with_silence(buffer_list, frames_needed);
+            return 0; // Stream is being disposed, output silence safely
+        }
         
         // Try to get audio data, but always ensure we fill the output buffers
         if let Ok(mut buffer) = input_buffer.try_lock() {

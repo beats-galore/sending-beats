@@ -140,9 +140,14 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
   }, [channel.id, toggleChannelSolo]);
 
   const handleInputDeviceChange = useCallback(
-    (deviceId: string | null) => {
+    async (deviceId: string | null) => {
       if (deviceId) {
-        setChannelInputDevice(channel.id, deviceId);
+        try {
+          await setChannelInputDevice(channel.id, deviceId);
+          console.debug(`✅ Channel ${channel.id} input device set to: ${deviceId}`);
+        } catch (error) {
+          console.error(`❌ Failed to set input device for channel ${channel.id}:`, error);
+        }
       }
     },
     [channel.id, setChannelInputDevice]

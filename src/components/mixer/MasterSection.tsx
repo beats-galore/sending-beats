@@ -13,18 +13,18 @@ import { audioService } from '../../services';
 import { VUMeter, AudioSlider } from '../ui';
 
 export const MasterSection = memo(() => {
-  const { mixerConfig, setMasterGain } = useMasterSectionData();
+  const { mixerConfig, setMasterGain, setMasterOutputDevice } = useMasterSectionData();
   const masterLevels = useMasterLevels();
   const metrics = useAudioMetrics();
   const { outputDevices, refreshDevices } = useAudioDevices();
 
   const handleOutputDeviceChange = useCallback(async (deviceId: string) => {
     try {
-      await audioService.setOutputStream(deviceId);
+      await setMasterOutputDevice(deviceId);
     } catch (error) {
       console.error('Failed to set output device:', error);
     }
-  }, []);
+  }, [setMasterOutputDevice]);
 
   const handleMasterGainChange = useCallback(
     (gain: number) => {

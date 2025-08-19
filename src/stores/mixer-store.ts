@@ -30,6 +30,7 @@ type MixerStore = {
   addChannel: () => Promise<void>;
   updateChannel: (channelId: number, updates: ChannelUpdate) => Promise<void>;
   updateMasterGain: (gain: number) => Promise<void>;
+  updateMasterOutputDevice: (deviceId: string) => Promise<void>;
 
   // Real-time data updates
   updateChannelLevels: (levels: Record<number, [number, number]>) => void;
@@ -266,6 +267,33 @@ export const useMixerStore = create<MixerStore>()(
             }
           : null,
       }));
+    },
+
+    // Update master output device
+    updateMasterOutputDevice: async (deviceId: string) => {
+      const { config } = get();
+      if (!config) {
+        throw new Error('Mixer not initialized');
+      }
+
+      try {
+        // Update backend first
+        await audioService.setOutputStream(deviceId);
+        
+        // Update local state if backend call succeeds
+        set((state) => ({
+          config: state.config
+            ? {
+                ...state.config,
+                master_output_device_id: deviceId,
+              }
+            : null,
+        }));
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        set({ error: `Failed to set output device: ${errorMessage}` });
+        throw error;
+      }
     },
 
     // Real-time level updates - optimized to prevent unnecessary re-renders

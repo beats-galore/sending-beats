@@ -5,14 +5,14 @@ import { memo } from 'react';
 import { useMixerControls } from '../../hooks';
 
 export const MixerControls = memo(() => {
-  const { isReady, isRunning, onStart, onStop, onAddChannel } = useMixerControls();
+  const { isReady, isRunning, canStop, onStart, onStop, onAddChannel } = useMixerControls();
   return (
     <Group>
       <Button
         leftSection={isRunning ? <IconPlayerStop size={16} /> : <IconPlayerPlay size={16} />}
         color={isRunning ? 'red' : 'green'}
         onClick={isRunning ? onStop : onStart}
-        disabled={!isReady}
+        disabled={isRunning ? !canStop : !isReady}
         variant={isRunning ? 'filled' : 'outline'}
       >
         {isRunning ? 'Stop Mixer' : 'Start Mixer'}

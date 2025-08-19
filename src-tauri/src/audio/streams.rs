@@ -37,9 +37,17 @@ impl AudioInputStream {
     
     pub fn get_samples(&self) -> Vec<f32> {
         if let Ok(mut buffer) = self.audio_buffer.try_lock() {
-            let samples = buffer.clone();
+            // Only process if we have a minimum amount of audio to avoid constantly draining small amounts
+            const MIN_SAMPLES_TO_PROCESS: usize = 256;  // Minimum before we bother processing
+            const MAX_SAMPLES_PER_CYCLE: usize = 2048;   // Maximum per processing cycle
+            
+            if buffer.len() < MIN_SAMPLES_TO_PROCESS {
+                return Vec::new();  // Wait for more audio to accumulate
+            }
+            
+            let samples_to_take = buffer.len().min(MAX_SAMPLES_PER_CYCLE);
+            let samples: Vec<f32> = buffer.drain(..samples_to_take).collect();
             let sample_count = samples.len();
-            buffer.clear();
             
             // Debug: Log when we're actually reading samples
             use std::sync::{LazyLock, Mutex as StdMutex};
@@ -71,9 +79,17 @@ impl AudioInputStream {
     /// Apply effects to input samples and update channel settings
     pub fn process_with_effects(&self, channel: &AudioChannel) -> Vec<f32> {
         if let Ok(mut buffer) = self.audio_buffer.try_lock() {
-            let mut samples = buffer.clone();
+            // Only process if we have a minimum amount of audio to avoid constantly draining small amounts
+            const MIN_SAMPLES_TO_PROCESS: usize = 256;  // Minimum before we bother processing
+            const MAX_SAMPLES_PER_CYCLE: usize = 2048;   // Maximum per processing cycle
+            
+            if buffer.len() < MIN_SAMPLES_TO_PROCESS {
+                return Vec::new();  // Wait for more audio to accumulate
+            }
+            
+            let samples_to_take = buffer.len().min(MAX_SAMPLES_PER_CYCLE);
+            let mut samples: Vec<f32> = buffer.drain(..samples_to_take).collect();
             let original_sample_count = samples.len();
-            buffer.clear();
             
             // Debug: Log processing activity
             use std::sync::{LazyLock, Mutex as StdMutex};
