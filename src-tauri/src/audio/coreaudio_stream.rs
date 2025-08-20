@@ -1,5 +1,6 @@
 #[cfg(target_os = "macos")]
 use anyhow::Result;
+use tracing::warn;
 use std::sync::{Arc, Mutex, atomic::{AtomicPtr, Ordering}};
 use coreaudio_sys::{
     AudioDeviceID, AudioUnit, AudioComponentDescription,

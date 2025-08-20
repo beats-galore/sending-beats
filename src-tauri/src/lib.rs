@@ -273,7 +273,7 @@ async fn get_mixer_metrics(
 #[tauri::command]
 async fn get_channel_levels(
     audio_state: State<'_, AudioState>,
-) -> Result<std::collections::HashMap<u32, (f32, f32)>, String> {
+) -> Result<std::collections::HashMap<u32, (f32, f32, f32, f32)>, String> {
     let mixer_guard = audio_state.mixer.lock().await;
     if let Some(ref mixer) = *mixer_guard {
         Ok(mixer.get_channel_levels().await)

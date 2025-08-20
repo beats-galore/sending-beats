@@ -524,7 +524,7 @@ pub struct VirtualMixerHandle {
     pub output_stream: Arc<Mutex<Option<Arc<AudioOutputStream>>>>,
     #[cfg(target_os = "macos")]
     pub coreaudio_stream: Arc<Mutex<Option<super::coreaudio_stream::CoreAudioOutputStream>>>,
-    pub channel_levels: Arc<Mutex<std::collections::HashMap<u32, (f32, f32)>>>,
+    pub channel_levels: Arc<Mutex<std::collections::HashMap<u32, (f32, f32, f32, f32)>>>,
 }
 
 impl VirtualMixerHandle {
@@ -603,8 +603,9 @@ impl VirtualMixerHandle {
                     
                     if collection_count % 200 == 0 {
                         println!("🔍 BRIDGE: Found {} existing channel levels in HashMap", existing_levels_count);
-                        for (channel_id, (peak, rms)) in channel_levels_guard.iter() {
-                            println!("   Real Level [Channel {}]: peak={:.4}, rms={:.4}", channel_id, peak, rms);
+                        for (channel_id, (peak_left, rms_left, peak_right, rms_right)) in channel_levels_guard.iter() {
+                            println!("   Real Level [Channel {}]: L(peak={:.4}, rms={:.4}) R(peak={:.4}, rms={:.4})", 
+                                channel_id, peak_left, rms_left, peak_right, rms_right);
                         }
                     }
                     
@@ -625,7 +626,8 @@ impl VirtualMixerHandle {
                                         let mock_peak = 0.001f32; // Small non-zero level
                                         let mock_rms = 0.0005f32;
                                         
-                                        channel_levels_guard.insert(channel.id, (mock_peak, mock_rms));
+                                        // Use stereo format: (peak_left, rms_left, peak_right, rms_right)
+                                        channel_levels_guard.insert(channel.id, (mock_peak, mock_rms, mock_peak, mock_rms));
                                         
                                         if collection_count % 200 == 0 {
                                             println!("🔗 BRIDGE [Channel {}]: Generated mock VU levels (peak: {:.4}, rms: {:.4}) - Real processing happening elsewhere", 

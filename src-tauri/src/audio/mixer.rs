@@ -66,8 +66,8 @@ pub struct VirtualMixer {
     metrics: Arc<Mutex<AudioMetrics>>,
     
     // Real-time audio level data for VU meters with atomic caching
-    channel_levels: Arc<Mutex<HashMap<u32, (f32, f32)>>>,
-    channel_levels_cache: Arc<Mutex<HashMap<u32, (f32, f32)>>>,
+    channel_levels: Arc<Mutex<HashMap<u32, (f32, f32, f32, f32)>>>, // (peak_left, rms_left, peak_right, rms_right)
+    channel_levels_cache: Arc<Mutex<HashMap<u32, (f32, f32, f32, f32)>>>,
     master_levels: Arc<Mutex<(f32, f32, f32, f32)>>,
     master_levels_cache: Arc<Mutex<(f32, f32, f32, f32)>>,
     
@@ -781,21 +781,44 @@ impl VirtualMixer {
                         if !samples.is_empty() {
                             active_channels += 1;
                             
-                            // Calculate peak and RMS levels for VU meters
-                            let peak_level = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                            let rms_level = (samples.iter().map(|&s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
+                            // **STEREO FIX**: Calculate L/R peak and RMS levels separately for VU meters
+                            let (peak_left, rms_left, peak_right, rms_right) = if samples.len() >= 2 {
+                                // Stereo audio: separate L/R channels (interleaved format)
+                                let left_samples: Vec<f32> = samples.iter().step_by(2).copied().collect();
+                                let right_samples: Vec<f32> = samples.iter().skip(1).step_by(2).copied().collect();
+                                
+                                let peak_left = left_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                                let rms_left = if !left_samples.is_empty() {
+                                    (left_samples.iter().map(|&s| s * s).sum::<f32>() / left_samples.len() as f32).sqrt()
+                                } else { 0.0 };
+                                
+                                let peak_right = right_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                                let rms_right = if !right_samples.is_empty() {
+                                    (right_samples.iter().map(|&s| s * s).sum::<f32>() / right_samples.len() as f32).sqrt()
+                                } else { 0.0 };
+                                
+                                (peak_left, rms_left, peak_right, rms_right)
+                            } else {
+                                // Mono audio: duplicate to both L/R channels
+                                let peak_mono = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                                let rms_mono = if !samples.is_empty() {
+                                    (samples.iter().map(|&s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
+                                } else { 0.0 };
+                                
+                                (peak_mono, rms_mono, peak_mono, rms_mono)
+                            };
                             
                             // Find which channel this device belongs to
                             if let Some(channel) = config_channels.iter().find(|ch| {
                                 ch.input_device_id.as_ref() == Some(device_id)
                             }) {
-                                // Store levels by channel ID
-                                calculated_channel_levels.insert(channel.id, (peak_level, rms_level));
+                                // Store stereo levels by channel ID
+                                calculated_channel_levels.insert(channel.id, (peak_left, rms_left, peak_right, rms_right));
                                 
                                 // Log levels occasionally
-                                if frame_count % 100 == 0 && peak_level > 0.001 {
-                                    println!("Channel {} ({}): {} samples, peak: {:.3}, rms: {:.3}", 
-                                        channel.id, device_id, samples.len(), peak_level, rms_level);
+                                if frame_count % 100 == 0 && (peak_left > 0.001 || peak_right > 0.001) {
+                                    println!("Channel {} ({}): {} samples, L(peak: {:.3}, rms: {:.3}) R(peak: {:.3}, rms: {:.3})", 
+                                        channel.id, device_id, samples.len(), peak_left, rms_left, peak_right, rms_right);
                                 }
                             }
                             
@@ -888,8 +911,9 @@ impl VirtualMixer {
                 if !calculated_channel_levels.is_empty() {
                     if frame_count % 100 == 0 {
                         println!("📊 STORING LEVELS: Attempting to store {} channel levels", calculated_channel_levels.len());
-                        for (channel_id, (peak, rms)) in calculated_channel_levels.iter() {
-                            println!("   Level [Channel {}]: peak={:.4}, rms={:.4}", channel_id, peak, rms);
+                        for (channel_id, (peak_left, rms_left, peak_right, rms_right)) in calculated_channel_levels.iter() {
+                            println!("   Level [Channel {}]: L(peak={:.4}, rms={:.4}) R(peak={:.4}, rms={:.4})", 
+                                channel_id, peak_left, rms_left, peak_right, rms_right);
                         }
                     }
                     
@@ -1044,7 +1068,7 @@ impl VirtualMixer {
     }
 
     /// Get current channel levels for VU meters with proper fallback caching
-    pub async fn get_channel_levels(&self) -> HashMap<u32, (f32, f32)> {
+    pub async fn get_channel_levels(&self) -> HashMap<u32, (f32, f32, f32, f32)> {
         use std::sync::{LazyLock, Mutex as StdMutex};
         static API_CALL_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
         
@@ -1062,8 +1086,9 @@ impl VirtualMixer {
             // Debug: Log what we're returning to the frontend
             if call_count % 50 == 0 || (!levels.is_empty() && call_count % 10 == 0) {
                 println!("🌐 API CALL #{}: get_channel_levels() returning {} levels", call_count, levels.len());
-                for (channel_id, (peak, rms)) in levels.iter() {
-                    println!("   API Level [Channel {}]: peak={:.4}, rms={:.4}", channel_id, peak, rms);
+                for (channel_id, (peak_left, rms_left, peak_right, rms_right)) in levels.iter() {
+                    println!("   API Level [Channel {}]: L(peak={:.4}, rms={:.4}) R(peak={:.4}, rms={:.4})", 
+                        channel_id, peak_left, rms_left, peak_right, rms_right);
                 }
             }
             
