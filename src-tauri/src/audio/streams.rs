@@ -491,6 +491,7 @@ pub struct VirtualMixerHandle {
 
 impl VirtualMixerHandle {
     /// Get samples from all active input streams with effects processing
+    /// Also checks CoreAudio streams when CPAL streams have no data
     pub async fn collect_input_samples_with_effects(&self, channels: &[AudioChannel]) -> HashMap<String, Vec<f32>> {
         let mut samples = HashMap::new();
         let streams = self.input_streams.lock().await;
@@ -509,6 +510,7 @@ impl VirtualMixerHandle {
         let num_streams = streams.len();
         let num_channels = channels.len();
         
+        // First try to get samples from CPAL input streams
         for (device_id, stream) in streams.iter() {
             // Find the channel configuration for this stream
             if let Some(channel) = channels.iter().find(|ch| {
@@ -540,6 +542,9 @@ impl VirtualMixerHandle {
                 }
             }
         }
+        
+        // Note: The actual VU meter levels are calculated in the mixer processing thread
+        // and accessed via get_channel_levels(). This sample collection is for audio processing only.
         
         // Debug: Log collection summary
         if collection_count % 1000 == 0 {
