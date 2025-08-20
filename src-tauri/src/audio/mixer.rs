@@ -75,6 +75,9 @@ pub struct VirtualMixer {
     audio_clock: Arc<Mutex<AudioClock>>, // Master audio clock for synchronization
     timing_metrics: Arc<Mutex<TimingMetrics>>, // Timing performance metrics
     
+    // **CRITICAL FIX**: Shared configuration for real-time updates
+    shared_config: Arc<std::sync::Mutex<MixerConfig>>,
+    
     // Audio stream management
     audio_device_manager: Arc<AudioDeviceManager>,
     input_streams: Arc<Mutex<HashMap<String, Arc<AudioInputStream>>>>,
@@ -267,6 +270,10 @@ impl VirtualMixer {
             channel_levels_cache,
             master_levels,
             master_levels_cache,
+            
+            // **CRITICAL FIX**: Shared configuration for real-time updates
+            shared_config: Arc::new(std::sync::Mutex::new(config.clone())),
+            
             audio_device_manager,
             input_streams: Arc::new(Mutex::new(HashMap::new())),
             output_stream: Arc::new(Mutex::new(None)),
@@ -728,13 +735,13 @@ impl VirtualMixer {
         let timing_metrics = self.timing_metrics.clone();
         let sample_rate = self.config.sample_rate;
         let buffer_size = self.config.buffer_size;
-        let config_channels = self.config.channels.clone();
         let mixer_handle = VirtualMixerHandle {
             input_streams: self.input_streams.clone(),
             output_stream: self.output_stream.clone(),
             #[cfg(target_os = "macos")]
             coreaudio_stream: self.coreaudio_stream.clone(),
             channel_levels: self.channel_levels.clone(),
+            config: self.shared_config.clone(),
         };
 
         // Spawn real-time audio processing task
@@ -756,7 +763,16 @@ impl VirtualMixer {
                 
                 // **CALLBACK-DRIVEN PROCESSING**: Only process when audio data is available
                 // This replaces timer-based processing to eliminate timing drift
-                let input_samples = mixer_handle.collect_input_samples_with_effects(&config_channels).await;
+                // Get current channel configuration dynamically (fixes mute/solo/gain not working)
+                let current_channels = {
+                    if let Ok(config_guard) = mixer_handle.config.try_lock() {
+                        config_guard.channels.clone()
+                    } else {
+                        // Fallback to empty vec if can't lock (shouldn't happen often)
+                        Vec::new()
+                    }
+                };
+                let input_samples = mixer_handle.collect_input_samples_with_effects(&current_channels).await;
                 
                 // If no audio data is available from callbacks, yield to prevent spinning
                 // but don't introduce artificial timing delays that cause drift
@@ -809,7 +825,7 @@ impl VirtualMixer {
                             };
                             
                             // Find which channel this device belongs to
-                            if let Some(channel) = config_channels.iter().find(|ch| {
+                            if let Some(channel) = current_channels.iter().find(|ch| {
                                 ch.input_device_id.as_ref() == Some(device_id)
                             }) {
                                 // Store stereo levels by channel ID
@@ -1181,11 +1197,25 @@ impl VirtualMixer {
         Ok(())
     }
 
-    /// Update channel configuration
+    /// Update channel configuration (now updates running mixer configuration)
     pub async fn update_channel(&mut self, channel_id: u32, updated_channel: AudioChannel) -> Result<()> {
+        // Update the main config
         if let Some(channel) = self.config.channels.iter_mut().find(|c| c.id == channel_id) {
-            *channel = updated_channel;
+            *channel = updated_channel.clone();
         }
+        
+        // **CRITICAL FIX**: Update the shared configuration that the processing loop reads from
+        if let Ok(mut shared_config_guard) = self.shared_config.try_lock() {
+            if let Some(shared_channel) = shared_config_guard.channels.iter_mut().find(|c| c.id == channel_id) {
+                *shared_channel = updated_channel.clone();
+                println!("🔄 Channel {} updated in shared config: muted={}, solo={}, gain={:.2}, pan={:.2}", 
+                    channel_id, updated_channel.muted, updated_channel.solo, 
+                    updated_channel.gain, updated_channel.pan);
+            }
+        } else {
+            println!("⚠️ Could not update shared config for channel {} - processing loop may not see changes", channel_id);
+        }
+        
         Ok(())
     }
 

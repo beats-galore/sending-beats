@@ -525,6 +525,7 @@ pub struct VirtualMixerHandle {
     #[cfg(target_os = "macos")]
     pub coreaudio_stream: Arc<Mutex<Option<super::coreaudio_stream::CoreAudioOutputStream>>>,
     pub channel_levels: Arc<Mutex<std::collections::HashMap<u32, (f32, f32, f32, f32)>>>,
+    pub config: Arc<std::sync::Mutex<super::types::MixerConfig>>,
 }
 
 impl VirtualMixerHandle {
