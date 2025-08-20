@@ -6,7 +6,8 @@ use streaming::{StreamConfig, StreamManager, StreamMetadata, StreamStatus};
 pub use audio::{
     AudioDeviceManager, VirtualMixer, MixerConfig, AudioDeviceInfo, AudioChannel, 
     AudioMetrics, MixerCommand, AudioConfigFactory, EQBand, ThreeBandEqualizer, 
-    Compressor, Limiter, PeakDetector, RmsDetector
+    Compressor, Limiter, PeakDetector, RmsDetector, AudioDatabase, AudioEventBus,
+    VULevelData, MasterLevelData, ChannelConfig, OutputRouteConfig
 };
 use std::sync::{Arc, Mutex};
 use tauri::State;
@@ -17,6 +18,8 @@ struct StreamState(Mutex<Option<StreamManager>>);
 struct AudioState {
     device_manager: Arc<AsyncMutex<AudioDeviceManager>>,
     mixer: Arc<AsyncMutex<Option<VirtualMixer>>>,
+    database: Arc<AudioDatabase>,
+    event_bus: Arc<AudioEventBus>,
 }
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -279,6 +282,63 @@ async fn get_channel_levels(
     }
 }
 
+// SQLite-based VU meter commands for improved performance
+#[tauri::command]
+async fn get_recent_vu_levels(
+    audio_state: State<'_, AudioState>,
+    channel_id: u32,
+    limit: Option<i64>,
+) -> Result<Vec<VULevelData>, String> {
+    let limit = limit.unwrap_or(50); // Default to last 50 readings
+    audio_state.database
+        .get_recent_vu_levels(channel_id, limit)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn get_recent_master_levels(
+    audio_state: State<'_, AudioState>,
+    limit: Option<i64>,
+) -> Result<Vec<MasterLevelData>, String> {
+    let limit = limit.unwrap_or(50); // Default to last 50 readings
+    audio_state.database
+        .get_recent_master_levels(limit)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn save_channel_config(
+    audio_state: State<'_, AudioState>,
+    channel: ChannelConfig,
+) -> Result<u32, String> {
+    audio_state.database
+        .save_channel_config(&channel)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn load_channel_configs(
+    audio_state: State<'_, AudioState>,
+) -> Result<Vec<ChannelConfig>, String> {
+    audio_state.database
+        .load_channel_configs()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn cleanup_old_levels(
+    audio_state: State<'_, AudioState>,
+) -> Result<u64, String> {
+    audio_state.database
+        .cleanup_old_vu_levels()
+        .await
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn get_master_levels(
     audio_state: State<'_, AudioState>,
@@ -420,19 +480,47 @@ async fn set_output_stream(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Initialize audio system
-    let audio_device_manager = match AudioDeviceManager::new() {
-        Ok(manager) => Arc::new(AsyncMutex::new(manager)),
-        Err(e) => {
-            eprintln!("Failed to initialize audio device manager: {}", e);
-            std::process::exit(1);
+    // Initialize the Tokio runtime for database initialization
+    let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+    
+    let audio_state = rt.block_on(async {
+        // Initialize audio system
+        let audio_device_manager = match AudioDeviceManager::new() {
+            Ok(manager) => Arc::new(AsyncMutex::new(manager)),
+            Err(e) => {
+                eprintln!("Failed to initialize audio device manager: {}", e);
+                std::process::exit(1);
+            }
+        };
+        
+        // Initialize SQLite database
+        let database_path = std::env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+            .join("data")
+            .join("sendin_beats.db");
+            
+        println!("🗄️  Initializing database at: {}", database_path.display());
+        
+        let database = match AudioDatabase::new(&database_path).await {
+            Ok(db) => Arc::new(db),
+            Err(e) => {
+                eprintln!("Failed to initialize database: {}", e);
+                std::process::exit(1);
+            }
+        };
+        
+        // Initialize event bus for lock-free audio data transfer
+        let event_bus = Arc::new(AudioEventBus::new(1000)); // Buffer up to 1000 events
+        
+        println!("✅ Audio system initialization complete");
+        
+        AudioState {
+            device_manager: audio_device_manager,
+            mixer: Arc::new(AsyncMutex::new(None)),
+            database,
+            event_bus,
         }
-    };
-
-    let audio_state = AudioState {
-        device_manager: audio_device_manager,
-        mixer: Arc::new(AsyncMutex::new(None)),
-    };
+    });
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -466,7 +554,12 @@ pub fn run() {
             update_channel_limiter,
             add_input_stream,
             remove_input_stream,
-            set_output_stream
+            set_output_stream,
+            get_recent_vu_levels,
+            get_recent_master_levels,
+            save_channel_config,
+            load_channel_configs,
+            cleanup_old_levels
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

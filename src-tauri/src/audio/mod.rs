@@ -12,6 +12,7 @@ pub mod devices;
 pub mod effects;
 pub mod streams;
 pub mod mixer;
+pub mod database;
 
 #[cfg(target_os = "macos")]
 pub mod coreaudio_stream;
@@ -38,3 +39,8 @@ pub use streams::{
 };
 
 pub use mixer::VirtualMixer;
+
+pub use database::{
+    AudioDatabase, AudioEventBus, VULevelData, MasterLevelData, 
+    AudioDeviceConfig, ChannelConfig, OutputRouteConfig,
+};
