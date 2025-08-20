@@ -339,6 +339,43 @@ async fn cleanup_old_levels(
         .map_err(|e| e.to_string())
 }
 
+// Crash-safe device switching commands
+#[tauri::command]
+async fn safe_switch_input_device(
+    audio_state: State<'_, AudioState>,
+    old_device_id: Option<String>,
+    new_device_id: String,
+) -> Result<(), String> {
+    let mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mixer) = *mixer_guard {
+        // Remove old device if specified
+        if let Some(old_id) = old_device_id {
+            if let Err(e) = mixer.remove_input_stream(&old_id).await {
+                eprintln!("Warning: Failed to remove old input device {}: {}", old_id, e);
+                // Continue anyway - don't fail the entire operation
+            }
+        }
+        
+        // Add new device
+        mixer.add_input_stream(&new_device_id).await.map_err(|e| e.to_string())
+    } else {
+        Err("No mixer created".to_string())
+    }
+}
+
+#[tauri::command]
+async fn safe_switch_output_device(
+    audio_state: State<'_, AudioState>,
+    new_device_id: String,
+) -> Result<(), String> {
+    let mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mixer) = *mixer_guard {
+        mixer.set_output_stream(&new_device_id).await.map_err(|e| e.to_string())
+    } else {
+        Err("No mixer created".to_string())
+    }
+}
+
 #[tauri::command]
 async fn get_master_levels(
     audio_state: State<'_, AudioState>,
@@ -559,7 +596,9 @@ pub fn run() {
             get_recent_master_levels,
             save_channel_config,
             load_channel_configs,
-            cleanup_old_levels
+            cleanup_old_levels,
+            safe_switch_input_device,
+            safe_switch_output_device
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

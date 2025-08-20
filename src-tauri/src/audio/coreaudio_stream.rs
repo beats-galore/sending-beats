@@ -247,24 +247,47 @@ impl CoreAudioOutputStream {
     }
 
     pub fn stop(&mut self) -> Result<()> {
-        println!("🔴 STOP: Starting stop sequence for device: {}", self.device_name);
+        println!("🔴 STOP: Starting graceful stop sequence for device: {}", self.device_name);
         
         // First, mark as not running to prevent callback from processing
-        println!("🔴 STOP: Setting is_running to false...");
-        *self.is_running.lock().unwrap() = false;
-        println!("🔴 STOP: Successfully set is_running to false");
+        if let Ok(mut is_running) = self.is_running.lock() {
+            *is_running = false;
+            println!("🔴 STOP: Successfully set is_running to false");
+        } else {
+            warn!("🔴 STOP: Could not lock is_running flag");
+        }
+        
+        // Give callbacks time to see the flag and exit
+        std::thread::sleep(std::time::Duration::from_millis(50));
         
         if let Some(audio_unit) = self.audio_unit.take() {
-            println!("🔴 STOP: Found AudioUnit, entering unsafe block...");
+            println!("🔴 STOP: Found AudioUnit, attempting graceful shutdown...");
             
-            // DON'T call any CoreAudio APIs - just see if we can exit the unsafe block
-            println!("🔴 STOP: Inside unsafe block, about to exit without calling any APIs...");
-            
-            // Skip ALL CoreAudio cleanup - just abandon the AudioUnit
-            println!("🔴 STOP: Skipping all CoreAudio API calls");
-            println!("🔴 STOP: AudioUnit abandoned - no cleanup performed");
+            // **CRITICAL FIX**: Attempt proper CoreAudio cleanup with error handling
+            unsafe {
+                // Try to stop the audio unit
+                if AudioOutputUnitStop(audio_unit) == 0 {
+                    println!("🔴 STOP: Successfully stopped AudioUnit");
+                } else {
+                    warn!("🔴 STOP: AudioOutputUnitStop failed, but continuing cleanup");
+                }
+                
+                // Try to uninitialize the audio unit
+                if AudioUnitUninitialize(audio_unit) == 0 {
+                    println!("🔴 STOP: Successfully uninitialized AudioUnit");
+                } else {
+                    warn!("🔴 STOP: AudioUnitUninitialize failed, but continuing cleanup");
+                }
+                
+                // Try to dispose of the audio unit
+                if AudioComponentInstanceDispose(audio_unit) == 0 {
+                    println!("🔴 STOP: Successfully disposed AudioUnit");
+                } else {
+                    warn!("🔴 STOP: AudioComponentInstanceDispose failed");
+                }
+            }
         } else {
-            println!("🔴 STOP: No AudioUnit found (already taken)");
+            println!("🔴 STOP: No AudioUnit found (already cleaned up)");
         }
         
         println!("🔴 STOP: AudioUnit disposal complete, cleaning up buffer...");

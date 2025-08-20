@@ -297,7 +297,23 @@ impl VirtualMixer {
         // Validate device_id input with comprehensive validation
         Self::validate_device_id(device_id)?;
         
-        info!("Adding real audio input stream for device: {}", device_id);
+        info!("🎧 DEVICE CHANGE: Adding input stream for device: {}", device_id);
+        
+        // **CRITICAL FIX**: Check if device is already active to prevent duplicate streams
+        {
+            let streams = self.input_streams.lock().await;
+            if streams.contains_key(device_id) {
+                warn!("Device {} already has an active input stream, removing first", device_id);
+                drop(streams);
+                // Remove existing stream first
+                if let Err(e) = self.remove_input_stream(device_id).await {
+                    warn!("Failed to remove existing stream for {}: {}", device_id, e);
+                }
+            }
+        }
+        
+        // **CRITICAL FIX**: Brief delay to allow previous stream cleanup
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
         
         // Find the actual cpal device
         let device = self.audio_device_manager.find_cpal_device(device_id, true).await?;
@@ -392,15 +408,22 @@ impl VirtualMixer {
 
     /// Set the audio output stream with support for both cpal and CoreAudio devices
     pub async fn set_output_stream(&self, device_id: &str) -> Result<()> {
-        info!("Setting output stream for device: {}", device_id);
+        info!("🔊 DEVICE CHANGE: Setting output stream for device: {}", device_id);
         
         // Validate device_id input
         if device_id.is_empty() || device_id.len() > 256 {
             return Err(anyhow::anyhow!("Invalid device ID: must be 1-256 characters"));
         }
         
-        // **CRITICAL FIX**: Stop and cleanup existing output streams first
-        self.stop_output_streams().await?;
+        // **CRITICAL FIX**: Graceful output stream switching with proper cleanup
+        info!("🔴 Stopping existing output streams before device change...");
+        if let Err(e) = self.stop_output_streams().await {
+            warn!("Error stopping existing output streams: {}", e);
+            // Continue anyway - try to start new stream
+        }
+        
+        // **CRITICAL FIX**: Additional delay for CoreAudio resource cleanup
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         
         // Find the audio device (CoreAudio or cpal) for output
         let device_handle = self.audio_device_manager.find_audio_device(device_id, false).await?;
@@ -617,35 +640,54 @@ impl VirtualMixer {
 
     /// Remove an input stream and clean up cpal stream
     pub async fn remove_input_stream(&self, device_id: &str) -> Result<()> {
-        // Remove from streams collection
-        let mut streams = self.input_streams.lock().await;
-        let was_present = streams.remove(device_id).is_some();
-        drop(streams); // Release the async lock
+        info!("🗑️ DEVICE CHANGE: Removing input stream for device: {}", device_id);
         
-        if was_present {
-            // Send stream removal command to the synchronous stream manager thread
-            let stream_manager = get_stream_manager();
-            let (response_tx, response_rx) = std::sync::mpsc::channel();
+        // **CRITICAL FIX**: Check if stream exists before attempting removal
+        let was_present = {
+            let mut streams = self.input_streams.lock().await;
+            streams.remove(device_id).is_some()
+        };
+        
+        if !was_present {
+            warn!("Attempted to remove non-existent stream for device: {}", device_id);
+            return Ok(()); // Not an error - stream was already removed
+        }
+        
+        // **CRITICAL FIX**: Graceful stream removal with timeout protection
+        info!("🔴 Removing audio stream for device: {}", device_id);
+        
+        // Send stream removal command to the synchronous stream manager thread
+        let stream_manager = get_stream_manager();
+        let (response_tx, response_rx) = std::sync::mpsc::channel();
             
-            let command = StreamCommand::RemoveStream {
-                device_id: device_id.to_string(),
-                response_tx,
-            };
-            
-            stream_manager.send(command)
-                .context("Failed to send stream removal command")?;
-                
-            // Wait for the response
-            let removed = response_rx.recv()
-                .context("Failed to receive stream removal response")?;
-                
-            if removed {
-                println!("Removed input stream and cleaned up cpal stream: {}", device_id);
-            } else {
-                println!("Stream was not found in manager for removal: {}", device_id);
+        let command = StreamCommand::RemoveStream {
+            device_id: device_id.to_string(),
+            response_tx,
+        };
+        
+        // **CRITICAL FIX**: Send command with error handling
+        if let Err(e) = stream_manager.send(command) {
+            warn!("Failed to send stream removal command for {}: {}", device_id, e);
+            return Ok(()); // Don't fail the entire operation
+        }
+        
+        // **CRITICAL FIX**: Wait for response with timeout to prevent hanging
+        let removed = match response_rx.recv_timeout(std::time::Duration::from_millis(2000)) {
+            Ok(removed) => removed,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                warn!("Timeout waiting for stream removal response for device: {}", device_id);
+                return Ok(()); // Continue anyway
             }
+            Err(e) => {
+                warn!("Error receiving stream removal response for {}: {}", device_id, e);
+                return Ok(()); // Continue anyway
+            }
+        };
+        
+        if removed {
+            info!("✅ Successfully removed input stream: {}", device_id);
         } else {
-            println!("Input stream not found for removal: {}", device_id);
+            warn!("Stream was not found in manager for removal: {}", device_id);
         }
         
         Ok(())
