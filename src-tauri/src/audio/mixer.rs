@@ -749,21 +749,46 @@ impl VirtualMixer {
                         }
                     }
                     
-                    // Normalize by number of active channels to prevent clipping
-                    if active_channels > 0 {
-                        let gain = 1.0 / active_channels as f32;
-                        for sample in reusable_output_buffer.iter_mut() {
-                            *sample *= gain;
+                    // **AUDIO QUALITY FIX**: Smart gain management instead of aggressive division
+                    // Only normalize if we have multiple overlapping channels with significant signal
+                    if active_channels > 1 {
+                        // Check if we actually need normalization by checking peak levels
+                        let buffer_peak = reusable_output_buffer.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                        
+                        // Only normalize if we're approaching clipping (> 0.8) with multiple channels
+                        if buffer_peak > 0.8 {
+                            let normalization_factor = 0.8 / buffer_peak; // Normalize to 80% max to prevent clipping
+                            for sample in reusable_output_buffer.iter_mut() {
+                                *sample *= normalization_factor;
+                            }
+                            println!("🔧 GAIN CONTROL: Normalized {} channels, peak {:.3} -> {:.3}", 
+                                active_channels, buffer_peak, buffer_peak * normalization_factor);
                         }
+                        // If not approaching clipping, leave levels untouched for better dynamics
                     }
+                    // Single channels: NO normalization - preserve full dynamics
                     
                     // Stereo audio is already mixed directly into reusable_output_buffer
                     // No conversion needed - stereo data preserved throughout mixing process
                     
-                    // Apply basic gain (master volume)
-                    let master_gain = 0.5f32; // Reduce volume to prevent clipping
-                    for sample in reusable_output_buffer.iter_mut() {
-                        *sample *= master_gain;
+                    // **AUDIO QUALITY FIX**: Professional master gain instead of aggressive reduction
+                    let master_gain = 0.9f32; // Professional level (was 0.5 - too low!)
+                    
+                    // Only apply master gain reduction if signal is actually hot
+                    let pre_master_peak = reusable_output_buffer.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                    
+                    if pre_master_peak > 0.95 {
+                        // Signal is very hot, apply conservative gain
+                        let conservative_gain = 0.8f32;
+                        for sample in reusable_output_buffer.iter_mut() {
+                            *sample *= conservative_gain;
+                        }
+                        println!("🔧 MASTER LIMITER: Hot signal {:.3}, applied {:.2} gain", pre_master_peak, conservative_gain);
+                    } else {
+                        // Normal signal levels, apply professional master gain
+                        for sample in reusable_output_buffer.iter_mut() {
+                            *sample *= master_gain;
+                        }
                     }
                     
                     // Calculate master output levels for L/R channels using reusable vectors
@@ -910,17 +935,36 @@ impl VirtualMixer {
                     }
                 }
 
-                // Event-driven processing: Sleep for a shorter interval to respond to audio data availability
-                // This replaces timer-driven processing with more responsive audio-availability-driven processing
-                let process_interval = std::time::Duration::from_millis(2); // 2ms = much more responsive than 10.67ms
+                // **CRITICAL FIX**: Real-time audio processing interval based on hardware buffer size
+                // Calculate proper timing interval based on buffer size and sample rate for real-time processing
+                let hardware_buffer_duration_ms = (buffer_size as f32 / sample_rate as f32) * 1000.0;
+                let process_interval_ms = hardware_buffer_duration_ms.max(5.0).min(20.0); // Clamp between 5-20ms
+                let process_interval = std::time::Duration::from_millis(process_interval_ms as u64);
+                
+                // Debug timing changes every 5 seconds
+                if frame_count % ((sample_rate / buffer_size) as u64 * 5) == 0 {
+                    println!("🕐 TIMING FIX: Hardware buffer: {:.2}ms, Process interval: {:.2}ms (was 2ms)", 
+                        hardware_buffer_duration_ms, process_interval_ms);
+                }
                 let elapsed = process_start.elapsed();
                 
-                // Always sleep briefly to prevent CPU spinning, but don't force rigid timing
-                if elapsed < process_interval {
-                    tokio::time::sleep(process_interval - elapsed).await;
-                } else {
-                    // If processing took longer than expected, yield briefly but continue processing
+                // **CRITICAL FIX**: Real-time synchronization with audio hardware timing
+                // Instead of just sleeping for remaining time, synchronize with real audio timing
+                let target_interval = std::time::Duration::from_micros((hardware_buffer_duration_ms * 1000.0) as u64);
+                
+                if elapsed < target_interval {
+                    // Sleep for the exact remaining time to maintain strict real-time synchronization
+                    tokio::time::sleep(target_interval - elapsed).await;
+                } else if elapsed > target_interval * 2 {
+                    // If we're running significantly late, yield and catch up gradually
                     tokio::task::yield_now().await;
+                    if frame_count % 100 == 0 {
+                        println!("⚠️  PROCESSING OVERRUN: {}ms processing time for {:.2}ms target", 
+                            elapsed.as_millis(), target_interval.as_millis());
+                    }
+                } else {
+                    // If slightly over target, still maintain the rhythm by yielding minimally
+                    tokio::time::sleep(std::time::Duration::from_micros(100)).await; // 0.1ms minimal yield
                 }
             }
             
