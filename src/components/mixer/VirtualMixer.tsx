@@ -16,20 +16,33 @@ import { ChannelGrid } from './ChannelGrid';
 import { MasterSection } from './MasterSection';
 import { MixerControls } from './MixerControls';
 
-const useStyles = createStyles(() => ({
+const useStyles = createStyles((theme) => ({
   container: {
-    minHeight: '100vh',
-    width: '100vw',
-    padding: '16px',
+    height: '100%',
+    width: '100%',
+    maxWidth: '100%',
+    overflow: 'auto',
+    padding: theme.spacing.md,
+    boxSizing: 'border-box',
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  
+  mainStack: {
+    width: '100%',
+    maxWidth: '100%',
+    overflow: 'visible',
+    flex: 1,
   },
 
   errorContainer: {
-    minHeight: '100vh',
-    width: '100vw',
+    height: '100%',
+    width: '100%',
+    maxWidth: '100%',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: '16px',
+    padding: theme.spacing.md,
   },
 
   errorAlert: {
@@ -102,7 +115,7 @@ const VirtualMixer = memo(() => {
 
   return (
     <Box className={classes.container}>
-      <Stack gap="lg" w="100%">
+      <Stack gap="lg" className={classes.mainStack}>
         <Title order={1} c="blue">
           Virtual Mixer
         </Title>

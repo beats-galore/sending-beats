@@ -17,25 +17,32 @@ const useStyles = createStyles((theme) => ({
   appShell: {
     backgroundColor: theme.colors.dark[8],
   },
-  
+
   navbar: {
     backgroundColor: theme.colors.dark[7],
     borderRight: `1px solid ${theme.colors.dark[5]}`,
   },
-  
+
   main: {
     backgroundColor: theme.colors.dark[8],
-    minHeight: '100vh',
+    height: 'calc(100vh - 100px)', // Account for header + footer
+    overflow: 'hidden', // Prevent main from scrolling
   },
-  
+
   content: {
     height: '100%',
+    width: '100%',
+    maxWidth: '100%',
+    overflow: 'hidden', // Let child components handle their own scrolling
+    display: 'flex',
+    flexDirection: 'column',
   },
 }));
 
 const App = memo(() => {
   const { classes } = useStyles();
-  const [opened, { toggle }] = useDisclosure();
+  const [mobileOpened, { toggle: toggleMobile }] = useDisclosure(false);
+  const [desktopOpened, { toggle: toggleDesktop }] = useDisclosure(false);
   const [currentView, setCurrentView] = useState<ViewType>('mixer');
 
   console.log('re-rendered app');
@@ -66,16 +73,18 @@ const App = memo(() => {
         className={classes.appShell}
         header={{ height: 60 }}
         navbar={{
-          width: 250,
+          width: desktopOpened ? 250 : 80,
           breakpoint: 'sm',
-          collapsed: { mobile: !opened },
+          collapsed: { mobile: !mobileOpened, desktop: false },
         }}
         footer={{ height: 40 }}
-        padding="md"
+        padding={{ base: 'xs', sm: 'sm', md: 'md' }}
       >
         <AppHeader
-          opened={opened}
-          toggle={toggle}
+          mobileOpened={mobileOpened}
+          desktopOpened={desktopOpened}
+          toggleMobile={toggleMobile}
+          toggleDesktop={toggleDesktop}
           currentView={currentView}
         />
 
@@ -83,13 +92,12 @@ const App = memo(() => {
           <Navigation
             currentView={currentView}
             onViewChange={handleViewChange}
+            collapsed={!desktopOpened}
           />
         </AppShell.Navbar>
 
         <AppShell.Main className={classes.main}>
-          <Box className={classes.content}>
-            {renderContent()}
-          </Box>
+          <Box className={classes.content}>{renderContent()}</Box>
         </AppShell.Main>
 
         <AppFooter />

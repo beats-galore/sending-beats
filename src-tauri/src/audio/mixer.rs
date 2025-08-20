@@ -627,6 +627,7 @@ impl VirtualMixer {
             output_stream: self.output_stream.clone(),
             #[cfg(target_os = "macos")]
             coreaudio_stream: self.coreaudio_stream.clone(),
+            channel_levels: self.channel_levels.clone(),
         };
 
         // Spawn real-time audio processing task
@@ -741,8 +742,31 @@ impl VirtualMixer {
                 }
                 
                 // Store calculated channel levels for VU meters
-                if let Ok(mut levels_guard) = channel_levels.try_lock() {
-                    *levels_guard = calculated_channel_levels.clone();
+                if !calculated_channel_levels.is_empty() {
+                    if frame_count % 100 == 0 {
+                        println!("📊 STORING LEVELS: Attempting to store {} channel levels", calculated_channel_levels.len());
+                        for (channel_id, (peak, rms)) in calculated_channel_levels.iter() {
+                            println!("   Level [Channel {}]: peak={:.4}, rms={:.4}", channel_id, peak, rms);
+                        }
+                    }
+                    
+                    match channel_levels.try_lock() {
+                        Ok(mut levels_guard) => {
+                            *levels_guard = calculated_channel_levels.clone();
+                            if frame_count % 100 == 0 {
+                                println!("✅ STORED LEVELS: Successfully stored {} channel levels in HashMap", calculated_channel_levels.len());
+                            }
+                        }
+                        Err(_) => {
+                            if frame_count % 100 == 0 {
+                                println!("🚫 STORAGE FAILED: Could not lock channel_levels HashMap for storage");
+                            }
+                        }
+                    }
+                } else {
+                    if frame_count % 500 == 0 {
+                        println!("⚠️  NO LEVELS TO STORE: calculated_channel_levels is empty");
+                    }
                 }
                 
                 // Also update cache for fallback (non-blocking)
@@ -817,9 +841,27 @@ impl VirtualMixer {
 
     /// Get current channel levels for VU meters with proper fallback caching
     pub async fn get_channel_levels(&self) -> HashMap<u32, (f32, f32)> {
+        use std::sync::{LazyLock, Mutex as StdMutex};
+        static API_CALL_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
+        
+        let call_count = if let Ok(mut count) = API_CALL_COUNT.lock() {
+            *count += 1;
+            *count
+        } else {
+            0
+        };
+        
         // Try to get real-time levels first
         if let Ok(levels_guard) = self.channel_levels.try_lock() {
             let levels = levels_guard.clone();
+            
+            // Debug: Log what we're returning to the frontend
+            if call_count % 50 == 0 || (!levels.is_empty() && call_count % 10 == 0) {
+                println!("🌐 API CALL #{}: get_channel_levels() returning {} levels", call_count, levels.len());
+                for (channel_id, (peak, rms)) in levels.iter() {
+                    println!("   API Level [Channel {}]: peak={:.4}, rms={:.4}", channel_id, peak, rms);
+                }
+            }
             
             // Update cache with latest values (non-blocking)
             if !levels.is_empty() {
@@ -832,9 +874,16 @@ impl VirtualMixer {
         } else {
             // Fallback to cached levels if we can't get the real-time lock
             if let Ok(cache_guard) = self.channel_levels_cache.try_lock() {
-                cache_guard.clone()
+                let cached_levels = cache_guard.clone();
+                if call_count % 50 == 0 {
+                    println!("🌐 API CALL #{}: get_channel_levels() using CACHED levels ({} items)", call_count, cached_levels.len());
+                }
+                cached_levels
             } else {
                 // Last resort: return empty levels
+                if call_count % 100 == 0 {
+                    println!("🌐 API CALL #{}: get_channel_levels() returning EMPTY levels (lock failed)", call_count);
+                }
                 HashMap::new()
             }
         }

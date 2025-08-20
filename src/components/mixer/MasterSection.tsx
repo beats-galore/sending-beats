@@ -1,5 +1,6 @@
 // Master section with output routing and master VU meters
 import { Paper, Grid, Stack, Title, Text, Group, Select, ActionIcon, Center } from '@mantine/core';
+import { createStyles } from '@mantine/styles';
 import { IconRefresh } from '@tabler/icons-react';
 import { memo, useCallback, useMemo } from 'react';
 
@@ -12,7 +13,15 @@ import {
 import { audioService } from '../../services';
 import { VUMeter, AudioSlider } from '../ui';
 
+const useStyles = createStyles(() => ({
+  responsiveGrid: {
+    width: '100%',
+    maxWidth: '100%',
+  },
+}));
+
 export const MasterSection = memo(() => {
+  const { classes } = useStyles();
   const { mixerConfig, setMasterGain, setMasterOutputDevice } = useMasterSectionData();
   const masterLevels = useMasterLevels();
   const metrics = useAudioMetrics();
@@ -65,9 +74,9 @@ export const MasterSection = memo(() => {
           Master Section
         </Title>
 
-        <Grid>
+        <Grid gutter="md" className={classes.responsiveGrid}>
           {/* Master VU Meters */}
-          <Grid.Col span={4}>
+          <Grid.Col span={{ base: 12, md: 4 }}>
             <Stack align="center">
               <Title order={4}>Master Levels</Title>
               <Group justify="center" gap="lg">
@@ -109,7 +118,7 @@ export const MasterSection = memo(() => {
           </Grid.Col>
 
           {/* Master Controls */}
-          <Grid.Col span={4}>
+          <Grid.Col span={{ base: 12, md: 4 }}>
             <Stack gap="lg">
               <Title order={4}>Controls</Title>
 
@@ -150,7 +159,7 @@ export const MasterSection = memo(() => {
           </Grid.Col>
 
           {/* Audio Metrics */}
-          <Grid.Col span={4}>
+          <Grid.Col span={{ base: 12, md: 4 }}>
             <Stack gap="sm">
               <Title order={4}>Audio Metrics</Title>
               {metrics ? (

@@ -1,12 +1,15 @@
-import { AppShell, Group, Title, Badge, Burger } from '@mantine/core';
+import { AppShell, Group, Title, Badge, Burger, ActionIcon } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { memo } from 'react';
+import { IconMenu2, IconMenuDeep } from '@tabler/icons-react';
 
 type ViewType = 'home' | 'dj' | 'admin' | 'listener' | 'mixer';
 
 type AppHeaderProps = {
-  opened: boolean;
-  toggle: () => void;
+  mobileOpened: boolean;
+  desktopOpened: boolean;
+  toggleMobile: () => void;
+  toggleDesktop: () => void;
   currentView: ViewType;
 };
 
@@ -28,7 +31,13 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export const AppHeader = memo<AppHeaderProps>(({ opened, toggle, currentView }) => {
+export const AppHeader = memo<AppHeaderProps>(({ 
+  mobileOpened, 
+  desktopOpened, 
+  toggleMobile, 
+  toggleDesktop, 
+  currentView 
+}) => {
   const { classes } = useStyles();
   
   return (
@@ -36,11 +45,20 @@ export const AppHeader = memo<AppHeaderProps>(({ opened, toggle, currentView }) 
       <Group className={classes.headerContent}>
         <Group>
           <Burger
-            opened={opened}
-            onClick={toggle}
+            opened={mobileOpened}
+            onClick={toggleMobile}
             hiddenFrom="sm"
             size="sm"
           />
+          <ActionIcon
+            onClick={toggleDesktop}
+            variant="subtle"
+            visibleFrom="sm"
+            size="sm"
+            title={desktopOpened ? "Collapse sidebar" : "Expand sidebar"}
+          >
+            {desktopOpened ? <IconMenuDeep size={18} /> : <IconMenu2 size={18} />}
+          </ActionIcon>
           <Title order={2} className={classes.logo}>
             Sendin Beats Radio
           </Title>
