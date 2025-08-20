@@ -57,15 +57,16 @@ impl AudioInputStream {
     
     pub fn get_samples(&self) -> Vec<f32> {
         if let Ok(mut buffer) = self.audio_buffer.try_lock() {
-            // **ADAPTIVE FIX**: Use hardware-aligned chunk sizes for optimal processing
+            // **BUFFER UNDERRUN FIX**: Process available samples instead of waiting for full chunks
             let chunk_size = self.adaptive_chunk_size;
             
-            if buffer.len() < chunk_size {
-                return Vec::new();  // Wait for enough samples to fill a complete chunk
+            if buffer.is_empty() {
+                return Vec::new();  // No samples available at all
             }
             
-            // Take exactly adaptive_chunk_size samples for hardware-aligned processing timing
-            let samples: Vec<f32> = buffer.drain(..chunk_size).collect();
+            // **CRITICAL FIX**: Take whatever samples are available, don't wait for full chunks
+            let samples_to_take = buffer.len().min(chunk_size);
+            let samples: Vec<f32> = buffer.drain(..samples_to_take).collect();
             let sample_count = samples.len();
             
             // Debug: Log when we're actually reading samples
@@ -98,15 +99,16 @@ impl AudioInputStream {
     /// Apply effects to input samples and update channel settings
     pub fn process_with_effects(&self, channel: &AudioChannel) -> Vec<f32> {
         if let Ok(mut buffer) = self.audio_buffer.try_lock() {
-            // **ADAPTIVE FIX**: Use hardware-aligned chunk sizes for optimal processing
+            // **BUFFER UNDERRUN FIX**: Process available samples instead of waiting for full chunks
             let chunk_size = self.adaptive_chunk_size;
             
-            if buffer.len() < chunk_size {
-                return Vec::new();  // Wait for enough samples to fill a complete chunk
+            if buffer.is_empty() {
+                return Vec::new();  // No samples available at all
             }
             
-            // Take exactly adaptive_chunk_size samples for hardware-aligned processing timing
-            let mut samples: Vec<f32> = buffer.drain(..chunk_size).collect();
+            // **CRITICAL FIX**: Take whatever samples are available, don't wait for full chunks
+            let samples_to_take = buffer.len().min(chunk_size);
+            let mut samples: Vec<f32> = buffer.drain(..samples_to_take).collect();
             let original_sample_count = samples.len();
             
             // Debug: Log processing activity

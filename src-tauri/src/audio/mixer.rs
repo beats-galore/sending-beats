@@ -311,11 +311,16 @@ impl VirtualMixer {
             
         debug!("Device config: {:?}", config);
         
-        // Create AudioInputStream structure
+        // **AUDIO QUALITY FIX**: Use hardware sample rate instead of fixed mixer sample rate
+        let hardware_sample_rate = config.sample_rate().0;
+        println!("🔧 SAMPLE RATE FIX: Hardware {} Hz, Mixer {} Hz -> Using {} Hz to avoid resampling distortion", 
+                 hardware_sample_rate, self.config.sample_rate, hardware_sample_rate);
+        
+        // Create AudioInputStream structure with hardware sample rate to prevent pitch shifting
         let mut input_stream = AudioInputStream::new(
             device_id.to_string(),
             device_name.clone(),
-            self.config.sample_rate,
+            hardware_sample_rate, // Use hardware sample rate instead of mixer sample rate
         )?;
         
         // Configure adaptive chunk size and stream config with OPTIMAL buffer sizing
@@ -332,12 +337,15 @@ impl VirtualMixer {
         // Get references for the audio callback
         let audio_buffer = input_stream.audio_buffer.clone();
         
-        // Create the appropriate stream config with DYNAMIC buffer sizing
+        // **AUDIO QUALITY FIX**: Use hardware-native configuration to prevent format conversion distortion
         let stream_config = StreamConfig {
             channels: config.channels().min(2), // Limit to stereo max
-            sample_rate: SampleRate(target_sample_rate),
+            sample_rate: config.sample_rate(),   // Use hardware sample rate, not mixer sample rate
             buffer_size: optimal_buffer_size,
         };
+        
+        println!("🔧 FORMAT FIX: Using native format - SR: {} Hz, CH: {}, Buffer: {:?} to prevent conversion distortion",
+                 config.sample_rate().0, config.channels(), optimal_buffer_size);
         
         debug!("Using stream config: channels={}, sample_rate={}, buffer_size={}", 
                 stream_config.channels, stream_config.sample_rate.0, buffer_size);
@@ -356,7 +364,7 @@ impl VirtualMixer {
             device,
             config: stream_config,
             audio_buffer,
-            target_sample_rate,
+            target_sample_rate: hardware_sample_rate, // Use hardware sample rate
             response_tx,
         };
         
@@ -704,8 +712,16 @@ impl VirtualMixer {
                 // **PRIORITY 5: Audio Clock Synchronization** - Track processing timing
                 let timing_start = std::time::Instant::now();
                 
-                // Collect input samples from all active input streams with effects processing
+                // **CALLBACK-DRIVEN PROCESSING**: Only process when audio data is available
+                // This replaces timer-based processing to eliminate timing drift
                 let input_samples = mixer_handle.collect_input_samples_with_effects(&config_channels).await;
+                
+                // If no audio data is available from callbacks, yield to prevent spinning
+                // but don't introduce artificial timing delays that cause drift
+                if input_samples.is_empty() {
+                    tokio::task::yield_now().await; // Non-blocking yield, no artificial timing
+                    continue;
+                }
                 
                 // Clear and reuse pre-allocated stereo buffers
                 reusable_output_buffer.fill(0.0);
@@ -935,37 +951,36 @@ impl VirtualMixer {
                     }
                 }
 
-                // **CRITICAL FIX**: Real-time audio processing interval based on hardware buffer size
-                // Calculate proper timing interval based on buffer size and sample rate for real-time processing
+                // **TIMING DRIFT FIX**: Replace timer-based processing with callback-driven approach
+                // Only process when we have sufficient audio data from callbacks, eliminating drift
+                
+                let elapsed = process_start.elapsed();
                 let hardware_buffer_duration_ms = (buffer_size as f32 / sample_rate as f32) * 1000.0;
-                let process_interval_ms = hardware_buffer_duration_ms.max(5.0).min(20.0); // Clamp between 5-20ms
-                let process_interval = std::time::Duration::from_millis(process_interval_ms as u64);
                 
                 // Debug timing changes every 5 seconds
                 if frame_count % ((sample_rate / buffer_size) as u64 * 5) == 0 {
-                    println!("🕐 TIMING FIX: Hardware buffer: {:.2}ms, Process interval: {:.2}ms (was 2ms)", 
-                        hardware_buffer_duration_ms, process_interval_ms);
+                    println!("🕐 CALLBACK-DRIVEN: Processing triggered by audio data availability, no timer drift (was sleeping {:.2}ms)", 
+                        hardware_buffer_duration_ms);
                 }
-                let elapsed = process_start.elapsed();
                 
-                // **CRITICAL FIX**: Real-time synchronization with audio hardware timing
-                // Instead of just sleeping for remaining time, synchronize with real audio timing
-                let target_interval = std::time::Duration::from_micros((hardware_buffer_duration_ms * 1000.0) as u64);
+                // **CRITICAL TIMING FIX**: Instead of sleeping on a timer (which causes drift),
+                // wait for actual audio data to be available from hardware callbacks.
+                // This synchronizes processing directly with hardware timing, eliminating drift.
                 
-                if elapsed < target_interval {
-                    // Sleep for the exact remaining time to maintain strict real-time synchronization
-                    tokio::time::sleep(target_interval - elapsed).await;
-                } else if elapsed > target_interval * 2 {
-                    // If we're running significantly late, yield and catch up gradually
+                // Only yield minimally if processing was too fast
+                if elapsed.as_micros() < 1000 {
+                    // Processing was very fast (< 1ms), yield briefly to prevent spinning
                     tokio::task::yield_now().await;
-                    if frame_count % 100 == 0 {
-                        println!("⚠️  PROCESSING OVERRUN: {}ms processing time for {:.2}ms target", 
-                            elapsed.as_millis(), target_interval.as_millis());
+                } else if elapsed.as_millis() > 50 {
+                    // Processing took too long (> 50ms), log the overrun
+                    if frame_count % 10 == 0 {
+                        println!("⚠️  PROCESSING OVERRUN: {}ms processing time (audio callback driven)", elapsed.as_millis());
                     }
-                } else {
-                    // If slightly over target, still maintain the rhythm by yielding minimally
-                    tokio::time::sleep(std::time::Duration::from_micros(100)).await; // 0.1ms minimal yield
+                    tokio::task::yield_now().await;
                 }
+                
+                // **NO MORE TIMER-BASED SLEEPING** - processing is now driven by available audio data
+                // The loop will naturally pace itself based on when audio callbacks provide data
             }
             
             println!("Audio processing thread stopped");
@@ -1195,7 +1210,7 @@ impl AudioClock {
         }
     }
     
-    /// Update the clock with processed samples and check for timing drift
+    /// Update the clock with processed samples - now tracks hardware callback timing instead of software timing
     pub fn update(&mut self, samples_added: usize) -> Option<TimingSync> {
         self.samples_processed += samples_added as u64;
         
@@ -1203,29 +1218,37 @@ impl AudioClock {
         if self.samples_processed % self.sync_interval_samples == 0 {
             let now = std::time::Instant::now();
             
-            // Calculate expected time based on samples processed
-            let expected_duration_us = (self.samples_processed as f64 * 1_000_000.0) / self.sample_rate as f64;
-            let actual_duration_us = now.duration_since(self.start_time).as_micros() as f64;
+            // **CRITICAL FIX**: In callback-driven processing, we don't calculate "expected" timing
+            // because the samples arrive exactly when the hardware provides them.
+            // Instead, we only track callback consistency and hardware timing variations.
             
-            // Calculate drift (positive = running slow, negative = running fast)
-            let drift_us = expected_duration_us - actual_duration_us;
-            self.drift_compensation = drift_us;
+            let callback_interval_us = now.duration_since(self.last_sync_time).as_micros() as f64;
+            let expected_interval_us = (self.sync_interval_samples as f64 * 1_000_000.0) / self.sample_rate as f64;
+            
+            // Only report drift if callback intervals are inconsistent with expected buffer timing
+            // This detects real hardware timing issues, not software processing timing
+            let interval_variation = callback_interval_us - expected_interval_us;
+            
+            // Only consider significant variations in hardware callback timing as real drift
+            let is_hardware_drift = interval_variation.abs() > expected_interval_us * 0.1; // 10% variation threshold
+            
+            // Reset drift compensation since we're now hardware-synchronized
+            self.drift_compensation = if is_hardware_drift { interval_variation } else { 0.0 };
             
             let sync = TimingSync {
                 samples_processed: self.samples_processed,
-                drift_microseconds: drift_us,
-                needs_adjustment: drift_us.abs() > 1000.0, // > 1ms drift
+                drift_microseconds: interval_variation,
+                needs_adjustment: is_hardware_drift,
                 sync_time: now,
             };
             
-            self.last_sync_time = now;
-            
-            // Log significant drift
-            if sync.needs_adjustment {
-                println!("⏰ AUDIO CLOCK: Drift detected: {:.2}ms at {} samples", 
-                    drift_us / 1000.0, self.samples_processed);
+            // Only log actual hardware timing issues, not software processing timing
+            if is_hardware_drift {
+                println!("⏰ HARDWARE TIMING: Callback interval variation: {:.2}ms (expected: {:.2}ms, actual: {:.2}ms)", 
+                    interval_variation / 1000.0, expected_interval_us / 1000.0, callback_interval_us / 1000.0);
             }
             
+            self.last_sync_time = now;
             Some(sync)
         } else {
             None
