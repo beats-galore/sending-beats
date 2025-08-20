@@ -1,5 +1,31 @@
+// Professional DJ Streaming Client - Modernized with Mantine
 import { invoke } from '@tauri-apps/api/core';
-import React, { useState, useRef, useEffect } from 'react';
+import {
+  Box,
+  Stack,
+  Group,
+  Text,
+  Title,
+  Alert,
+  Grid,
+  LoadingOverlay,
+  Badge,
+} from '@mantine/core';
+import { createStyles } from '@mantine/styles';
+import {
+  IconAlertCircle,
+  IconWifi,
+  IconWifiOff,
+} from '@tabler/icons-react';
+import { memo, useState, useRef, useEffect, useCallback } from 'react';
+
+import { ErrorBoundary } from './layout';
+import {
+  StreamStatusCard,
+  StreamConfigurationCard,
+  AudioControlsCard,
+  MetadataCard,
+} from './dj';
 
 type AudioDevice = {
   deviceId: string;
@@ -39,7 +65,22 @@ type StreamMetadata = {
   genre?: string;
 };
 
-const DJClient: React.FC = () => {
+const useStyles = createStyles((theme) => ({
+  container: {
+    padding: theme.spacing.md,
+    maxWidth: 1200,
+    margin: '0 auto',
+  },
+
+  statusIndicator: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: theme.spacing.xs,
+  },
+}));
+
+const DJClient = memo(() => {
+  const { classes } = useStyles();
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [selectedDevice, setSelectedDevice] = useState<string>('');
@@ -66,6 +107,8 @@ const DJClient: React.FC = () => {
   const [audioLevel, setAudioLevel] = useState(0);
   const [error, setError] = useState<string>('');
   const [streamStatus, setStreamStatus] = useState<StreamStatus | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isRefreshingDevices, setIsRefreshingDevices] = useState(false);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -76,43 +119,46 @@ const DJClient: React.FC = () => {
   const streamSenderRef = useRef<((data: Uint8Array) => void) | null>(null);
 
   // Get available audio devices
-  useEffect(() => {
-    const getAudioDevices = async () => {
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
+  const getAudioDevices = useCallback(async () => {
+    try {
+      setIsRefreshingDevices(true);
+      const devices = await navigator.mediaDevices.enumerateDevices();
 
-        // Get all audio input devices (microphones, system audio, etc.)
-        const audioInputs = devices
-          .filter((device) => device.kind === 'audioinput')
-          .map((device) => ({
-            deviceId: device.deviceId,
-            label: device.label || `Audio Input ${device.deviceId.slice(0, 8)}`,
-          }));
+      // Get all audio input devices (microphones, system audio, etc.)
+      const audioInputs = devices
+        .filter((device) => device.kind === 'audioinput')
+        .map((device) => ({
+          deviceId: device.deviceId,
+          label: device.label || `Audio Input ${device.deviceId.slice(0, 8)}`,
+        }));
 
-        // Add system audio capture option if available
-        const systemAudioOption = {
-          deviceId: 'system-audio',
-          label: 'System Audio (All Sounds)',
-        };
+      // Add system audio capture option if available
+      const systemAudioOption = {
+        deviceId: 'system-audio',
+        label: 'System Audio (All Sounds)',
+      };
 
-        // Combine system audio with detected devices
-        const allDevices = [systemAudioOption, ...audioInputs];
+      // Combine system audio with detected devices
+      const allDevices = [systemAudioOption, ...audioInputs];
 
-        setAudioDevices(allDevices);
-        if (allDevices.length > 0) {
-          setSelectedDevice(allDevices[0].deviceId);
-        }
-      } catch (err) {
-        setError('Failed to get audio devices');
-        console.error(err);
+      setAudioDevices(allDevices);
+      if (allDevices.length > 0 && !selectedDevice) {
+        setSelectedDevice(allDevices[0].deviceId);
       }
-    };
+    } catch (err) {
+      setError('Failed to get audio devices');
+      console.error(err);
+    } finally {
+      setIsRefreshingDevices(false);
+    }
+  }, [selectedDevice]);
 
-    getAudioDevices();
+  useEffect(() => {
+    void getAudioDevices();
 
     // Listen for device changes
     const handleDeviceChange = () => {
-      getAudioDevices();
+      void getAudioDevices();
     };
 
     navigator.mediaDevices.addEventListener('devicechange', handleDeviceChange);
@@ -120,7 +166,7 @@ const DJClient: React.FC = () => {
     return () => {
       navigator.mediaDevices.removeEventListener('devicechange', handleDeviceChange);
     };
-  }, []);
+  }, [getAudioDevices]);
 
   // Update stream status periodically
   useEffect(() => {
@@ -242,8 +288,9 @@ const DJClient: React.FC = () => {
     streamSenderRef.current = null;
   };
 
-  const connectToStream = async () => {
+  const connectToStream = useCallback(async () => {
     try {
+      setIsConnecting(true);
       setError('');
 
       // Update stream config with current settings
@@ -266,10 +313,12 @@ const DJClient: React.FC = () => {
     } catch (err) {
       setError(`Failed to connect to stream: ${err}`);
       setIsConnected(false);
+    } finally {
+      setIsConnecting(false);
     }
-  };
+  }, [streamConfig, streamSettings]);
 
-  const disconnectFromStream = async () => {
+  const disconnectFromStream = useCallback(async () => {
     try {
       await invoke('disconnect_from_stream');
       stopAudioMonitoring();
@@ -280,9 +329,9 @@ const DJClient: React.FC = () => {
     } catch (err) {
       setError(`Failed to disconnect: ${err}`);
     }
-  };
+  }, []);
 
-  const startStreaming = async () => {
+  const startStreaming = useCallback(async () => {
     if (!isConnected) return;
 
     try {
@@ -301,9 +350,9 @@ const DJClient: React.FC = () => {
       setError(`Failed to start streaming: ${err}`);
       setIsStreaming(false);
     }
-  };
+  }, [isConnected]);
 
-  const stopStreaming = async () => {
+  const stopStreaming = useCallback(async () => {
     try {
       await invoke('stop_streaming');
       setIsStreaming(false);
@@ -311,9 +360,9 @@ const DJClient: React.FC = () => {
     } catch (err) {
       setError(`Failed to stop streaming: ${err}`);
     }
-  };
+  }, []);
 
-  const updateMetadata = async () => {
+  const updateMetadata = useCallback(async () => {
     if (!metadata.title || !metadata.artist) return;
 
     try {
@@ -329,285 +378,91 @@ const DJClient: React.FC = () => {
     } catch (err) {
       setError(`Failed to update metadata: ${err}`);
     }
-  };
+  }, [metadata]);
 
   return (
-    <div className="bg-surface rounded-2xl p-6 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-display text-brand">DJ Streaming Client</h2>
-        <div className="flex items-center gap-2">
-          <div
-            className={`w-3 h-3 rounded-full ${isConnected ? 'bg-brand animate-pulse' : 'bg-surface-light'}`}
+    <ErrorBoundary>
+      <Box className={classes.container} pos="relative">
+        <LoadingOverlay visible={isConnecting} />
+        
+        <Stack gap="lg">
+          <Group justify="space-between" align="center">
+            <Title order={1} c="blue.4">
+              DJ Streaming Client
+            </Title>
+            <Group className={classes.statusIndicator}>
+              {isConnected ? (
+                <IconWifi size={20} color="#51cf66" />
+              ) : (
+                <IconWifiOff size={20} color="#fa5252" />
+              )}
+              <Badge
+                color={isConnected ? 'green' : 'red'}
+                variant="light"
+                size="md"
+              >
+                {isConnected ? 'Connected' : 'Disconnected'}
+              </Badge>
+            </Group>
+          </Group>
+
+          {error && (
+            <Alert
+              icon={<IconAlertCircle size={16} />}
+              title="Error"
+              color="red"
+              variant="light"
+            >
+              {error}
+            </Alert>
+          )}
+
+          <StreamStatusCard streamStatus={streamStatus} />
+
+          <Grid>
+            {/* Stream Configuration */}
+            <Grid.Col span={12} md={6}>
+              <StreamConfigurationCard
+                streamConfig={streamConfig}
+                streamSettings={streamSettings}
+                isConnected={isConnected}
+                isConnecting={isConnecting}
+                onConfigChange={setStreamConfig}
+                onSettingsChange={setStreamSettings}
+                onConnect={connectToStream}
+                onDisconnect={disconnectFromStream}
+              />
+            </Grid.Col>
+
+            {/* Audio Controls */}
+            <Grid.Col span={12} md={6}>
+              <AudioControlsCard
+                audioDevices={audioDevices}
+                selectedDevice={selectedDevice}
+                audioLevel={audioLevel}
+                isConnected={isConnected}
+                isStreaming={isStreaming}
+                isRefreshingDevices={isRefreshingDevices}
+                onDeviceChange={setSelectedDevice}
+                onRefreshDevices={getAudioDevices}
+                onStartStreaming={startStreaming}
+                onStopStreaming={stopStreaming}
+              />
+            </Grid.Col>
+          </Grid>
+
+          {/* Metadata Section */}
+          <MetadataCard
+            metadata={metadata}
+            onMetadataChange={setMetadata}
+            onUpdateMetadata={updateMetadata}
           />
-          <span className="text-sm text-surface-light">
-            {isConnected ? 'Connected' : 'Disconnected'}
-          </span>
-        </div>
-      </div>
-
-      {error && (
-        <div className="bg-accent/20 border border-accent text-accent px-4 py-2 rounded-lg mb-4">
-          {error}
-        </div>
-      )}
-
-      {streamStatus && (
-        <div className="bg-surface-light rounded-lg p-4 mb-4">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-            <div>
-              <div className="text-2xl font-display text-brand">
-                {streamStatus.current_listeners}
-              </div>
-              <div className="text-sm text-surface-light">Current Listeners</div>
-            </div>
-            <div>
-              <div className="text-2xl font-display text-accent">{streamStatus.peak_listeners}</div>
-              <div className="text-sm text-surface-light">Peak Listeners</div>
-            </div>
-            <div>
-              <div className="text-2xl font-display text-brand">
-                {streamStatus.stream_duration}s
-              </div>
-              <div className="text-sm text-surface-light">Stream Duration</div>
-            </div>
-            <div>
-              <div className="text-2xl font-display text-brand">{streamStatus.bitrate} kbps</div>
-              <div className="text-sm text-surface-light">Bitrate</div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Stream Configuration */}
-        <div className="space-y-4">
-          <h3 className="text-lg font-display text-brand">Stream Configuration</h3>
-
-          <div>
-            <label className="block text-sm font-medium text-surface-light mb-2">Icecast URL</label>
-            <input
-              type="text"
-              value={streamConfig.icecast_url}
-              onChange={(e) =>
-                setStreamConfig((prev) => ({ ...prev, icecast_url: e.target.value }))
-              }
-              className="w-full bg-surface-light border border-surface rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-brand"
-              placeholder="http://localhost:8000"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-surface-light mb-2">Mount Point</label>
-            <input
-              type="text"
-              value={streamConfig.mount_point}
-              onChange={(e) =>
-                setStreamConfig((prev) => ({ ...prev, mount_point: e.target.value }))
-              }
-              className="w-full bg-surface-light border border-surface rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-brand"
-              placeholder="live"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-surface-light mb-2">Username</label>
-              <input
-                type="text"
-                value={streamConfig.username}
-                onChange={(e) => setStreamConfig((prev) => ({ ...prev, username: e.target.value }))}
-                className="w-full bg-surface-light border border-surface rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-brand"
-                placeholder="source"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-surface-light mb-2">Password</label>
-              <input
-                type="password"
-                value={streamConfig.password}
-                onChange={(e) => setStreamConfig((prev) => ({ ...prev, password: e.target.value }))}
-                className="w-full bg-surface-light border border-surface rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-brand"
-                placeholder="hackme"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-surface-light mb-2">
-              Bitrate (kbps)
-            </label>
-            <select
-              value={streamSettings.bitrate}
-              onChange={(e) =>
-                setStreamSettings((prev) => ({ ...prev, bitrate: Number(e.target.value) }))
-              }
-              className="w-full bg-surface-light border border-surface rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-brand"
-            >
-              <option value={64}>64 kbps</option>
-              <option value={128}>128 kbps</option>
-              <option value={192}>192 kbps</option>
-              <option value={320}>320 kbps</option>
-            </select>
-          </div>
-
-          <div className="flex gap-2">
-            {!isConnected ? (
-              <button
-                onClick={connectToStream}
-                className="flex-1 bg-brand hover:bg-brand-light text-white font-medium py-2 px-4 rounded-lg transition-colors"
-              >
-                Connect
-              </button>
-            ) : (
-              <button
-                onClick={disconnectFromStream}
-                className="flex-1 bg-accent hover:bg-accent-light text-white font-medium py-2 px-4 rounded-lg transition-colors"
-              >
-                Disconnect
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Audio Controls */}
-        <div className="space-y-4">
-          <h3 className="text-lg font-display text-brand">Audio Controls</h3>
-
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <label className="block text-sm font-medium text-surface-light">
-                Audio Input Device
-              </label>
-              <button
-                onClick={() => {
-                  navigator.mediaDevices.enumerateDevices().then((devices) => {
-                    const audioInputs = devices
-                      .filter((device) => device.kind === 'audioinput')
-                      .map((device) => ({
-                        deviceId: device.deviceId,
-                        label: device.label || `Audio Input ${device.deviceId.slice(0, 8)}`,
-                      }));
-                    const systemAudioOption = {
-                      deviceId: 'system-audio',
-                      label: 'System Audio (All Sounds)',
-                    };
-                    const allDevices = [systemAudioOption, ...audioInputs];
-                    setAudioDevices(allDevices);
-                  });
-                }}
-                className="text-xs text-brand hover:text-brand-light transition-colors"
-              >
-                Refresh
-              </button>
-            </div>
-            <select
-              value={selectedDevice}
-              onChange={(e) => setSelectedDevice(e.target.value)}
-              className="w-full bg-surface-light border border-surface rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-brand"
-            >
-              {audioDevices.map((device) => (
-                <option key={device.deviceId} value={device.deviceId}>
-                  {device.label}
-                </option>
-              ))}
-            </select>
-            {selectedDevice === 'system-audio' && (
-              <p className="text-xs text-surface-light mt-1">
-                Note: System audio capture may require additional permissions and may not work in
-                all browsers.
-              </p>
-            )}
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-surface-light mb-2">Audio Level</label>
-            <div className="bg-surface-light rounded-lg p-4">
-              <div className="flex items-end gap-1 h-20">
-                {Array.from({ length: 20 }, (_, i) => (
-                  <div
-                    key={i}
-                    className={`flex-1 rounded-sm transition-all duration-100 ${
-                      i < (audioLevel / 255) * 20 ? 'bg-brand' : 'bg-surface'
-                    }`}
-                    style={{ height: `${Math.max(2, (audioLevel / 255) * 100)}%` }}
-                  />
-                ))}
-              </div>
-              <div className="text-center text-sm text-surface-light mt-2">
-                {Math.round(audioLevel)} dB
-              </div>
-            </div>
-          </div>
-
-          <div className="flex gap-2">
-            {isConnected && (
-              <>
-                {!isStreaming ? (
-                  <button
-                    onClick={startStreaming}
-                    className="flex-1 bg-brand hover:bg-brand-light text-white font-medium py-2 px-4 rounded-lg transition-colors"
-                  >
-                    Start Streaming
-                  </button>
-                ) : (
-                  <button
-                    onClick={stopStreaming}
-                    className="flex-1 bg-accent hover:bg-accent-light text-white font-medium py-2 px-4 rounded-lg transition-colors"
-                  >
-                    Stop Streaming
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Metadata Section */}
-      <div className="mt-6 pt-6 border-t border-surface">
-        <h3 className="text-lg font-display text-brand mb-4">Track Metadata</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-surface-light mb-2">Title</label>
-            <input
-              type="text"
-              value={metadata.title}
-              onChange={(e) => setMetadata((prev) => ({ ...prev, title: e.target.value }))}
-              className="w-full bg-surface-light border border-surface rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-brand"
-              placeholder="Track title"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-surface-light mb-2">Artist</label>
-            <input
-              type="text"
-              value={metadata.artist}
-              onChange={(e) => setMetadata((prev) => ({ ...prev, artist: e.target.value }))}
-              className="w-full bg-surface-light border border-surface rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-brand"
-              placeholder="Artist name"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-surface-light mb-2">Album</label>
-            <input
-              type="text"
-              value={metadata.album}
-              onChange={(e) => setMetadata((prev) => ({ ...prev, album: e.target.value }))}
-              className="w-full bg-surface-light border border-surface rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-brand"
-              placeholder="Album name"
-            />
-          </div>
-        </div>
-        <button
-          onClick={updateMetadata}
-          disabled={!metadata.title || !metadata.artist}
-          className="mt-4 bg-brand hover:bg-brand-light disabled:bg-surface disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded-lg transition-colors"
-        >
-          Update Metadata
-        </button>
-      </div>
-    </div>
+        </Stack>
+      </Box>
+    </ErrorBoundary>
   );
-};
+});
+
+DJClient.displayName = 'DJClient';
 
 export default DJClient;

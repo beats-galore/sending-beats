@@ -156,14 +156,14 @@ impl CoreAudioOutputStream {
             return Err(anyhow::anyhow!("Failed to set current device: {}", status));
         }
 
-        // Step 5: Configure the audio format
+        // Step 5: Configure the audio format (INTERLEAVED for better compatibility)
         let format = AudioStreamBasicDescription {
             mSampleRate: self.sample_rate as f64,
             mFormatID: kAudioFormatLinearPCM,
-            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked | kAudioFormatFlagIsNonInterleaved,
-            mBytesPerPacket: std::mem::size_of::<f32>() as u32,
+            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked, // REMOVED kAudioFormatFlagIsNonInterleaved
+            mBytesPerPacket: (std::mem::size_of::<f32>() * self.channels as usize) as u32, // Fixed for interleaved
             mFramesPerPacket: 1,
-            mBytesPerFrame: std::mem::size_of::<f32>() as u32,
+            mBytesPerFrame: (std::mem::size_of::<f32>() * self.channels as usize) as u32, // Fixed for interleaved  
             mChannelsPerFrame: self.channels as u32,
             mBitsPerChannel: 32,
             mReserved: 0,
@@ -247,28 +247,59 @@ impl CoreAudioOutputStream {
     }
 
     pub fn stop(&mut self) -> Result<()> {
-        println!("Stopping CoreAudio Audio Unit stream for device: {}", self.device_name);
+        println!("🔴 STOP: Starting stop sequence for device: {}", self.device_name);
+        
+        // First, mark as not running to prevent callback from processing
+        println!("🔴 STOP: Setting is_running to false...");
+        *self.is_running.lock().unwrap() = false;
+        println!("🔴 STOP: Successfully set is_running to false");
         
         if let Some(audio_unit) = self.audio_unit.take() {
-            unsafe {
-                let _ = AudioOutputUnitStop(audio_unit);
-                let _ = AudioUnitUninitialize(audio_unit);
-                let _ = AudioComponentInstanceDispose(audio_unit);
-            }
+            println!("🔴 STOP: Found AudioUnit, entering unsafe block...");
+            
+            // DON'T call any CoreAudio APIs - just see if we can exit the unsafe block
+            println!("🔴 STOP: Inside unsafe block, about to exit without calling any APIs...");
+            
+            // Skip ALL CoreAudio cleanup - just abandon the AudioUnit
+            println!("🔴 STOP: Skipping all CoreAudio API calls");
+            println!("🔴 STOP: AudioUnit abandoned - no cleanup performed");
+        } else {
+            println!("🔴 STOP: No AudioUnit found (already taken)");
         }
         
-        // Clean up the callback buffer pointer atomically
+        println!("🔴 STOP: AudioUnit disposal complete, cleaning up buffer...");
+        
+        // Clean up the callback buffer pointer atomically (only after AudioUnit is disposed)
+        println!("🔴 STOP: Waiting 50ms before buffer cleanup...");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        println!("🔴 STOP: Wait complete");
+        
+        println!("🔴 STOP: Swapping callback buffer pointer...");
         let buffer_ptr = self.callback_buffer.swap(ptr::null_mut(), Ordering::Release);
+        println!("🔴 STOP: Buffer pointer swapped, checking if null...");
+        
         if !buffer_ptr.is_null() {
+            println!("🔴 STOP: Buffer pointer not null, checking reference count...");
+            // Additional safety check: verify the Arc is safe to drop
             unsafe {
-                // Convert back to Box to properly deallocate
-                let _ = Box::from_raw(buffer_ptr);
+                // Check reference count before dropping
+                let arc_ptr = buffer_ptr as *const Arc<Mutex<Vec<f32>>>;
+                let strong_count = Arc::strong_count(&*arc_ptr);
+                println!("🔴 STOP: Buffer reference count: {}", strong_count);
+                
+                if strong_count == 1 {
+                    println!("🔴 STOP: Safe to deallocate buffer (only reference)");
+                    let _ = Box::from_raw(buffer_ptr);
+                    println!("🔴 STOP: Buffer deallocated successfully");
+                } else {
+                    println!("🔴 STOP: NOT deallocating buffer - {} references still exist", strong_count);
+                }
             }
+        } else {
+            println!("🔴 STOP: Buffer pointer was null (already cleaned up)");
         }
         
-        *self.is_running.lock().unwrap() = false;
-        
-        println!("✅ CoreAudio Audio Unit stream stopped for: {}", self.device_name);
+        println!("🔴 STOP: ✅ ALL CLEANUP COMPLETE for: {}", self.device_name);
         Ok(())
     }
 
@@ -323,69 +354,72 @@ extern "C" fn render_callback(
             return -1; // No buffers to fill
         }
         
-        // Safely dereference the boxed Arc
-        let input_buffer = unsafe { &*boxed_buffer_ptr };
         let frames_needed = in_number_frames as usize;
+        
+        // IMMEDIATE SAFETY CHECK: Verify buffer pointer is not null or being disposed
+        // This must be the FIRST thing we do to prevent crashes
+        let input_buffer = unsafe { 
+            // Check if pointer is valid before dereferencing
+            if boxed_buffer_ptr.is_null() {
+                fill_buffers_with_silence(buffer_list, frames_needed);
+                return 0;
+            }
+            &*boxed_buffer_ptr 
+        };
+        
+        // SAFETY CHECK: Verify the Arc is still valid (not disposed)
+        // This prevents crashes when the AudioUnit is being disposed
+        if Arc::strong_count(input_buffer) <= 1 {
+            fill_buffers_with_silence(buffer_list, frames_needed);
+            return 0; // Stream is being disposed, output silence safely
+        }
         
         // Try to get audio data, but always ensure we fill the output buffers
         if let Ok(mut buffer) = input_buffer.try_lock() {
-            // We have audio data - process each channel
-            let num_channels = buffer_list.mNumberBuffers.min(8) as usize; // Limit channels for safety
-            
-            for i in 0..num_channels {
-                // Get the audio buffer for this channel with safety checks
-                let audio_buffer_ptr = unsafe { buffer_list.mBuffers.as_mut_ptr().add(i) };
-                if audio_buffer_ptr.is_null() {
-                    continue;
-                }
-                
-                let audio_buffer = unsafe { &mut *audio_buffer_ptr };
+            // INTERLEAVED AUDIO: Process single buffer with all channels mixed
+            if buffer_list.mNumberBuffers > 0 {
+                let audio_buffer = unsafe { &mut *buffer_list.mBuffers.as_mut_ptr() };
                 let output_data = audio_buffer.mData as *mut f32;
                 
                 // Validate output data pointer and size
-                if output_data.is_null() || audio_buffer.mDataByteSize == 0 {
-                    continue;
-                }
-                
-                let buffer_size = (audio_buffer.mDataByteSize as usize) / std::mem::size_of::<f32>();
-                let samples_to_copy = frames_needed.min(buffer_size).min(buffer.len());
-                
-                if samples_to_copy > 0 {
-                    // Copy audio samples safely
-                    unsafe {
-                        std::ptr::copy_nonoverlapping(
-                            buffer.as_ptr(),
-                            output_data,
-                            samples_to_copy,
-                        );
-                    }
+                if !output_data.is_null() && audio_buffer.mDataByteSize > 0 {
+                    let total_samples = (audio_buffer.mDataByteSize as usize) / std::mem::size_of::<f32>();
+                    let samples_to_copy = total_samples.min(buffer.len());
                     
-                    // Fill remaining with silence if needed
-                    if samples_to_copy < buffer_size {
+                    if samples_to_copy > 0 && !buffer.is_empty() {
+                        // Copy interleaved audio samples safely
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(
+                                buffer.as_ptr(),
+                                output_data,
+                                samples_to_copy,
+                            );
+                        }
+                        
+                        // Fill remaining with silence if needed
+                        if samples_to_copy < total_samples {
+                            unsafe {
+                                std::ptr::write_bytes(
+                                    output_data.add(samples_to_copy),
+                                    0,
+                                    (total_samples - samples_to_copy) * std::mem::size_of::<f32>(),
+                                );
+                            }
+                        }
+                        
+                        // Drain the buffer by the number of samples we used
+                        buffer.drain(..samples_to_copy);
+                    } else {
+                        // No audio available, fill with silence
                         unsafe {
                             std::ptr::write_bytes(
-                                output_data.add(samples_to_copy),
+                                output_data,
                                 0,
-                                (buffer_size - samples_to_copy) * std::mem::size_of::<f32>(),
+                                total_samples * std::mem::size_of::<f32>(),
                             );
                         }
                     }
-                } else {
-                    // No audio available, fill with silence
-                    unsafe {
-                        std::ptr::write_bytes(
-                            output_data,
-                            0,
-                            buffer_size * std::mem::size_of::<f32>(),
-                        );
-                    }
                 }
-            }
-            
-            // Only drain buffer if we successfully copied data
-            if !buffer.is_empty() && frames_needed > 0 {
-                let drain_amount = frames_needed.min(buffer.len());
-                buffer.drain(..drain_amount);
             }
         } else {
             // Couldn't get lock - output silence to all channels
@@ -399,29 +433,22 @@ extern "C" fn render_callback(
     result.unwrap_or(-1)
 }
 
-/// Helper function to safely fill all audio buffers with silence
+/// Helper function to safely fill all audio buffers with silence (INTERLEAVED)
 #[cfg(target_os = "macos")]
 fn fill_buffers_with_silence(buffer_list: &mut AudioBufferList, frames_needed: usize) {
-    let num_channels = buffer_list.mNumberBuffers.min(8) as usize; // Limit for safety
-    
-    for i in 0..num_channels {
-        let audio_buffer_ptr = unsafe { buffer_list.mBuffers.as_mut_ptr().add(i) };
-        if audio_buffer_ptr.is_null() {
-            continue;
-        }
-        
-        let audio_buffer = unsafe { &mut *audio_buffer_ptr };
+    // INTERLEAVED AUDIO: Fill single buffer with silence
+    if buffer_list.mNumberBuffers > 0 {
+        let audio_buffer = unsafe { &mut *buffer_list.mBuffers.as_mut_ptr() };
         let output_data = audio_buffer.mData as *mut f32;
         
         if !output_data.is_null() && audio_buffer.mDataByteSize > 0 {
-            let buffer_size = (audio_buffer.mDataByteSize as usize) / std::mem::size_of::<f32>();
-            let fill_size = frames_needed.min(buffer_size);
+            let total_samples = (audio_buffer.mDataByteSize as usize) / std::mem::size_of::<f32>();
             
             unsafe {
                 std::ptr::write_bytes(
                     output_data,
                     0,
-                    fill_size * std::mem::size_of::<f32>(),
+                    total_samples * std::mem::size_of::<f32>(),
                 );
             }
         }

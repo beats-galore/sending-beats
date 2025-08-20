@@ -178,12 +178,11 @@ impl AudioDeviceManager {
         // Process each device
         for device_id in device_ids {
             match self.get_coreaudio_device_info(device_id).await {
-                Ok(Some(device_info)) => {
-                    println!("  Found CoreAudio device: {} ({})", device_info.name, device_info.id);
-                    devices.push(device_info);
-                }
-                Ok(None) => {
-                    // Device filtered out (e.g., no streams)
+                Ok(device_infos) => {
+                    for device_info in device_infos {
+                        println!("  Found CoreAudio device: {} ({})", device_info.name, device_info.id);
+                        devices.push(device_info);
+                    }
                 }
                 Err(e) => {
                     println!("  Failed to get info for device {}: {}", device_id, e);
@@ -194,9 +193,9 @@ impl AudioDeviceManager {
         Ok(devices)
     }
     
-    /// Get device info from CoreAudio device ID
+    /// Get device info from CoreAudio device ID - returns multiple entries for dual-capability devices
     #[cfg(target_os = "macos")]
-    async fn get_coreaudio_device_info(&self, device_id: AudioDeviceID) -> Result<Option<AudioDeviceInfo>> {
+    async fn get_coreaudio_device_info(&self, device_id: AudioDeviceID) -> Result<Vec<AudioDeviceInfo>> {
         use std::ptr;
         use std::mem;
         
@@ -272,29 +271,49 @@ impl AudioDeviceManager {
         
         // Skip devices that have neither input nor output
         if !has_input && !has_output {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         
-        // Generate device ID
-        let device_type = if has_output { "output" } else { "input" };
         let clean_name = device_name.replace(" ", "_").replace("(", "").replace(")", "").to_lowercase();
-        let device_id_string = format!("{}_{}", device_type, clean_name);
         
-        // Check if this is a default device
-        let is_default = self.is_coreaudio_default_device(device_id, has_output).await.unwrap_or(false);
+        // For devices that support both input and output, we need to create separate entries
+        let mut device_infos = Vec::new();
         
-        let device_info = AudioDeviceInfo {
-            id: device_id_string,
-            name: device_name,
-            is_input: has_input,
-            is_output: has_output,
-            is_default,
-            supported_sample_rates: vec![44100, 48000], // Default rates
-            supported_channels: vec![2], // Assume stereo
-            host_api: "CoreAudio (Direct)".to_string(),
-        };
+        // Create input device entry if device supports input
+        if has_input {
+            let input_device_id = format!("input_{}", clean_name);
+            let is_default_input = self.is_coreaudio_default_device(device_id, false).await.unwrap_or(false);
+            
+            device_infos.push(AudioDeviceInfo {
+                id: input_device_id,
+                name: device_name.clone(),
+                is_input: true,
+                is_output: false, // Input-only entry
+                is_default: is_default_input,
+                supported_sample_rates: vec![48000, 44100], // Prioritize 48kHz to match system default
+                supported_channels: vec![2], // Assume stereo
+                host_api: "CoreAudio (Direct)".to_string(),
+            });
+        }
         
-        Ok(Some(device_info))
+        // Create output device entry if device supports output
+        if has_output {
+            let output_device_id = format!("output_{}", clean_name);
+            let is_default_output = self.is_coreaudio_default_device(device_id, true).await.unwrap_or(false);
+            
+            device_infos.push(AudioDeviceInfo {
+                id: output_device_id,
+                name: device_name.clone(),
+                is_input: false, // Output-only entry
+                is_output: true,
+                is_default: is_default_output,
+                supported_sample_rates: vec![48000, 44100], // Prioritize 48kHz to match system default
+                supported_channels: vec![2], // Assume stereo
+                host_api: "CoreAudio (Direct)".to_string(),
+            });
+        }
+        
+        Ok(device_infos)
     }
     
     /// Check if a CoreAudio device is the system default
@@ -724,7 +743,7 @@ impl AudioDeviceManager {
                 Ok(AudioDeviceHandle::CoreAudio(CoreAudioDevice {
                     device_id,
                     name: device_info.name.clone(),
-                    sample_rate: 44100, // Default
+                    sample_rate: 48000, // Match system default (was 44100)
                     channels: 2,        // Default stereo
                     stream: None,       // Stream will be created when needed
                 }))
