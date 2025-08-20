@@ -290,7 +290,7 @@ impl AudioDeviceManager {
                 is_input: true,
                 is_output: false, // Input-only entry
                 is_default: is_default_input,
-                supported_sample_rates: vec![44100, 48000], // Default rates
+                supported_sample_rates: vec![48000, 44100], // Prioritize 48kHz to match system default
                 supported_channels: vec![2], // Assume stereo
                 host_api: "CoreAudio (Direct)".to_string(),
             });
@@ -307,7 +307,7 @@ impl AudioDeviceManager {
                 is_input: false, // Output-only entry
                 is_output: true,
                 is_default: is_default_output,
-                supported_sample_rates: vec![44100, 48000], // Default rates
+                supported_sample_rates: vec![48000, 44100], // Prioritize 48kHz to match system default
                 supported_channels: vec![2], // Assume stereo
                 host_api: "CoreAudio (Direct)".to_string(),
             });
@@ -743,7 +743,7 @@ impl AudioDeviceManager {
                 Ok(AudioDeviceHandle::CoreAudio(CoreAudioDevice {
                     device_id,
                     name: device_info.name.clone(),
-                    sample_rate: 44100, // Default
+                    sample_rate: 48000, // Match system default (was 44100)
                     channels: 2,        // Default stereo
                     stream: None,       // Stream will be created when needed
                 }))

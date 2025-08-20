@@ -156,14 +156,14 @@ impl CoreAudioOutputStream {
             return Err(anyhow::anyhow!("Failed to set current device: {}", status));
         }
 
-        // Step 5: Configure the audio format
+        // Step 5: Configure the audio format (INTERLEAVED for better compatibility)
         let format = AudioStreamBasicDescription {
             mSampleRate: self.sample_rate as f64,
             mFormatID: kAudioFormatLinearPCM,
-            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked | kAudioFormatFlagIsNonInterleaved,
-            mBytesPerPacket: std::mem::size_of::<f32>() as u32,
+            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked, // REMOVED kAudioFormatFlagIsNonInterleaved
+            mBytesPerPacket: (std::mem::size_of::<f32>() * self.channels as usize) as u32, // Fixed for interleaved
             mFramesPerPacket: 1,
-            mBytesPerFrame: std::mem::size_of::<f32>() as u32,
+            mBytesPerFrame: (std::mem::size_of::<f32>() * self.channels as usize) as u32, // Fixed for interleaved  
             mChannelsPerFrame: self.channels as u32,
             mBitsPerChannel: 32,
             mReserved: 0,
@@ -376,63 +376,50 @@ extern "C" fn render_callback(
         
         // Try to get audio data, but always ensure we fill the output buffers
         if let Ok(mut buffer) = input_buffer.try_lock() {
-            // We have audio data - process each channel
-            let num_channels = buffer_list.mNumberBuffers.min(8) as usize; // Limit channels for safety
-            
-            for i in 0..num_channels {
-                // Get the audio buffer for this channel with safety checks
-                let audio_buffer_ptr = unsafe { buffer_list.mBuffers.as_mut_ptr().add(i) };
-                if audio_buffer_ptr.is_null() {
-                    continue;
-                }
-                
-                let audio_buffer = unsafe { &mut *audio_buffer_ptr };
+            // INTERLEAVED AUDIO: Process single buffer with all channels mixed
+            if buffer_list.mNumberBuffers > 0 {
+                let audio_buffer = unsafe { &mut *buffer_list.mBuffers.as_mut_ptr() };
                 let output_data = audio_buffer.mData as *mut f32;
                 
                 // Validate output data pointer and size
-                if output_data.is_null() || audio_buffer.mDataByteSize == 0 {
-                    continue;
-                }
-                
-                let buffer_size = (audio_buffer.mDataByteSize as usize) / std::mem::size_of::<f32>();
-                let samples_to_copy = frames_needed.min(buffer_size).min(buffer.len());
-                
-                if samples_to_copy > 0 {
-                    // Copy audio samples safely
-                    unsafe {
-                        std::ptr::copy_nonoverlapping(
-                            buffer.as_ptr(),
-                            output_data,
-                            samples_to_copy,
-                        );
-                    }
+                if !output_data.is_null() && audio_buffer.mDataByteSize > 0 {
+                    let total_samples = (audio_buffer.mDataByteSize as usize) / std::mem::size_of::<f32>();
+                    let samples_to_copy = total_samples.min(buffer.len());
                     
-                    // Fill remaining with silence if needed
-                    if samples_to_copy < buffer_size {
+                    if samples_to_copy > 0 && !buffer.is_empty() {
+                        // Copy interleaved audio samples safely
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(
+                                buffer.as_ptr(),
+                                output_data,
+                                samples_to_copy,
+                            );
+                        }
+                        
+                        // Fill remaining with silence if needed
+                        if samples_to_copy < total_samples {
+                            unsafe {
+                                std::ptr::write_bytes(
+                                    output_data.add(samples_to_copy),
+                                    0,
+                                    (total_samples - samples_to_copy) * std::mem::size_of::<f32>(),
+                                );
+                            }
+                        }
+                        
+                        // Drain the buffer by the number of samples we used
+                        buffer.drain(..samples_to_copy);
+                    } else {
+                        // No audio available, fill with silence
                         unsafe {
                             std::ptr::write_bytes(
-                                output_data.add(samples_to_copy),
+                                output_data,
                                 0,
-                                (buffer_size - samples_to_copy) * std::mem::size_of::<f32>(),
+                                total_samples * std::mem::size_of::<f32>(),
                             );
                         }
                     }
-                } else {
-                    // No audio available, fill with silence
-                    unsafe {
-                        std::ptr::write_bytes(
-                            output_data,
-                            0,
-                            buffer_size * std::mem::size_of::<f32>(),
-                        );
-                    }
                 }
-            }
-            
-            // Only drain buffer if we successfully copied data
-            if !buffer.is_empty() && frames_needed > 0 {
-                let drain_amount = frames_needed.min(buffer.len());
-                buffer.drain(..drain_amount);
             }
         } else {
             // Couldn't get lock - output silence to all channels
@@ -446,29 +433,22 @@ extern "C" fn render_callback(
     result.unwrap_or(-1)
 }
 
-/// Helper function to safely fill all audio buffers with silence
+/// Helper function to safely fill all audio buffers with silence (INTERLEAVED)
 #[cfg(target_os = "macos")]
 fn fill_buffers_with_silence(buffer_list: &mut AudioBufferList, frames_needed: usize) {
-    let num_channels = buffer_list.mNumberBuffers.min(8) as usize; // Limit for safety
-    
-    for i in 0..num_channels {
-        let audio_buffer_ptr = unsafe { buffer_list.mBuffers.as_mut_ptr().add(i) };
-        if audio_buffer_ptr.is_null() {
-            continue;
-        }
-        
-        let audio_buffer = unsafe { &mut *audio_buffer_ptr };
+    // INTERLEAVED AUDIO: Fill single buffer with silence
+    if buffer_list.mNumberBuffers > 0 {
+        let audio_buffer = unsafe { &mut *buffer_list.mBuffers.as_mut_ptr() };
         let output_data = audio_buffer.mData as *mut f32;
         
         if !output_data.is_null() && audio_buffer.mDataByteSize > 0 {
-            let buffer_size = (audio_buffer.mDataByteSize as usize) / std::mem::size_of::<f32>();
-            let fill_size = frames_needed.min(buffer_size);
+            let total_samples = (audio_buffer.mDataByteSize as usize) / std::mem::size_of::<f32>();
             
             unsafe {
                 std::ptr::write_bytes(
                     output_data,
                     0,
-                    fill_size * std::mem::size_of::<f32>(),
+                    total_samples * std::mem::size_of::<f32>(),
                 );
             }
         }

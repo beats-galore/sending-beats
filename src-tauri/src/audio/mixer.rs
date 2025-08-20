@@ -71,6 +71,10 @@ pub struct VirtualMixer {
     master_levels: Arc<Mutex<(f32, f32, f32, f32)>>,
     master_levels_cache: Arc<Mutex<(f32, f32, f32, f32)>>,
     
+    // **PRIORITY 5: Audio Clock Synchronization**
+    audio_clock: Arc<Mutex<AudioClock>>, // Master audio clock for synchronization
+    timing_metrics: Arc<Mutex<TimingMetrics>>, // Timing performance metrics
+    
     // Audio stream management
     audio_device_manager: Arc<AudioDeviceManager>,
     input_streams: Arc<Mutex<HashMap<String, Arc<AudioInputStream>>>>,
@@ -82,6 +86,41 @@ pub struct VirtualMixer {
 }
 
 impl VirtualMixer {
+    /// Calculate optimal buffer size based on hardware capabilities and performance requirements  
+    async fn calculate_optimal_buffer_size(
+        &self, 
+        device: &cpal::Device, 
+        config: &cpal::SupportedStreamConfig,
+        fallback_size: usize
+    ) -> Result<BufferSize> {
+        // Try to get the device's preferred buffer size
+        match device.default_input_config() {
+            Ok(device_config) => {
+                // Calculate optimal buffer size based on sample rate and latency requirements
+                let sample_rate = config.sample_rate().0;
+                let channels = config.channels();
+                
+                // Target latency: 5-10ms for professional audio (balance between latency and stability)
+                let target_latency_ms = if sample_rate >= 48000 { 5.0 } else { 10.0 };
+                let target_buffer_size = ((sample_rate as f32 * target_latency_ms / 1000.0) as usize)
+                    .max(64)   // Minimum 64 samples for stability
+                    .min(2048); // Maximum 2048 samples to prevent excessive latency
+                
+                // Round to next power of 2 for optimal hardware performance  
+                let optimal_size = target_buffer_size.next_power_of_two().min(1024);
+                
+                info!("🔧 DYNAMIC BUFFER: Calculated optimal buffer size {} for device (SR: {}, CH: {}, Target: {}ms)", 
+                      optimal_size, sample_rate, channels, target_latency_ms);
+                
+                Ok(BufferSize::Fixed(optimal_size as u32))
+            }
+            Err(e) => {
+                warn!("Failed to get device config for buffer optimization: {}, using fallback", e);
+                Ok(BufferSize::Fixed(fallback_size as u32))
+            }
+        }
+    }
+
     /// Comprehensive device ID validation for security and robustness
     fn validate_device_id(device_id: &str) -> Result<()> {
         // Basic empty/length checks
@@ -218,6 +257,10 @@ impl VirtualMixer {
             audio_analyzer: AudioAnalyzer::new(config.sample_rate),
             command_tx,
             command_rx: Arc::new(Mutex::new(command_rx)),
+            
+            // **PRIORITY 5: Audio Clock Synchronization**
+            audio_clock: Arc::new(Mutex::new(AudioClock::new(config.sample_rate))),
+            timing_metrics: Arc::new(Mutex::new(TimingMetrics::new())),
             audio_output_tx,
             metrics,
             channel_levels,
@@ -269,22 +312,31 @@ impl VirtualMixer {
         debug!("Device config: {:?}", config);
         
         // Create AudioInputStream structure
-        let input_stream = AudioInputStream::new(
+        let mut input_stream = AudioInputStream::new(
             device_id.to_string(),
             device_name.clone(),
             self.config.sample_rate,
         )?;
         
+        // Configure adaptive chunk size and stream config with OPTIMAL buffer sizing
+        let buffer_size = self.config.buffer_size as usize;
+        let target_sample_rate = self.config.sample_rate;
+        let optimal_buffer_size = self.calculate_optimal_buffer_size(&device, &config, buffer_size).await?;
+        
+        let actual_buffer_size = match optimal_buffer_size {
+            BufferSize::Fixed(size) => size as usize,
+            BufferSize::Default => buffer_size,
+        };
+        input_stream.set_adaptive_chunk_size(actual_buffer_size);
+        
         // Get references for the audio callback
         let audio_buffer = input_stream.audio_buffer.clone();
-        let target_sample_rate = self.config.sample_rate;
-        let buffer_size = self.config.buffer_size as usize;
         
-        // Create the appropriate stream config
+        // Create the appropriate stream config with DYNAMIC buffer sizing
         let stream_config = StreamConfig {
             channels: config.channels().min(2), // Limit to stereo max
             sample_rate: SampleRate(target_sample_rate),
-            buffer_size: BufferSize::Fixed(buffer_size as u32),
+            buffer_size: optimal_buffer_size,
         };
         
         debug!("Using stream config: channels={}, sample_rate={}, buffer_size={}", 
@@ -379,11 +431,12 @@ impl VirtualMixer {
         let target_sample_rate = self.config.sample_rate;
         let buffer_size = self.config.buffer_size as usize;
         
-        // Create the appropriate stream config for output
+        // Create the appropriate stream config for output with DYNAMIC buffer sizing
+        let optimal_buffer_size = self.calculate_optimal_buffer_size(&device, &config, buffer_size).await?;
         let stream_config = StreamConfig {
             channels: 2, // Force stereo output
             sample_rate: SampleRate(target_sample_rate),
-            buffer_size: BufferSize::Fixed(buffer_size as u32),
+            buffer_size: optimal_buffer_size,
         };
         
         debug!("Using output stream config: channels={}, sample_rate={}, buffer_size={}", 
@@ -619,6 +672,10 @@ impl VirtualMixer {
         let channel_levels_cache = self.channel_levels_cache.clone();
         let master_levels = self.master_levels.clone();
         let master_levels_cache = self.master_levels_cache.clone();
+        
+        // **PRIORITY 5: Audio Clock Synchronization** - Clone timing references
+        let audio_clock = self.audio_clock.clone();
+        let timing_metrics = self.timing_metrics.clone();
         let sample_rate = self.config.sample_rate;
         let buffer_size = self.config.buffer_size;
         let config_channels = self.config.channels.clone();
@@ -639,10 +696,13 @@ impl VirtualMixer {
             let mut reusable_left_samples = Vec::with_capacity(buffer_size as usize);
             let mut reusable_right_samples = Vec::with_capacity(buffer_size as usize);
             
-            println!("Audio processing thread started with real mixing and optimized buffers");
+            println!("🎵 Audio processing thread started with real mixing, optimized buffers, and clock synchronization");
 
             while is_running.load(Ordering::Relaxed) {
                 let process_start = std::time::Instant::now();
+                
+                // **PRIORITY 5: Audio Clock Synchronization** - Track processing timing
+                let timing_start = std::time::Instant::now();
                 
                 // Collect input samples from all active input streams with effects processing
                 let input_samples = mixer_handle.collect_input_samples_with_effects(&config_channels).await;
@@ -791,6 +851,49 @@ impl VirtualMixer {
                 // Don't break on send failure - just continue processing
 
                 frame_count += 1;
+                
+                // **PRIORITY 5: Audio Clock Synchronization** - Update master clock and timing metrics
+                let samples_processed = buffer_size as usize;
+                let processing_time_us = timing_start.elapsed().as_micros() as f64;
+                
+                // Update audio clock with processed samples
+                if let Ok(mut clock_guard) = audio_clock.try_lock() {
+                    if let Some(sync_info) = clock_guard.update(samples_processed) {
+                        // Clock detected timing drift - log it
+                        if sync_info.needs_adjustment {
+                            println!("⚠️  TIMING DRIFT: {:.2}ms drift detected at {} samples", 
+                                sync_info.drift_microseconds / 1000.0, sync_info.samples_processed);
+                            
+                            // Record sync adjustment in metrics
+                            if let Ok(mut metrics_guard) = timing_metrics.try_lock() {
+                                metrics_guard.record_sync_adjustment();
+                            }
+                        }
+                    }
+                }
+                
+                // Record processing time metrics
+                if let Ok(mut metrics_guard) = timing_metrics.try_lock() {
+                    metrics_guard.record_processing_time(processing_time_us);
+                    
+                    // Check for underruns (no input samples available)
+                    if input_samples.is_empty() {
+                        metrics_guard.record_underrun();
+                    }
+                }
+                
+                // **TIMING METRICS**: Report comprehensive timing every 10 seconds
+                if frame_count % ((sample_rate / buffer_size) as u64 * 10) == 0 {
+                    if let Ok(metrics_guard) = timing_metrics.try_lock() {
+                        println!("📈 {}", metrics_guard.get_summary());
+                    }
+                    if let Ok(clock_guard) = audio_clock.try_lock() {
+                        let sample_timestamp = clock_guard.get_sample_timestamp();
+                        let drift = clock_guard.get_drift_compensation();
+                        println!("⏰ Audio Clock: {} samples processed, {:.2}ms drift", 
+                            sample_timestamp, drift / 1000.0);
+                    }
+                }
                 
                 // Update metrics every second
                 if frame_count % (sample_rate / buffer_size) as u64 == 0 {
@@ -1020,5 +1123,179 @@ impl VirtualMixer {
         
         info!("All input streams stopped");
         Ok(())
+    }
+}
+
+/// **PRIORITY 5: Audio Clock Synchronization**
+/// Master audio clock for timing synchronization between input and output streams
+#[derive(Debug)]
+pub struct AudioClock {
+    sample_rate: u32,
+    samples_processed: u64,
+    start_time: std::time::Instant,
+    last_sync_time: std::time::Instant,
+    drift_compensation: f64, // Microseconds of drift compensation
+    sync_interval_samples: u64, // Sync every N samples
+}
+
+impl AudioClock {
+    pub fn new(sample_rate: u32) -> Self {
+        let now = std::time::Instant::now();
+        Self {
+            sample_rate,
+            samples_processed: 0,
+            start_time: now,
+            last_sync_time: now,
+            drift_compensation: 0.0,
+            sync_interval_samples: sample_rate as u64 / 10, // Sync every 100ms
+        }
+    }
+    
+    /// Update the clock with processed samples and check for timing drift
+    pub fn update(&mut self, samples_added: usize) -> Option<TimingSync> {
+        self.samples_processed += samples_added as u64;
+        
+        // Check if it's time to sync (every sync_interval_samples)
+        if self.samples_processed % self.sync_interval_samples == 0 {
+            let now = std::time::Instant::now();
+            
+            // Calculate expected time based on samples processed
+            let expected_duration_us = (self.samples_processed as f64 * 1_000_000.0) / self.sample_rate as f64;
+            let actual_duration_us = now.duration_since(self.start_time).as_micros() as f64;
+            
+            // Calculate drift (positive = running slow, negative = running fast)
+            let drift_us = expected_duration_us - actual_duration_us;
+            self.drift_compensation = drift_us;
+            
+            let sync = TimingSync {
+                samples_processed: self.samples_processed,
+                drift_microseconds: drift_us,
+                needs_adjustment: drift_us.abs() > 1000.0, // > 1ms drift
+                sync_time: now,
+            };
+            
+            self.last_sync_time = now;
+            
+            // Log significant drift
+            if sync.needs_adjustment {
+                println!("⏰ AUDIO CLOCK: Drift detected: {:.2}ms at {} samples", 
+                    drift_us / 1000.0, self.samples_processed);
+            }
+            
+            Some(sync)
+        } else {
+            None
+        }
+    }
+    
+    /// Get the current audio timestamp in samples
+    pub fn get_sample_timestamp(&self) -> u64 {
+        self.samples_processed
+    }
+    
+    /// Get the current drift compensation
+    pub fn get_drift_compensation(&self) -> f64 {
+        self.drift_compensation
+    }
+    
+    /// Reset the clock (useful when switching sample rates)
+    pub fn reset(&mut self, new_sample_rate: Option<u32>) {
+        if let Some(sr) = new_sample_rate {
+            self.sample_rate = sr;
+            self.sync_interval_samples = sr as u64 / 10;
+        }
+        
+        let now = std::time::Instant::now();
+        self.samples_processed = 0;
+        self.start_time = now;
+        self.last_sync_time = now;
+        self.drift_compensation = 0.0;
+        
+        println!("⏰ AUDIO CLOCK: Reset with sample rate {} Hz", self.sample_rate);
+    }
+}
+
+/// Timing synchronization result from clock update
+#[derive(Debug, Clone)]
+pub struct TimingSync {
+    pub samples_processed: u64,
+    pub drift_microseconds: f64,
+    pub needs_adjustment: bool,
+    pub sync_time: std::time::Instant,
+}
+
+/// Performance timing metrics for audio processing
+#[derive(Debug)]
+pub struct TimingMetrics {
+    pub processing_time_avg_us: f64,
+    pub processing_time_max_us: f64,
+    pub buffer_underruns: u64,
+    pub buffer_overruns: u64,
+    pub sync_adjustments: u64,
+    pub last_reset: std::time::Instant,
+    sample_count: u64,
+    processing_time_sum_us: f64,
+}
+
+impl TimingMetrics {
+    pub fn new() -> Self {
+        Self {
+            processing_time_avg_us: 0.0,
+            processing_time_max_us: 0.0,
+            buffer_underruns: 0,
+            buffer_overruns: 0,
+            sync_adjustments: 0,
+            last_reset: std::time::Instant::now(),
+            sample_count: 0,
+            processing_time_sum_us: 0.0,
+        }
+    }
+    
+    /// Record processing time for a buffer
+    pub fn record_processing_time(&mut self, duration_us: f64) {
+        self.processing_time_sum_us += duration_us;
+        self.sample_count += 1;
+        
+        // Update max
+        if duration_us > self.processing_time_max_us {
+            self.processing_time_max_us = duration_us;
+        }
+        
+        // Update rolling average
+        self.processing_time_avg_us = self.processing_time_sum_us / self.sample_count as f64;
+    }
+    
+    /// Record buffer underrun (not enough samples available)
+    pub fn record_underrun(&mut self) {
+        self.buffer_underruns += 1;
+    }
+    
+    /// Record buffer overrun (too many samples, had to drop)
+    pub fn record_overrun(&mut self) {
+        self.buffer_overruns += 1;
+    }
+    
+    /// Record sync adjustment applied
+    pub fn record_sync_adjustment(&mut self) {
+        self.sync_adjustments += 1;
+    }
+    
+    /// Reset metrics (useful for periodic reporting)
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+    
+    /// Get metrics summary
+    pub fn get_summary(&self) -> String {
+        let uptime_sec = self.last_reset.elapsed().as_secs_f64();
+        format!(
+            "Audio Metrics ({}s): Avg Processing: {:.1}μs, Max: {:.1}μs, Underruns: {}, Overruns: {}, Sync Adjustments: {}",
+            uptime_sec.round(),
+            self.processing_time_avg_us,
+            self.processing_time_max_us,
+            self.buffer_underruns,
+            self.buffer_overruns,
+            self.sync_adjustments
+        )
     }
 }

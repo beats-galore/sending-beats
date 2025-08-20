@@ -17,6 +17,7 @@ pub struct AudioInputStream {
     pub channels: u16,
     pub audio_buffer: Arc<Mutex<Vec<f32>>>,
     pub effects_chain: Arc<Mutex<AudioEffectsChain>>,
+    pub adaptive_chunk_size: usize, // Adaptive buffer chunk size based on hardware
     // Stream is managed separately via StreamManager to avoid Send/Sync issues
 }
 
@@ -25,6 +26,9 @@ impl AudioInputStream {
         let audio_buffer = Arc::new(Mutex::new(Vec::new()));
         let effects_chain = Arc::new(Mutex::new(AudioEffectsChain::new(sample_rate)));
         
+        // Calculate optimal chunk size based on sample rate for low latency (5-10ms target)
+        let optimal_chunk_size = (sample_rate as f32 * 0.005) as usize; // 5ms default
+        
         Ok(AudioInputStream {
             device_id,
             device_name,
@@ -32,20 +36,36 @@ impl AudioInputStream {
             channels: 1, // Start with mono
             audio_buffer,
             effects_chain,
+            adaptive_chunk_size: optimal_chunk_size.max(64).min(1024), // Clamp between 64-1024 samples
         })
+    }
+    
+    /// Set adaptive chunk size based on hardware buffer configuration
+    pub fn set_adaptive_chunk_size(&mut self, hardware_buffer_size: usize) {
+        // Use hardware buffer size if reasonable, otherwise calculate optimal size
+        let adaptive_size = if hardware_buffer_size > 32 && hardware_buffer_size <= 2048 {
+            hardware_buffer_size
+        } else {
+            // Fallback to time-based calculation (5ms)
+            (self.sample_rate as f32 * 0.005) as usize
+        };
+        
+        self.adaptive_chunk_size = adaptive_size;
+        println!("🔧 ADAPTIVE BUFFER: Set chunk size to {} samples for device {}", 
+                 self.adaptive_chunk_size, self.device_id);
     }
     
     pub fn get_samples(&self) -> Vec<f32> {
         if let Ok(mut buffer) = self.audio_buffer.try_lock() {
-            // **CRITICAL FIX**: Use fixed chunk sizes for consistent processing
-            const FIXED_CHUNK_SIZE: usize = 512;  // Process exactly 512 samples each time
+            // **ADAPTIVE FIX**: Use hardware-aligned chunk sizes for optimal processing
+            let chunk_size = self.adaptive_chunk_size;
             
-            if buffer.len() < FIXED_CHUNK_SIZE {
+            if buffer.len() < chunk_size {
                 return Vec::new();  // Wait for enough samples to fill a complete chunk
             }
             
-            // Always take exactly FIXED_CHUNK_SIZE samples for consistent processing timing
-            let samples: Vec<f32> = buffer.drain(..FIXED_CHUNK_SIZE).collect();
+            // Take exactly adaptive_chunk_size samples for hardware-aligned processing timing
+            let samples: Vec<f32> = buffer.drain(..chunk_size).collect();
             let sample_count = samples.len();
             
             // Debug: Log when we're actually reading samples
@@ -78,15 +98,15 @@ impl AudioInputStream {
     /// Apply effects to input samples and update channel settings
     pub fn process_with_effects(&self, channel: &AudioChannel) -> Vec<f32> {
         if let Ok(mut buffer) = self.audio_buffer.try_lock() {
-            // **CRITICAL FIX**: Use fixed chunk sizes for consistent processing
-            const FIXED_CHUNK_SIZE: usize = 512;  // Process exactly 512 samples each time
+            // **ADAPTIVE FIX**: Use hardware-aligned chunk sizes for optimal processing
+            let chunk_size = self.adaptive_chunk_size;
             
-            if buffer.len() < FIXED_CHUNK_SIZE {
+            if buffer.len() < chunk_size {
                 return Vec::new();  // Wait for enough samples to fill a complete chunk
             }
             
-            // Always take exactly FIXED_CHUNK_SIZE samples for consistent processing timing
-            let mut samples: Vec<f32> = buffer.drain(..FIXED_CHUNK_SIZE).collect();
+            // Take exactly adaptive_chunk_size samples for hardware-aligned processing timing
+            let mut samples: Vec<f32> = buffer.drain(..chunk_size).collect();
             let original_sample_count = samples.len();
             
             // Debug: Log processing activity
