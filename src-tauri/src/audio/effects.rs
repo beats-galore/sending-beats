@@ -1,3 +1,46 @@
+/// Audio stability constants for denormal protection
+const DENORMAL_THRESHOLD: f32 = 1e-15;
+const MIN_DB: f32 = -100.0;
+const MAX_DB: f32 = 40.0;
+const MIN_LOG_INPUT: f32 = 1e-10;
+
+/// Denormal protection - force very small numbers to zero
+#[inline]
+fn flush_denormal(x: f32) -> f32 {
+    if x.abs() < DENORMAL_THRESHOLD {
+        0.0
+    } else {
+        x
+    }
+}
+
+/// Safe logarithm with denormal protection
+#[inline]
+fn safe_log10(x: f32) -> f32 {
+    if x > MIN_LOG_INPUT {
+        x.log10()
+    } else {
+        MIN_LOG_INPUT.log10()
+    }
+}
+
+/// Safe dB conversion with clamping
+#[inline]
+fn safe_db_to_linear(db: f32) -> f32 {
+    let clamped_db = db.clamp(MIN_DB, MAX_DB);
+    10.0_f32.powf(clamped_db / 20.0)
+}
+
+/// Clamp and validate floating point values
+#[inline]
+fn validate_float(x: f32) -> f32 {
+    if x.is_finite() {
+        flush_denormal(x)
+    } else {
+        0.0
+    }
+}
+
 /// Real-time audio analysis
 #[derive(Debug)]
 pub struct AudioAnalyzer {
@@ -253,6 +296,13 @@ impl AudioEffectsChain {
     pub fn set_limiter_threshold(&mut self, threshold_db: f32) {
         self.limiter.set_threshold(threshold_db);
     }
+    
+    /// Reset all effects to prevent accumulated instabilities
+    pub fn reset(&mut self) {
+        self.equalizer.reset();
+        self.compressor.reset();
+        self.limiter.reset();
+    }
 }
 
 /// 3-Band Equalizer (High, Mid, Low)
@@ -301,6 +351,13 @@ impl ThreeBandEqualizer {
                 self.high_shelf = BiquadFilter::high_shelf(self.sample_rate, 8000.0, 0.7, gain_db);
             }
         }
+    }
+    
+    /// Reset all EQ filter states to prevent instabilities
+    pub fn reset(&mut self) {
+        self.low_shelf.reset();
+        self.mid_peak.reset();
+        self.high_shelf.reset();
     }
 }
 
@@ -403,15 +460,24 @@ impl BiquadFilter {
     }
 
     pub fn process(&mut self, input: f32) -> f32 {
-        let output = (input + self.b1 * self.x1 + self.b2 * self.x2 - self.a1 * self.y1 - self.a2 * self.y2) / self.a0;
+        let input_safe = validate_float(input);
+        let output = (input_safe + self.b1 * self.x1 + self.b2 * self.x2 - self.a1 * self.y1 - self.a2 * self.y2) / self.a0;
 
-        // Update delay line
-        self.x2 = self.x1;
-        self.x1 = input;
-        self.y2 = self.y1;
-        self.y1 = output;
+        // **STABILITY**: Update delay line with denormal protection
+        self.x2 = flush_denormal(self.x1);
+        self.x1 = input_safe;
+        self.y2 = flush_denormal(self.y1);
+        self.y1 = validate_float(output);
 
-        output
+        validate_float(output)
+    }
+    
+    /// Reset filter state to prevent instability
+    pub fn reset(&mut self) {
+        self.x1 = 0.0;
+        self.x2 = 0.0;
+        self.y1 = 0.0;
+        self.y2 = 0.0;
     }
 }
 
@@ -462,14 +528,17 @@ impl Compressor {
 
     pub fn process(&mut self, samples: &mut [f32]) {
         for sample in samples.iter_mut() {
-            let input_level = sample.abs();
-            let input_level_db = if input_level > 0.0 {
-                20.0 * input_level.log10()
+            let input_safe = validate_float(*sample);
+            let input_level = input_safe.abs();
+            
+            // **STABILITY**: Safe dB conversion with denormal protection
+            let input_level_db = if input_level > MIN_LOG_INPUT {
+                (20.0 * safe_log10(input_level)).clamp(MIN_DB, MAX_DB)
             } else {
-                -100.0
+                MIN_DB
             };
 
-            // Envelope follower
+            // Envelope follower with stability checks
             let target_envelope = if input_level_db > self.envelope {
                 input_level_db
             } else {
@@ -482,21 +551,27 @@ impl Compressor {
                 self.release_coeff
             };
 
-            self.envelope = target_envelope + (self.envelope - target_envelope) * coeff;
+            self.envelope = validate_float(target_envelope + (self.envelope - target_envelope) * coeff);
 
-            // Compression calculation
+            // **STABILITY**: Compression calculation with clamping
             if self.envelope > self.threshold {
                 let over_threshold = self.envelope - self.threshold;
-                let compressed = over_threshold / self.ratio;
-                self.gain_reduction = over_threshold - compressed;
+                let compressed = over_threshold / self.ratio.max(1.0); // Prevent divide by values < 1
+                self.gain_reduction = (over_threshold - compressed).clamp(0.0, 60.0); // Limit max reduction
             } else {
                 self.gain_reduction = 0.0;
             }
 
-            // Apply gain reduction
-            let gain = 10.0_f32.powf(-self.gain_reduction / 20.0);
-            *sample *= gain;
+            // **STABILITY**: Apply gain reduction with safe conversion
+            let gain = safe_db_to_linear(-self.gain_reduction).clamp(0.001, 2.0); // Prevent extreme gains
+            *sample = validate_float(input_safe * gain);
         }
+    }
+    
+    /// Reset compressor state to prevent instability
+    pub fn reset(&mut self) {
+        self.envelope = MIN_DB;
+        self.gain_reduction = 0.0;
     }
 }
 
@@ -538,38 +613,48 @@ impl Limiter {
 
     pub fn process(&mut self, samples: &mut [f32]) {
         for sample in samples.iter_mut() {
-            // Store input in delay line
-            self.delay_line[self.delay_index] = *sample;
+            let input_safe = validate_float(*sample);
+            
+            // **STABILITY**: Store validated input in delay line
+            self.delay_line[self.delay_index] = input_safe;
             
             // Get delayed sample for output
-            let delayed_sample = self.delay_line[(self.delay_index + 1) % self.delay_line.len()];
+            let delayed_sample = validate_float(self.delay_line[(self.delay_index + 1) % self.delay_line.len()]);
             
-            // Calculate input level in dB
-            let input_level_db = if sample.abs() > 0.0 {
-                20.0 * sample.abs().log10()
+            // **STABILITY**: Calculate input level in dB with protection
+            let input_level = input_safe.abs();
+            let input_level_db = if input_level > MIN_LOG_INPUT {
+                (20.0 * safe_log10(input_level)).clamp(MIN_DB, MAX_DB)
             } else {
-                -100.0
+                MIN_DB
             };
 
-            // Peak detection with lookahead
+            // Peak detection with lookahead and validation
             let target_envelope = input_level_db.max(self.envelope);
             
-            // Smooth envelope
-            self.envelope = target_envelope + (self.envelope - target_envelope) * self.release_coeff;
+            // **STABILITY**: Smooth envelope with denormal protection
+            self.envelope = validate_float(target_envelope + (self.envelope - target_envelope) * self.release_coeff);
 
-            // Calculate gain reduction
+            // **STABILITY**: Calculate gain reduction with clamping
             let gain_reduction = if self.envelope > self.threshold {
-                self.envelope - self.threshold
+                (self.envelope - self.threshold).clamp(0.0, 60.0) // Limit max reduction
             } else {
                 0.0
             };
 
-            // Apply limiting
-            let gain = 10.0_f32.powf(-gain_reduction / 20.0);
-            *sample = delayed_sample * gain;
+            // **STABILITY**: Apply limiting with safe conversion
+            let gain = safe_db_to_linear(-gain_reduction).clamp(0.001, 1.0); // Prevent amplification
+            *sample = validate_float(delayed_sample * gain);
 
             // Advance delay line
             self.delay_index = (self.delay_index + 1) % self.delay_line.len();
         }
+    }
+    
+    /// Reset limiter state to prevent instability
+    pub fn reset(&mut self) {
+        self.envelope = MIN_DB;
+        self.delay_line.fill(0.0);
+        self.delay_index = 0;
     }
 }
