@@ -321,21 +321,48 @@ impl StreamManager {
         use cpal::SampleFormat;
         use cpal::traits::StreamTrait;
         
-        let device_config = device.default_input_config().context("Failed to get device config")?;
+        // **CRASH DEBUG**: Add detailed logging around device config retrieval
+        println!("🔍 CRASH DEBUG: About to get default input config for device: {}", device_id);
+        let device_config = match device.default_input_config() {
+            Ok(config) => {
+                println!("✅ CRASH DEBUG: Successfully got device config for {}: {}Hz, {} channels, format: {:?}", 
+                    device_id, config.sample_rate().0, config.channels(), config.sample_format());
+                config
+            }
+            Err(e) => {
+                eprintln!("❌ CRASH DEBUG: Failed to get device config for {}: {}", device_id, e);
+                eprintln!("   This is likely the crash point - device config retrieval failed");
+                return Err(anyhow::anyhow!("Device config retrieval failed for {}: {}", device_id, e));
+            }
+        };
         
-        // **CRITICAL FIX**: Use device native sample rate to prevent conversion artifacts
+        // **CRITICAL FIX**: Use device native sample rate AND channel count to prevent conversion artifacts
         let mut native_config = config.clone();
         native_config.sample_rate = device_config.sample_rate();
+        native_config.channels = device_config.channels(); // **CRASH FIX**: Use device native channel count
         
-        println!("🔧 SAMPLE RATE FIX: Device {} native: {}Hz, mixer config: {}Hz → Using native {}Hz", 
-            device_id, device_config.sample_rate().0, config.sample_rate.0, native_config.sample_rate.0);
+        println!("🔧 DEVICE NATIVE FIX: Device {} native: {}Hz, {} ch | mixer config: {}Hz, {} ch → Using native {}Hz, {} ch", 
+            device_id, device_config.sample_rate().0, device_config.channels(),
+            config.sample_rate.0, config.channels,
+            native_config.sample_rate.0, native_config.channels);
         
         // Add debugging context
-        let device_name_for_debug = device.name().unwrap_or_else(|_| "Unknown Device".to_string());
+        println!("🔍 CRASH DEBUG: About to get device name for {}", device_id);
+        let device_name_for_debug = match device.name() {
+            Ok(name) => {
+                println!("✅ CRASH DEBUG: Device name retrieved: {}", name);
+                name
+            }
+            Err(e) => {
+                eprintln!("⚠️ CRASH DEBUG: Failed to get device name for {}: {}", device_id, e);
+                "Unknown Device".to_string()
+            }
+        };
         let debug_device_id = device_id.clone();
         let debug_device_id_for_callback = debug_device_id.clone();
         let debug_device_id_for_error = debug_device_id.clone();
         
+        println!("🔍 CRASH DEBUG: About to create stream with format: {:?}", device_config.sample_format());
         let stream = match device_config.sample_format() {
             SampleFormat::F32 => {
                 println!("🎤 Creating F32 input stream for: {} ({})", device_name_for_debug, debug_device_id);
@@ -351,7 +378,8 @@ impl StreamManager {
                 let mut total_samples_captured = 0u64;
                 let mut last_debug_time = std::time::Instant::now();
                 
-                device.build_input_stream(
+                println!("🔍 CRASH DEBUG: About to call device.build_input_stream for F32 format");
+                let build_result = device.build_input_stream(
                     &native_config,
                     move |data: &[f32], _: &cpal::InputCallbackInfo| {
                         callback_count += 1;
@@ -406,7 +434,18 @@ impl StreamManager {
                         }
                     },
                     None
-                )?
+                );
+                
+                match build_result {
+                    Ok(stream) => {
+                        println!("✅ CRASH DEBUG: Successfully built F32 input stream for {}", device_id);
+                        stream
+                    }
+                    Err(e) => {
+                        eprintln!("❌ CRASH DEBUG: Failed to build F32 input stream for {}: {}", device_id, e);
+                        return Err(anyhow::anyhow!("Failed to build F32 input stream for {}: {}", device_id, e));
+                    }
+                }
             },
             SampleFormat::I16 => {
                 println!("🎤 Creating I16 input stream for: {} ({})", device_name_for_debug, debug_device_id);
@@ -482,10 +521,27 @@ impl StreamManager {
             }
         };
         
-        stream.play().context("Failed to start input stream")?;
-        self.streams.insert(device_id, stream);
-        
-        Ok(())
+        // **CRASH FIX**: Enhanced error handling for stream.play() with device-specific diagnostics
+        match stream.play() {
+            Ok(()) => {
+                println!("✅ Successfully started input stream for device: {} ({})", device_name_for_debug, device_id);
+                self.streams.insert(device_id, stream);
+                Ok(())
+            }
+            Err(e) => {
+                eprintln!("❌ CRITICAL: Failed to start input stream for device '{}' ({})", device_id, device_name_for_debug);
+                eprintln!("   Device config: {} Hz, {} channels, format: {:?}", 
+                    device_config.sample_rate().0, device_config.channels(), device_config.sample_format());
+                eprintln!("   Native config used: {} Hz, {} channels", 
+                    native_config.sample_rate.0, native_config.channels);
+                eprintln!("   Error details: {}", e);
+                
+                // **CRASH FIX**: Return detailed error instead of generic context
+                Err(anyhow::anyhow!("Device '{}' stream start failed - {} Hz, {} ch, format {:?}: {}", 
+                    device_id, native_config.sample_rate.0, native_config.channels, 
+                    device_config.sample_format(), e))
+            }
+        }
     }
     
     pub fn remove_stream(&mut self, device_id: &str) -> bool {

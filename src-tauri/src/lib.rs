@@ -12,6 +12,7 @@ pub use audio::{
 use std::sync::{Arc, Mutex};
 use tauri::State;
 use tokio::sync::Mutex as AsyncMutex;
+use tracing::error;
 
 // Global state management
 struct StreamState(Mutex<Option<StreamManager>>);
@@ -194,16 +195,35 @@ async fn create_mixer(
     audio_state: State<'_, AudioState>,
     config: MixerConfig,
 ) -> Result<(), String> {
-    // Create and automatically start the mixer (always-running approach)
-    let mut mixer = VirtualMixer::new(config)
-        .await
-        .map_err(|e| e.to_string())?;
+    // **CRASH FIX**: Add comprehensive error handling for mixer creation
+    println!("🎛️ Creating mixer with {} channels...", config.channels.len());
     
-    // Automatically start the mixer - no separate start/stop needed
-    mixer.start().await.map_err(|e| e.to_string())?;
-    println!("🎛️ Mixer created and automatically started (always-running mode)");
+    // Create the mixer with enhanced error handling
+    let mut mixer = match VirtualMixer::new(config).await {
+        Ok(mixer) => {
+            println!("✅ Mixer structure created successfully");
+            mixer
+        }
+        Err(e) => {
+            error!("Failed to create mixer: {}", e);
+            return Err(format!("Failed to create mixer: {}", e));
+        }
+    };
     
+    // **CRASH FIX**: Start the mixer with better error handling
+    match mixer.start().await {
+        Ok(()) => {
+            println!("✅ Mixer started successfully (always-running mode)");
+        }
+        Err(e) => {
+            error!("Failed to start mixer: {}", e);
+            return Err(format!("Failed to start mixer: {}", e));
+        }
+    }
+    
+    // Store the initialized mixer
     *audio_state.mixer.lock().await = Some(mixer);
+    println!("🎛️ Mixer created, started, and stored successfully");
     Ok(())
 }
 
@@ -354,20 +374,46 @@ async fn safe_switch_input_device(
     old_device_id: Option<String>,
     new_device_id: String,
 ) -> Result<(), String> {
+    // **CRASH FIX**: Validate input device ID
+    if new_device_id.trim().is_empty() {
+        return Err("Device ID cannot be empty".to_string());
+    }
+    if new_device_id.len() > 256 {
+        return Err("Device ID too long".to_string());
+    }
+    
     let mixer_guard = audio_state.mixer.lock().await;
     if let Some(ref mixer) = *mixer_guard {
+        println!("🔄 Switching input device from {:?} to {}", old_device_id, new_device_id);
+        
         // Remove old device if specified
         if let Some(old_id) = old_device_id {
-            if let Err(e) = mixer.remove_input_stream(&old_id).await {
-                eprintln!("Warning: Failed to remove old input device {}: {}", old_id, e);
-                // Continue anyway - don't fail the entire operation
+            if !old_id.trim().is_empty() {
+                println!("🗑️ Removing old input device: {}", old_id);
+                if let Err(e) = mixer.remove_input_stream(&old_id).await {
+                    eprintln!("Warning: Failed to remove old input device {}: {}", old_id, e);
+                    // Continue anyway - don't fail the entire operation
+                }
+                // **CRASH FIX**: Add delay to allow cleanup
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             }
         }
         
-        // Add new device
-        mixer.add_input_stream(&new_device_id).await.map_err(|e| e.to_string())
+        // **CRASH FIX**: Add new device with better error handling
+        println!("➕ Adding new input device: {}", new_device_id);
+        match mixer.add_input_stream(&new_device_id).await {
+            Ok(()) => {
+                println!("✅ Successfully switched input device to: {}", new_device_id);
+                Ok(())
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to add input stream for {}: {}", new_device_id, e);
+                Err(format!("Failed to add input device: {}", e))
+            }
+        }
     } else {
-        Err("No mixer created".to_string())
+        eprintln!("❌ Cannot switch input device: No mixer has been created yet");
+        Err("No mixer created - please create mixer first".to_string())
     }
 }
 
@@ -376,11 +422,32 @@ async fn safe_switch_output_device(
     audio_state: State<'_, AudioState>,
     new_device_id: String,
 ) -> Result<(), String> {
+    // **CRASH FIX**: Validate output device ID
+    if new_device_id.trim().is_empty() {
+        return Err("Device ID cannot be empty".to_string());
+    }
+    if new_device_id.len() > 256 {
+        return Err("Device ID too long".to_string());
+    }
+    
     let mixer_guard = audio_state.mixer.lock().await;
     if let Some(ref mixer) = *mixer_guard {
-        mixer.set_output_stream(&new_device_id).await.map_err(|e| e.to_string())
+        println!("🔊 Switching output device to: {}", new_device_id);
+        
+        // **CRASH FIX**: Better error handling and logging
+        match mixer.set_output_stream(&new_device_id).await {
+            Ok(()) => {
+                println!("✅ Successfully switched output device to: {}", new_device_id);
+                Ok(())
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to set output stream for {}: {}", new_device_id, e);
+                Err(format!("Failed to set output device: {}", e))
+            }
+        }
     } else {
-        Err("No mixer created".to_string())
+        eprintln!("❌ Cannot switch output device: No mixer has been created yet");
+        Err("No mixer created - please create mixer first".to_string())
     }
 }
 
@@ -821,14 +888,30 @@ async fn add_input_stream(
     audio_state: State<'_, AudioState>,
     device_id: String,
 ) -> Result<(), String> {
+    // **CRASH FIX**: Validate device ID
+    if device_id.trim().is_empty() {
+        return Err("Device ID cannot be empty".to_string());
+    }
+    if device_id.len() > 256 {
+        return Err("Device ID too long".to_string());
+    }
+    
     let mixer_guard = audio_state.mixer.lock().await;
     if let Some(ref mixer) = *mixer_guard {
-        // Use enhanced health-checked version
-        mixer.add_input_stream_safe(&device_id).await.map_err(|e| e.to_string())?;
+        // **CRASH FIX**: Use basic add_input_stream for better compatibility
+        match mixer.add_input_stream(&device_id).await {
+            Ok(()) => {
+                println!("✅ Successfully added input stream: {}", device_id);
+                Ok(())
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to add input stream for {}: {}", device_id, e);
+                Err(format!("Failed to add input stream: {}", e))
+            }
+        }
     } else {
-        return Err("No mixer created".to_string());
+        Err("No mixer created".to_string())
     }
-    Ok(())
 }
 
 #[tauri::command]
@@ -850,13 +933,29 @@ async fn set_output_stream(
     audio_state: State<'_, AudioState>,
     device_id: String,
 ) -> Result<(), String> {
+    // **CRASH FIX**: Validate device ID
+    if device_id.trim().is_empty() {
+        return Err("Device ID cannot be empty".to_string());
+    }
+    if device_id.len() > 256 {
+        return Err("Device ID too long".to_string());
+    }
+    
     let mixer_guard = audio_state.mixer.lock().await;
     if let Some(ref mixer) = *mixer_guard {
-        mixer.set_output_stream(&device_id).await.map_err(|e| e.to_string())?;
+        match mixer.set_output_stream(&device_id).await {
+            Ok(()) => {
+                println!("✅ Successfully set output stream: {}", device_id);
+                Ok(())
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to set output stream for {}: {}", device_id, e);
+                Err(format!("Failed to set output stream: {}", e))
+            }
+        }
     } else {
-        return Err("No mixer created".to_string());
+        Err("No mixer created".to_string())
     }
-    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
