@@ -262,7 +262,7 @@ impl VirtualMixer {
             command_rx: Arc::new(Mutex::new(command_rx)),
             
             // **PRIORITY 5: Audio Clock Synchronization**
-            audio_clock: Arc::new(Mutex::new(AudioClock::new(config.sample_rate))),
+            audio_clock: Arc::new(Mutex::new(AudioClock::new(config.sample_rate, config.buffer_size))),
             timing_metrics: Arc::new(Mutex::new(TimingMetrics::new())),
             audio_output_tx,
             metrics,
@@ -1327,7 +1327,7 @@ pub struct AudioClock {
 }
 
 impl AudioClock {
-    pub fn new(sample_rate: u32) -> Self {
+    pub fn new(sample_rate: u32, buffer_size: u32) -> Self {
         let now = std::time::Instant::now();
         Self {
             sample_rate,
@@ -1335,7 +1335,7 @@ impl AudioClock {
             start_time: now,
             last_sync_time: now,
             drift_compensation: 0.0,
-            sync_interval_samples: sample_rate as u64 / 10, // Sync every 100ms
+            sync_interval_samples: buffer_size as u64, // Sync every buffer to match hardware callback timing
         }
     }
     
@@ -1394,11 +1394,13 @@ impl AudioClock {
         self.drift_compensation
     }
     
-    /// Reset the clock (useful when switching sample rates)
-    pub fn reset(&mut self, new_sample_rate: Option<u32>) {
+    /// Reset the clock (useful when switching sample rates or buffer sizes)
+    pub fn reset(&mut self, new_sample_rate: Option<u32>, new_buffer_size: Option<u32>) {
         if let Some(sr) = new_sample_rate {
             self.sample_rate = sr;
-            self.sync_interval_samples = sr as u64 / 10;
+        }
+        if let Some(bs) = new_buffer_size {
+            self.sync_interval_samples = bs as u64; // Sync based on actual buffer size from config
         }
         
         let now = std::time::Instant::now();
