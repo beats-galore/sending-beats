@@ -1224,6 +1224,16 @@ impl VirtualMixer {
         &self.audio_device_manager
     }
     
+    /// Get a mutable reference to a channel by ID
+    pub fn get_channel_mut(&mut self, channel_id: u32) -> Option<&mut AudioChannel> {
+        self.config.channels.iter_mut().find(|c| c.id == channel_id)
+    }
+    
+    /// Get a reference to a channel by ID
+    pub fn get_channel(&self, channel_id: u32) -> Option<&AudioChannel> {
+        self.config.channels.iter().find(|c| c.id == channel_id)
+    }
+    
     /// **NEW**: Safely stop all output streams to prevent crashes when switching devices
     async fn stop_output_streams(&self) -> Result<()> {
         info!("Stopping existing output streams...");
