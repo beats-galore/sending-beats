@@ -12,6 +12,7 @@ import type {
   AudioChannel,
   AudioMetrics,
   MasterLevels,
+  ChannelLevels,
   ChannelUpdate,
 } from '../types';
 
@@ -22,31 +23,29 @@ type MixerStore = {
   error: string | null;
   metrics: AudioMetrics | null;
   masterLevels: MasterLevels;
+  channelLevels: ChannelLevels;
 
   // Actions
   initializeMixer: () => Promise<void>;
-  startMixer: () => Promise<void>;
-  stopMixer: () => Promise<void>;
   addChannel: () => Promise<void>;
   updateChannel: (channelId: number, updates: ChannelUpdate) => Promise<void>;
   updateMasterGain: (gain: number) => Promise<void>;
   updateMasterOutputDevice: (deviceId: string) => Promise<void>;
 
   // Real-time data updates
-  updateChannelLevels: (levels: Record<number, [number, number]>) => void;
+  updateChannelLevels: (levels: Record<number, [number, number, number, number]>) => void;
   updateMasterLevels: (levels: MasterLevels) => void;
   updateMetrics: (metrics: AudioMetrics) => void;
+  batchUpdate: (updates: {
+    channelLevels?: ChannelLevels;
+    masterLevels?: MasterLevels;
+    metrics?: AudioMetrics;
+  }) => void;
 
   // Error handling
   setError: (error: string | null) => void;
   clearError: () => void;
 
-  // Batch updates for performance
-  batchUpdate: (updates: {
-    channelLevels?: Record<number, [number, number]>;
-    masterLevels?: MasterLevels;
-    metrics?: AudioMetrics;
-  }) => void;
 };
 
 export const useMixerStore = create<MixerStore>()(
@@ -60,10 +59,11 @@ export const useMixerStore = create<MixerStore>()(
       left: { peak_level: 0, rms_level: 0 },
       right: { peak_level: 0, rms_level: 0 },
     },
+    channelLevels: {},
 
-    // Initialize mixer
+    // Initialize mixer (now automatically starts - always-running mode)
     initializeMixer: async () => {
-      console.debug('🎛️ Initializing mixer...');
+      console.debug('🎛️ Initializing always-running mixer...');
       try {
         set({ state: MixerState.STARTING, error: null });
 
@@ -76,21 +76,21 @@ export const useMixerStore = create<MixerStore>()(
           bufferSize: djConfig.buffer_size,
         });
 
-        // Create mixer with config
-        console.debug('🔧 Creating mixer...');
+        // Create mixer with config (automatically starts)
+        console.debug('🔧 Creating and starting mixer...');
         const result = await mixerService.safeCreateMixer(djConfig);
 
         if (!result.success) {
           throw new Error(result.error || 'Failed to create mixer');
         }
-        console.debug('✅ Mixer created successfully');
+        console.debug('✅ Mixer created and started automatically');
 
         set({
           config: djConfig,
-          state: MixerState.STOPPED,
+          state: MixerState.RUNNING, // Always running after creation
           error: null,
         });
-        console.debug('🎛️ Mixer initialized successfully');
+        console.debug('🎛️ Always-running mixer initialized successfully');
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         console.error('❌ Failed to initialize mixer:', errorMessage);
@@ -102,55 +102,7 @@ export const useMixerStore = create<MixerStore>()(
       }
     },
 
-    // Start mixer
-    startMixer: async () => {
-      try {
-        set({ state: MixerState.STARTING, error: null });
-
-        const result = await mixerService.safeStartMixer();
-
-        if (!result.success) {
-          throw new Error(result.error || 'Failed to start mixer');
-        }
-
-        set({
-          state: MixerState.RUNNING,
-          error: null,
-        });
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        set({
-          state: MixerState.ERROR,
-          error: `Failed to start mixer: ${errorMessage}`,
-        });
-        throw error;
-      }
-    },
-
-    // Stop mixer
-    stopMixer: async () => {
-      try {
-        set({ state: MixerState.STOPPING, error: null });
-
-        const result = await mixerService.safeStopMixer();
-
-        if (!result.success) {
-          throw new Error(result.error || 'Failed to stop mixer');
-        }
-
-        set({
-          state: MixerState.STOPPED,
-          error: null,
-        });
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        set({
-          state: MixerState.ERROR,
-          error: `Failed to stop mixer: ${errorMessage}`,
-        });
-        throw error;
-      }
-    },
+    // Start/stop mixer actions removed - mixer is now always running after initialization
 
     // Add new channel
     addChannel: async () => {
@@ -296,20 +248,32 @@ export const useMixerStore = create<MixerStore>()(
       }
     },
 
-    // Real-time level updates - optimized to prevent unnecessary re-renders
-    updateChannelLevels: (levels: Record<number, [number, number]>) => {
+    // Real-time level updates - optimized to prevent unnecessary re-renders (updated for stereo)
+    updateChannelLevels: (levels: Record<number, [number, number, number, number]>) => {
       set((state) => {
         if (!state.config) return {};
 
         const newChannels = updateArrayItems(state.config.channels, (channel) => {
-          const newPeak = levels[channel.id]?.[0] || 0;
-          const newRms = levels[channel.id]?.[1] || 0;
+          // Stereo levels: [peak_left, rms_left, peak_right, rms_right]
+          const newPeakLeft = levels[channel.id]?.[0] || 0;
+          const newRmsLeft = levels[channel.id]?.[1] || 0;
+          const newPeakRight = levels[channel.id]?.[2] || 0;
+          const newRmsRight = levels[channel.id]?.[3] || 0;
+          
+          // For mono compatibility, use max of L/R for peak and average for RMS
+          const newPeak = Math.max(newPeakLeft, newPeakRight);
+          const newRms = (newRmsLeft + newRmsRight) / 2;
 
           if (channel.peak_level !== newPeak || channel.rms_level !== newRms) {
             return {
               ...channel,
               peak_level: newPeak,
               rms_level: newRms,
+              // Store stereo data for future use
+              peak_left: newPeakLeft,
+              rms_left: newRmsLeft,
+              peak_right: newPeakRight,
+              rms_right: newRmsRight,
             };
           }
           return channel;
@@ -323,6 +287,7 @@ export const useMixerStore = create<MixerStore>()(
             ...state.config,
             channels: newChannels,
           },
+          channelLevels: { ...state.channelLevels, ...levels },
         };
       });
     },
@@ -352,48 +317,23 @@ export const useMixerStore = create<MixerStore>()(
       set({ error: null });
     },
 
-    // Batch updates for performance - optimized to prevent unnecessary re-renders
+    // Batch update for efficient VU meter updates
     batchUpdate: (updates) => {
       set((state) => {
         const newState: Partial<MixerStore> = {};
-
-        // Handle channel level updates
-        if (updates.channelLevels && state.config) {
-          const levels = updates.channelLevels;
-          const newChannels = updateArrayItems(state.config.channels, (channel) => {
-            const newPeak = levels[channel.id]?.[0] || channel.peak_level;
-            const newRms = levels[channel.id]?.[1] || channel.rms_level;
-
-            if (channel.peak_level !== newPeak || channel.rms_level !== newRms) {
-              return {
-                ...channel,
-                peak_level: newPeak,
-                rms_level: newRms,
-              };
-            }
-            return channel;
-          });
-
-          // Only update config if channels array changed
-          if (newChannels !== state.config.channels) {
-            newState.config = {
-              ...state.config,
-              channels: newChannels,
-            };
-          }
+        
+        if (updates.channelLevels && !isEqual(state.channelLevels, updates.channelLevels)) {
+          newState.channelLevels = { ...state.channelLevels, ...updates.channelLevels };
         }
-
-        // Handle master levels with deep equality check
+        
         if (updates.masterLevels && !isEqual(state.masterLevels, updates.masterLevels)) {
           newState.masterLevels = updates.masterLevels;
         }
-
-        // Handle metrics with deep equality check
+        
         if (updates.metrics && !isEqual(state.metrics, updates.metrics)) {
           newState.metrics = updates.metrics;
         }
-
-        // Only return changes if there are any
+        
         return Object.keys(newState).length > 0 ? newState : {};
       });
     },

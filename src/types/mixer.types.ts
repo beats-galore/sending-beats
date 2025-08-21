@@ -11,6 +11,12 @@ export type AudioChannel = {
   effects_enabled: boolean;
   peak_level: number;
   rms_level: number;
+  
+  // Stereo level data (optional for backward compatibility)
+  peak_left?: number;
+  rms_left?: number;
+  peak_right?: number;
+  rms_right?: number;
 
   // Effects (keeping original property names for Tauri compatibility)
   eq_low_gain: number;

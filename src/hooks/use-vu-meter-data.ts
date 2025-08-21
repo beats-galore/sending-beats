@@ -24,7 +24,7 @@ export const useVUMeterData = (isEnabled = true) => {
   const throttledBatchUpdate = useThrottle(
     useCallback(
       (updates: {
-        channelLevels?: Record<number, [number, number]>;
+        channelLevels?: Record<number, [number, number, number, number]>;
         masterLevels?: any;
         metrics?: any;
       }) => {
