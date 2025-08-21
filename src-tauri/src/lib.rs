@@ -194,12 +194,14 @@ async fn create_mixer(
     audio_state: State<'_, AudioState>,
     config: MixerConfig,
 ) -> Result<(), String> {
-    // We need to unwrap the AudioDeviceManager from the Mutex to pass to the mixer
-    // Since VirtualMixer needs to own it, we'll create a new one for now
-    // TODO: Refactor this to properly share the AudioDeviceManager instance
-    let mixer = VirtualMixer::new(config)
+    // Create and automatically start the mixer (always-running approach)
+    let mut mixer = VirtualMixer::new(config)
         .await
         .map_err(|e| e.to_string())?;
+    
+    // Automatically start the mixer - no separate start/stop needed
+    mixer.start().await.map_err(|e| e.to_string())?;
+    println!("🎛️ Mixer created and automatically started (always-running mode)");
     
     *audio_state.mixer.lock().await = Some(mixer);
     Ok(())
@@ -209,24 +211,30 @@ async fn create_mixer(
 async fn start_mixer(
     audio_state: State<'_, AudioState>,
 ) -> Result<(), String> {
-    let mut mixer_guard = audio_state.mixer.lock().await;
-    if let Some(ref mut mixer) = *mixer_guard {
-        mixer.start().await.map_err(|e| e.to_string())?;
+    // DEPRECATED: Mixer is now always running after creation
+    // This command is kept for compatibility but does nothing
+    let mixer_guard = audio_state.mixer.lock().await;
+    if mixer_guard.is_some() {
+        println!("⚠️ start_mixer called but mixer is already always-running");
+        Ok(())
     } else {
-        return Err("No mixer created".to_string());
+        Err("No mixer created".to_string())
     }
-    Ok(())
 }
 
 #[tauri::command]
 async fn stop_mixer(
     audio_state: State<'_, AudioState>,
 ) -> Result<(), String> {
-    let mut mixer_guard = audio_state.mixer.lock().await;
-    if let Some(ref mut mixer) = *mixer_guard {
-        mixer.stop().await.map_err(|e| e.to_string())?;
+    // DEPRECATED: Mixer is now always running and cannot be stopped
+    // This command is kept for compatibility but does nothing
+    let mixer_guard = audio_state.mixer.lock().await;
+    if mixer_guard.is_some() {
+        println!("⚠️ stop_mixer called but mixer is always-running (operation ignored)");
+        Ok(())
+    } else {
+        Err("No mixer created".to_string())
     }
-    Ok(())
 }
 
 #[tauri::command]
@@ -716,7 +724,7 @@ pub fn run() {
             }
         };
         
-        // Initialize SQLite database
+        // Initialize SQLite database in src-tauri directory for now
         let database_path = std::env::current_dir()
             .unwrap_or_else(|_| std::path::PathBuf::from("."))
             .join("data")

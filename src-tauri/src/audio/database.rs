@@ -98,8 +98,10 @@ impl AudioDatabase {
                 .context("Failed to create database directory")?;
         }
         
-        // Create connection pool
-        let database_url = format!("sqlite:{}", database_path.display());
+        // Create connection pool with SQLite-specific options
+        let database_url = format!("sqlite:{}?mode=rwc", database_path.display()); 
+        println!("🗄️  Database URL: {}", database_url);
+        
         let pool = SqlitePoolOptions::new()
             .max_connections(10)
             .connect(&database_url)
