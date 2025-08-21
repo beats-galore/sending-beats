@@ -446,10 +446,12 @@ impl AudioDeviceManager {
             println!("4. CoreAudio routing configuration");
         }
         
-        let input_devices = self.host.input_devices()
-            .context("Failed to get input devices")?;
-        let output_devices = self.host.output_devices()
-            .context("Failed to get output devices")?;
+        // **CRASH PREVENTION**: Use safe enumeration for both input and output devices
+        println!("🛡️ Using crash-safe CPAL enumeration for input devices...");
+        let input_devices_result = self.safe_enumerate_cpal_devices(true).await;
+        
+        println!("🛡️ Using crash-safe CPAL enumeration for output devices...");
+        let output_devices_result = self.safe_enumerate_cpal_devices(false).await;
         
         let default_input = self.host.default_input_device();
         let default_output = self.host.default_output_device();
@@ -460,64 +462,77 @@ impl AudioDeviceManager {
         let mut devices = Vec::new();
         let mut devices_map = HashMap::new();
 
-        // Process input devices
-        for (_index, device) in input_devices.enumerate() {
-            let is_default = if let Some(ref default_device) = default_input {
-                device.name().unwrap_or_default() == default_device.name().unwrap_or_default()
-            } else {
-                false
-            };
-            
-            if let Ok(device_info) = self.get_device_info(&device, true, false, is_default) {
-                devices.push(device_info.clone());
-                devices_map.insert(device_info.id.clone(), device_info);
+        // Process input devices safely
+        match input_devices_result {
+            Ok(input_devices) => {
+                println!("✅ Safely found {} input devices", input_devices.len());
+                for (device, device_name) in input_devices {
+                    let is_default = if let Some(ref default_device) = default_input {
+                        device_name == default_device.name().unwrap_or_default()
+                    } else {
+                        false
+                    };
+                    
+                    if let Ok(device_info) = self.get_device_info(&device, true, false, is_default) {
+                        devices.push(device_info.clone());
+                        devices_map.insert(device_info.id.clone(), device_info);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("⚠️ Failed to safely enumerate input devices: {}", e);
+                eprintln!("   Continuing with output device enumeration...");
             }
         }
 
-        // Process output devices
-        println!("Processing output devices...");
-        let output_devices_vec: Vec<_> = output_devices.collect();
-        println!("Total output devices found: {}", output_devices_vec.len());
-        
-        for (_index, device) in output_devices_vec.into_iter().enumerate() {
-            let device_name = device.name().unwrap_or_else(|_| "Unknown Device".to_string());
-            println!("Found output device: {}", device_name);
-            
-            // Try to get more detailed device information
-            match device.supported_output_configs() {
-                Ok(configs) => {
-                    println!("  Supported configs:");
-                    for (i, config) in configs.enumerate() {
-                        if i < 3 { // Limit output to prevent spam
-                            println!("    - Sample rate: {}-{}, Channels: {}, Format: {:?}", 
-                                config.min_sample_rate().0, 
-                                config.max_sample_rate().0,
-                                config.channels(),
-                                config.sample_format()
-                            );
+        // Process output devices safely
+        match output_devices_result {
+            Ok(output_devices) => {
+                println!("✅ Safely found {} output devices", output_devices.len());
+                for (device, device_name) in output_devices {
+                    println!("Processing output device: {}", device_name);
+                    
+                    // Try to get more detailed device information
+                    match device.supported_output_configs() {
+                        Ok(configs) => {
+                            println!("  Supported configs:");
+                            for (i, config) in configs.enumerate() {
+                                if i < 3 { // Limit output to prevent spam
+                                    println!("    - Sample rate: {}-{}, Channels: {}, Format: {:?}", 
+                                        config.min_sample_rate().0, 
+                                        config.max_sample_rate().0,
+                                        config.channels(),
+                                        config.sample_format()
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            println!("  Failed to get configs: {}", e);
+                        }
+                    }
+                    
+                    let is_default = if let Some(ref default_device) = default_output {
+                        device_name == default_device.name().unwrap_or_default()
+                    } else {
+                        false
+                    };
+                    
+                    match self.get_device_info(&device, false, true, is_default) {
+                        Ok(device_info) => {
+                            println!("Successfully added output device: {} (ID: {})", device_info.name, device_info.id);
+                            devices.push(device_info.clone());
+                            devices_map.insert(device_info.id.clone(), device_info);
+                        }
+                        Err(e) => {
+                            println!("Failed to process output device '{}': {}", device_name, e);
                         }
                     }
                 }
-                Err(e) => {
-                    println!("  Failed to get configs: {}", e);
-                }
             }
-            
-            let is_default = if let Some(ref default_device) = default_output {
-                device.name().unwrap_or_default() == default_device.name().unwrap_or_default()
-            } else {
-                false
-            };
-            
-            match self.get_device_info(&device, false, true, is_default) {
-                Ok(device_info) => {
-                    println!("Successfully added output device: {} (ID: {})", device_info.name, device_info.id);
-                    devices.push(device_info.clone());
-                    devices_map.insert(device_info.id.clone(), device_info);
-                }
-                Err(e) => {
-                    println!("Failed to process output device '{}': {}", device_name, e);
-                }
+            Err(e) => {
+                eprintln!("⚠️ Failed to safely enumerate output devices: {}", e);
+                eprintln!("   This may prevent output device switching from working correctly.");
             }
         }
 

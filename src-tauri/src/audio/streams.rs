@@ -849,15 +849,18 @@ impl VirtualMixerHandle {
             .find(|d| d.id == output_device.device_id && d.is_output)
             .ok_or_else(|| anyhow::anyhow!("Output device not found: {}", output_device.device_id))?;
             
-        // Get the actual device
-        let host = cpal::default_host();
-        let device = if device_info.is_default {
-            host.default_output_device()
-                .ok_or_else(|| anyhow::anyhow!("No default output device"))?
-        } else {
-            host.output_devices()?
-                .find(|d| d.name().unwrap_or_default() == device_info.name)
-                .ok_or_else(|| anyhow::anyhow!("Device not found: {}", device_info.name))?
+        // **CRASH PREVENTION**: Use device manager's safe device finding instead of direct CPAL calls
+        let device_handle = device_manager.find_audio_device(&output_device.device_id, false).await?;
+        let device = match device_handle {
+            super::types::AudioDeviceHandle::Cpal(cpal_device) => cpal_device,
+            #[cfg(target_os = "macos")]
+            super::types::AudioDeviceHandle::CoreAudio(_) => {
+                return Err(anyhow::anyhow!("CoreAudio device handles not supported in add_output_device - use CPAL fallback"));
+            }
+            #[cfg(not(target_os = "macos"))]
+            _ => {
+                return Err(anyhow::anyhow!("Unknown device handle type"));
+            }
         };
         
         // Create output stream
