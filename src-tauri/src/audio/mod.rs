@@ -13,6 +13,7 @@ pub mod effects;
 pub mod streams;
 pub mod mixer;
 pub mod database;
+pub mod streaming_bridge;
 
 #[cfg(target_os = "macos")]
 pub mod coreaudio_stream;
@@ -43,6 +44,11 @@ pub use mixer::VirtualMixer;
 pub use database::{
     AudioDatabase, AudioEventBus, VULevelData, MasterLevelData, 
     AudioDeviceConfig, ChannelConfig, OutputRouteConfig,
+};
+
+pub use streaming_bridge::{
+    AudioStreamingBridge, StreamingStatus, StreamingCommand, StreamingStats,
+    create_streaming_bridge,
 };
 
 // Global audio debug logging control

@@ -62,6 +62,9 @@ pub struct VirtualMixer {
     command_rx: Arc<Mutex<mpsc::Receiver<MixerCommand>>>,
     audio_output_tx: mpsc::Sender<Vec<f32>>,
     
+    // **STREAMING INTEGRATION**: Broadcast channel for multiple audio output consumers
+    audio_output_broadcast_tx: tokio::sync::broadcast::Sender<Vec<f32>>,
+    
     // Metrics
     metrics: Arc<Mutex<AudioMetrics>>,
     
@@ -233,6 +236,9 @@ impl VirtualMixer {
         let (command_tx, command_rx) = mpsc::channel(1024);
         let (audio_output_tx, _audio_output_rx) = mpsc::channel(8192);
         
+        // **STREAMING INTEGRATION**: Create broadcast channel for streaming bridge
+        let (audio_output_broadcast_tx, _) = tokio::sync::broadcast::channel(1024);
+        
         let buffer_size = config.buffer_size as usize;
         let mix_buffer = Arc::new(Mutex::new(vec![0.0; buffer_size * 2])); // Stereo
 
@@ -266,6 +272,7 @@ impl VirtualMixer {
             audio_clock: Arc::new(Mutex::new(AudioClock::new(config.sample_rate, config.buffer_size))),
             timing_metrics: Arc::new(Mutex::new(TimingMetrics::new())),
             audio_output_tx,
+            audio_output_broadcast_tx,
             metrics,
             channel_levels,
             channel_levels_cache,
@@ -1071,6 +1078,9 @@ impl VirtualMixer {
 
                 // Send processed audio to the rest of the application (non-blocking)
                 let _ = audio_output_tx.try_send(reusable_output_buffer.clone());
+                
+                // **STREAMING INTEGRATION**: Also send to broadcast channel for streaming bridge
+                let _ = self.audio_output_broadcast_tx.send(reusable_output_buffer.clone());
                 // Don't break on send failure - just continue processing
 
                 frame_count += 1;
@@ -1262,30 +1272,29 @@ impl VirtualMixer {
     }
 
     /// Get audio output stream for streaming/recording
-    pub async fn get_audio_output_receiver(&self) -> mpsc::Receiver<Vec<f32>> {
-        // Return a connected receiver that gets real audio data from the processing thread
-        let (tx, rx) = mpsc::channel(8192);
+    /// 
+    /// Returns a receiver that gets real-time audio data from the mixer's processing thread.
+    /// Multiple receivers can be created for different consumers (streaming, recording, analysis).
+    pub fn get_audio_output_receiver(&self) -> tokio::sync::broadcast::Receiver<Vec<f32>> {
+        // Return a new receiver from the broadcast channel
+        // This allows multiple consumers to receive the same audio stream
+        self.audio_output_broadcast_tx.subscribe()
+    }
+    
+    /// Create an mpsc receiver for streaming bridge compatibility
+    pub async fn create_streaming_audio_receiver(&self) -> mpsc::Receiver<Vec<f32>> {
+        let (tx, rx) = mpsc::channel(1024);
+        let mut broadcast_rx = self.get_audio_output_receiver();
         
-        // Clone references needed for the forwarding task
-        let audio_output_tx = self.audio_output_tx.clone();
-        
-        // Spawn a task to forward audio from the processing thread to this receiver
+        // Spawn a task to convert broadcast receiver to mpsc receiver
         tokio::spawn(async move {
-            let mut audio_rx = {
-                // We need to create a new receiver by cloning the sender
-                // This is a limitation - ideally we'd have a broadcast channel
-                let (_temp_tx, temp_rx) = mpsc::channel(8192);
-                temp_rx
-            };
-            
-            // For now, we'll need to modify the processing thread to support multiple receivers
-            // This is a placeholder that demonstrates the correct API
-            while let Some(audio_data) = audio_rx.recv().await {
+            while let Ok(audio_data) = broadcast_rx.recv().await {
                 if tx.send(audio_data).await.is_err() {
                     // Receiver dropped, stop forwarding
                     break;
                 }
             }
+            println!("🔌 Audio streaming receiver disconnected");
         });
         
         rx

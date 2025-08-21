@@ -1,5 +1,7 @@
 pub mod streaming;
 pub mod audio;
+pub mod icecast_source;
+pub mod streaming_service;
 
 use streaming::{StreamConfig, StreamManager, StreamMetadata, StreamStatus};
 // Re-export audio types for testing and external use
@@ -1053,8 +1055,143 @@ pub fn run() {
             safe_switch_input_device,
             safe_switch_output_device,
             set_audio_debug_enabled,
-            get_audio_debug_enabled
+            get_audio_debug_enabled,
+            initialize_icecast_streaming,
+            start_icecast_streaming,
+            stop_icecast_streaming,
+            update_icecast_metadata,
+            get_icecast_streaming_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+// ================================================================================================
+// ENHANCED ICECAST STREAMING COMMANDS  
+// ================================================================================================
+
+#[tauri::command]
+async fn initialize_icecast_streaming(
+    server_host: String,
+    server_port: u16,
+    mount_point: String,
+    password: String,
+    stream_name: String,
+    bitrate: u32,
+    state: State<'_, AudioState>
+) -> Result<String, String> {
+    use crate::streaming_service::{initialize_streaming, connect_streaming_to_mixer, StreamingServiceConfig};
+    use crate::icecast_source::{AudioFormat, AudioCodec};
+    
+    println!("🔧 Initializing Icecast streaming: {}:{}{}", server_host, server_port, mount_point);
+    
+    // Create streaming configuration
+    let config = StreamingServiceConfig {
+        server_host: server_host.clone(),
+        server_port,
+        mount_point: mount_point.clone(),
+        password,
+        stream_name,
+        stream_description: "Live radio stream from Sendin Beats".to_string(),
+        stream_genre: "Electronic".to_string(),
+        stream_url: "https://sendinbeats.com".to_string(),
+        is_public: true,
+        audio_format: AudioFormat {
+            sample_rate: 48000,
+            channels: 2,
+            bitrate,
+            codec: AudioCodec::Mp3,
+        },
+        auto_reconnect: true,
+        max_reconnect_attempts: 5,
+        reconnect_delay_ms: 3000,
+    };
+    
+    // Initialize streaming service
+    if let Err(e) = initialize_streaming(config).await {
+        eprintln!("❌ Failed to initialize streaming service: {}", e);
+        return Err(format!("Failed to initialize streaming: {}", e));
+    }
+    
+    // Connect to mixer if available
+    if let Some(mixer_ref) = &*state.mixer.lock().await {
+        if let Err(e) = connect_streaming_to_mixer(Arc::clone(mixer_ref)).await {
+            eprintln!("❌ Failed to connect streaming to mixer: {}", e);
+            return Err(format!("Failed to connect to mixer: {}", e));
+        }
+        println!("✅ Streaming service connected to mixer");
+    } else {
+        println!("⚠️ No mixer available - streaming initialized but not connected");
+    }
+    
+    Ok(format!("Icecast streaming initialized: {}:{}{}", server_host, server_port, mount_point))
+}
+
+#[tauri::command]
+async fn start_icecast_streaming() -> Result<String, String> {
+    use crate::streaming_service::start_streaming;
+    
+    println!("🎯 Starting Icecast streaming...");
+    
+    match start_streaming().await {
+        Ok(()) => {
+            println!("✅ Icecast streaming started successfully");
+            Ok("Streaming started successfully".to_string())
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to start streaming: {}", e);
+            Err(format!("Failed to start streaming: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn stop_icecast_streaming() -> Result<String, String> {
+    use crate::streaming_service::stop_streaming;
+    
+    println!("🛑 Stopping Icecast streaming...");
+    
+    match stop_streaming().await {
+        Ok(()) => {
+            println!("✅ Icecast streaming stopped successfully");
+            Ok("Streaming stopped successfully".to_string())
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to stop streaming: {}", e);
+            Err(format!("Failed to stop streaming: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn update_icecast_metadata(title: String, artist: String) -> Result<String, String> {
+    use crate::streaming_service::update_stream_metadata;
+    
+    println!("📝 Updating stream metadata: {} - {}", artist, title);
+    
+    match update_stream_metadata(title.clone(), artist.clone()).await {
+        Ok(()) => {
+            println!("✅ Stream metadata updated successfully");
+            Ok(format!("Metadata updated: {} - {}", artist, title))
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to update metadata: {}", e);
+            Err(format!("Failed to update metadata: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn get_icecast_streaming_status() -> Result<serde_json::Value, String> {
+    use crate::streaming_service::get_streaming_status;
+    
+    let status = get_streaming_status().await;
+    
+    match serde_json::to_value(&status) {
+        Ok(json_status) => Ok(json_status),
+        Err(e) => {
+            eprintln!("❌ Failed to serialize streaming status: {}", e);
+            Err(format!("Failed to get status: {}", e))
+        }
+    }
 }
