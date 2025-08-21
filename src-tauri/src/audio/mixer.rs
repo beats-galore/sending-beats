@@ -1073,7 +1073,7 @@ impl VirtualMixer {
 
     /// Add a new audio channel
     pub async fn add_channel(&mut self, channel: AudioChannel) -> Result<()> {
-        // TODO: Add ring buffer management
+        // Simple channel addition without automatic stream creation
         self.config.channels.push(channel);
         Ok(())
     }

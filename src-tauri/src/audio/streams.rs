@@ -314,21 +314,27 @@ impl StreamManager {
                                 println!("📦 BUFFER: First audio data stored in buffer for {}: {} samples", debug_device_id, buffer_size_after);
                             }
                             
-                            // **CRITICAL FIX**: Use much larger buffer and proper backpressure management
-                            // Allow 500ms of buffering (was 100ms) to prevent constant overflows
-                            let max_buffer_size = target_sample_rate as usize / 2; // 500ms max buffer
+                            // **CRITICAL FIX**: Prevent buffer underruns with larger, more robust buffer management
+                            // Allow 1 second of buffering to eliminate gaps and underruns
+                            let max_buffer_size = target_sample_rate as usize; // 1 second max buffer (was 500ms)
                             
-                            // Only drain if we exceed the larger buffer size significantly
-                            if buffer.len() > max_buffer_size {
-                                // Instead of draining from the front (which causes audio gaps),
-                                // keep the most recent audio by draining less aggressively
-                                let target_size = max_buffer_size * 3 / 4; // Keep 75% of max buffer
-                                let excess = buffer.len() - target_size;
-                                buffer.drain(0..excess);
+                            // Only drain if we significantly exceed the buffer size to prevent underruns
+                            if buffer.len() > max_buffer_size + (max_buffer_size / 4) { // 1.25 seconds before draining
+                                // **AUDIO QUALITY FIX**: Keep most recent audio and drain less aggressively
+                                // This prevents the constant buffer gaps that cause crunchiness
+                                let target_size = max_buffer_size * 7 / 8; // Keep 87.5% of max buffer (more data)
+                                let samples_to_keep = target_size;
                                 
-                                if callback_count % 50 == 0 { // Log more frequently since this indicates a problem
-                                    println!("⚠️  BUFFER OVERFLOW: Drained {} samples from {}, buffer now {} samples (max: {})", 
-                                        excess, debug_device_id, buffer.len(), max_buffer_size);
+                                // **CRITICAL**: Keep the LATEST audio, not the oldest
+                                if buffer.len() > samples_to_keep {
+                                    let start_index = buffer.len() - samples_to_keep;
+                                    let new_buffer = buffer.split_off(start_index);
+                                    *buffer = new_buffer;
+                                    
+                                    if callback_count % 100 == 0 { // Less frequent logging
+                                        println!("🔧 BUFFER OPTIMIZATION: Kept latest {} samples from {}, buffer now {} samples (max: {})", 
+                                            samples_to_keep, debug_device_id, buffer.len(), max_buffer_size);
+                                    }
                                 }
                             }
                             
@@ -385,17 +391,23 @@ impl StreamManager {
                                 println!("📦 BUFFER I16: First audio data stored for {}: {} samples", debug_device_id_i16, buffer.len());
                             }
                             
-                            // **CRITICAL FIX**: Use much larger buffer and proper backpressure management
-                            let max_buffer_size = target_sample_rate as usize / 2; // 500ms max buffer
+                            // **CRITICAL FIX**: Prevent buffer underruns with larger, more robust buffer management
+                            let max_buffer_size = target_sample_rate as usize; // 1 second max buffer (was 500ms)
                             
-                            if buffer.len() > max_buffer_size {
-                                let target_size = max_buffer_size * 3 / 4; // Keep 75% of max buffer
-                                let excess = buffer.len() - target_size;
-                                buffer.drain(0..excess);
+                            if buffer.len() > max_buffer_size + (max_buffer_size / 4) { // 1.25 seconds before draining
+                                let target_size = max_buffer_size * 7 / 8; // Keep 87.5% of max buffer
+                                let samples_to_keep = target_size;
                                 
-                                if callback_count % 50 == 0 {
-                                    println!("⚠️  BUFFER OVERFLOW I16: Drained {} samples from {}, buffer now {} samples (max: {})", 
-                                        excess, debug_device_id_i16, buffer.len(), max_buffer_size);
+                                // **CRITICAL**: Keep the LATEST audio, not the oldest
+                                if buffer.len() > samples_to_keep {
+                                    let start_index = buffer.len() - samples_to_keep;
+                                    let new_buffer = buffer.split_off(start_index);
+                                    *buffer = new_buffer;
+                                    
+                                    if callback_count % 100 == 0 {
+                                        println!("🔧 BUFFER OPTIMIZATION I16: Kept latest {} samples from {}, buffer now {} samples (max: {})", 
+                                            samples_to_keep, debug_device_id_i16, buffer.len(), max_buffer_size);
+                                    }
                                 }
                             }
                         }
@@ -421,13 +433,19 @@ impl StreamManager {
                         if let Ok(mut buffer) = audio_buffer.try_lock() {
                             buffer.extend_from_slice(&audio_samples);
                             
-                            // **CRITICAL FIX**: Use much larger buffer and proper backpressure management
-                            let max_buffer_size = target_sample_rate as usize / 2; // 500ms max buffer
+                            // **CRITICAL FIX**: Prevent buffer underruns with larger, more robust buffer management
+                            let max_buffer_size = target_sample_rate as usize; // 1 second max buffer (was 500ms)
                             
-                            if buffer.len() > max_buffer_size {
-                                let target_size = max_buffer_size * 3 / 4; // Keep 75% of max buffer
-                                let excess = buffer.len() - target_size;
-                                buffer.drain(0..excess);
+                            if buffer.len() > max_buffer_size + (max_buffer_size / 4) { // 1.25 seconds before draining
+                                let target_size = max_buffer_size * 7 / 8; // Keep 87.5% of max buffer
+                                let samples_to_keep = target_size;
+                                
+                                // **CRITICAL**: Keep the LATEST audio, not the oldest
+                                if buffer.len() > samples_to_keep {
+                                    let start_index = buffer.len() - samples_to_keep;
+                                    let new_buffer = buffer.split_off(start_index);
+                                    *buffer = new_buffer;
+                                }
                             }
                         }
                     },
