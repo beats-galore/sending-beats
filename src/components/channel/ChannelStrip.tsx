@@ -218,7 +218,7 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
               VU Meter
             </Text>
             <Box className={classes.vuMeterContainer}>
-              <ChannelVUMeter peakLevel={levels.peak} rmsLevel={levels.rms} />
+              <ChannelVUMeter levels={levels} />
             </Box>
           </Stack>
 

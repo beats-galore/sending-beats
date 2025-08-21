@@ -12,8 +12,6 @@ export const useMixerState = () => {
     metrics,
     masterLevels,
     initializeMixer,
-    startMixer,
-    stopMixer,
     addChannel,
     updateChannel,
     updateMasterGain,
@@ -144,29 +142,7 @@ export const useMixerState = () => {
     }
   }, [initializeMixer, clearError]);
 
-  // Start mixer with error handling
-  const start = useCallback(async () => {
-    try {
-      clearError();
-      await startMixer();
-      return true;
-    } catch (err) {
-      console.error('Failed to start mixer:', err);
-      return false;
-    }
-  }, [startMixer, clearError]);
-
-  // Stop mixer with error handling
-  const stop = useCallback(async () => {
-    try {
-      clearError();
-      await stopMixer();
-      return true;
-    } catch (err) {
-      console.error('Failed to stop mixer:', err);
-      return false;
-    }
-  }, [stopMixer, clearError]);
+  // Start/stop functions removed - mixer is always running after initialization
 
   // Add channel with error handling
   const createChannel = useCallback(async () => {
@@ -199,8 +175,6 @@ export const useMixerState = () => {
 
       // Core actions
       initialize,
-      start,
-      stop,
       createChannel,
 
       // Channel helpers
@@ -236,8 +210,6 @@ export const useMixerState = () => {
       hasError,
       isReady,
       initialize,
-      start,
-      stop,
       createChannel,
       getChannelById,
       updateChannelGain,

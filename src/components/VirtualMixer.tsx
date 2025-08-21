@@ -425,7 +425,7 @@ const VirtualMixer: React.FC = () => {
     rightPeak: 0,
     rightRms: 0,
   });
-  const [isRunning, setIsRunning] = useState(false);
+  const [isRunning, setIsRunning] = useState(true); // Always running after initialization
   const [nextChannelId, setNextChannelId] = useState(1);
   const [error, setError] = useState<string>('');
   const [isRefreshingDevices, setIsRefreshingDevices] = useState(false);
@@ -445,8 +445,9 @@ const VirtualMixer: React.FC = () => {
         const devices = await invoke<AudioDeviceInfo[]>('enumerate_audio_devices');
         setAudioDevices(devices);
 
-        // Create mixer with config
+        // Create mixer with config (automatically starts in always-running mode)
         await invoke('create_mixer', { config: djConfig });
+        setIsRunning(true); // Mixer is now always running after creation
       } catch (err) {
         setError(`Failed to initialize mixer: ${err}`);
       }
@@ -519,25 +520,7 @@ const VirtualMixer: React.FC = () => {
     }
   }, [isRunning]);
 
-  const startMixer = async () => {
-    try {
-      await invoke('start_mixer');
-      setIsRunning(true);
-      setError('');
-    } catch (err) {
-      setError(`Failed to start mixer: ${err}`);
-    }
-  };
-
-  const stopMixer = async () => {
-    try {
-      await invoke('stop_mixer');
-      setIsRunning(false);
-      setError('');
-    } catch (err) {
-      setError(`Failed to stop mixer: ${err}`);
-    }
-  };
+  // Start/stop functions removed - mixer is now always running after initialization
 
   const addChannel = async () => {
     if (!mixerConfig) return;
@@ -675,21 +658,7 @@ const VirtualMixer: React.FC = () => {
         <p>Is Running: {isRunning ? 'Yes' : 'No'}</p>
         <p>Error: {error || 'None'}</p>
 
-        <div className="mt-4 space-x-4">
-          <button
-            onClick={startMixer}
-            disabled={isRunning}
-            className="bg-brand hover:bg-brand-light disabled:bg-gray-600 text-white px-6 py-2 rounded-lg font-medium"
-          >
-            Start Mixer
-          </button>
-          <button
-            onClick={stopMixer}
-            disabled={!isRunning}
-            className="bg-red-600 hover:bg-red-700 disabled:bg-gray-600 text-white px-6 py-2 rounded-lg font-medium"
-          >
-            Stop Mixer
-          </button>
+        <div className="mt-4">
           <button
             onClick={addChannel}
             className="bg-surface border border-surface-light hover:bg-surface-light text-white px-4 py-2 rounded-lg"

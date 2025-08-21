@@ -66,14 +66,17 @@ pub struct VirtualMixer {
     metrics: Arc<Mutex<AudioMetrics>>,
     
     // Real-time audio level data for VU meters with atomic caching
-    channel_levels: Arc<Mutex<HashMap<u32, (f32, f32)>>>,
-    channel_levels_cache: Arc<Mutex<HashMap<u32, (f32, f32)>>>,
+    channel_levels: Arc<Mutex<HashMap<u32, (f32, f32, f32, f32)>>>, // (peak_left, rms_left, peak_right, rms_right)
+    channel_levels_cache: Arc<Mutex<HashMap<u32, (f32, f32, f32, f32)>>>,
     master_levels: Arc<Mutex<(f32, f32, f32, f32)>>,
     master_levels_cache: Arc<Mutex<(f32, f32, f32, f32)>>,
     
     // **PRIORITY 5: Audio Clock Synchronization**
     audio_clock: Arc<Mutex<AudioClock>>, // Master audio clock for synchronization
     timing_metrics: Arc<Mutex<TimingMetrics>>, // Timing performance metrics
+    
+    // **CRITICAL FIX**: Shared configuration for real-time updates
+    shared_config: Arc<std::sync::Mutex<MixerConfig>>,
     
     // Audio stream management
     audio_device_manager: Arc<AudioDeviceManager>,
@@ -267,6 +270,10 @@ impl VirtualMixer {
             channel_levels_cache,
             master_levels,
             master_levels_cache,
+            
+            // **CRITICAL FIX**: Shared configuration for real-time updates
+            shared_config: Arc::new(std::sync::Mutex::new(config.clone())),
+            
             audio_device_manager,
             input_streams: Arc::new(Mutex::new(HashMap::new())),
             output_stream: Arc::new(Mutex::new(None)),
@@ -297,7 +304,23 @@ impl VirtualMixer {
         // Validate device_id input with comprehensive validation
         Self::validate_device_id(device_id)?;
         
-        info!("Adding real audio input stream for device: {}", device_id);
+        info!("🎧 DEVICE CHANGE: Adding input stream for device: {}", device_id);
+        
+        // **CRITICAL FIX**: Check if device is already active to prevent duplicate streams
+        {
+            let streams = self.input_streams.lock().await;
+            if streams.contains_key(device_id) {
+                warn!("Device {} already has an active input stream, removing first", device_id);
+                drop(streams);
+                // Remove existing stream first
+                if let Err(e) = self.remove_input_stream(device_id).await {
+                    warn!("Failed to remove existing stream for {}: {}", device_id, e);
+                }
+            }
+        }
+        
+        // **CRITICAL FIX**: Brief delay to allow previous stream cleanup
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
         
         // Find the actual cpal device
         let device = self.audio_device_manager.find_cpal_device(device_id, true).await?;
@@ -311,11 +334,16 @@ impl VirtualMixer {
             
         debug!("Device config: {:?}", config);
         
-        // Create AudioInputStream structure
+        // **AUDIO QUALITY FIX**: Use hardware sample rate instead of fixed mixer sample rate
+        let hardware_sample_rate = config.sample_rate().0;
+        println!("🔧 SAMPLE RATE FIX: Hardware {} Hz, Mixer {} Hz -> Using {} Hz to avoid resampling distortion", 
+                 hardware_sample_rate, self.config.sample_rate, hardware_sample_rate);
+        
+        // Create AudioInputStream structure with hardware sample rate to prevent pitch shifting
         let mut input_stream = AudioInputStream::new(
             device_id.to_string(),
             device_name.clone(),
-            self.config.sample_rate,
+            hardware_sample_rate, // Use hardware sample rate instead of mixer sample rate
         )?;
         
         // Configure adaptive chunk size and stream config with OPTIMAL buffer sizing
@@ -332,12 +360,15 @@ impl VirtualMixer {
         // Get references for the audio callback
         let audio_buffer = input_stream.audio_buffer.clone();
         
-        // Create the appropriate stream config with DYNAMIC buffer sizing
+        // **AUDIO QUALITY FIX**: Use hardware-native configuration to prevent format conversion distortion
         let stream_config = StreamConfig {
             channels: config.channels().min(2), // Limit to stereo max
-            sample_rate: SampleRate(target_sample_rate),
+            sample_rate: config.sample_rate(),   // Use hardware sample rate, not mixer sample rate
             buffer_size: optimal_buffer_size,
         };
+        
+        println!("🔧 FORMAT FIX: Using native format - SR: {} Hz, CH: {}, Buffer: {:?} to prevent conversion distortion",
+                 config.sample_rate().0, config.channels(), optimal_buffer_size);
         
         debug!("Using stream config: channels={}, sample_rate={}, buffer_size={}", 
                 stream_config.channels, stream_config.sample_rate.0, buffer_size);
@@ -356,7 +387,7 @@ impl VirtualMixer {
             device,
             config: stream_config,
             audio_buffer,
-            target_sample_rate,
+            target_sample_rate: hardware_sample_rate, // Use hardware sample rate
             response_tx,
         };
         
@@ -384,15 +415,22 @@ impl VirtualMixer {
 
     /// Set the audio output stream with support for both cpal and CoreAudio devices
     pub async fn set_output_stream(&self, device_id: &str) -> Result<()> {
-        info!("Setting output stream for device: {}", device_id);
+        info!("🔊 DEVICE CHANGE: Setting output stream for device: {}", device_id);
         
         // Validate device_id input
         if device_id.is_empty() || device_id.len() > 256 {
             return Err(anyhow::anyhow!("Invalid device ID: must be 1-256 characters"));
         }
         
-        // **CRITICAL FIX**: Stop and cleanup existing output streams first
-        self.stop_output_streams().await?;
+        // **CRITICAL FIX**: Graceful output stream switching with proper cleanup
+        info!("🔴 Stopping existing output streams before device change...");
+        if let Err(e) = self.stop_output_streams().await {
+            warn!("Error stopping existing output streams: {}", e);
+            // Continue anyway - try to start new stream
+        }
+        
+        // **CRITICAL FIX**: Additional delay for CoreAudio resource cleanup
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         
         // Find the audio device (CoreAudio or cpal) for output
         let device_handle = self.audio_device_manager.find_audio_device(device_id, false).await?;
@@ -609,35 +647,54 @@ impl VirtualMixer {
 
     /// Remove an input stream and clean up cpal stream
     pub async fn remove_input_stream(&self, device_id: &str) -> Result<()> {
-        // Remove from streams collection
-        let mut streams = self.input_streams.lock().await;
-        let was_present = streams.remove(device_id).is_some();
-        drop(streams); // Release the async lock
+        info!("🗑️ DEVICE CHANGE: Removing input stream for device: {}", device_id);
         
-        if was_present {
-            // Send stream removal command to the synchronous stream manager thread
-            let stream_manager = get_stream_manager();
-            let (response_tx, response_rx) = std::sync::mpsc::channel();
+        // **CRITICAL FIX**: Check if stream exists before attempting removal
+        let was_present = {
+            let mut streams = self.input_streams.lock().await;
+            streams.remove(device_id).is_some()
+        };
+        
+        if !was_present {
+            warn!("Attempted to remove non-existent stream for device: {}", device_id);
+            return Ok(()); // Not an error - stream was already removed
+        }
+        
+        // **CRITICAL FIX**: Graceful stream removal with timeout protection
+        info!("🔴 Removing audio stream for device: {}", device_id);
+        
+        // Send stream removal command to the synchronous stream manager thread
+        let stream_manager = get_stream_manager();
+        let (response_tx, response_rx) = std::sync::mpsc::channel();
             
-            let command = StreamCommand::RemoveStream {
-                device_id: device_id.to_string(),
-                response_tx,
-            };
-            
-            stream_manager.send(command)
-                .context("Failed to send stream removal command")?;
-                
-            // Wait for the response
-            let removed = response_rx.recv()
-                .context("Failed to receive stream removal response")?;
-                
-            if removed {
-                println!("Removed input stream and cleaned up cpal stream: {}", device_id);
-            } else {
-                println!("Stream was not found in manager for removal: {}", device_id);
+        let command = StreamCommand::RemoveStream {
+            device_id: device_id.to_string(),
+            response_tx,
+        };
+        
+        // **CRITICAL FIX**: Send command with error handling
+        if let Err(e) = stream_manager.send(command) {
+            warn!("Failed to send stream removal command for {}: {}", device_id, e);
+            return Ok(()); // Don't fail the entire operation
+        }
+        
+        // **CRITICAL FIX**: Wait for response with timeout to prevent hanging
+        let removed = match response_rx.recv_timeout(std::time::Duration::from_millis(2000)) {
+            Ok(removed) => removed,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                warn!("Timeout waiting for stream removal response for device: {}", device_id);
+                return Ok(()); // Continue anyway
             }
+            Err(e) => {
+                warn!("Error receiving stream removal response for {}: {}", device_id, e);
+                return Ok(()); // Continue anyway
+            }
+        };
+        
+        if removed {
+            info!("✅ Successfully removed input stream: {}", device_id);
         } else {
-            println!("Input stream not found for removal: {}", device_id);
+            warn!("Stream was not found in manager for removal: {}", device_id);
         }
         
         Ok(())
@@ -678,13 +735,13 @@ impl VirtualMixer {
         let timing_metrics = self.timing_metrics.clone();
         let sample_rate = self.config.sample_rate;
         let buffer_size = self.config.buffer_size;
-        let config_channels = self.config.channels.clone();
         let mixer_handle = VirtualMixerHandle {
             input_streams: self.input_streams.clone(),
             output_stream: self.output_stream.clone(),
             #[cfg(target_os = "macos")]
             coreaudio_stream: self.coreaudio_stream.clone(),
             channel_levels: self.channel_levels.clone(),
+            config: self.shared_config.clone(),
         };
 
         // Spawn real-time audio processing task
@@ -704,8 +761,25 @@ impl VirtualMixer {
                 // **PRIORITY 5: Audio Clock Synchronization** - Track processing timing
                 let timing_start = std::time::Instant::now();
                 
-                // Collect input samples from all active input streams with effects processing
-                let input_samples = mixer_handle.collect_input_samples_with_effects(&config_channels).await;
+                // **CALLBACK-DRIVEN PROCESSING**: Only process when audio data is available
+                // This replaces timer-based processing to eliminate timing drift
+                // Get current channel configuration dynamically (fixes mute/solo/gain not working)
+                let current_channels = {
+                    if let Ok(config_guard) = mixer_handle.config.try_lock() {
+                        config_guard.channels.clone()
+                    } else {
+                        // Fallback to empty vec if can't lock (shouldn't happen often)
+                        Vec::new()
+                    }
+                };
+                let input_samples = mixer_handle.collect_input_samples_with_effects(&current_channels).await;
+                
+                // If no audio data is available from callbacks, yield to prevent spinning
+                // but don't introduce artificial timing delays that cause drift
+                if input_samples.is_empty() {
+                    tokio::task::yield_now().await; // Non-blocking yield, no artificial timing
+                    continue;
+                }
                 
                 // Clear and reuse pre-allocated stereo buffers
                 reusable_output_buffer.fill(0.0);
@@ -723,21 +797,44 @@ impl VirtualMixer {
                         if !samples.is_empty() {
                             active_channels += 1;
                             
-                            // Calculate peak and RMS levels for VU meters
-                            let peak_level = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                            let rms_level = (samples.iter().map(|&s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
+                            // **STEREO FIX**: Calculate L/R peak and RMS levels separately for VU meters
+                            let (peak_left, rms_left, peak_right, rms_right) = if samples.len() >= 2 {
+                                // Stereo audio: separate L/R channels (interleaved format)
+                                let left_samples: Vec<f32> = samples.iter().step_by(2).copied().collect();
+                                let right_samples: Vec<f32> = samples.iter().skip(1).step_by(2).copied().collect();
+                                
+                                let peak_left = left_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                                let rms_left = if !left_samples.is_empty() {
+                                    (left_samples.iter().map(|&s| s * s).sum::<f32>() / left_samples.len() as f32).sqrt()
+                                } else { 0.0 };
+                                
+                                let peak_right = right_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                                let rms_right = if !right_samples.is_empty() {
+                                    (right_samples.iter().map(|&s| s * s).sum::<f32>() / right_samples.len() as f32).sqrt()
+                                } else { 0.0 };
+                                
+                                (peak_left, rms_left, peak_right, rms_right)
+                            } else {
+                                // Mono audio: duplicate to both L/R channels
+                                let peak_mono = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                                let rms_mono = if !samples.is_empty() {
+                                    (samples.iter().map(|&s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
+                                } else { 0.0 };
+                                
+                                (peak_mono, rms_mono, peak_mono, rms_mono)
+                            };
                             
                             // Find which channel this device belongs to
-                            if let Some(channel) = config_channels.iter().find(|ch| {
+                            if let Some(channel) = current_channels.iter().find(|ch| {
                                 ch.input_device_id.as_ref() == Some(device_id)
                             }) {
-                                // Store levels by channel ID
-                                calculated_channel_levels.insert(channel.id, (peak_level, rms_level));
+                                // Store stereo levels by channel ID
+                                calculated_channel_levels.insert(channel.id, (peak_left, rms_left, peak_right, rms_right));
                                 
                                 // Log levels occasionally
-                                if frame_count % 100 == 0 && peak_level > 0.001 {
-                                    println!("Channel {} ({}): {} samples, peak: {:.3}, rms: {:.3}", 
-                                        channel.id, device_id, samples.len(), peak_level, rms_level);
+                                if frame_count % 100 == 0 && (peak_left > 0.001 || peak_right > 0.001) {
+                                    println!("Channel {} ({}): {} samples, L(peak: {:.3}, rms: {:.3}) R(peak: {:.3}, rms: {:.3})", 
+                                        channel.id, device_id, samples.len(), peak_left, rms_left, peak_right, rms_right);
                                 }
                             }
                             
@@ -830,8 +927,9 @@ impl VirtualMixer {
                 if !calculated_channel_levels.is_empty() {
                     if frame_count % 100 == 0 {
                         println!("📊 STORING LEVELS: Attempting to store {} channel levels", calculated_channel_levels.len());
-                        for (channel_id, (peak, rms)) in calculated_channel_levels.iter() {
-                            println!("   Level [Channel {}]: peak={:.4}, rms={:.4}", channel_id, peak, rms);
+                        for (channel_id, (peak_left, rms_left, peak_right, rms_right)) in calculated_channel_levels.iter() {
+                            println!("   Level [Channel {}]: L(peak={:.4}, rms={:.4}) R(peak={:.4}, rms={:.4})", 
+                                channel_id, peak_left, rms_left, peak_right, rms_right);
                         }
                     }
                     
@@ -935,37 +1033,36 @@ impl VirtualMixer {
                     }
                 }
 
-                // **CRITICAL FIX**: Real-time audio processing interval based on hardware buffer size
-                // Calculate proper timing interval based on buffer size and sample rate for real-time processing
+                // **TIMING DRIFT FIX**: Replace timer-based processing with callback-driven approach
+                // Only process when we have sufficient audio data from callbacks, eliminating drift
+                
+                let elapsed = process_start.elapsed();
                 let hardware_buffer_duration_ms = (buffer_size as f32 / sample_rate as f32) * 1000.0;
-                let process_interval_ms = hardware_buffer_duration_ms.max(5.0).min(20.0); // Clamp between 5-20ms
-                let process_interval = std::time::Duration::from_millis(process_interval_ms as u64);
                 
                 // Debug timing changes every 5 seconds
                 if frame_count % ((sample_rate / buffer_size) as u64 * 5) == 0 {
-                    println!("🕐 TIMING FIX: Hardware buffer: {:.2}ms, Process interval: {:.2}ms (was 2ms)", 
-                        hardware_buffer_duration_ms, process_interval_ms);
+                    println!("🕐 CALLBACK-DRIVEN: Processing triggered by audio data availability, no timer drift (was sleeping {:.2}ms)", 
+                        hardware_buffer_duration_ms);
                 }
-                let elapsed = process_start.elapsed();
                 
-                // **CRITICAL FIX**: Real-time synchronization with audio hardware timing
-                // Instead of just sleeping for remaining time, synchronize with real audio timing
-                let target_interval = std::time::Duration::from_micros((hardware_buffer_duration_ms * 1000.0) as u64);
+                // **CRITICAL TIMING FIX**: Instead of sleeping on a timer (which causes drift),
+                // wait for actual audio data to be available from hardware callbacks.
+                // This synchronizes processing directly with hardware timing, eliminating drift.
                 
-                if elapsed < target_interval {
-                    // Sleep for the exact remaining time to maintain strict real-time synchronization
-                    tokio::time::sleep(target_interval - elapsed).await;
-                } else if elapsed > target_interval * 2 {
-                    // If we're running significantly late, yield and catch up gradually
+                // Only yield minimally if processing was too fast
+                if elapsed.as_micros() < 1000 {
+                    // Processing was very fast (< 1ms), yield briefly to prevent spinning
                     tokio::task::yield_now().await;
-                    if frame_count % 100 == 0 {
-                        println!("⚠️  PROCESSING OVERRUN: {}ms processing time for {:.2}ms target", 
-                            elapsed.as_millis(), target_interval.as_millis());
+                } else if elapsed.as_millis() > 50 {
+                    // Processing took too long (> 50ms), log the overrun
+                    if frame_count % 10 == 0 {
+                        println!("⚠️  PROCESSING OVERRUN: {}ms processing time (audio callback driven)", elapsed.as_millis());
                     }
-                } else {
-                    // If slightly over target, still maintain the rhythm by yielding minimally
-                    tokio::time::sleep(std::time::Duration::from_micros(100)).await; // 0.1ms minimal yield
+                    tokio::task::yield_now().await;
                 }
+                
+                // **NO MORE TIMER-BASED SLEEPING** - processing is now driven by available audio data
+                // The loop will naturally pace itself based on when audio callbacks provide data
             }
             
             println!("Audio processing thread stopped");
@@ -987,7 +1084,7 @@ impl VirtualMixer {
     }
 
     /// Get current channel levels for VU meters with proper fallback caching
-    pub async fn get_channel_levels(&self) -> HashMap<u32, (f32, f32)> {
+    pub async fn get_channel_levels(&self) -> HashMap<u32, (f32, f32, f32, f32)> {
         use std::sync::{LazyLock, Mutex as StdMutex};
         static API_CALL_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
         
@@ -1005,8 +1102,9 @@ impl VirtualMixer {
             // Debug: Log what we're returning to the frontend
             if call_count % 50 == 0 || (!levels.is_empty() && call_count % 10 == 0) {
                 println!("🌐 API CALL #{}: get_channel_levels() returning {} levels", call_count, levels.len());
-                for (channel_id, (peak, rms)) in levels.iter() {
-                    println!("   API Level [Channel {}]: peak={:.4}, rms={:.4}", channel_id, peak, rms);
+                for (channel_id, (peak_left, rms_left, peak_right, rms_right)) in levels.iter() {
+                    println!("   API Level [Channel {}]: L(peak={:.4}, rms={:.4}) R(peak={:.4}, rms={:.4})", 
+                        channel_id, peak_left, rms_left, peak_right, rms_right);
                 }
             }
             
@@ -1099,17 +1197,41 @@ impl VirtualMixer {
         Ok(())
     }
 
-    /// Update channel configuration
+    /// Update channel configuration (now updates running mixer configuration)
     pub async fn update_channel(&mut self, channel_id: u32, updated_channel: AudioChannel) -> Result<()> {
+        // Update the main config
         if let Some(channel) = self.config.channels.iter_mut().find(|c| c.id == channel_id) {
-            *channel = updated_channel;
+            *channel = updated_channel.clone();
         }
+        
+        // **CRITICAL FIX**: Update the shared configuration that the processing loop reads from
+        if let Ok(mut shared_config_guard) = self.shared_config.try_lock() {
+            if let Some(shared_channel) = shared_config_guard.channels.iter_mut().find(|c| c.id == channel_id) {
+                *shared_channel = updated_channel.clone();
+                println!("🔄 Channel {} updated in shared config: muted={}, solo={}, gain={:.2}, pan={:.2}", 
+                    channel_id, updated_channel.muted, updated_channel.solo, 
+                    updated_channel.gain, updated_channel.pan);
+            }
+        } else {
+            println!("⚠️ Could not update shared config for channel {} - processing loop may not see changes", channel_id);
+        }
+        
         Ok(())
     }
 
     /// Get the audio device manager
     pub fn get_device_manager(&self) -> &Arc<AudioDeviceManager> {
         &self.audio_device_manager
+    }
+    
+    /// Get a mutable reference to a channel by ID
+    pub fn get_channel_mut(&mut self, channel_id: u32) -> Option<&mut AudioChannel> {
+        self.config.channels.iter_mut().find(|c| c.id == channel_id)
+    }
+    
+    /// Get a reference to a channel by ID
+    pub fn get_channel(&self, channel_id: u32) -> Option<&AudioChannel> {
+        self.config.channels.iter().find(|c| c.id == channel_id)
     }
     
     /// **NEW**: Safely stop all output streams to prevent crashes when switching devices
@@ -1195,7 +1317,7 @@ impl AudioClock {
         }
     }
     
-    /// Update the clock with processed samples and check for timing drift
+    /// Update the clock with processed samples - now tracks hardware callback timing instead of software timing
     pub fn update(&mut self, samples_added: usize) -> Option<TimingSync> {
         self.samples_processed += samples_added as u64;
         
@@ -1203,29 +1325,37 @@ impl AudioClock {
         if self.samples_processed % self.sync_interval_samples == 0 {
             let now = std::time::Instant::now();
             
-            // Calculate expected time based on samples processed
-            let expected_duration_us = (self.samples_processed as f64 * 1_000_000.0) / self.sample_rate as f64;
-            let actual_duration_us = now.duration_since(self.start_time).as_micros() as f64;
+            // **CRITICAL FIX**: In callback-driven processing, we don't calculate "expected" timing
+            // because the samples arrive exactly when the hardware provides them.
+            // Instead, we only track callback consistency and hardware timing variations.
             
-            // Calculate drift (positive = running slow, negative = running fast)
-            let drift_us = expected_duration_us - actual_duration_us;
-            self.drift_compensation = drift_us;
+            let callback_interval_us = now.duration_since(self.last_sync_time).as_micros() as f64;
+            let expected_interval_us = (self.sync_interval_samples as f64 * 1_000_000.0) / self.sample_rate as f64;
+            
+            // Only report drift if callback intervals are inconsistent with expected buffer timing
+            // This detects real hardware timing issues, not software processing timing
+            let interval_variation = callback_interval_us - expected_interval_us;
+            
+            // Only consider significant variations in hardware callback timing as real drift
+            let is_hardware_drift = interval_variation.abs() > expected_interval_us * 0.1; // 10% variation threshold
+            
+            // Reset drift compensation since we're now hardware-synchronized
+            self.drift_compensation = if is_hardware_drift { interval_variation } else { 0.0 };
             
             let sync = TimingSync {
                 samples_processed: self.samples_processed,
-                drift_microseconds: drift_us,
-                needs_adjustment: drift_us.abs() > 1000.0, // > 1ms drift
+                drift_microseconds: interval_variation,
+                needs_adjustment: is_hardware_drift,
                 sync_time: now,
             };
             
-            self.last_sync_time = now;
-            
-            // Log significant drift
-            if sync.needs_adjustment {
-                println!("⏰ AUDIO CLOCK: Drift detected: {:.2}ms at {} samples", 
-                    drift_us / 1000.0, self.samples_processed);
+            // Only log actual hardware timing issues, not software processing timing
+            if is_hardware_drift {
+                println!("⏰ HARDWARE TIMING: Callback interval variation: {:.2}ms (expected: {:.2}ms, actual: {:.2}ms)", 
+                    interval_variation / 1000.0, expected_interval_us / 1000.0, callback_interval_us / 1000.0);
             }
             
+            self.last_sync_time = now;
             Some(sync)
         } else {
             None

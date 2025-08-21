@@ -30,7 +30,7 @@ export type MasterLevels = {
   right: AudioLevels;
 };
 
-export type ChannelLevels = Record<number, [number, number]>;
+export type ChannelLevels = Record<number, [number, number, number, number]>; // [peak_left, rms_left, peak_right, rms_right]
 
 // Audio processing types
 export type ThreeBandEqualizer = {

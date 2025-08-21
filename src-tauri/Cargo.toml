@@ -41,6 +41,10 @@ rtrb = "0.2"               # Real-time ring buffer
 rubato = "0.15"            # High-quality sample rate conversion
 rustfft = "6.2"            # Fast Fourier Transform for spectrum analysis
 
+# Database and storage
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "chrono", "migrate"] }
+crossbeam = "0.8"          # Lock-free data structures for audio threading
+
 # Platform-specific audio system integration
 [target.'cfg(target_os = "macos")'.dependencies]
 coreaudio-rs = "0.13"     # macOS Core Audio integration
