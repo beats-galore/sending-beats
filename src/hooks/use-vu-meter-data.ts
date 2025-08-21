@@ -105,7 +105,7 @@ export const useVUMeterData = (isEnabled = true) => {
           intervalRef.current = undefined;
         }
       };
-    } else {
+    } 
       console.debug('🚫 VU polling disabled or no config');
       // Clean up if disabled
       if (intervalRef.current) {
@@ -113,7 +113,7 @@ export const useVUMeterData = (isEnabled = true) => {
         clearInterval(intervalRef.current);
         intervalRef.current = undefined;
       }
-    }
+    
   }, [isEnabled, hasConfig, pollVUData]);
 
   // Clean up on unmount

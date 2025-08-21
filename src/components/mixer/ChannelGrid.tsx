@@ -2,8 +2,8 @@
 import { Stack, Title, Paper, Text, Center } from '@mantine/core';
 import { memo } from 'react';
 
-import { ChannelStrip } from '../channel';
 import { useChannelsData } from '../../hooks';
+import { ChannelStrip } from '../channel';
 
 export const ChannelGrid = memo(() => {
   const { channels } = useChannelsData();

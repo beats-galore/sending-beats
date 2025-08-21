@@ -1,14 +1,4 @@
-import {
-  Stack,
-  Group,
-  Title,
-  Button,
-  Card,
-  Table,
-  Text,
-  Badge,
-  ActionIcon,
-} from '@mantine/core';
+import { Stack, Group, Title, Button, Card, Table, Text, Badge, ActionIcon } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { IconPlus, IconPlayerPlay, IconTrash } from '@tabler/icons-react';
 import { memo } from 'react';
@@ -94,11 +84,7 @@ export const UploadsTab = memo<UploadsTabProps>(({ uploads }) => {
                   <Text c="dimmed">{track.fileSize}</Text>
                 </Table.Td>
                 <Table.Td>
-                  <Badge
-                    color={getStatusColor(track.status)}
-                    variant="light"
-                    size="sm"
-                  >
+                  <Badge color={getStatusColor(track.status)} variant="light" size="sm">
                     {track.status}
                   </Badge>
                 </Table.Td>

@@ -1,7 +1,7 @@
 // Zustand store for audio device state management
+import isEqual from 'fast-deep-equal';
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
-import isEqual from 'fast-deep-equal';
 
 import { audioService, deviceService } from '../services';
 

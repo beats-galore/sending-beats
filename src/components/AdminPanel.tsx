@@ -1,11 +1,5 @@
 // Professional Admin Panel - Modernized with Mantine
-import {
-  Box,
-  Group,
-  Title,
-  Badge,
-  Tabs,
-} from '@mantine/core';
+import { Box, Group, Title, Badge, Tabs } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import {
   IconDashboard,
@@ -17,13 +11,8 @@ import {
 } from '@tabler/icons-react';
 import { memo, useState, useCallback } from 'react';
 
+import { DashboardTab, ScheduleTab, UploadsTab, AnalyticsTab } from './admin';
 import { ErrorBoundary } from './layout';
-import {
-  DashboardTab,
-  ScheduleTab,
-  UploadsTab,
-  AnalyticsTab,
-} from './admin';
 
 type ScheduleItem = {
   id: string;
@@ -150,11 +139,7 @@ const AdminPanel = memo(() => {
             ) : (
               <IconWifiOff size={20} color="#fa5252" />
             )}
-            <Badge
-              color={isLive ? 'green' : 'gray'}
-              variant="light"
-              size="md"
-            >
+            <Badge color={isLive ? 'green' : 'gray'} variant="light" size="md">
               {isLive ? 'Live' : 'Offline'}
             </Badge>
           </Group>
@@ -162,28 +147,16 @@ const AdminPanel = memo(() => {
 
         <Tabs value={activeTab} onChange={(value) => setActiveTab(value as any)} variant="pills">
           <Tabs.List mb="xl">
-            <Tabs.Tab
-              value="dashboard"
-              leftSection={<IconDashboard size={16} />}
-            >
+            <Tabs.Tab value="dashboard" leftSection={<IconDashboard size={16} />}>
               Dashboard
             </Tabs.Tab>
-            <Tabs.Tab
-              value="schedule"
-              leftSection={<IconCalendar size={16} />}
-            >
+            <Tabs.Tab value="schedule" leftSection={<IconCalendar size={16} />}>
               Schedule
             </Tabs.Tab>
-            <Tabs.Tab
-              value="uploads"
-              leftSection={<IconMusic size={16} />}
-            >
+            <Tabs.Tab value="uploads" leftSection={<IconMusic size={16} />}>
               Uploads
             </Tabs.Tab>
-            <Tabs.Tab
-              value="analytics"
-              leftSection={<IconChartBar size={16} />}
-            >
+            <Tabs.Tab value="analytics" leftSection={<IconChartBar size={16} />}>
               Analytics
             </Tabs.Tab>
           </Tabs.List>

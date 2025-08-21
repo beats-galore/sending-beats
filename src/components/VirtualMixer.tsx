@@ -178,7 +178,7 @@ const ChannelStrip: React.FC<{
             peakLevel={channel.peak_level}
             rmsLevel={channel.rms_level}
             height={40}
-            vertical={true}
+            vertical
           />
           <div className="mt-1 text-xs">
             <div>P: {channel.peak_level.toFixed(2)}</div>
@@ -774,7 +774,7 @@ const VirtualMixer: React.FC = () => {
                   peakLevel={masterLevels.leftPeak}
                   rmsLevel={masterLevels.leftRms}
                   height={120}
-                  vertical={true}
+                  vertical
                 />
                 <div className="text-xs text-surface-light mt-2">
                   <div>Peak: {masterLevels.leftPeak.toFixed(3)}</div>
@@ -788,7 +788,7 @@ const VirtualMixer: React.FC = () => {
                   peakLevel={masterLevels.rightPeak}
                   rmsLevel={masterLevels.rightRms}
                   height={120}
-                  vertical={true}
+                  vertical
                 />
                 <div className="text-xs text-surface-light mt-2">
                   <div>Peak: {masterLevels.rightPeak.toFixed(3)}</div>

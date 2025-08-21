@@ -1,7 +1,7 @@
 // Audio service layer - abstraction over Tauri audio commands
 import { invoke } from '@tauri-apps/api/core';
 
-import type { AudioDeviceInfo, AudioMetrics } from '../types';
+import type { AudioDeviceInfo, AudioMetrics, OutputDevice, DeviceHealth } from '../types';
 
 export const audioService = {
   // Device management
@@ -35,8 +35,12 @@ export const audioService = {
     return invoke('remove_input_stream', { deviceId });
   },
 
+  async switchInputStream(oldDeviceId: string | null, newDeviceId: string): Promise<void> {
+    return invoke('safe_switch_input_device', { oldDeviceId, newDeviceId });
+  },
+
   async setOutputStream(deviceId: string): Promise<void> {
-    return invoke('set_output_stream', { deviceId });
+    return invoke('safe_switch_output_device', { newDeviceId: deviceId });
   },
 
   // Effects management
@@ -101,5 +105,61 @@ export const audioService = {
       thresholdDb: options.thresholdDb,
       enabled: options.enabled,
     });
+  },
+
+  // Multiple output device management
+  async addOutputDevice(
+    deviceId: string,
+    deviceName: string,
+    options?: {
+      gain?: number;
+      isMonitor?: boolean;
+    }
+  ): Promise<void> {
+    return invoke('add_output_device', {
+      deviceId,
+      deviceName,
+      gain: options?.gain,
+      isMonitor: options?.isMonitor,
+    });
+  },
+
+  async removeOutputDevice(deviceId: string): Promise<void> {
+    return invoke('remove_output_device', { deviceId });
+  },
+
+  async updateOutputDevice(
+    deviceId: string,
+    options: {
+      deviceName?: string;
+      gain?: number;
+      enabled?: boolean;
+      isMonitor?: boolean;
+    }
+  ): Promise<void> {
+    return invoke('update_output_device', {
+      deviceId,
+      deviceName: options.deviceName,
+      gain: options.gain,
+      enabled: options.enabled,
+      isMonitor: options.isMonitor,
+    });
+  },
+
+  async getOutputDevices(): Promise<OutputDevice[]> {
+    return invoke('get_output_devices');
+  },
+
+  // Device health monitoring
+  async getDeviceHealth(deviceId: string): Promise<DeviceHealth | null> {
+    return invoke('get_device_health', { deviceId });
+  },
+
+  async getAllDeviceHealth(): Promise<Record<string, DeviceHealth>> {
+    return invoke('get_all_device_health');
+  },
+
+  async reportDeviceError(deviceId: string, error: string): Promise<void> {
+    return invoke('report_device_error', { deviceId, error });
   },
 } as const;

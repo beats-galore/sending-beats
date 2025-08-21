@@ -12,7 +12,7 @@ export const audioCalculations = {
   // Convert decibels to linear amplitude (0-1)
   dbToLinear(db: number): number {
     if (db <= AUDIO_CONSTANTS.MIN_DB) return 0;
-    return Math.pow(10, db / 20);
+    return 10**(db / 20);
   },
 
   // Convert dB to VU meter position (0-1 range)
@@ -33,7 +33,7 @@ export const audioCalculations = {
 
   // Gain conversions
   gainDbToLinear(gainDb: number): number {
-    return Math.pow(10, gainDb / 20);
+    return 10**(gainDb / 20);
   },
 
   gainLinearToDb(gainLinear: number): number {
@@ -92,7 +92,7 @@ export const audioCalculations = {
   calculateEqGain(frequency: number, centerFreq: number, gain: number, q = 1): number {
     const freqRatio = frequency / centerFreq;
     const bandwidth = Math.log2(freqRatio) * q;
-    const response = Math.pow(10, gain / 20 / (1 + Math.pow(bandwidth, 2)));
+    const response = 10**(gain / 20 / (1 + bandwidth**2));
 
     return 20 * Math.log10(response);
   },

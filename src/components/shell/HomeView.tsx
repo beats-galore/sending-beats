@@ -1,13 +1,14 @@
 import { Center, Stack, Title, Text } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { memo } from 'react';
+
 import { NowPlayingCard } from './NowPlayingCard';
 
 const useStyles = createStyles(() => ({
   homeContainer: {
     height: '100%',
   },
-  
+
   welcomeText: {
     textAlign: 'center',
   },
@@ -15,7 +16,7 @@ const useStyles = createStyles(() => ({
 
 export const HomeView = memo(() => {
   const { classes } = useStyles();
-  
+
   return (
     <Center h="100%">
       <Stack align="center" gap="xl">

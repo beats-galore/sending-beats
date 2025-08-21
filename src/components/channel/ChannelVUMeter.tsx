@@ -10,6 +10,7 @@ const useStyles = createStyles((theme) => ({
     width: '100%',
     minWidth: '200px',
     maxWidth: '300px',
+    marginTop: 30,
   },
   channelLabel: {
     fontSize: '8px',
@@ -38,7 +39,7 @@ type StereoChannelLevels = {
   left: { peak: number; rms: number };
   right: { peak: number; rms: number };
   peak: number; // Legacy mono compatibility
-  rms: number;  // Legacy mono compatibility
+  rms: number; // Legacy mono compatibility
 };
 
 type ChannelVUMeterProps = {
@@ -52,7 +53,6 @@ export const ChannelVUMeter = memo<ChannelVUMeterProps>(
     return (
       <Center>
         <div className={classes.vuContainer}>
-          <Text className={classes.channelLabel}>VU LEVELS</Text>
           <Stack gap={1}>
             {/* Left Channel */}
             <div className={classes.meterRow}>
@@ -81,7 +81,7 @@ export const ChannelVUMeter = memo<ChannelVUMeterProps>(
       </Center>
     );
   },
-  (prev, next) => 
+  (prev, next) =>
     prev.levels.left.peak === next.levels.left.peak &&
     prev.levels.left.rms === next.levels.left.rms &&
     prev.levels.right.peak === next.levels.right.peak &&

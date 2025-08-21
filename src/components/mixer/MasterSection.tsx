@@ -27,13 +27,16 @@ export const MasterSection = memo(() => {
   const metrics = useAudioMetrics();
   const { outputDevices, refreshDevices } = useAudioDevices();
 
-  const handleOutputDeviceChange = useCallback(async (deviceId: string) => {
-    try {
-      await setMasterOutputDevice(deviceId);
-    } catch (error) {
-      console.error('Failed to set output device:', error);
-    }
-  }, [setMasterOutputDevice]);
+  const handleOutputDeviceChange = useCallback(
+    async (deviceId: string) => {
+      try {
+        await setMasterOutputDevice(deviceId);
+      } catch (error) {
+        console.error('Failed to set output device:', error);
+      }
+    },
+    [setMasterOutputDevice]
+  );
 
   const handleMasterGainChange = useCallback(
     (gain: number) => {

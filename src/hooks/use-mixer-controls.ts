@@ -1,5 +1,6 @@
 // Hook specifically for mixer controls - simplified for always-running mixer
 import { useCallback, useMemo } from 'react';
+
 import { useMixerStore } from '../stores';
 import { MixerState } from '../types';
 

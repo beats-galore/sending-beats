@@ -81,7 +81,8 @@ pub struct VirtualMixer {
     // Audio stream management
     audio_device_manager: Arc<AudioDeviceManager>,
     input_streams: Arc<Mutex<HashMap<String, Arc<AudioInputStream>>>>,
-    output_stream: Arc<Mutex<Option<Arc<AudioOutputStream>>>>,
+    output_stream: Arc<Mutex<Option<Arc<AudioOutputStream>>>>, // Legacy single output
+    output_streams: Arc<Mutex<HashMap<String, Arc<AudioOutputStream>>>>, // Multiple outputs
     // Track active output streams by device ID for cleanup (no direct stream storage due to Send/Sync)
     active_output_devices: Arc<Mutex<std::collections::HashSet<String>>>,
     #[cfg(target_os = "macos")]
@@ -277,6 +278,7 @@ impl VirtualMixer {
             audio_device_manager,
             input_streams: Arc::new(Mutex::new(HashMap::new())),
             output_stream: Arc::new(Mutex::new(None)),
+            output_streams: Arc::new(Mutex::new(HashMap::new())), // Initialize empty multiple outputs
             active_output_devices: Arc::new(Mutex::new(std::collections::HashSet::new())),
             #[cfg(target_os = "macos")]
             coreaudio_stream: Arc::new(Mutex::new(None)),
@@ -738,6 +740,7 @@ impl VirtualMixer {
         let mixer_handle = VirtualMixerHandle {
             input_streams: self.input_streams.clone(),
             output_stream: self.output_stream.clone(),
+            output_streams: self.output_streams.clone(), // Add multiple outputs support
             #[cfg(target_os = "macos")]
             coreaudio_stream: self.coreaudio_stream.clone(),
             channel_levels: self.channel_levels.clone(),
@@ -1311,6 +1314,212 @@ impl VirtualMixer {
         
         info!("All input streams stopped");
         Ok(())
+    }
+    
+    /// Add an output device to the mixer
+    pub async fn add_output_device(&self, output_device: super::types::OutputDevice) -> Result<()> {
+        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+        
+        let devices = self.audio_device_manager.enumerate_devices().await?;
+        
+        // Find the device
+        let device_info = devices.iter()
+            .find(|d| d.id == output_device.device_id && d.is_output)
+            .ok_or_else(|| anyhow::anyhow!("Output device not found: {}", output_device.device_id))?;
+            
+        // Get the actual device
+        let host = cpal::default_host();
+        let device = if device_info.is_default {
+            host.default_output_device()
+                .ok_or_else(|| anyhow::anyhow!("No default output device"))?
+        } else {
+            host.output_devices()?
+                .find(|d| d.name().unwrap_or_default() == device_info.name)
+                .ok_or_else(|| anyhow::anyhow!("Device not found: {}", device_info.name))?
+        };
+        
+        // Create output stream
+        let output_stream = Arc::new(AudioOutputStream::new(
+            output_device.device_id.clone(),
+            device_info.name.clone(),
+            self.config.sample_rate,
+        )?);
+        
+        // Add to output streams collection
+        self.output_streams.lock().await.insert(
+            output_device.device_id.clone(),
+            output_stream.clone(),
+        );
+        
+        // Update config to include this output device
+        {
+            let mut config_guard = self.shared_config.lock().unwrap();
+            config_guard.output_devices.push(output_device.clone());
+        }
+        
+        println!("✅ Added output device: {} ({})", output_device.device_name, output_device.device_id);
+        Ok(())
+    }
+    
+    /// Remove an output device from the mixer
+    pub async fn remove_output_device(&self, device_id: &str) -> Result<()> {
+        // Remove from output streams collection
+        let removed = self.output_streams.lock().await.remove(device_id);
+        
+        if removed.is_some() {
+            // Update config to remove this output device
+            {
+                let mut config_guard = self.shared_config.lock().unwrap();
+                config_guard.output_devices.retain(|d| d.device_id != device_id);
+            }
+            
+            println!("✅ Removed output device: {}", device_id);
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Output device not found: {}", device_id))
+        }
+    }
+    
+    /// Update output device configuration
+    pub async fn update_output_device(&self, device_id: &str, updated_device: super::types::OutputDevice) -> Result<()> {
+        // Update config
+        {
+            let mut config_guard = self.shared_config.lock().unwrap();
+            if let Some(device) = config_guard.output_devices.iter_mut().find(|d| d.device_id == device_id) {
+                *device = updated_device;
+                println!("✅ Updated output device: {}", device_id);
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("Output device not found in config: {}", device_id))
+            }
+        }
+    }
+    
+    /// Get a specific output device configuration
+    pub async fn get_output_device(&self, device_id: &str) -> Option<super::types::OutputDevice> {
+        let config_guard = self.shared_config.lock().unwrap();
+        config_guard.output_devices
+            .iter()
+            .find(|d| d.device_id == device_id)
+            .cloned()
+    }
+    
+    /// Get all output devices
+    pub async fn get_output_devices(&self) -> Vec<super::types::OutputDevice> {
+        let config_guard = self.shared_config.lock().unwrap();
+        config_guard.output_devices.clone()
+    }
+    
+    /// Enhanced add input stream with device health checking
+    pub async fn add_input_stream_safe(&self, device_id: &str) -> Result<()> {
+        info!("Adding input stream for device with health checking: {}", device_id);
+        
+        // Check device health before attempting to use it
+        if self.audio_device_manager.should_avoid_device(device_id).await {
+            let health = self.audio_device_manager.get_device_health(device_id).await;
+            if let Some(h) = health {
+                return Err(anyhow::anyhow!(
+                    "Avoiding device {} due to {} consecutive errors. Last error: {:?}", 
+                    device_id, h.consecutive_errors, h.status
+                ));
+            }
+        }
+        
+        // Check if device is still available
+        match self.audio_device_manager.check_device_health(device_id).await {
+            Ok(super::devices::DeviceStatus::Connected) => {
+                // Device is healthy, proceed with normal stream addition
+                // This would call the existing stream management logic
+                println!("✅ Device {} is healthy, proceeding with stream creation", device_id);
+            }
+            Ok(super::devices::DeviceStatus::Disconnected) => {
+                self.audio_device_manager.report_device_error(
+                    device_id, 
+                    "Device disconnected".to_string()
+                ).await;
+                return Err(anyhow::anyhow!("Device {} is disconnected", device_id));
+            }
+            Ok(super::devices::DeviceStatus::Error(err)) => {
+                return Err(anyhow::anyhow!("Device {} has error: {}", device_id, err));
+            }
+            Err(e) => {
+                self.audio_device_manager.report_device_error(
+                    device_id, 
+                    format!("Health check failed: {}", e)
+                ).await;
+                return Err(anyhow::anyhow!("Failed to check device {} health: {}", device_id, e));
+            }
+        }
+        
+        // Initialize health tracking for this device if not already tracked
+        if let Ok(devices) = self.audio_device_manager.enumerate_devices().await {
+            if let Some(device_info) = devices.iter().find(|d| d.id == device_id) {
+                self.audio_device_manager.initialize_device_health(device_info).await;
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Enhanced add output stream with device health checking
+    pub async fn add_output_stream_safe(&self, device_id: &str) -> Result<()> {
+        info!("Adding output stream for device with health checking: {}", device_id);
+        
+        // Similar health checking for output devices
+        if self.audio_device_manager.should_avoid_device(device_id).await {
+            let health = self.audio_device_manager.get_device_health(device_id).await;
+            if let Some(h) = health {
+                return Err(anyhow::anyhow!(
+                    "Avoiding output device {} due to {} consecutive errors", 
+                    device_id, h.consecutive_errors
+                ));
+            }
+        }
+        
+        match self.audio_device_manager.check_device_health(device_id).await {
+            Ok(super::devices::DeviceStatus::Connected) => {
+                println!("✅ Output device {} is healthy, proceeding with stream creation", device_id);
+                // Initialize health tracking
+                if let Ok(devices) = self.audio_device_manager.enumerate_devices().await {
+                    if let Some(device_info) = devices.iter().find(|d| d.id == device_id) {
+                        self.audio_device_manager.initialize_device_health(device_info).await;
+                    }
+                }
+                Ok(())
+            }
+            Ok(super::devices::DeviceStatus::Disconnected) => {
+                self.audio_device_manager.report_device_error(
+                    device_id, 
+                    "Output device disconnected".to_string()
+                ).await;
+                Err(anyhow::anyhow!("Output device {} is disconnected", device_id))
+            }
+            Ok(super::devices::DeviceStatus::Error(err)) => {
+                Err(anyhow::anyhow!("Output device {} has error: {}", device_id, err))
+            }
+            Err(e) => {
+                self.audio_device_manager.report_device_error(
+                    device_id, 
+                    format!("Output health check failed: {}", e)
+                ).await;
+                Err(anyhow::anyhow!("Failed to check output device {} health: {}", device_id, e))
+            }
+        }
+    }
+    
+    /// Get device health status for UI reporting
+    pub async fn get_device_health_status(&self, device_id: &str) -> Option<super::devices::DeviceHealth> {
+        self.audio_device_manager.get_device_health(device_id).await
+    }
+    
+    /// Get all device health statuses for UI monitoring
+    pub async fn get_all_device_health_statuses(&self) -> std::collections::HashMap<String, super::devices::DeviceHealth> {
+        self.audio_device_manager.get_all_device_health().await
+    }
+    
+    /// Report a device error from external sources (like stream callbacks)
+    pub async fn report_device_error(&self, device_id: &str, error: String) {
+        self.audio_device_manager.report_device_error(device_id, error).await;
     }
 }
 

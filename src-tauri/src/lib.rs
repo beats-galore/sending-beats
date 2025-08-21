@@ -678,6 +678,143 @@ async fn get_channel_effects(
     }
 }
 
+// Multiple output device management commands
+#[tauri::command]
+async fn add_output_device(
+    audio_state: State<'_, AudioState>,
+    device_id: String,
+    device_name: String,
+    gain: Option<f32>,
+    is_monitor: Option<bool>,
+) -> Result<(), String> {
+    let mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mixer) = *mixer_guard {
+        // Create output device configuration
+        let output_device = audio::types::OutputDevice {
+            device_id: device_id.clone(),
+            device_name,
+            gain: gain.unwrap_or(1.0),
+            enabled: true,
+            is_monitor: is_monitor.unwrap_or(false),
+        };
+        
+        // Add the output device directly through the mixer
+        mixer.add_output_device(output_device).await.map_err(|e| e.to_string())?;
+        println!("✅ Added output device via Tauri command: {}", device_id);
+    } else {
+        return Err("No mixer created".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn remove_output_device(
+    audio_state: State<'_, AudioState>,
+    device_id: String,
+) -> Result<(), String> {
+    let mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mixer) = *mixer_guard {
+        mixer.remove_output_device(&device_id).await.map_err(|e| e.to_string())?;
+        println!("✅ Removed output device via Tauri command: {}", device_id);
+    } else {
+        return Err("No mixer created".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn update_output_device(
+    audio_state: State<'_, AudioState>,
+    device_id: String,
+    device_name: Option<String>,
+    gain: Option<f32>,
+    enabled: Option<bool>,
+    is_monitor: Option<bool>,
+) -> Result<(), String> {
+    let mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mixer) = *mixer_guard {
+        // Get current device configuration
+        let current_config = mixer.get_output_device(&device_id).await;
+        
+        if let Some(mut updated_device) = current_config {
+            // Update specified fields
+            if let Some(name) = device_name {
+                updated_device.device_name = name;
+            }
+            if let Some(g) = gain {
+                updated_device.gain = g;
+            }
+            if let Some(e) = enabled {
+                updated_device.enabled = e;
+            }
+            if let Some(m) = is_monitor {
+                updated_device.is_monitor = m;
+            }
+            
+            mixer.update_output_device(&device_id, updated_device).await.map_err(|e| e.to_string())?;
+            println!("✅ Updated output device via Tauri command: {}", device_id);
+        } else {
+            return Err(format!("Output device not found: {}", device_id));
+        }
+    } else {
+        return Err("No mixer created".to_string());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn get_output_devices(
+    audio_state: State<'_, AudioState>,
+) -> Result<Vec<audio::types::OutputDevice>, String> {
+    let mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mixer) = *mixer_guard {
+        Ok(mixer.get_output_devices().await)
+    } else {
+        Err("No mixer created".to_string())
+    }
+}
+
+// Device health monitoring commands
+#[tauri::command]
+async fn get_device_health(
+    audio_state: State<'_, AudioState>,
+    device_id: String,
+) -> Result<Option<audio::devices::DeviceHealth>, String> {
+    let mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mixer) = *mixer_guard {
+        Ok(mixer.get_device_health_status(&device_id).await)
+    } else {
+        Err("No mixer created".to_string())
+    }
+}
+
+#[tauri::command]
+async fn get_all_device_health(
+    audio_state: State<'_, AudioState>,
+) -> Result<std::collections::HashMap<String, audio::devices::DeviceHealth>, String> {
+    let mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mixer) = *mixer_guard {
+        Ok(mixer.get_all_device_health_statuses().await)
+    } else {
+        Err("No mixer created".to_string())
+    }
+}
+
+#[tauri::command]
+async fn report_device_error(
+    audio_state: State<'_, AudioState>,
+    device_id: String,
+    error: String,
+) -> Result<(), String> {
+    let mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mixer) = *mixer_guard {
+        mixer.report_device_error(&device_id, error).await;
+        Ok(())
+    } else {
+        Err("No mixer created".to_string())
+    }
+}
+
 // Audio stream management commands
 #[tauri::command]
 async fn add_input_stream(
@@ -686,7 +823,8 @@ async fn add_input_stream(
 ) -> Result<(), String> {
     let mixer_guard = audio_state.mixer.lock().await;
     if let Some(ref mixer) = *mixer_guard {
-        mixer.add_input_stream(&device_id).await.map_err(|e| e.to_string())?;
+        // Use enhanced health-checked version
+        mixer.add_input_stream_safe(&device_id).await.map_err(|e| e.to_string())?;
     } else {
         return Err("No mixer created".to_string());
     }
@@ -801,6 +939,13 @@ pub fn run() {
             add_input_stream,
             remove_input_stream,
             set_output_stream,
+            add_output_device,
+            remove_output_device,
+            update_output_device,
+            get_output_devices,
+            get_device_health,
+            get_all_device_health,
+            report_device_error,
             get_recent_vu_levels,
             get_recent_master_levels,
             save_channel_config,

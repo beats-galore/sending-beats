@@ -10,6 +10,25 @@ export type AudioDeviceInfo = {
   host_api: string;
 };
 
+export type OutputDevice = {
+  device_id: string;
+  device_name: string;
+  gain: number; // Individual output gain (0.0 - 2.0)
+  enabled: boolean; // Whether this output is active
+  is_monitor: boolean; // Whether this is a monitor/headphone output
+};
+
+export type DeviceStatus = 'Connected' | 'Disconnected' | { Error: string };
+
+export type DeviceHealth = {
+  device_id: string;
+  device_name: string;
+  status: DeviceStatus;
+  last_seen: number; // timestamp
+  error_count: number;
+  consecutive_errors: number;
+};
+
 export type AudioMetrics = {
   cpu_usage: number;
   buffer_underruns: number;

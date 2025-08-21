@@ -42,14 +42,6 @@ export default tseslint.config(
 
   // TypeScript configuration
   tseslint.configs.recommendedTypeChecked,
-  {
-    languageOptions: {
-      parserOptions: {
-        projectService: true,
-        tsconfigRootDir: import.meta.dirname,
-      },
-    },
-  },
   ...tseslint.configs.stylisticTypeChecked,
   ...compat.extends('prettier'),
 
@@ -63,8 +55,8 @@ export default tseslint.config(
         ecmaFeatures: {
           jsx: true,
         },
-        project: ['./tsconfig.json'],
-        tsconfigRootDir: import.meta.dirname,
+        project: [path.resolve(path.dirname(new URL(import.meta.url).pathname), 'tsconfig.json')],
+        tsconfigRootDir: path.resolve(path.dirname(new URL(import.meta.url).pathname)),
       },
       globals: {
         // Browser globals
@@ -85,7 +77,7 @@ export default tseslint.config(
       react,
       'react-hooks': reactHooks,
       'react-refresh': reactRefresh,
-      'jsx-a11y': jsxA11y,
+
       import: importPlugin,
     },
 

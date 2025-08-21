@@ -119,6 +119,16 @@ impl Default for AudioChannel {
     }
 }
 
+/// Output device configuration for multiple output support
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutputDevice {
+    pub device_id: String,
+    pub device_name: String,
+    pub gain: f32,         // Individual output gain (0.0 - 2.0)
+    pub enabled: bool,     // Whether this output is active
+    pub is_monitor: bool,  // Whether this is a monitor/headphone output
+}
+
 /// Virtual mixer configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MixerConfig {
@@ -126,8 +136,9 @@ pub struct MixerConfig {
     pub buffer_size: u32,
     pub channels: Vec<AudioChannel>,
     pub master_gain: f32,
-    pub master_output_device_id: Option<String>,
-    pub monitor_output_device_id: Option<String>,
+    pub master_output_device_id: Option<String>, // Kept for backward compatibility
+    pub monitor_output_device_id: Option<String>, // Kept for backward compatibility
+    pub output_devices: Vec<OutputDevice>, // New multiple output support
     pub enable_loopback: bool,
 }
 
@@ -140,6 +151,7 @@ impl Default for MixerConfig {
             master_gain: 1.0,
             master_output_device_id: None,
             monitor_output_device_id: None,
+            output_devices: vec![], // Empty by default
             enable_loopback: true,
         }
     }
@@ -168,6 +180,12 @@ pub enum MixerCommand {
     EnableChannel(u32, bool),
     SoloChannel(u32, bool),
     MuteChannel(u32, bool),
+    // Multiple output device commands
+    AddOutputDevice(OutputDevice),
+    RemoveOutputDevice(String), // device_id
+    UpdateOutputDevice(String, OutputDevice), // device_id, new_config
+    SetOutputDeviceGain(String, f32), // device_id, gain
+    EnableOutputDevice(String, bool), // device_id, enabled
 }
 
 /// Factory for creating optimized audio configurations based on use case

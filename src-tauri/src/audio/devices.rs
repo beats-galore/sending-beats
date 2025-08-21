@@ -14,6 +14,25 @@ use core_foundation::base::TCFType;
 
 use super::types::{AudioDeviceInfo, AudioDeviceHandle};
 
+/// Device connection status for error handling
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum DeviceStatus {
+    Connected,
+    Disconnected,
+    Error(String),
+}
+
+/// Device health information for monitoring
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DeviceHealth {
+    pub device_id: String,
+    pub device_name: String,
+    pub status: DeviceStatus,
+    pub last_seen: u64, // Changed to timestamp in milliseconds for serialization
+    pub error_count: u32,
+    pub consecutive_errors: u32,
+}
+
 #[cfg(target_os = "macos")]
 use super::types::CoreAudioDevice;
 
@@ -21,6 +40,7 @@ use super::types::CoreAudioDevice;
 pub struct AudioDeviceManager {
     host: Host,
     devices_cache: Arc<Mutex<HashMap<String, AudioDeviceInfo>>>,
+    device_health: Arc<Mutex<HashMap<String, DeviceHealth>>>,
 }
 
 impl std::fmt::Debug for AudioDeviceManager {
@@ -28,6 +48,7 @@ impl std::fmt::Debug for AudioDeviceManager {
         f.debug_struct("AudioDeviceManager")
             .field("host", &"Host(cpal)")
             .field("devices_cache", &self.devices_cache)
+            .field("device_health", &self.device_health)
             .finish()
     }
 }
@@ -58,6 +79,7 @@ impl AudioDeviceManager {
         Ok(Self {
             host,
             devices_cache: Arc::new(Mutex::new(HashMap::new())),
+            device_health: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -694,6 +716,116 @@ impl AudioDeviceManager {
     pub async fn refresh_devices(&self) -> Result<()> {
         let _devices = self.enumerate_devices().await?;
         Ok(())
+    }
+    
+    /// Check if a device is still available and update its health status
+    pub async fn check_device_health(&self, device_id: &str) -> Result<DeviceStatus> {
+        // Try to enumerate devices to see if the device still exists
+        let devices = self.enumerate_devices().await?;
+        let device_exists = devices.iter().any(|d| d.id == device_id);
+        
+        let status = if device_exists {
+            DeviceStatus::Connected
+        } else {
+            DeviceStatus::Disconnected
+        };
+        
+        // Update device health tracking
+        {
+            let mut health_guard = self.device_health.lock().await;
+            if let Some(health) = health_guard.get_mut(device_id) {
+                health.status = status.clone();
+                health.last_seen = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64;
+                
+                match &status {
+                    DeviceStatus::Connected => {
+                        health.consecutive_errors = 0;
+                    }
+                    DeviceStatus::Disconnected | DeviceStatus::Error(_) => {
+                        health.consecutive_errors += 1;
+                        health.error_count += 1;
+                    }
+                }
+            }
+        }
+        
+        Ok(status)
+    }
+    
+    /// Report a device error and update health tracking
+    pub async fn report_device_error(&self, device_id: &str, error: String) {
+        let mut health_guard = self.device_health.lock().await;
+        if let Some(health) = health_guard.get_mut(device_id) {
+            health.status = DeviceStatus::Error(error.clone());
+            health.consecutive_errors += 1;
+            health.error_count += 1;
+            health.last_seen = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
+            
+            println!("🚨 Device error for {}: {} (consecutive: {}, total: {})", 
+                device_id, error, health.consecutive_errors, health.error_count);
+        } else {
+            // Create new health entry for unknown device
+            let health = DeviceHealth {
+                device_id: device_id.to_string(),
+                device_name: format!("Unknown Device {}", device_id),
+                status: DeviceStatus::Error(error.clone()),
+                last_seen: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64,
+                error_count: 1,
+                consecutive_errors: 1,
+            };
+            health_guard.insert(device_id.to_string(), health);
+            println!("🚨 New device error for {}: {}", device_id, error);
+        }
+    }
+    
+    /// Get device health information
+    pub async fn get_device_health(&self, device_id: &str) -> Option<DeviceHealth> {
+        let health_guard = self.device_health.lock().await;
+        health_guard.get(device_id).cloned()
+    }
+    
+    /// Get all device health information
+    pub async fn get_all_device_health(&self) -> HashMap<String, DeviceHealth> {
+        let health_guard = self.device_health.lock().await;
+        health_guard.clone()
+    }
+    
+    /// Initialize device health tracking for a device
+    pub async fn initialize_device_health(&self, device_info: &AudioDeviceInfo) {
+        let mut health_guard = self.device_health.lock().await;
+        
+        let health = DeviceHealth {
+            device_id: device_info.id.clone(),
+            device_name: device_info.name.clone(),
+            status: DeviceStatus::Connected,
+            last_seen: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64,
+            error_count: 0,
+            consecutive_errors: 0,
+        };
+        
+        health_guard.insert(device_info.id.clone(), health);
+    }
+    
+    /// Check if a device should be avoided due to consecutive errors
+    pub async fn should_avoid_device(&self, device_id: &str) -> bool {
+        if let Some(health) = self.get_device_health(device_id).await {
+            // Avoid device if it has 3 or more consecutive errors
+            health.consecutive_errors >= 3
+        } else {
+            false
+        }
     }
     
     /// Find audio device for streaming - tries CoreAudio first, then cpal fallback

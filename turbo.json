@@ -31,13 +31,7 @@
     },
     "type-check": {
       "dependsOn": [],
-      "inputs": [
-        "src/**/*.{ts,tsx}",
-        "tsconfig.json",
-        "tsconfig.node.json",
-        "package.json",
-        "vite.config.ts"
-      ],
+      "inputs": ["src/**/*.{ts,tsx}", "tsconfig.json", "package.json", "vite.config.ts"],
       "outputs": [],
       "cache": true
     },

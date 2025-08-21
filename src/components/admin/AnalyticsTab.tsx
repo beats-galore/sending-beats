@@ -1,17 +1,8 @@
-import {
-  Stack,
-  Title,
-  Card,
-  Grid,
-  Group,
-  Badge,
-  Box,
-  Text,
-  ThemeIcon,
-} from '@mantine/core';
+import { Stack, Title, Card, Grid, Group, Badge, Box, Text, ThemeIcon } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { IconClock, IconUsers } from '@tabler/icons-react';
 import { memo } from 'react';
+
 import { StatCard } from './StatCard';
 
 type AnalyticsData = {
@@ -74,7 +65,9 @@ export const AnalyticsTab = memo<AnalyticsTabProps>(({ analytics }) => {
                   </ThemeIcon>
                   <Box>
                     <Text fw={600}>{track.title}</Text>
-                    <Text size="sm" c="dimmed">{track.artist}</Text>
+                    <Text size="sm" c="dimmed">
+                      {track.artist}
+                    </Text>
                   </Box>
                 </Group>
                 <Badge color="blue" variant="light">
@@ -92,7 +85,7 @@ export const AnalyticsTab = memo<AnalyticsTabProps>(({ analytics }) => {
           Stream Statistics
         </Title>
         <Grid>
-          <Grid.Col span={12} md={6}>
+          <Grid.Col span={{ base: 12, md: 6 }}>
             <StatCard
               icon={<IconClock size={24} />}
               value={analytics.totalStreamTime}
@@ -100,7 +93,7 @@ export const AnalyticsTab = memo<AnalyticsTabProps>(({ analytics }) => {
               color="blue"
             />
           </Grid.Col>
-          <Grid.Col span={12} md={6}>
+          <Grid.Col span={{ base: 12, md: 6 }}>
             <StatCard
               icon={<IconUsers size={24} />}
               value={analytics.peakListeners}

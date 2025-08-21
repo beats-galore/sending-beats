@@ -27,7 +27,7 @@ const useStyles = createStyles((theme) => ({
     display: 'flex',
     flexDirection: 'column',
   },
-  
+
   mainStack: {
     width: '100%',
     maxWidth: '100%',

@@ -8,6 +8,70 @@ use tokio::sync::Mutex;
 use super::effects::AudioEffectsChain;
 use super::types::AudioChannel;
 
+/// Optimized I16 to F32 conversion
+#[inline]
+fn convert_i16_to_f32_optimized(i16_samples: &[i16]) -> Vec<f32> {
+    i16_samples.iter()
+        .map(|&sample| {
+            if sample >= 0 {
+                sample as f32 / 32767.0  // Positive: divide by 32767
+            } else {
+                sample as f32 / 32768.0  // Negative: divide by 32768 
+            }
+        })
+        .collect()
+}
+
+/// Optimized U16 to F32 conversion
+#[inline]
+fn convert_u16_to_f32_optimized(u16_samples: &[u16]) -> Vec<f32> {
+    u16_samples.iter()
+        .map(|&sample| (sample as f32 - 32768.0) / 32767.5)  // Better symmetry
+        .collect()
+}
+
+/// Centralized buffer overflow management
+fn manage_buffer_overflow_optimized(
+    buffer: &mut Vec<f32>, 
+    target_sample_rate: u32, 
+    device_id: &str, 
+    callback_count: u64
+) {
+    let max_buffer_size = target_sample_rate as usize; // 1 second max buffer
+    let overflow_threshold = max_buffer_size + (max_buffer_size / 4); // 1.25 seconds
+    
+    if buffer.len() > overflow_threshold {
+        let target_size = max_buffer_size * 7 / 8; // Keep 87.5% of max buffer
+        
+        if buffer.len() > target_size {
+            let crossfade_samples = 64; // Small crossfade to prevent clicks/pops
+            let start_index = buffer.len() - target_size;
+            
+            // Apply crossfading only if we have enough samples
+            if start_index >= crossfade_samples {
+                for i in 0..crossfade_samples {
+                    let fade_out = 1.0 - (i as f32 / crossfade_samples as f32);
+                    let fade_in = i as f32 / crossfade_samples as f32;
+                    
+                    let old_sample = buffer[start_index - crossfade_samples + i];
+                    let new_sample = buffer[start_index + i];
+                    buffer[start_index + i] = old_sample * fade_out + new_sample * fade_in;
+                }
+            }
+            
+            // Remove the old portion
+            let new_buffer = buffer.split_off(start_index);
+            *buffer = new_buffer;
+            
+            if callback_count % 100 == 0 {
+                println!("🔧 BUFFER OPTIMIZATION [{}]: Kept latest {} samples, buffer now {} samples (max: {})", 
+                    device_id, target_size, buffer.len(), max_buffer_size);
+            }
+        }
+    }
+}
+
+
 // Audio stream management structures
 #[derive(Debug)]
 pub struct AudioInputStream {
@@ -335,7 +399,11 @@ impl StreamManager {
                     },
                     {
                         let error_device_id = debug_device_id_for_error.clone();
-                        move |err| eprintln!("❌ Audio input error [{}]: {}", error_device_id, err)
+                        move |err| {
+                            eprintln!("❌ Audio input error [{}]: {}", error_device_id, err);
+                            // TODO: Report error to device manager for health tracking
+                            // This would require passing device manager reference to callback
+                        }
                     },
                     None
                 )?
@@ -353,15 +421,7 @@ impl StreamManager {
                         callback_count += 1;
                         
                         // **CRITICAL FIX**: Proper I16 to F32 conversion to prevent distortion
-                        let f32_samples: Vec<f32> = data.iter()
-                            .map(|&sample| {
-                                if sample >= 0 {
-                                    sample as f32 / 32767.0  // Positive: divide by 32767
-                                } else {
-                                    sample as f32 / 32768.0  // Negative: divide by 32768 
-                                }
-                            })
-                            .collect();
+                        let f32_samples = convert_i16_to_f32_optimized(data);
                         
                         let peak_level = f32_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
                         let rms_level = (f32_samples.iter().map(|&s| s * s).sum::<f32>() / f32_samples.len() as f32).sqrt();
@@ -382,45 +442,16 @@ impl StreamManager {
                                 println!("📦 BUFFER I16: First audio data stored for {}: {} samples", debug_device_id_i16, buffer.len());
                             }
                             
-                            // **CRITICAL FIX**: Prevent buffer underruns with larger, more robust buffer management
-                            let max_buffer_size = target_sample_rate as usize; // 1 second max buffer (was 500ms)
-                            
-                            if buffer.len() > max_buffer_size + (max_buffer_size / 4) { // 1.25 seconds before draining
-                                let target_size = max_buffer_size * 7 / 8; // Keep 87.5% of max buffer
-                                let samples_to_keep = target_size;
-                                
-                                // **CRITICAL CRUNCHINESS FIX**: Crossfade transition instead of abrupt cut
-                                if buffer.len() > samples_to_keep {
-                                    let crossfade_samples = 64; // Small crossfade to prevent clicks/pops
-                                    let start_index = buffer.len() - samples_to_keep;
-                                    
-                                    // Create crossfade between old end and new start to prevent discontinuity
-                                    if start_index >= crossfade_samples {
-                                        for i in 0..crossfade_samples {
-                                            let fade_out = 1.0 - (i as f32 / crossfade_samples as f32);
-                                            let fade_in = i as f32 / crossfade_samples as f32;
-                                            
-                                            let old_sample = buffer[start_index - crossfade_samples + i];
-                                            let new_sample = buffer[start_index + i];
-                                            buffer[start_index + i] = old_sample * fade_out + new_sample * fade_in;
-                                        }
-                                    }
-                                    
-                                    // Now safely remove the old portion without audio artifacts
-                                    let new_buffer = buffer.split_off(start_index);
-                                    *buffer = new_buffer;
-                                    
-                                    if callback_count % 100 == 0 {
-                                        println!("🔧 BUFFER OPTIMIZATION I16: Kept latest {} samples from {}, buffer now {} samples (max: {})", 
-                                            samples_to_keep, debug_device_id_i16, buffer.len(), max_buffer_size);
-                                    }
-                                }
-                            }
+                            // **CLEANED UP**: Use centralized buffer management
+                            manage_buffer_overflow_optimized(&mut buffer, target_sample_rate, &debug_device_id_i16, callback_count);
                         }
                     },
                     {
                         let error_device_id = debug_device_id_i16_error.clone();
-                        move |err| eprintln!("❌ Audio input error I16 [{}]: {}", error_device_id, err)
+                        move |err| {
+                            eprintln!("❌ Audio input error I16 [{}]: {}", error_device_id, err);
+                            // TODO: Report error to device manager for health tracking
+                        }
                     },
                     None
                 )?
@@ -430,9 +461,7 @@ impl StreamManager {
                     &native_config,
                     move |data: &[u16], _: &cpal::InputCallbackInfo| {
                         // **CRITICAL FIX**: Proper U16 to F32 conversion to prevent distortion  
-                        let f32_samples: Vec<f32> = data.iter()
-                            .map(|&sample| (sample as f32 - 32768.0) / 32767.5)  // Better symmetry
-                            .collect();
+                        let f32_samples = convert_u16_to_f32_optimized(data);
                             
                         // Keep stereo data as-is to prevent pitch shifting - don't convert to mono
                         let audio_samples = f32_samples;
@@ -440,35 +469,8 @@ impl StreamManager {
                         if let Ok(mut buffer) = audio_buffer.try_lock() {
                             buffer.extend_from_slice(&audio_samples);
                             
-                            // **CRITICAL FIX**: Prevent buffer underruns with larger, more robust buffer management
-                            let max_buffer_size = target_sample_rate as usize; // 1 second max buffer (was 500ms)
-                            
-                            if buffer.len() > max_buffer_size + (max_buffer_size / 4) { // 1.25 seconds before draining
-                                let target_size = max_buffer_size * 7 / 8; // Keep 87.5% of max buffer
-                                let samples_to_keep = target_size;
-                                
-                                // **CRITICAL CRUNCHINESS FIX**: Crossfade transition instead of abrupt cut
-                                if buffer.len() > samples_to_keep {
-                                    let crossfade_samples = 64; // Small crossfade to prevent clicks/pops
-                                    let start_index = buffer.len() - samples_to_keep;
-                                    
-                                    // Create crossfade between old end and new start to prevent discontinuity
-                                    if start_index >= crossfade_samples {
-                                        for i in 0..crossfade_samples {
-                                            let fade_out = 1.0 - (i as f32 / crossfade_samples as f32);
-                                            let fade_in = i as f32 / crossfade_samples as f32;
-                                            
-                                            let old_sample = buffer[start_index - crossfade_samples + i];
-                                            let new_sample = buffer[start_index + i];
-                                            buffer[start_index + i] = old_sample * fade_out + new_sample * fade_in;
-                                        }
-                                    }
-                                    
-                                    // Now safely remove the old portion without audio artifacts
-                                    let new_buffer = buffer.split_off(start_index);
-                                    *buffer = new_buffer;
-                                }
-                            }
+                            // **CLEANED UP**: Use centralized buffer management
+                            manage_buffer_overflow_optimized(&mut buffer, target_sample_rate, "U16_device", 0);
                         }
                     },
                     |err| eprintln!("Audio input error: {}", err),
@@ -561,7 +563,8 @@ pub fn get_stream_manager() -> &'static std::sync::mpsc::Sender<StreamCommand> {
 #[derive(Debug)]
 pub struct VirtualMixerHandle {
     pub input_streams: Arc<Mutex<HashMap<String, Arc<AudioInputStream>>>>,
-    pub output_stream: Arc<Mutex<Option<Arc<AudioOutputStream>>>>,
+    pub output_stream: Arc<Mutex<Option<Arc<AudioOutputStream>>>>, // Legacy single output
+    pub output_streams: Arc<Mutex<HashMap<String, Arc<AudioOutputStream>>>>, // New multiple outputs
     #[cfg(target_os = "macos")]
     pub coreaudio_stream: Arc<Mutex<Option<super::coreaudio_stream::CoreAudioOutputStream>>>,
     pub channel_levels: Arc<Mutex<std::collections::HashMap<u32, (f32, f32, f32, f32)>>>,
@@ -733,11 +736,39 @@ impl VirtualMixerHandle {
         samples
     }
 
-    /// Send mixed samples to the output stream
+    /// Send mixed samples to all output streams (legacy and multiple outputs)
     pub async fn send_to_output(&self, samples: &[f32]) {
-        // Send to regular output stream
+        // Send to legacy single output stream for backward compatibility
         if let Some(output) = self.output_stream.lock().await.as_ref() {
             output.send_samples(samples);
+        }
+        
+        // Send to all multiple output streams with individual gain control
+        let config_guard = match self.config.try_lock() {
+            Ok(guard) => guard,
+            Err(_) => return, // Skip if config is locked
+        };
+        
+        let output_devices = config_guard.output_devices.clone();
+        drop(config_guard); // Release config lock early
+        
+        let output_streams = self.output_streams.lock().await;
+        
+        for output_device in output_devices.iter() {
+            if output_device.enabled {
+                if let Some(output_stream) = output_streams.get(&output_device.device_id) {
+                    // Apply individual output device gain
+                    if output_device.gain != 1.0 {
+                        let mut gained_samples = samples.to_vec();
+                        for sample in gained_samples.iter_mut() {
+                            *sample *= output_device.gain;
+                        }
+                        output_stream.send_samples(&gained_samples);
+                    } else {
+                        output_stream.send_samples(samples);
+                    }
+                }
+            }
         }
         
         // Send to CoreAudio stream if available
@@ -745,6 +776,92 @@ impl VirtualMixerHandle {
         {
             if let Some(ref coreaudio_stream) = *self.coreaudio_stream.lock().await {
                 let _ = coreaudio_stream.send_audio(samples);
+            }
+        }
+    }
+    
+    /// Add a new output device stream
+    pub async fn add_output_device(&self, output_device: super::types::OutputDevice) -> anyhow::Result<()> {
+        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+        use std::sync::mpsc;
+        
+        let device_manager = super::devices::AudioDeviceManager::new()?;
+        let devices = device_manager.enumerate_devices().await?;
+        
+        // Find the device
+        let device_info = devices.iter()
+            .find(|d| d.id == output_device.device_id && d.is_output)
+            .ok_or_else(|| anyhow::anyhow!("Output device not found: {}", output_device.device_id))?;
+            
+        // Get the actual device
+        let host = cpal::default_host();
+        let device = if device_info.is_default {
+            host.default_output_device()
+                .ok_or_else(|| anyhow::anyhow!("No default output device"))?
+        } else {
+            host.output_devices()?
+                .find(|d| d.name().unwrap_or_default() == device_info.name)
+                .ok_or_else(|| anyhow::anyhow!("Device not found: {}", device_info.name))?
+        };
+        
+        // Create output stream
+        let sample_rate = {
+            let config_guard = self.config.lock().unwrap();
+            config_guard.sample_rate
+        };
+        
+        let output_stream = Arc::new(AudioOutputStream::new(
+            output_device.device_id.clone(),
+            device_info.name.clone(),
+            sample_rate,
+        )?);
+        
+        // Add to output streams collection
+        self.output_streams.lock().await.insert(
+            output_device.device_id.clone(),
+            output_stream.clone(),
+        );
+        
+        // Update config to include this output device
+        {
+            let mut config_guard = self.config.lock().unwrap();
+            config_guard.output_devices.push(output_device.clone());
+        }
+        
+        println!("✅ Added output device: {} ({})", output_device.device_name, output_device.device_id);
+        Ok(())
+    }
+    
+    /// Remove an output device stream
+    pub async fn remove_output_device(&self, device_id: &str) -> anyhow::Result<()> {
+        // Remove from output streams collection
+        let removed = self.output_streams.lock().await.remove(device_id);
+        
+        if removed.is_some() {
+            // Update config to remove this output device
+            {
+                let mut config_guard = self.config.lock().unwrap();
+                config_guard.output_devices.retain(|d| d.device_id != device_id);
+            }
+            
+            println!("✅ Removed output device: {}", device_id);
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Output device not found: {}", device_id))
+        }
+    }
+    
+    /// Update output device configuration
+    pub async fn update_output_device(&self, device_id: &str, updated_device: super::types::OutputDevice) -> anyhow::Result<()> {
+        // Update config
+        {
+            let mut config_guard = self.config.lock().unwrap();
+            if let Some(device) = config_guard.output_devices.iter_mut().find(|d| d.device_id == device_id) {
+                *device = updated_device;
+                println!("✅ Updated output device: {}", device_id);
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("Output device not found in config: {}", device_id))
             }
         }
     }

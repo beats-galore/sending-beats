@@ -1,21 +1,6 @@
-import {
-  Card,
-  Group,
-  Text,
-  Title,
-  Badge,
-  Grid,
-  Stack,
-  ThemeIcon,
-} from '@mantine/core';
+import { Card, Group, Text, Title, Badge, Grid, Stack, ThemeIcon } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
-import {
-  IconWifi,
-  IconWifiOff,
-  IconUsers,
-  IconClock,
-  IconBroadcast,
-} from '@tabler/icons-react';
+import { IconWifi, IconWifiOff, IconUsers, IconClock, IconBroadcast } from '@tabler/icons-react';
 import { memo } from 'react';
 
 type StreamStatus = {
@@ -51,7 +36,7 @@ const useStyles = createStyles((theme) => ({
 
 export const StreamStatusCard = memo<StreamStatusCardProps>(({ streamStatus }) => {
   const { classes } = useStyles();
-  
+
   return (
     <Card className={classes.statusCard} padding="lg" withBorder>
       <Group justify="space-between" mb="md">
@@ -64,11 +49,7 @@ export const StreamStatusCard = memo<StreamStatusCardProps>(({ streamStatus }) =
           ) : (
             <IconWifiOff size={16} color="#fa5252" />
           )}
-          <Badge
-            color={streamStatus?.is_connected ? 'green' : 'red'}
-            variant="light"
-            size="sm"
-          >
+          <Badge color={streamStatus?.is_connected ? 'green' : 'red'} variant="light" size="sm">
             {streamStatus?.is_connected ? 'Connected' : 'Disconnected'}
           </Badge>
         </Group>
@@ -76,7 +57,7 @@ export const StreamStatusCard = memo<StreamStatusCardProps>(({ streamStatus }) =
 
       {streamStatus && (
         <Grid>
-          <Grid.Col span={6} md={3}>
+          <Grid.Col span={{ base: 6, md: 3 }}>
             <Stack align="center" gap={4} className={classes.statContainer}>
               <IconUsers size={20} color="#339af0" />
               <Text size="xl" fw={700} c="blue.4">
@@ -87,8 +68,8 @@ export const StreamStatusCard = memo<StreamStatusCardProps>(({ streamStatus }) =
               </Text>
             </Stack>
           </Grid.Col>
-          
-          <Grid.Col span={6} md={3}>
+
+          <Grid.Col span={{ base: 6, md: 3 }}>
             <Stack align="center" gap={4} className={classes.statContainer}>
               <IconUsers size={20} color="#fd7e14" />
               <Text size="xl" fw={700} c="orange.4">
@@ -99,8 +80,8 @@ export const StreamStatusCard = memo<StreamStatusCardProps>(({ streamStatus }) =
               </Text>
             </Stack>
           </Grid.Col>
-          
-          <Grid.Col span={6} md={3}>
+
+          <Grid.Col span={{ base: 6, md: 3 }}>
             <Stack align="center" gap={4} className={classes.statContainer}>
               <IconClock size={20} color="#339af0" />
               <Text size="xl" fw={700} c="blue.4">
@@ -111,8 +92,8 @@ export const StreamStatusCard = memo<StreamStatusCardProps>(({ streamStatus }) =
               </Text>
             </Stack>
           </Grid.Col>
-          
-          <Grid.Col span={6} md={3}>
+
+          <Grid.Col span={{ base: 6, md: 3 }}>
             <Stack align="center" gap={4} className={classes.statContainer}>
               <IconBroadcast size={20} color="#339af0" />
               <Text size="xl" fw={700} c="blue.4">

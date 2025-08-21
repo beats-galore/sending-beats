@@ -20,7 +20,7 @@ const useStyles = createStyles((theme) => ({
 
 export const StatCard = memo<StatCardProps>(({ icon, value, label, color = 'blue' }) => {
   const { classes } = useStyles();
-  
+
   return (
     <Card className={classes.statCard} withBorder>
       <Stack align="center" gap="sm">
