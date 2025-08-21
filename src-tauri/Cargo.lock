@@ -4344,6 +4344,7 @@ dependencies = [
  "crossbeam",
  "futures",
  "lame",
+ "libc",
  "mockall",
  "proptest",
  "pulse",

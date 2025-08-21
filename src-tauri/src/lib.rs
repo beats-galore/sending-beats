@@ -420,6 +420,18 @@ fn get_streaming_mixer_config() -> MixerConfig {
     AudioConfigFactory::create_streaming_config()
 }
 
+// Debug control commands
+#[tauri::command]
+fn set_audio_debug_enabled(enabled: bool) {
+    audio::AUDIO_DEBUG_ENABLED.store(enabled, std::sync::atomic::Ordering::Relaxed);
+    println!("🔧 Audio debug logging {}", if enabled { "ENABLED" } else { "DISABLED" });
+}
+
+#[tauri::command]
+fn get_audio_debug_enabled() -> bool {
+    audio::AUDIO_DEBUG_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 // Audio effects management commands
 #[tauri::command]
 async fn update_channel_eq(
@@ -795,7 +807,9 @@ pub fn run() {
             load_channel_configs,
             cleanup_old_levels,
             safe_switch_input_device,
-            safe_switch_output_device
+            safe_switch_output_device,
+            set_audio_debug_enabled,
+            get_audio_debug_enabled
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

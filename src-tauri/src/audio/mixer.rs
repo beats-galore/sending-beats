@@ -262,7 +262,7 @@ impl VirtualMixer {
             command_rx: Arc::new(Mutex::new(command_rx)),
             
             // **PRIORITY 5: Audio Clock Synchronization**
-            audio_clock: Arc::new(Mutex::new(AudioClock::new(config.sample_rate))),
+            audio_clock: Arc::new(Mutex::new(AudioClock::new(config.sample_rate, config.buffer_size))),
             timing_metrics: Arc::new(Mutex::new(TimingMetrics::new())),
             audio_output_tx,
             metrics,
@@ -744,8 +744,29 @@ impl VirtualMixer {
             config: self.shared_config.clone(),
         };
 
-        // Spawn real-time audio processing task
-        tokio::spawn(async move {
+        // **CRITICAL FIX**: Use dedicated high-priority thread for real-time audio processing
+        // tokio::spawn() can be preempted by scheduler causing audio dropouts and crunchiness
+        std::thread::spawn(move || {
+            // Set thread priority for real-time audio processing
+            #[cfg(target_os = "macos")]
+            {
+                // On macOS, set thread to real-time priority to prevent preemption
+                unsafe {
+                    use libc::{pthread_self, pthread_setschedparam, sched_param, SCHED_RR};
+                    let mut param: sched_param = std::mem::zeroed();
+                    param.sched_priority = 80; // High priority for real-time audio
+                    
+                    if pthread_setschedparam(pthread_self(), SCHED_RR, &param) == 0 {
+                        println!("✅ Audio thread priority set to real-time (priority: 80)");
+                    } else {
+                        println!("⚠️ Failed to set audio thread priority - may cause audio dropouts");
+                    }
+                }
+            }
+            
+            // Create async runtime for this thread only
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create audio runtime");
+            rt.block_on(async move {
             let mut frame_count = 0u64;
             
             // Pre-allocate stereo buffers to reduce allocations during real-time processing
@@ -774,10 +795,10 @@ impl VirtualMixer {
                 };
                 let input_samples = mixer_handle.collect_input_samples_with_effects(&current_channels).await;
                 
-                // If no audio data is available from callbacks, yield to prevent spinning
-                // but don't introduce artificial timing delays that cause drift
+                // If no audio data is available from callbacks, add small delay to prevent excessive CPU usage
+                // **RT THREAD FIX**: Add delay to prevent overwhelming system with debug output
                 if input_samples.is_empty() {
-                    tokio::task::yield_now().await; // Non-blocking yield, no artificial timing
+                    std::thread::sleep(std::time::Duration::from_micros(100)); // 0.1ms sleep 
                     continue;
                 }
                 
@@ -833,7 +854,7 @@ impl VirtualMixer {
                                 
                                 // Log levels occasionally
                                 if frame_count % 100 == 0 && (peak_left > 0.001 || peak_right > 0.001) {
-                                    println!("Channel {} ({}): {} samples, L(peak: {:.3}, rms: {:.3}) R(peak: {:.3}, rms: {:.3})", 
+                                    crate::audio_debug!("Channel {} ({}): {} samples, L(peak: {:.3}, rms: {:.3}) R(peak: {:.3}, rms: {:.3})", 
                                         channel.id, device_id, samples.len(), peak_left, rms_left, peak_right, rms_right);
                                 }
                             }
@@ -918,7 +939,7 @@ impl VirtualMixer {
                     
                     // Log master levels occasionally
                     if frame_count % 100 == 0 && (left_peak > 0.001 || right_peak > 0.001) {
-                        println!("Master output: L(peak: {:.3}, rms: {:.3}) R(peak: {:.3}, rms: {:.3})", 
+                        crate::audio_debug!("Master output: L(peak: {:.3}, rms: {:.3}) R(peak: {:.3}, rms: {:.3})", 
                             left_peak, left_rms, right_peak, right_rms);
                     }
                 }
@@ -926,9 +947,9 @@ impl VirtualMixer {
                 // Store calculated channel levels for VU meters
                 if !calculated_channel_levels.is_empty() {
                     if frame_count % 100 == 0 {
-                        println!("📊 STORING LEVELS: Attempting to store {} channel levels", calculated_channel_levels.len());
+                        crate::audio_debug!("📊 STORING LEVELS: Attempting to store {} channel levels", calculated_channel_levels.len());
                         for (channel_id, (peak_left, rms_left, peak_right, rms_right)) in calculated_channel_levels.iter() {
-                            println!("   Level [Channel {}]: L(peak={:.4}, rms={:.4}) R(peak={:.4}, rms={:.4})", 
+                            crate::audio_debug!("   Level [Channel {}]: L(peak={:.4}, rms={:.4}) R(peak={:.4}, rms={:.4})", 
                                 channel_id, peak_left, rms_left, peak_right, rms_right);
                         }
                     }
@@ -937,7 +958,7 @@ impl VirtualMixer {
                         Ok(mut levels_guard) => {
                             *levels_guard = calculated_channel_levels.clone();
                             if frame_count % 100 == 0 {
-                                println!("✅ STORED LEVELS: Successfully stored {} channel levels in HashMap", calculated_channel_levels.len());
+                                crate::audio_debug!("✅ STORED LEVELS: Successfully stored {} channel levels in HashMap", calculated_channel_levels.len());
                             }
                         }
                         Err(_) => {
@@ -984,7 +1005,7 @@ impl VirtualMixer {
                     if let Some(sync_info) = clock_guard.update(samples_processed) {
                         // Clock detected timing drift - log it
                         if sync_info.needs_adjustment {
-                            println!("⚠️  TIMING DRIFT: {:.2}ms drift detected at {} samples", 
+                            crate::audio_debug!("⚠️  TIMING DRIFT: {:.2}ms drift detected at {} samples", 
                                 sync_info.drift_microseconds / 1000.0, sync_info.samples_processed);
                             
                             // Record sync adjustment in metrics
@@ -1066,14 +1087,15 @@ impl VirtualMixer {
             }
             
             println!("Audio processing thread stopped");
-        });
+            }) // End of async block for runtime
+        }); // End of thread spawn
 
         Ok(())
     }
 
     /// Add a new audio channel
     pub async fn add_channel(&mut self, channel: AudioChannel) -> Result<()> {
-        // TODO: Add ring buffer management
+        // Simple channel addition without automatic stream creation
         self.config.channels.push(channel);
         Ok(())
     }
@@ -1101,9 +1123,9 @@ impl VirtualMixer {
             
             // Debug: Log what we're returning to the frontend
             if call_count % 50 == 0 || (!levels.is_empty() && call_count % 10 == 0) {
-                println!("🌐 API CALL #{}: get_channel_levels() returning {} levels", call_count, levels.len());
+                crate::audio_debug!("🌐 API CALL #{}: get_channel_levels() returning {} levels", call_count, levels.len());
                 for (channel_id, (peak_left, rms_left, peak_right, rms_right)) in levels.iter() {
-                    println!("   API Level [Channel {}]: L(peak={:.4}, rms={:.4}) R(peak={:.4}, rms={:.4})", 
+                    crate::audio_debug!("   API Level [Channel {}]: L(peak={:.4}, rms={:.4}) R(peak={:.4}, rms={:.4})", 
                         channel_id, peak_left, rms_left, peak_right, rms_right);
                 }
             }
@@ -1305,7 +1327,7 @@ pub struct AudioClock {
 }
 
 impl AudioClock {
-    pub fn new(sample_rate: u32) -> Self {
+    pub fn new(sample_rate: u32, buffer_size: u32) -> Self {
         let now = std::time::Instant::now();
         Self {
             sample_rate,
@@ -1313,7 +1335,7 @@ impl AudioClock {
             start_time: now,
             last_sync_time: now,
             drift_compensation: 0.0,
-            sync_interval_samples: sample_rate as u64 / 10, // Sync every 100ms
+            sync_interval_samples: buffer_size as u64, // Sync every buffer to match hardware callback timing
         }
     }
     
@@ -1351,7 +1373,7 @@ impl AudioClock {
             
             // Only log actual hardware timing issues, not software processing timing
             if is_hardware_drift {
-                println!("⏰ HARDWARE TIMING: Callback interval variation: {:.2}ms (expected: {:.2}ms, actual: {:.2}ms)", 
+                crate::audio_debug!("⏰ HARDWARE TIMING: Callback interval variation: {:.2}ms (expected: {:.2}ms, actual: {:.2}ms)", 
                     interval_variation / 1000.0, expected_interval_us / 1000.0, callback_interval_us / 1000.0);
             }
             
@@ -1372,11 +1394,13 @@ impl AudioClock {
         self.drift_compensation
     }
     
-    /// Reset the clock (useful when switching sample rates)
-    pub fn reset(&mut self, new_sample_rate: Option<u32>) {
+    /// Reset the clock (useful when switching sample rates or buffer sizes)
+    pub fn reset(&mut self, new_sample_rate: Option<u32>, new_buffer_size: Option<u32>) {
         if let Some(sr) = new_sample_rate {
             self.sample_rate = sr;
-            self.sync_interval_samples = sr as u64 / 10;
+        }
+        if let Some(bs) = new_buffer_size {
+            self.sync_interval_samples = bs as u64; // Sync based on actual buffer size from config
         }
         
         let now = std::time::Instant::now();
