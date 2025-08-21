@@ -854,7 +854,7 @@ impl VirtualMixer {
                                 
                                 // Log levels occasionally
                                 if frame_count % 100 == 0 && (peak_left > 0.001 || peak_right > 0.001) {
-                                    println!("Channel {} ({}): {} samples, L(peak: {:.3}, rms: {:.3}) R(peak: {:.3}, rms: {:.3})", 
+                                    crate::audio_debug!("Channel {} ({}): {} samples, L(peak: {:.3}, rms: {:.3}) R(peak: {:.3}, rms: {:.3})", 
                                         channel.id, device_id, samples.len(), peak_left, rms_left, peak_right, rms_right);
                                 }
                             }
@@ -939,7 +939,7 @@ impl VirtualMixer {
                     
                     // Log master levels occasionally
                     if frame_count % 100 == 0 && (left_peak > 0.001 || right_peak > 0.001) {
-                        println!("Master output: L(peak: {:.3}, rms: {:.3}) R(peak: {:.3}, rms: {:.3})", 
+                        crate::audio_debug!("Master output: L(peak: {:.3}, rms: {:.3}) R(peak: {:.3}, rms: {:.3})", 
                             left_peak, left_rms, right_peak, right_rms);
                     }
                 }
@@ -947,9 +947,9 @@ impl VirtualMixer {
                 // Store calculated channel levels for VU meters
                 if !calculated_channel_levels.is_empty() {
                     if frame_count % 100 == 0 {
-                        println!("📊 STORING LEVELS: Attempting to store {} channel levels", calculated_channel_levels.len());
+                        crate::audio_debug!("📊 STORING LEVELS: Attempting to store {} channel levels", calculated_channel_levels.len());
                         for (channel_id, (peak_left, rms_left, peak_right, rms_right)) in calculated_channel_levels.iter() {
-                            println!("   Level [Channel {}]: L(peak={:.4}, rms={:.4}) R(peak={:.4}, rms={:.4})", 
+                            crate::audio_debug!("   Level [Channel {}]: L(peak={:.4}, rms={:.4}) R(peak={:.4}, rms={:.4})", 
                                 channel_id, peak_left, rms_left, peak_right, rms_right);
                         }
                     }
@@ -958,7 +958,7 @@ impl VirtualMixer {
                         Ok(mut levels_guard) => {
                             *levels_guard = calculated_channel_levels.clone();
                             if frame_count % 100 == 0 {
-                                println!("✅ STORED LEVELS: Successfully stored {} channel levels in HashMap", calculated_channel_levels.len());
+                                crate::audio_debug!("✅ STORED LEVELS: Successfully stored {} channel levels in HashMap", calculated_channel_levels.len());
                             }
                         }
                         Err(_) => {
@@ -1005,7 +1005,7 @@ impl VirtualMixer {
                     if let Some(sync_info) = clock_guard.update(samples_processed) {
                         // Clock detected timing drift - log it
                         if sync_info.needs_adjustment {
-                            println!("⚠️  TIMING DRIFT: {:.2}ms drift detected at {} samples", 
+                            crate::audio_debug!("⚠️  TIMING DRIFT: {:.2}ms drift detected at {} samples", 
                                 sync_info.drift_microseconds / 1000.0, sync_info.samples_processed);
                             
                             // Record sync adjustment in metrics
@@ -1123,9 +1123,9 @@ impl VirtualMixer {
             
             // Debug: Log what we're returning to the frontend
             if call_count % 50 == 0 || (!levels.is_empty() && call_count % 10 == 0) {
-                println!("🌐 API CALL #{}: get_channel_levels() returning {} levels", call_count, levels.len());
+                crate::audio_debug!("🌐 API CALL #{}: get_channel_levels() returning {} levels", call_count, levels.len());
                 for (channel_id, (peak_left, rms_left, peak_right, rms_right)) in levels.iter() {
-                    println!("   API Level [Channel {}]: L(peak={:.4}, rms={:.4}) R(peak={:.4}, rms={:.4})", 
+                    crate::audio_debug!("   API Level [Channel {}]: L(peak={:.4}, rms={:.4}) R(peak={:.4}, rms={:.4})", 
                         channel_id, peak_left, rms_left, peak_right, rms_right);
                 }
             }
@@ -1373,7 +1373,7 @@ impl AudioClock {
             
             // Only log actual hardware timing issues, not software processing timing
             if is_hardware_drift {
-                println!("⏰ HARDWARE TIMING: Callback interval variation: {:.2}ms (expected: {:.2}ms, actual: {:.2}ms)", 
+                crate::audio_debug!("⏰ HARDWARE TIMING: Callback interval variation: {:.2}ms (expected: {:.2}ms, actual: {:.2}ms)", 
                     interval_variation / 1000.0, expected_interval_us / 1000.0, callback_interval_us / 1000.0);
             }
             

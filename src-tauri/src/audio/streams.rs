@@ -64,9 +64,8 @@ impl AudioInputStream {
                 return Vec::new();  // No samples available at all
             }
             
-            // **CRITICAL FIX**: Take whatever samples are available, don't wait for full chunks
-            let samples_to_take = buffer.len().min(chunk_size);
-            let samples: Vec<f32> = buffer.drain(..samples_to_take).collect();
+            // **REAL FIX**: Process ALL available samples to prevent buffer buildup
+            let samples: Vec<f32> = buffer.drain(..).collect();
             let sample_count = samples.len();
             
             // Debug: Log when we're actually reading samples
@@ -106,9 +105,8 @@ impl AudioInputStream {
                 return Vec::new();  // No samples available at all
             }
             
-            // **CRITICAL FIX**: Take whatever samples are available, don't wait for full chunks
-            let samples_to_take = buffer.len().min(chunk_size);
-            let mut samples: Vec<f32> = buffer.drain(..samples_to_take).collect();
+            // **REAL FIX**: Process ALL available samples to prevent buffer buildup  
+            let mut samples: Vec<f32> = buffer.drain(..).collect();
             let original_sample_count = samples.len();
             
             // Debug: Log processing activity
@@ -124,9 +122,9 @@ impl AudioInputStream {
                     let original_peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
                     
                     if *count % 100 == 0 || (*count < 10) {
-                        println!("⚙️  PROCESS_WITH_EFFECTS [{}]: Processing {} samples (call #{}), peak: {:.4}, channel: {}", 
+                        crate::audio_debug!("⚙️  PROCESS_WITH_EFFECTS [{}]: Processing {} samples (call #{}), peak: {:.4}, channel: {}", 
                             self.device_id, original_sample_count, count, original_peak, channel.name);
-                        println!("   Settings: gain: {:.2}, muted: {}, effects: {}", 
+                        crate::audio_debug!("   Settings: gain: {:.2}, muted: {}, effects: {}", 
                             channel.gain, channel.muted, channel.effects_enabled);
                     }
                 }
@@ -170,7 +168,7 @@ impl AudioInputStream {
                     if original_sample_count > 0 && (*count % 100 == 0 || *count < 10) {
                         let final_peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
                         let final_rms = (samples.iter().map(|&s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
-                        println!("✅ PROCESSED [{}]: Final {} samples, peak: {:.4}, rms: {:.4}", 
+                        crate::audio_debug!("✅ PROCESSED [{}]: Final {} samples, peak: {:.4}, rms: {:.4}", 
                             self.device_id, samples.len(), final_peak, final_rms);
                     }
                 }
@@ -261,6 +259,13 @@ impl StreamManager {
         
         let device_config = device.default_input_config().context("Failed to get device config")?;
         
+        // **CRITICAL FIX**: Use device native sample rate to prevent conversion artifacts
+        let mut native_config = config.clone();
+        native_config.sample_rate = device_config.sample_rate();
+        
+        println!("🔧 SAMPLE RATE FIX: Device {} native: {}Hz, mixer config: {}Hz → Using native {}Hz", 
+            device_id, device_config.sample_rate().0, config.sample_rate.0, native_config.sample_rate.0);
+        
         // Add debugging context
         let device_name_for_debug = device.name().unwrap_or_else(|_| "Unknown Device".to_string());
         let debug_device_id = device_id.clone();
@@ -271,8 +276,8 @@ impl StreamManager {
             SampleFormat::F32 => {
                 println!("🎤 Creating F32 input stream for: {} ({})", device_name_for_debug, debug_device_id);
                 println!("   Config: {} channels, {} Hz, {} samples/buffer", 
-                    config.channels, config.sample_rate.0, 
-                    match &config.buffer_size { 
+                    native_config.channels, native_config.sample_rate.0, 
+                    match &native_config.buffer_size { 
                         cpal::BufferSize::Fixed(s) => s.to_string(),
                         cpal::BufferSize::Default => "default".to_string()
                     });
@@ -283,7 +288,7 @@ impl StreamManager {
                 let mut last_debug_time = std::time::Instant::now();
                 
                 device.build_input_stream(
-                    &config,
+                    &native_config,
                     move |data: &[f32], _: &cpal::InputCallbackInfo| {
                         callback_count += 1;
                         
@@ -298,9 +303,9 @@ impl StreamManager {
                         
                         // Debug logging every 2 seconds (approximately)
                         if callback_count % 200 == 0 || (peak_level > 0.01 && callback_count % 50 == 0) {
-                            println!("🔊 INPUT [{}] Callback #{}: {} samples, peak: {:.4}, rms: {:.4}", 
+                            crate::audio_debug!("🔊 INPUT [{}] Callback #{}: {} samples, peak: {:.4}, rms: {:.4}", 
                                 debug_device_id_for_callback, callback_count, data.len(), peak_level, rms_level);
-                            println!("   Total samples captured: {}, stereo samples: {}", total_samples_captured, audio_samples.len());
+                            crate::audio_debug!("   Total samples captured: {}, stereo samples: {}", total_samples_captured, audio_samples.len());
                         }
                         
                         // Store in buffer with additional debugging
@@ -311,41 +316,20 @@ impl StreamManager {
                             
                             // Only log buffer state changes when significant or debug needed
                             if buffer_size_before == 0 && buffer_size_after > 0 && callback_count < 10 {
-                                println!("📦 BUFFER: First audio data stored in buffer for {}: {} samples", debug_device_id, buffer_size_after);
+                                crate::audio_debug!("📦 BUFFER: First audio data stored in buffer for {}: {} samples", debug_device_id, buffer_size_after);
                             }
                             
-                            // **CRITICAL FIX**: Prevent buffer underruns with larger, more robust buffer management
-                            // Allow 1 second of buffering to eliminate gaps and underruns
-                            let max_buffer_size = target_sample_rate as usize; // 1 second max buffer (was 500ms)
+                            // **SIMPLE BUFFER MANAGEMENT**: Just store incoming samples, consumer drains them completely
+                            // No complex overflow management needed since we process all available samples
                             
-                            // Only drain if we significantly exceed the buffer size to prevent underruns
-                            if buffer.len() > max_buffer_size + (max_buffer_size / 4) { // 1.25 seconds before draining
-                                // **AUDIO QUALITY FIX**: Keep most recent audio and drain less aggressively
-                                // This prevents the constant buffer gaps that cause crunchiness
-                                let target_size = max_buffer_size * 7 / 8; // Keep 87.5% of max buffer (more data)
-                                let samples_to_keep = target_size;
-                                
-                                // **CRITICAL**: Keep the LATEST audio, not the oldest
-                                if buffer.len() > samples_to_keep {
-                                    let start_index = buffer.len() - samples_to_keep;
-                                    let new_buffer = buffer.split_off(start_index);
-                                    *buffer = new_buffer;
-                                    
-                                    if callback_count % 100 == 0 { // Less frequent logging
-                                        println!("🔧 BUFFER OPTIMIZATION: Kept latest {} samples from {}, buffer now {} samples (max: {})", 
-                                            samples_to_keep, debug_device_id, buffer.len(), max_buffer_size);
-                                    }
-                                }
-                            }
-                            
-                            // Debug buffer state periodically
+                            // Debug buffer state periodically  
                             if callback_count % 500 == 0 && buffer.len() > 0 {
-                                println!("📊 BUFFER STATUS [{}]: {} samples stored (max {})", 
-                                    debug_device_id, buffer.len(), max_buffer_size);
+                                crate::audio_debug!("📊 BUFFER STATUS [{}]: {} samples stored", 
+                                    debug_device_id, buffer.len());
                             }
                         } else {
                             if callback_count % 100 == 0 {
-                                println!("🔒 BUFFER LOCK FAILED [{}]: Callback #{} couldn't access buffer", debug_device_id, callback_count);
+                                crate::audio_debug!("🔒 BUFFER LOCK FAILED [{}]: Callback #{} couldn't access buffer", debug_device_id, callback_count);
                             }
                         }
                     },
@@ -364,7 +348,7 @@ impl StreamManager {
                 let debug_device_id_i16_error = debug_device_id.clone();
                 
                 device.build_input_stream(
-                    &config,
+                    &native_config,
                     move |data: &[i16], _: &cpal::InputCallbackInfo| {
                         callback_count += 1;
                         
@@ -405,9 +389,24 @@ impl StreamManager {
                                 let target_size = max_buffer_size * 7 / 8; // Keep 87.5% of max buffer
                                 let samples_to_keep = target_size;
                                 
-                                // **CRITICAL**: Keep the LATEST audio, not the oldest
+                                // **CRITICAL CRUNCHINESS FIX**: Crossfade transition instead of abrupt cut
                                 if buffer.len() > samples_to_keep {
+                                    let crossfade_samples = 64; // Small crossfade to prevent clicks/pops
                                     let start_index = buffer.len() - samples_to_keep;
+                                    
+                                    // Create crossfade between old end and new start to prevent discontinuity
+                                    if start_index >= crossfade_samples {
+                                        for i in 0..crossfade_samples {
+                                            let fade_out = 1.0 - (i as f32 / crossfade_samples as f32);
+                                            let fade_in = i as f32 / crossfade_samples as f32;
+                                            
+                                            let old_sample = buffer[start_index - crossfade_samples + i];
+                                            let new_sample = buffer[start_index + i];
+                                            buffer[start_index + i] = old_sample * fade_out + new_sample * fade_in;
+                                        }
+                                    }
+                                    
+                                    // Now safely remove the old portion without audio artifacts
                                     let new_buffer = buffer.split_off(start_index);
                                     *buffer = new_buffer;
                                     
@@ -428,7 +427,7 @@ impl StreamManager {
             },
             SampleFormat::U16 => {
                 device.build_input_stream(
-                    &config,
+                    &native_config,
                     move |data: &[u16], _: &cpal::InputCallbackInfo| {
                         // **CRITICAL FIX**: Proper U16 to F32 conversion to prevent distortion  
                         let f32_samples: Vec<f32> = data.iter()
@@ -448,9 +447,24 @@ impl StreamManager {
                                 let target_size = max_buffer_size * 7 / 8; // Keep 87.5% of max buffer
                                 let samples_to_keep = target_size;
                                 
-                                // **CRITICAL**: Keep the LATEST audio, not the oldest
+                                // **CRITICAL CRUNCHINESS FIX**: Crossfade transition instead of abrupt cut
                                 if buffer.len() > samples_to_keep {
+                                    let crossfade_samples = 64; // Small crossfade to prevent clicks/pops
                                     let start_index = buffer.len() - samples_to_keep;
+                                    
+                                    // Create crossfade between old end and new start to prevent discontinuity
+                                    if start_index >= crossfade_samples {
+                                        for i in 0..crossfade_samples {
+                                            let fade_out = 1.0 - (i as f32 / crossfade_samples as f32);
+                                            let fade_in = i as f32 / crossfade_samples as f32;
+                                            
+                                            let old_sample = buffer[start_index - crossfade_samples + i];
+                                            let new_sample = buffer[start_index + i];
+                                            buffer[start_index + i] = old_sample * fade_out + new_sample * fade_in;
+                                        }
+                                    }
+                                    
+                                    // Now safely remove the old portion without audio artifacts
                                     let new_buffer = buffer.split_off(start_index);
                                     *buffer = new_buffer;
                                 }
@@ -587,7 +601,7 @@ impl VirtualMixerHandle {
                     let rms = (stream_samples.iter().map(|&s| s * s).sum::<f32>() / stream_samples.len() as f32).sqrt();
                     
                     if collection_count % 200 == 0 || (peak > 0.01 && collection_count % 50 == 0) {
-                        println!("🎯 COLLECT WITH EFFECTS [{}]: {} samples collected, peak: {:.4}, rms: {:.4}, channel: {}", 
+                        crate::audio_debug!("🎯 COLLECT WITH EFFECTS [{}]: {} samples collected, peak: {:.4}, rms: {:.4}, channel: {}", 
                             device_id, stream_samples.len(), peak, rms, channel.name);
                     }
                     samples.insert(device_id.clone(), stream_samples);
@@ -618,7 +632,7 @@ impl VirtualMixerHandle {
             // Check if real levels are already available, otherwise generate representative levels
             
             if collection_count % 200 == 0 {
-                println!("🔧 DEBUG: Bridge condition met - samples empty but {} streams active, checking {} channels", 
+                crate::audio_debug!("🔧 DEBUG: Bridge condition met - samples empty but {} streams active, checking {} channels", 
                     num_streams, num_channels);
             }
             
@@ -629,9 +643,9 @@ impl VirtualMixerHandle {
                     let has_real_levels = existing_levels_count > 0;
                     
                     if collection_count % 200 == 0 {
-                        println!("🔍 BRIDGE: Found {} existing channel levels in HashMap", existing_levels_count);
+                        crate::audio_debug!("🔍 BRIDGE: Found {} existing channel levels in HashMap", existing_levels_count);
                         for (channel_id, (peak_left, rms_left, peak_right, rms_right)) in channel_levels_guard.iter() {
-                            println!("   Real Level [Channel {}]: L(peak={:.4}, rms={:.4}) R(peak={:.4}, rms={:.4})", 
+                            crate::audio_debug!("   Real Level [Channel {}]: L(peak={:.4}, rms={:.4}) R(peak={:.4}, rms={:.4})", 
                                 channel_id, peak_left, rms_left, peak_right, rms_right);
                         }
                     }
@@ -639,7 +653,7 @@ impl VirtualMixerHandle {
                     // If we have real levels, we don't need to generate mock ones
                     if has_real_levels {
                         if collection_count % 200 == 0 {
-                            println!("✅ BRIDGE: Using real levels from audio processing thread");
+                            crate::audio_debug!("✅ BRIDGE: Using real levels from audio processing thread");
                         }
                     } else {
                         // Only generate mock levels if no real levels are available
@@ -678,24 +692,24 @@ impl VirtualMixerHandle {
                 }
             }
         } else if collection_count % 2000 == 0 {  // Reduce from every 200 to every 2000 calls
-            println!("🔧 DEBUG: Bridge condition NOT met - samples.len()={}, num_streams={}", 
+            crate::audio_debug!("🔧 DEBUG: Bridge condition NOT met - samples.len()={}, num_streams={}", 
                 samples.len(), num_streams);
         }
         
         // Debug: Log collection summary
         if collection_count % 1000 == 0 {
-            println!("📈 COLLECTION SUMMARY: {} streams available, {} channels configured, {} samples collected", 
+            crate::audio_debug!("📈 COLLECTION SUMMARY: {} streams available, {} channels configured, {} samples collected", 
                 num_streams, num_channels, samples.len());
             
             if samples.is_empty() && num_streams > 0 {
-                println!("⚠️  NO SAMPLES COLLECTED despite {} active streams - potential issue!", num_streams);
+                crate::audio_debug!("⚠️  NO SAMPLES COLLECTED despite {} active streams - potential issue!", num_streams);
                 
                 // Debug each stream buffer state
                 for (device_id, stream) in streams.iter() {
                     if let Ok(buffer_guard) = stream.audio_buffer.try_lock() {
-                        println!("   Stream [{}]: buffer has {} samples", device_id, buffer_guard.len());
+                        crate::audio_debug!("   Stream [{}]: buffer has {} samples", device_id, buffer_guard.len());
                     } else {
-                        println!("   Stream [{}]: buffer locked", device_id);
+                        crate::audio_debug!("   Stream [{}]: buffer locked", device_id);
                     }
                 }
             }
