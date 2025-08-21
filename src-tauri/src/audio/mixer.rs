@@ -795,10 +795,10 @@ impl VirtualMixer {
                 };
                 let input_samples = mixer_handle.collect_input_samples_with_effects(&current_channels).await;
                 
-                // If no audio data is available from callbacks, yield to prevent spinning
-                // but don't introduce artificial timing delays that cause drift
+                // If no audio data is available from callbacks, add small delay to prevent excessive CPU usage
+                // **RT THREAD FIX**: Add delay to prevent overwhelming system with debug output
                 if input_samples.is_empty() {
-                    tokio::task::yield_now().await; // Non-blocking yield, no artificial timing
+                    std::thread::sleep(std::time::Duration::from_micros(100)); // 0.1ms sleep 
                     continue;
                 }
                 

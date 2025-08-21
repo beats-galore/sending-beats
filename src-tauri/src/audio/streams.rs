@@ -677,7 +677,7 @@ impl VirtualMixerHandle {
                     }
                 }
             }
-        } else if collection_count % 200 == 0 {
+        } else if collection_count % 2000 == 0 {  // Reduce from every 200 to every 2000 calls
             println!("🔧 DEBUG: Bridge condition NOT met - samples.len()={}, num_streams={}", 
                 samples.len(), num_streams);
         }
