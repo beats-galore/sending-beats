@@ -744,8 +744,29 @@ impl VirtualMixer {
             config: self.shared_config.clone(),
         };
 
-        // Spawn real-time audio processing task
-        tokio::spawn(async move {
+        // **CRITICAL FIX**: Use dedicated high-priority thread for real-time audio processing
+        // tokio::spawn() can be preempted by scheduler causing audio dropouts and crunchiness
+        std::thread::spawn(move || {
+            // Set thread priority for real-time audio processing
+            #[cfg(target_os = "macos")]
+            {
+                // On macOS, set thread to real-time priority to prevent preemption
+                unsafe {
+                    use libc::{pthread_self, pthread_setschedparam, sched_param, SCHED_RR};
+                    let mut param: sched_param = std::mem::zeroed();
+                    param.sched_priority = 80; // High priority for real-time audio
+                    
+                    if pthread_setschedparam(pthread_self(), SCHED_RR, &param) == 0 {
+                        println!("✅ Audio thread priority set to real-time (priority: 80)");
+                    } else {
+                        println!("⚠️ Failed to set audio thread priority - may cause audio dropouts");
+                    }
+                }
+            }
+            
+            // Create async runtime for this thread only
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create audio runtime");
+            rt.block_on(async move {
             let mut frame_count = 0u64;
             
             // Pre-allocate stereo buffers to reduce allocations during real-time processing
@@ -1066,7 +1087,8 @@ impl VirtualMixer {
             }
             
             println!("Audio processing thread stopped");
-        });
+            }) // End of async block for runtime
+        }); // End of thread spawn
 
         Ok(())
     }

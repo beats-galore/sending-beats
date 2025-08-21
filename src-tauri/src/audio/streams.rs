@@ -368,8 +368,15 @@ impl StreamManager {
                     move |data: &[i16], _: &cpal::InputCallbackInfo| {
                         callback_count += 1;
                         
+                        // **CRITICAL FIX**: Proper I16 to F32 conversion to prevent distortion
                         let f32_samples: Vec<f32> = data.iter()
-                            .map(|&sample| sample as f32 / 32768.0)
+                            .map(|&sample| {
+                                if sample >= 0 {
+                                    sample as f32 / 32767.0  // Positive: divide by 32767
+                                } else {
+                                    sample as f32 / 32768.0  // Negative: divide by 32768 
+                                }
+                            })
                             .collect();
                         
                         let peak_level = f32_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
@@ -423,8 +430,9 @@ impl StreamManager {
                 device.build_input_stream(
                     &config,
                     move |data: &[u16], _: &cpal::InputCallbackInfo| {
+                        // **CRITICAL FIX**: Proper U16 to F32 conversion to prevent distortion  
                         let f32_samples: Vec<f32> = data.iter()
-                            .map(|&sample| (sample as f32 - 32768.0) / 32768.0)
+                            .map(|&sample| (sample as f32 - 32768.0) / 32767.5)  // Better symmetry
                             .collect();
                             
                         // Keep stereo data as-is to prevent pitch shifting - don't convert to mono
