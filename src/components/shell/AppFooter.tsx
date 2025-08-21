@@ -8,7 +8,7 @@ const useStyles = createStyles((theme) => ({
     borderTop: `1px solid ${theme.colors.dark[5]}`,
     padding: '8px 16px',
   },
-  
+
   footerText: {
     textAlign: 'center',
   },
@@ -16,7 +16,7 @@ const useStyles = createStyles((theme) => ({
 
 export const AppFooter = memo(() => {
   const { classes } = useStyles();
-  
+
   return (
     <AppShell.Footer className={classes.footer}>
       <Text size="xs" c="dimmed" className={classes.footerText}>

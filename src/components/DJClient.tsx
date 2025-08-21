@@ -1,31 +1,12 @@
 // Professional DJ Streaming Client - Modernized with Mantine
-import { invoke } from '@tauri-apps/api/core';
-import {
-  Box,
-  Stack,
-  Group,
-  Text,
-  Title,
-  Alert,
-  Grid,
-  LoadingOverlay,
-  Badge,
-} from '@mantine/core';
+import { Box, Stack, Group, Text, Title, Alert, Grid, LoadingOverlay, Badge } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
-import {
-  IconAlertCircle,
-  IconWifi,
-  IconWifiOff,
-} from '@tabler/icons-react';
+import { IconAlertCircle, IconWifi, IconWifiOff } from '@tabler/icons-react';
+import { invoke } from '@tauri-apps/api/core';
 import { memo, useState, useRef, useEffect, useCallback } from 'react';
 
+import { StreamStatusCard, StreamConfigurationCard, AudioControlsCard, MetadataCard } from './dj';
 import { ErrorBoundary } from './layout';
-import {
-  StreamStatusCard,
-  StreamConfigurationCard,
-  AudioControlsCard,
-  MetadataCard,
-} from './dj';
 
 type AudioDevice = {
   deviceId: string;
@@ -384,7 +365,7 @@ const DJClient = memo(() => {
     <ErrorBoundary>
       <Box className={classes.container} pos="relative">
         <LoadingOverlay visible={isConnecting} />
-        
+
         <Stack gap="lg">
           <Group justify="space-between" align="center">
             <Title order={1} c="blue.4">
@@ -396,23 +377,14 @@ const DJClient = memo(() => {
               ) : (
                 <IconWifiOff size={20} color="#fa5252" />
               )}
-              <Badge
-                color={isConnected ? 'green' : 'red'}
-                variant="light"
-                size="md"
-              >
+              <Badge color={isConnected ? 'green' : 'red'} variant="light" size="md">
                 {isConnected ? 'Connected' : 'Disconnected'}
               </Badge>
             </Group>
           </Group>
 
           {error && (
-            <Alert
-              icon={<IconAlertCircle size={16} />}
-              title="Error"
-              color="red"
-              variant="light"
-            >
+            <Alert icon={<IconAlertCircle size={16} />} title="Error" color="red" variant="light">
               {error}
             </Alert>
           )}
@@ -421,7 +393,7 @@ const DJClient = memo(() => {
 
           <Grid>
             {/* Stream Configuration */}
-            <Grid.Col span={12} md={6}>
+            <Grid.Col span={{ base: 12, md: 6 }}>
               <StreamConfigurationCard
                 streamConfig={streamConfig}
                 streamSettings={streamSettings}
@@ -435,7 +407,7 @@ const DJClient = memo(() => {
             </Grid.Col>
 
             {/* Audio Controls */}
-            <Grid.Col span={12} md={6}>
+            <Grid.Col span={{ base: 12, md: 6 }}>
               <AudioControlsCard
                 audioDevices={audioDevices}
                 selectedDevice={selectedDevice}

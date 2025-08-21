@@ -4,12 +4,12 @@ import { useDisclosure } from '@mantine/hooks';
 import { createStyles } from '@mantine/styles';
 import { memo, useCallback, useState } from 'react';
 
-import { ErrorBoundary } from './components/layout';
-import { AppHeader, AppFooter, Navigation, HomeView } from './components/shell';
 import AdminPanel from './components/AdminPanel';
 import DJClient from './components/DJClient';
+import { ErrorBoundary } from './components/layout';
 import ListenerPlayer from './components/ListenerPlayer';
 import { VirtualMixerWithErrorBoundary as VirtualMixer } from './components/mixer';
+import { AppHeader, AppFooter, Navigation, HomeView } from './components/shell';
 
 type ViewType = 'home' | 'dj' | 'admin' | 'listener' | 'mixer';
 

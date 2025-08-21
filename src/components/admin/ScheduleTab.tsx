@@ -1,14 +1,4 @@
-import {
-  Stack,
-  Group,
-  Title,
-  Button,
-  Card,
-  Table,
-  Text,
-  Badge,
-  ActionIcon,
-} from '@mantine/core';
+import { Stack, Group, Title, Button, Card, Table, Text, Badge, ActionIcon } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { IconPlus, IconEdit, IconTrash } from '@tabler/icons-react';
 import { memo } from 'react';
@@ -78,11 +68,7 @@ export const ScheduleTab = memo<ScheduleTabProps>(({ schedules }) => {
                   </Text>
                 </Table.Td>
                 <Table.Td>
-                  <Badge
-                    color={schedule.isActive ? 'green' : 'gray'}
-                    variant="light"
-                    size="sm"
-                  >
+                  <Badge color={schedule.isActive ? 'green' : 'gray'} variant="light" size="sm">
                     {schedule.isActive ? 'Active' : 'Inactive'}
                   </Badge>
                 </Table.Td>

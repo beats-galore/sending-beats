@@ -9,7 +9,7 @@ const useStyles = createStyles((theme) => ({
     maxWidth: 400,
     margin: '0 auto',
   },
-  
+
   musicIcon: {
     width: 60,
     height: 60,
@@ -20,12 +20,12 @@ const useStyles = createStyles((theme) => ({
     justifyContent: 'center',
     fontSize: '24px',
   },
-  
+
   liveBadge: {
     backgroundColor: theme.colors.red[6],
     color: theme.white,
   },
-  
+
   pulseIndicator: {
     width: 8,
     height: 8,
@@ -33,7 +33,7 @@ const useStyles = createStyles((theme) => ({
     borderRadius: '50%',
     animation: 'pulse 2s infinite',
   },
-  
+
   trackInfo: {
     flex: 1,
   },
@@ -41,14 +41,12 @@ const useStyles = createStyles((theme) => ({
 
 export const NowPlayingCard = memo(() => {
   const { classes } = useStyles();
-  
+
   return (
     <Card className={classes.nowPlayingCard} padding="lg" shadow="md" withBorder>
       <Group gap="md">
-        <Box className={classes.musicIcon}>
-          🎵
-        </Box>
-        
+        <Box className={classes.musicIcon}>🎵</Box>
+
         <Box className={classes.trackInfo}>
           <Text size="sm" c="blue.4" fw={600} mb={4}>
             Now Playing
@@ -60,7 +58,7 @@ export const NowPlayingCard = memo(() => {
             DJ Luna
           </Text>
         </Box>
-        
+
         <Stack align="center" gap={4}>
           <Badge className={classes.liveBadge} size="xs" variant="filled">
             LIVE

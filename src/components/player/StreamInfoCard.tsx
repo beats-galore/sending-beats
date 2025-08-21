@@ -1,11 +1,4 @@
-import {
-  Card,
-  Title,
-  Grid,
-  Stack,
-  Text,
-  Badge,
-} from '@mantine/core';
+import { Card, Title, Grid, Stack, Text, Badge } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { memo } from 'react';
 
@@ -46,36 +39,41 @@ export const StreamInfoCard = memo<StreamInfoCardProps>(({ streamUrl, streamStat
         Stream Information
       </Title>
       <Grid>
-        <Grid.Col span={12} md={6}>
+        <Grid.Col span={{ base: 12, md: 6 }}>
           <Stack gap={4}>
-            <Text size="sm" c="dimmed">Stream URL:</Text>
+            <Text size="sm" c="dimmed">
+              Stream URL:
+            </Text>
             <Text size="sm" className={classes.streamUrl}>
               {streamUrl}
             </Text>
           </Stack>
         </Grid.Col>
-        <Grid.Col span={12} md={6}>
+        <Grid.Col span={{ base: 12, md: 6 }}>
           <Stack gap={4}>
-            <Text size="sm" c="dimmed">Status:</Text>
-            <Badge
-              color={streamStatus?.is_streaming ? 'green' : 'gray'}
-              variant="light"
-            >
+            <Text size="sm" c="dimmed">
+              Status:
+            </Text>
+            <Badge color={streamStatus?.is_streaming ? 'green' : 'gray'} variant="light">
               {streamStatus?.is_streaming ? 'Live' : 'Offline'}
             </Badge>
           </Stack>
         </Grid.Col>
-        <Grid.Col span={12} md={6}>
+        <Grid.Col span={{ base: 12, md: 6 }}>
           <Stack gap={4}>
-            <Text size="sm" c="dimmed">Quality:</Text>
+            <Text size="sm" c="dimmed">
+              Quality:
+            </Text>
             <Text size="sm" fw={500}>
               {streamStatus?.bitrate || 128} kbps
             </Text>
           </Stack>
         </Grid.Col>
-        <Grid.Col span={12} md={6}>
+        <Grid.Col span={{ base: 12, md: 6 }}>
           <Stack gap={4}>
-            <Text size="sm" c="dimmed">Listeners:</Text>
+            <Text size="sm" c="dimmed">
+              Listeners:
+            </Text>
             <Text size="sm" fw={500}>
               {streamStatus?.current_listeners || 0} / {streamStatus?.peak_listeners || 0}
             </Text>

@@ -1,5 +1,6 @@
 // Hook specifically for master section data - only what MasterSection needs
 import { useCallback } from 'react';
+
 import { useMixerStore } from '../stores';
 
 export const useMasterSectionData = () => {

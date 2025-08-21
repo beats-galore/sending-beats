@@ -5,7 +5,7 @@ export const useChannelLevels = (channelId: number) => {
   // Get stereo channel levels from VU meter data
   const channelLevels = useMixerStore((state) => {
     const levelData = state.channelLevels?.[channelId];
-    
+
     if (levelData && Array.isArray(levelData) && levelData.length === 4) {
       // Stereo format: [peak_left, rms_left, peak_right, rms_right]
       return {
@@ -22,7 +22,7 @@ export const useChannelLevels = (channelId: number) => {
         rms: (levelData[1] + levelData[3]) / 2,
       };
     }
-    
+
     // Fallback for missing data
     return {
       left: { peak: 0, rms: 0 },

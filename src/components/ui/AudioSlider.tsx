@@ -67,17 +67,14 @@ export const AudioSlider = memo<AudioSliderProps>(
 
     // Create simplified marks for the slider - only show key values
     const marks = useMemo(() => {
-      const marksArray: Array<{ value: number; label: string }> = [];
-      
+      const marksArray: { value: number; label: string }[] = [];
+
       // For gain controls, only show 0dB mark
       if (min < 0 && max > 0 && unit === 'dB') {
         marksArray.push({ value: 0, label: '0' });
       } else {
         // For other controls, show min and max
-        marksArray.push(
-          { value: min, label: `${min}` },
-          { value: max, label: `${max}` }
-        );
+        marksArray.push({ value: min, label: `${min}` }, { value: max, label: `${max}` });
       }
 
       return marksArray;
@@ -94,7 +91,6 @@ export const AudioSlider = memo<AudioSliderProps>(
         {/* Slider */}
         <Box className={classes.sliderContainer}>
           <Slider
-            orientation="vertical"
             min={min}
             max={max}
             step={step}

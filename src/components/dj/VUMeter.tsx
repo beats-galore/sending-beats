@@ -38,7 +38,7 @@ export const VUMeter = memo<VUMeterProps>(({ level }) => {
 
   const getBarColor = (index: number, isActive: boolean) => {
     if (!isActive) return '#495057';
-    
+
     if (index > barCount * 0.8) return '#fa5252';
     if (index > barCount * 0.6) return '#fd7e14';
     return '#339af0';
@@ -54,7 +54,7 @@ export const VUMeter = memo<VUMeterProps>(({ level }) => {
         <Box
           key={i}
           className={`${classes.vuBar} ${i < activeBars ? classes.vuBarActive : ''}`}
-          sx={{
+          style={{
             height: getBarHeight(normalizedLevel),
             backgroundColor: getBarColor(i, i < activeBars),
           }}

@@ -19,9 +19,9 @@ import {
   IconChevronDown,
   IconChevronUp,
 } from '@tabler/icons-react';
+import { useState } from 'react';
 import { ErrorBoundary as ReactErrorBoundary } from 'react-error-boundary';
 
-import { useState } from 'react';
 import type { ErrorInfo } from 'react';
 import type { FallbackProps } from 'react-error-boundary';
 

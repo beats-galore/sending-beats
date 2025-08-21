@@ -1,7 +1,7 @@
 // Zustand store for mixer state management
+import isEqual from 'fast-deep-equal';
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
-import isEqual from 'fast-deep-equal';
 
 import { mixerService, audioService } from '../services';
 import { MixerState, DEFAULT_CHANNEL } from '../types';
@@ -45,7 +45,6 @@ type MixerStore = {
   // Error handling
   setError: (error: string | null) => void;
   clearError: () => void;
-
 };
 
 export const useMixerStore = create<MixerStore>()(
@@ -159,30 +158,17 @@ export const useMixerStore = create<MixerStore>()(
         // Update channel configuration first
         await mixerService.updateMixerChannel(channelId, updatedChannel);
 
-        // Handle input stream management (critical missing functionality)
-        if (newInputDeviceId && newInputDeviceId !== previousInputDeviceId) {
-          console.debug(`🎤 Adding input stream for device: ${newInputDeviceId}`);
+        // Handle input stream management with crash-safe switching
+        if (newInputDeviceId !== previousInputDeviceId && newInputDeviceId) {
+          console.debug(
+            `🎤 Switching input stream: ${previousInputDeviceId} → ${newInputDeviceId}`
+          );
           try {
-            await audioService.addInputStream(newInputDeviceId);
-            console.debug(`✅ Successfully added input stream for: ${newInputDeviceId}`);
+            await audioService.switchInputStream(previousInputDeviceId ?? null, newInputDeviceId);
+            console.debug(`✅ Successfully switched input stream to: ${newInputDeviceId}`);
           } catch (streamErr) {
-            console.error(`❌ Failed to add input stream for ${newInputDeviceId}:`, streamErr);
-            throw new Error(`Failed to add input stream: ${streamErr}`);
-          }
-        }
-
-        // If input device was removed, remove input stream
-        if (previousInputDeviceId && !newInputDeviceId) {
-          console.debug(`🗑️ Removing input stream for device: ${previousInputDeviceId}`);
-          try {
-            await audioService.removeInputStream(previousInputDeviceId);
-            console.debug(`✅ Successfully removed input stream for: ${previousInputDeviceId}`);
-          } catch (streamErr) {
-            console.error(
-              `❌ Failed to remove input stream for ${previousInputDeviceId}:`,
-              streamErr
-            );
-            // Don't throw here - removal failure shouldn't block the update
+            console.error(`❌ Failed to switch input stream to ${newInputDeviceId}:`, streamErr);
+            throw new Error(`Failed to switch input stream: ${streamErr}`);
           }
         }
 
@@ -231,7 +217,7 @@ export const useMixerStore = create<MixerStore>()(
       try {
         // Update backend first
         await audioService.setOutputStream(deviceId);
-        
+
         // Update local state if backend call succeeds
         set((state) => ({
           config: state.config
@@ -259,7 +245,7 @@ export const useMixerStore = create<MixerStore>()(
           const newRmsLeft = levels[channel.id]?.[1] || 0;
           const newPeakRight = levels[channel.id]?.[2] || 0;
           const newRmsRight = levels[channel.id]?.[3] || 0;
-          
+
           // For mono compatibility, use max of L/R for peak and average for RMS
           const newPeak = Math.max(newPeakLeft, newPeakRight);
           const newRms = (newRmsLeft + newRmsRight) / 2;
@@ -321,19 +307,19 @@ export const useMixerStore = create<MixerStore>()(
     batchUpdate: (updates) => {
       set((state) => {
         const newState: Partial<MixerStore> = {};
-        
+
         if (updates.channelLevels && !isEqual(state.channelLevels, updates.channelLevels)) {
           newState.channelLevels = { ...state.channelLevels, ...updates.channelLevels };
         }
-        
+
         if (updates.masterLevels && !isEqual(state.masterLevels, updates.masterLevels)) {
           newState.masterLevels = updates.masterLevels;
         }
-        
+
         if (updates.metrics && !isEqual(state.metrics, updates.metrics)) {
           newState.metrics = updates.metrics;
         }
-        
+
         return Object.keys(newState).length > 0 ? newState : {};
       });
     },

@@ -1,16 +1,5 @@
 // Professional Listener Player - Modernized with Mantine
-import { invoke } from '@tauri-apps/api/core';
-import {
-  Box,
-  Stack,
-  Group,
-  Title,
-  Alert,
-  Grid,
-  LoadingOverlay,
-  Badge,
-  Card,
-} from '@mantine/core';
+import { Box, Stack, Group, Title, Alert, Grid, LoadingOverlay, Badge, Card } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import {
   IconAlertCircle,
@@ -20,15 +9,11 @@ import {
   IconClock,
   IconBroadcast,
 } from '@tabler/icons-react';
+import { invoke } from '@tauri-apps/api/core';
 import { memo, useState, useEffect, useRef, useCallback } from 'react';
 
 import { ErrorBoundary } from './layout';
-import {
-  StatCard,
-  NowPlayingCard,
-  AudioControls,
-  StreamInfoCard,
-} from './player';
+import { StatCard, NowPlayingCard, AudioControls, StreamInfoCard } from './player';
 
 type StreamMetadata = {
   title: string;
@@ -161,7 +146,7 @@ const ListenerPlayer = memo(() => {
     <ErrorBoundary>
       <Box className={classes.container} pos="relative">
         <LoadingOverlay visible={isLoading} />
-        
+
         <Stack gap="lg">
           <Group justify="space-between" align="center">
             <Title order={1} c="blue.4">
@@ -173,11 +158,7 @@ const ListenerPlayer = memo(() => {
               ) : (
                 <IconWifiOff size={20} color="#fa5252" />
               )}
-              <Badge
-                color={streamStatus?.is_streaming ? 'green' : 'red'}
-                variant="light"
-                size="md"
-              >
+              <Badge color={streamStatus?.is_streaming ? 'green' : 'red'} variant="light" size="md">
                 {streamStatus?.is_streaming ? 'LIVE' : 'OFFLINE'}
               </Badge>
             </Group>
@@ -198,7 +179,7 @@ const ListenerPlayer = memo(() => {
           {streamStatus && (
             <Card className={classes.statusCard} padding="lg" withBorder>
               <Grid>
-                <Grid.Col span={6} md={3}>
+                <Grid.Col span={{ base: 6, md: 3 }}>
                   <StatCard
                     icon={<IconUsers size={16} />}
                     value={streamStatus.current_listeners}
@@ -206,7 +187,7 @@ const ListenerPlayer = memo(() => {
                     color="blue"
                   />
                 </Grid.Col>
-                <Grid.Col span={6} md={3}>
+                <Grid.Col span={{ base: 6, md: 3 }}>
                   <StatCard
                     icon={<IconUsers size={16} />}
                     value={streamStatus.peak_listeners}
@@ -214,7 +195,7 @@ const ListenerPlayer = memo(() => {
                     color="orange"
                   />
                 </Grid.Col>
-                <Grid.Col span={6} md={3}>
+                <Grid.Col span={{ base: 6, md: 3 }}>
                   <StatCard
                     icon={<IconClock size={16} />}
                     value={formatTime(streamStatus.stream_duration)}
@@ -222,7 +203,7 @@ const ListenerPlayer = memo(() => {
                     color="green"
                   />
                 </Grid.Col>
-                <Grid.Col span={6} md={3}>
+                <Grid.Col span={{ base: 6, md: 3 }}>
                   <StatCard
                     icon={<IconBroadcast size={16} />}
                     value={`${streamStatus.bitrate} kbps`}
@@ -249,10 +230,7 @@ const ListenerPlayer = memo(() => {
           />
 
           {/* Stream Info */}
-          <StreamInfoCard
-            streamUrl={streamUrl}
-            streamStatus={streamStatus}
-          />
+          <StreamInfoCard streamUrl={streamUrl} streamStatus={streamStatus} />
         </Stack>
 
         {/* Hidden audio element */}

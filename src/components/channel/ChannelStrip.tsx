@@ -12,15 +12,16 @@ import {
   ActionIcon,
   Divider,
   Box,
+  Menu,
 } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
-import { IconChevronDown, IconChevronRight, IconRefresh, IconSettings } from '@tabler/icons-react';
-import { memo, useCallback, useMemo, useState } from 'react';
+import { IconChevronDown, IconChevronRight, IconRefresh, IconPlus, IconAdjustmentsHorizontal, IconVolume, IconShield } from '@tabler/icons-react';
+import { memo, useCallback, useMemo, useState, useEffect } from 'react';
 
 import { useMixerState, useAudioDevices, useChannelLevels } from '../../hooks';
+import { audioService } from '../../services';
 
 import { ChannelEffects } from './ChannelEffects';
-import { ChannelEQ } from './ChannelEQ';
 import { ChannelVUMeter } from './ChannelVUMeter';
 
 import type { AudioChannel } from '../../types';
@@ -100,12 +101,18 @@ const useStyles = createStyles(() => ({
   customButton: {
     height: '24px !important',
     fontSize: '10px !important',
-    
+
     '& .mantine-Button-inner': {
       justifyContent: 'center !important',
     },
   },
 }));
+
+const AVAILABLE_EFFECTS = [
+  { value: 'eq', label: 'Equalizer', icon: IconAdjustmentsHorizontal },
+  { value: 'compressor', label: 'Compressor', icon: IconVolume },
+  { value: 'limiter', label: 'Limiter', icon: IconShield },
+];
 
 type ChannelStripProps = {
   channel: AudioChannel;
@@ -126,10 +133,26 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
 
   const levels = useChannelLevels(channel.id);
 
-  // State for expandable sections
+  // State for expandable sections  
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showEQ, setShowEQ] = useState(false);
   const [showEffects, setShowEffects] = useState(false);
+  
+  // State for effects
+  const [activeEffects, setActiveEffects] = useState<string[]>([]);
+
+  // Load active effects on mount
+  useEffect(() => {
+    const loadActiveEffects = async () => {
+      try {
+        const effects = await audioService.getChannelEffects(channel.id);
+        setActiveEffects(effects);
+      } catch (error) {
+        console.error('Failed to load channel effects:', error);
+      }
+    };
+    loadActiveEffects();
+  }, [channel.id]);
 
   const handleMuteToggle = useCallback(() => {
     toggleChannelMute(channel.id);
@@ -165,6 +188,23 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
       updateChannelPan(channel.id, pan);
     },
     [channel.id, updateChannelPan]
+  );
+
+  // Effect handling
+  const handleAddEffect = useCallback(async (effectType: string) => {
+    try {
+      console.log('Adding effect', effectType, 'to channel', channel.id);
+      await audioService.addChannelEffect(channel.id, effectType);
+      setActiveEffects((prev) => [...prev, effectType]);
+      setShowAdvanced(true); // Show the effects section
+      console.log('Effect added successfully');
+    } catch (error) {
+      console.error('Failed to add effect:', error);
+    }
+  }, [channel.id]);
+
+  const availableToAdd = AVAILABLE_EFFECTS.filter(
+    (effect) => !activeEffects.includes(effect.value)
   );
 
   // Convert gain to dB for display
@@ -214,9 +254,6 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
 
           {/* VU Meter - Now wider and flexible */}
           <Stack gap={2} className={classes.vuMeterSection}>
-            <Text size="xs" c="dimmed" ta="center" lh={1}>
-              VU Meter
-            </Text>
             <Box className={classes.vuMeterContainer}>
               <ChannelVUMeter levels={levels} />
             </Box>
@@ -234,7 +271,7 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
                 max={6}
                 step={0.5}
                 value={gainDb}
-                onChange={(value) => handleGainChange(Math.pow(10, value / 20))}
+                onChange={(value) => handleGainChange(10 ** (value / 20))}
                 marks={[
                   { value: -20, label: '-20' },
                   { value: 0, label: '0' },
@@ -286,39 +323,49 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
             </Button>
           </Stack>
 
-          {/* Advanced Controls Toggle */}
-          <ActionIcon
-            size="sm"
-            variant="subtle"
-            onClick={() => setShowAdvanced(!showAdvanced)}
-            c={showAdvanced ? 'blue' : 'gray'}
-            className={classes.settingsToggle}
-          >
-            <IconSettings size={14} />
-          </ActionIcon>
+          {/* Add Effects Menu */}
+          {availableToAdd.length > 0 ? (
+            <Menu position="bottom-end" withArrow>
+              <Menu.Target>
+                <ActionIcon
+                  size="sm"
+                  variant="outline"
+                  color="blue"
+                  className={classes.settingsToggle}
+                >
+                  <IconPlus size={14} />
+                </ActionIcon>
+              </Menu.Target>
+              <Menu.Dropdown>
+                {availableToAdd.map((effect) => (
+                  <Menu.Item
+                    key={effect.value}
+                    leftSection={<effect.icon size={16} />}
+                    onClick={() => handleAddEffect(effect.value)}
+                  >
+                    {effect.label}
+                  </Menu.Item>
+                ))}
+              </Menu.Dropdown>
+            </Menu>
+          ) : (
+            <ActionIcon
+              size="sm"
+              variant="subtle"
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              c={showAdvanced ? 'blue' : 'gray'}
+              className={classes.settingsToggle}
+            >
+              <IconPlus size={14} />
+            </ActionIcon>
+          )}
         </Group>
       </Paper>
 
       {/* Expandable Advanced Controls */}
       <Collapse in={showAdvanced}>
         <Paper p="md" withBorder radius="md" className={classes.effectsBox} mt="xs">
-          <Group gap="lg" align="flex-start">
-            {/* EQ Section */}
-            <Box>
-              <Text size="sm" c="blue" mb="xs">
-                3-Band EQ
-              </Text>
-              <ChannelEQ channelId={channel.id} />
-            </Box>
-
-            {/* Effects Section */}
-            <Box>
-              <Text size="sm" c="blue" mb="xs">
-                Effects
-              </Text>
-              <ChannelEffects channelId={channel.id} />
-            </Box>
-          </Group>
+          <ChannelEffects channelId={channel.id} key={`${channel.id}-${activeEffects.join(',')}`} />
         </Paper>
       </Collapse>
     </Stack>

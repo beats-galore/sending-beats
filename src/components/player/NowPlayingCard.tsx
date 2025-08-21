@@ -1,14 +1,4 @@
-import {
-  Card,
-  Title,
-  Group,
-  Box,
-  Text,
-  Stack,
-  Badge,
-  Center,
-  ThemeIcon,
-} from '@mantine/core';
+import { Card, Title, Group, Box, Text, Stack, Badge, Center, ThemeIcon } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { IconMusic } from '@tabler/icons-react';
 import { memo } from 'react';
@@ -66,9 +56,7 @@ export const NowPlayingCard = memo<NowPlayingCardProps>(({ currentMetadata }) =>
 
       {currentMetadata ? (
         <Group gap="lg" align="center">
-          <Box className={classes.musicIcon}>
-            🎵
-          </Box>
+          <Box className={classes.musicIcon}>🎵</Box>
           <Box className={classes.trackInfo}>
             <Text size="xl" fw={700} c="white" mb={4}>
               {currentMetadata.title}

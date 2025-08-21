@@ -1,6 +1,5 @@
 import { Tabs, Tooltip, Stack, UnstyledButton } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
-import { memo, useCallback } from 'react';
 import {
   IconHome,
   IconAdjustments,
@@ -8,6 +7,7 @@ import {
   IconHeadphones,
   IconSettings,
 } from '@tabler/icons-react';
+import { memo, useCallback } from 'react';
 
 type ViewType = 'home' | 'dj' | 'admin' | 'listener' | 'mixer';
 
