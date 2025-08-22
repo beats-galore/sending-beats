@@ -14,3 +14,10 @@ export { useChannelLevels } from './use-channel-levels';
 export { useMasterLevels } from './use-master-levels';
 export { useAudioMetrics } from './use-audio-metrics';
 export { useAudioDevicesStatus } from './use-audio-devices-status';
+
+// Streaming hooks
+export { useStreamingStatus } from './use-streaming-status';
+export { useStreamingControls } from './use-streaming-controls';
+
+// Recording hooks
+export { useRecording } from './use-recording';

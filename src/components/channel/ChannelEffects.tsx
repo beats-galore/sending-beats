@@ -1,21 +1,7 @@
 // Channel effects controls - Add from list with collapsible removable tiles
-import {
-  Stack,
-  Group,
-  Paper,
-  ActionIcon,
-  Text,
-  Switch,
-  Slider,
-  Box,
-} from '@mantine/core';
+import { Stack, Group, Paper, ActionIcon, Text, Switch, Slider, Box } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
-import {
-  IconX,
-  IconAdjustmentsHorizontal,
-  IconVolume,
-  IconShield,
-} from '@tabler/icons-react';
+import { IconX, IconAdjustmentsHorizontal, IconVolume, IconShield } from '@tabler/icons-react';
 import { memo, useState, useEffect } from 'react';
 
 import { useChannelEffects } from '../../hooks';
@@ -161,7 +147,6 @@ export const ChannelEffects = memo<ChannelEffectsProps>(({ channelId }) => {
     }
   };
 
-
   const renderEffectControls = (effectType: string) => {
     switch (effectType) {
       case 'eq': {
@@ -208,13 +193,11 @@ export const ChannelEffects = memo<ChannelEffectsProps>(({ channelId }) => {
         if (!compressor) return null;
         return (
           <Group gap="md" justify="flex-start" align="flex-start">
-            <Box style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
+            <Box
+              style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}
+            >
               <Text style={{ fontSize: '11px', color: '#339af0', fontWeight: 600 }}>Enable</Text>
-              <Switch
-                checked={compressor.enabled}
-                onChange={toggleCompressor}
-                size="sm"
-              />
+              <Switch checked={compressor.enabled} onChange={toggleCompressor} size="sm" />
             </Box>
             <CompactSlider
               label="Threshold"
@@ -264,13 +247,11 @@ export const ChannelEffects = memo<ChannelEffectsProps>(({ channelId }) => {
         if (!limiter) return null;
         return (
           <Group gap="md" justify="flex-start" align="flex-start">
-            <Box style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}>
+            <Box
+              style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center' }}
+            >
               <Text style={{ fontSize: '11px', color: '#339af0', fontWeight: 600 }}>Enable</Text>
-              <Switch
-                checked={limiter.enabled}
-                onChange={toggleLimiter}
-                size="sm"
-              />
+              <Switch checked={limiter.enabled} onChange={toggleLimiter} size="sm" />
             </Box>
             <CompactSlider
               label="Threshold"

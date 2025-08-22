@@ -2,8 +2,10 @@ pub mod streaming;
 pub mod audio;
 pub mod icecast_source;
 pub mod streaming_service;
+pub mod recording_service;
 
 use streaming::{StreamConfig, StreamManager, StreamMetadata, StreamStatus};
+use recording_service::{RecordingService, RecordingConfig, RecordingStatus, RecordingHistoryEntry};
 // Re-export audio types for testing and external use
 pub use audio::{
     AudioDeviceManager, VirtualMixer, MixerConfig, AudioDeviceInfo, AudioChannel, 
@@ -25,6 +27,9 @@ struct AudioState {
     mixer: Arc<AsyncMutex<Option<VirtualMixer>>>,
     database: Arc<AudioDatabase>,
     event_bus: Arc<AudioEventBus>,
+}
+struct RecordingState {
+    service: Arc<RecordingService>,
 }
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -1043,10 +1048,17 @@ pub fn run() {
         }
     });
 
+    // Initialize recording service
+    let recording_state = RecordingState {
+        service: Arc::new(RecordingService::new()),
+    };
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(StreamState(Mutex::new(None)))
         .manage(audio_state)
+        .manage(recording_state)
         .invoke_handler(tauri::generate_handler![
             greet,
             connect_to_stream,
@@ -1100,6 +1112,19 @@ pub fn run() {
             stop_icecast_streaming,
             update_icecast_metadata,
             get_icecast_streaming_status,
+            set_stream_bitrate,
+            get_available_stream_bitrates,
+            get_current_stream_bitrate,
+            set_variable_bitrate_streaming,
+            get_variable_bitrate_settings,
+            start_recording,
+            stop_recording,
+            get_recording_status,
+            save_recording_config,
+            get_recording_configs,
+            get_recording_history,
+            create_default_recording_config,
+            select_recording_directory,
             start_device_monitoring,
             stop_device_monitoring,
             get_device_monitoring_stats
@@ -1144,6 +1169,10 @@ async fn initialize_icecast_streaming(
             bitrate,
             codec: AudioCodec::Mp3,
         },
+        available_bitrates: vec![96, 128, 160, 192, 256, 320],
+        selected_bitrate: bitrate,
+        enable_variable_bitrate: false,
+        vbr_quality: 2,
         auto_reconnect: true,
         max_reconnect_attempts: 5,
         reconnect_delay_ms: 3000,
@@ -1235,5 +1264,213 @@ async fn get_icecast_streaming_status() -> Result<serde_json::Value, String> {
             eprintln!("❌ Failed to serialize streaming status: {}", e);
             Err(format!("Failed to get status: {}", e))
         }
+    }
+}
+
+#[tauri::command]
+async fn set_stream_bitrate(bitrate: u32) -> Result<String, String> {
+    use crate::streaming_service::set_stream_bitrate;
+    
+    println!("🎵 Setting stream bitrate to {}kbps", bitrate);
+    
+    match set_stream_bitrate(bitrate).await {
+        Ok(()) => {
+            println!("✅ Bitrate set to {}kbps (restart streaming to apply)", bitrate);
+            Ok(format!("Bitrate set to {}kbps", bitrate))
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to set bitrate: {}", e);
+            Err(format!("Failed to set bitrate: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn get_available_stream_bitrates() -> Result<Vec<u32>, String> {
+    use crate::streaming_service::get_available_bitrates;
+    
+    let bitrates = get_available_bitrates().await;
+    Ok(bitrates)
+}
+
+#[tauri::command]
+async fn get_current_stream_bitrate() -> Result<u32, String> {
+    use crate::streaming_service::get_current_stream_bitrate;
+    
+    let bitrate = get_current_stream_bitrate().await;
+    Ok(bitrate)
+}
+
+#[tauri::command]
+async fn set_variable_bitrate_streaming(enabled: bool, quality: u8) -> Result<String, String> {
+    use crate::streaming_service::set_variable_bitrate_streaming;
+    
+    println!("🎵 Setting variable bitrate: enabled={}, quality=V{}", enabled, quality);
+    
+    match set_variable_bitrate_streaming(enabled, quality).await {
+        Ok(()) => {
+            println!("✅ Variable bitrate set: enabled={}, quality=V{}", enabled, quality);
+            Ok(format!("Variable bitrate set: enabled={}, quality=V{}", enabled, quality))
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to set variable bitrate: {}", e);
+            Err(format!("Failed to set variable bitrate: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn get_variable_bitrate_settings() -> Result<(bool, u8), String> {
+    use crate::streaming_service::get_variable_bitrate_settings;
+    
+    let (enabled, quality) = get_variable_bitrate_settings().await;
+    Ok((enabled, quality))
+}
+
+// ================================================================================================
+// RECORDING SERVICE COMMANDS
+// ================================================================================================
+
+#[tauri::command]
+async fn start_recording(
+    recording_state: State<'_, RecordingState>,
+    audio_state: State<'_, AudioState>,
+    config: RecordingConfig,
+) -> Result<String, String> {
+    println!("🎙️ Starting recording with config: {}", config.name);
+    
+    // Get audio output receiver from mixer
+    let mixer_guard = audio_state.mixer.lock().await;
+    if let Some(ref mixer) = *mixer_guard {
+        let audio_rx = mixer.get_audio_output_receiver();
+        
+        match recording_state.service.start_recording(config, audio_rx).await {
+            Ok(session_id) => {
+                println!("✅ Recording started with session ID: {}", session_id);
+                Ok(session_id)
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to start recording: {}", e);
+                Err(format!("Failed to start recording: {}", e))
+            }
+        }
+    } else {
+        Err("No mixer available - please create mixer first".to_string())
+    }
+}
+
+#[tauri::command]
+async fn stop_recording(
+    recording_state: State<'_, RecordingState>,
+) -> Result<Option<RecordingHistoryEntry>, String> {
+    println!("🛑 Stopping recording...");
+    
+    match recording_state.service.stop_recording().await {
+        Ok(history_entry) => {
+            if let Some(ref entry) = history_entry {
+                println!("✅ Recording stopped: {:?}", entry.file_path);
+            } else {
+                println!("⚠️ No active recording to stop");
+            }
+            Ok(history_entry)
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to stop recording: {}", e);
+            Err(format!("Failed to stop recording: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn get_recording_status(
+    recording_state: State<'_, RecordingState>,
+) -> Result<RecordingStatus, String> {
+    Ok(recording_state.service.get_status().await)
+}
+
+#[tauri::command]
+async fn save_recording_config(
+    recording_state: State<'_, RecordingState>,
+    config: RecordingConfig,
+) -> Result<String, String> {
+    println!("💾 Saving recording config: {}", config.name);
+    
+    match recording_state.service.save_config(config.clone()).await {
+        Ok(()) => {
+            println!("✅ Recording config saved: {}", config.name);
+            Ok(format!("Config '{}' saved successfully", config.name))
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to save recording config: {}", e);
+            Err(format!("Failed to save config: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn get_recording_configs(
+    recording_state: State<'_, RecordingState>,
+) -> Result<Vec<RecordingConfig>, String> {
+    Ok(recording_state.service.get_configs().await)
+}
+
+#[tauri::command]
+async fn get_recording_history(
+    recording_state: State<'_, RecordingState>,
+) -> Result<Vec<RecordingHistoryEntry>, String> {
+    Ok(recording_state.service.get_history().await)
+}
+
+#[tauri::command]
+async fn create_default_recording_config() -> Result<RecordingConfig, String> {
+    Ok(RecordingConfig::default())
+}
+
+#[tauri::command]
+async fn select_recording_directory(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    use std::sync::{Arc, Mutex};
+    use tokio::time::Duration;
+    
+    println!("🔍 select_recording_directory command called");
+    
+    // Use a shared result to capture the callback result
+    let result: Arc<Mutex<Option<Option<String>>>> = Arc::new(Mutex::new(None));
+    let result_clone = result.clone();
+    
+    // Show directory picker dialog with callback
+    app.dialog().file().pick_folder(move |folder_path| {
+        let path_result = if let Some(path) = folder_path {
+            let path_str = path.to_string();
+            println!("📁 User selected directory: {}", path_str);
+            Some(path_str)
+        } else {
+            println!("📁 User cancelled directory selection");
+            None
+        };
+        
+        // Store the result
+        if let Ok(mut guard) = result_clone.lock() {
+            *guard = Some(path_result);
+        }
+    });
+    
+    // Wait for the dialog result with timeout
+    let timeout_duration = Duration::from_secs(30); // 30 second timeout
+    let start_time = std::time::Instant::now();
+    
+    loop {
+        if start_time.elapsed() > timeout_duration {
+            return Err("Dialog timeout".to_string());
+        }
+        
+        if let Ok(guard) = result.lock() {
+            if let Some(path_result) = guard.as_ref() {
+                return Ok(path_result.clone());
+            }
+        }
+        
+        // Small delay to avoid busy waiting
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }

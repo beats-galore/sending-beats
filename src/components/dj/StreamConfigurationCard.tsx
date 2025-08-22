@@ -1,7 +1,7 @@
 import { Card, Stack, Title, TextInput, Grid, Select, Group, Button } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { IconWifi, IconWifiOff } from '@tabler/icons-react';
-import { memo } from 'react';
+import { memo, useEffect, useState } from 'react';
 
 type StreamSettings = {
   bitrate: number;
@@ -24,6 +24,7 @@ type StreamConfigurationCardProps = {
   streamSettings: StreamSettings;
   isConnected: boolean;
   isConnecting: boolean;
+  availableBitrates?: number[];
   onConfigChange: (config: StreamConfig) => void;
   onSettingsChange: (settings: StreamSettings) => void;
   onConnect: () => void;
@@ -43,12 +44,19 @@ export const StreamConfigurationCard = memo<StreamConfigurationCardProps>(
     streamSettings,
     isConnected,
     isConnecting,
+    availableBitrates = [96, 128, 160, 192, 256, 320],
     onConfigChange,
     onSettingsChange,
     onConnect,
     onDisconnect,
   }) => {
     const { classes } = useStyles();
+    
+    // Generate bitrate options from available bitrates
+    const bitrateOptions = availableBitrates.map(bitrate => ({
+      value: bitrate.toString(),
+      label: `${bitrate} kbps`
+    }));
 
     return (
       <Card className={classes.configCard} padding="lg" withBorder>
@@ -93,14 +101,11 @@ export const StreamConfigurationCard = memo<StreamConfigurationCardProps>(
 
           <Select
             label="Bitrate (kbps)"
+            description="Restart streaming to apply changes"
             value={streamSettings.bitrate.toString()}
             onChange={(value) => onSettingsChange({ ...streamSettings, bitrate: Number(value) })}
-            data={[
-              { value: '64', label: '64 kbps' },
-              { value: '128', label: '128 kbps' },
-              { value: '192', label: '192 kbps' },
-              { value: '320', label: '320 kbps' },
-            ]}
+            data={bitrateOptions}
+            disabled={isConnected}
           />
 
           <Group grow>

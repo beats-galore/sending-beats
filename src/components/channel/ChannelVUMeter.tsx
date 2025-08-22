@@ -3,8 +3,8 @@ import { Text, Center, Box, Stack } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { memo, useMemo, useRef } from 'react';
 
-import { VUMeter } from '../ui';
 import { VU_METER_OPTIMIZATIONS } from '../../utils/performance-helpers';
+import { VUMeter } from '../ui';
 
 const useStyles = createStyles((theme) => ({
   vuContainer: {
@@ -50,9 +50,11 @@ type ChannelVUMeterProps = {
 export const ChannelVUMeter = memo<ChannelVUMeterProps>(
   ({ levels }) => {
     const { classes } = useStyles();
-    const previousLevelsRef = useRef<StereoChannelLevels & { 
-      meterElements?: React.ReactNode 
-    }>({
+    const previousLevelsRef = useRef<
+      StereoChannelLevels & {
+        meterElements?: React.ReactNode;
+      }
+    >({
       left: { peak: 0, rms: 0 },
       right: { peak: 0, rms: 0 },
       peak: 0,
@@ -62,10 +64,10 @@ export const ChannelVUMeter = memo<ChannelVUMeterProps>(
     // Check if levels have changed significantly enough to warrant re-render
     const levelsChanged = useMemo(() => {
       const prev = previousLevelsRef.current;
-      const changed = 
+      const changed =
         !VU_METER_OPTIMIZATIONS.levelsEqual(prev.left, levels.left) ||
         !VU_METER_OPTIMIZATIONS.levelsEqual(prev.right, levels.right);
-      
+
       if (changed) {
         previousLevelsRef.current = levels;
       }
@@ -114,9 +116,7 @@ export const ChannelVUMeter = memo<ChannelVUMeterProps>(
 
     return (
       <Center>
-        <div className={classes.vuContainer}>
-          {meterElements}
-        </div>
+        <div className={classes.vuContainer}>{meterElements}</div>
       </Center>
     );
   },

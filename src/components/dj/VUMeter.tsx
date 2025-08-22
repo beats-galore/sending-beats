@@ -1,6 +1,7 @@
 import { Box } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { memo, useMemo, useRef } from 'react';
+
 import { VU_METER_OPTIMIZATIONS } from '../../utils/performance-helpers';
 
 type VUMeterProps = {
@@ -31,68 +32,81 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export const VUMeter = memo<VUMeterProps>(({ level }) => {
-  const { classes } = useStyles();
-  const previousLevelRef = useRef<{ 
-    current: number; 
-    barElements?: React.ReactNode[] 
-  }>({ current: 0 });
-  
-  // Skip expensive render if level hasn't changed significantly
-  const levelChanged = useMemo(() => {
-    const threshold = VU_METER_OPTIMIZATIONS.RENDER_THRESHOLD * 255; // Scale threshold to 0-255 range
-    const changed = Math.abs(level - previousLevelRef.current.current) > threshold;
-    if (changed) {
-      previousLevelRef.current.current = level;
-    }
-    return changed;
-  }, [level]);
+export const VUMeter = memo<VUMeterProps>(
+  ({ level }) => {
+    const { classes } = useStyles();
+    const previousLevelRef = useRef<{
+      current: number;
+      barElements?: React.ReactNode[];
+    }>({ current: 0 });
 
-  const normalizedLevel = useMemo(() => Math.max(0, Math.min(1, level / 255)), [level]);
-  const barCount = 20;
-  const activeBars = useMemo(() => Math.floor(normalizedLevel * barCount), [normalizedLevel, barCount]);
+    // Skip expensive render if level hasn't changed significantly
+    const levelChanged = useMemo(() => {
+      const threshold = VU_METER_OPTIMIZATIONS.RENDER_THRESHOLD * 255; // Scale threshold to 0-255 range
+      const changed = Math.abs(level - previousLevelRef.current.current) > threshold;
+      if (changed) {
+        previousLevelRef.current.current = level;
+      }
+      return changed;
+    }, [level]);
 
-  const getBarColor = useMemo(() => (index: number, isActive: boolean) => {
-    if (!isActive) return '#495057';
+    const normalizedLevel = useMemo(() => Math.max(0, Math.min(1, level / 255)), [level]);
+    const barCount = 20;
+    const activeBars = useMemo(
+      () => Math.floor(normalizedLevel * barCount),
+      [normalizedLevel, barCount]
+    );
 
-    if (index > barCount * 0.8) return '#fa5252';
-    if (index > barCount * 0.6) return '#fd7e14';
-    return '#339af0';
-  }, [barCount]);
+    const getBarColor = useMemo(
+      () => (index: number, isActive: boolean) => {
+        if (!isActive) return '#495057';
 
-  const barHeight = useMemo(() => `${Math.max(10, normalizedLevel * 100)}%`, [normalizedLevel]);
+        if (index > barCount * 0.8) return '#fa5252';
+        if (index > barCount * 0.6) return '#fd7e14';
+        return '#339af0';
+      },
+      [barCount]
+    );
 
-  // Memoize bar elements to prevent unnecessary re-renders
-  const barElements = useMemo(() => {
-    if (!levelChanged && previousLevelRef.current.current > 0) {
-      return previousLevelRef.current.barElements || [];
-    }
+    const barHeight = useMemo(() => `${Math.max(10, normalizedLevel * 100)}%`, [normalizedLevel]);
 
-    const elements = Array.from({ length: barCount }, (_, i) => (
-      <Box
-        key={i}
-        className={`${classes.vuBar} ${i < activeBars ? classes.vuBarActive : ''}`}
-        style={{
-          height: barHeight,
-          backgroundColor: getBarColor(i, i < activeBars),
-        }}
-      />
-    ));
+    // Memoize bar elements to prevent unnecessary re-renders
+    const barElements = useMemo(() => {
+      if (!levelChanged && previousLevelRef.current.current > 0) {
+        return previousLevelRef.current.barElements || [];
+      }
 
-    // Cache the rendered elements
-    previousLevelRef.current.barElements = elements;
-    return elements;
-  }, [barCount, activeBars, barHeight, getBarColor, classes.vuBar, classes.vuBarActive, levelChanged]);
+      const elements = Array.from({ length: barCount }, (_, i) => (
+        <Box
+          key={i}
+          className={`${classes.vuBar} ${i < activeBars ? classes.vuBarActive : ''}`}
+          style={{
+            height: barHeight,
+            backgroundColor: getBarColor(i, i < activeBars),
+          }}
+        />
+      ));
 
-  return (
-    <Box className={classes.vuMeter}>
-      {barElements}
-    </Box>
-  );
-}, (prevProps, nextProps) => {
-  // Optimized comparison - only re-render if change is significant
-  const threshold = VU_METER_OPTIMIZATIONS.RENDER_THRESHOLD * 255;
-  return Math.abs(prevProps.level - nextProps.level) < threshold;
-});
+      // Cache the rendered elements
+      previousLevelRef.current.barElements = elements;
+      return elements;
+    }, [
+      barCount,
+      activeBars,
+      barHeight,
+      getBarColor,
+      classes.vuBar,
+      classes.vuBarActive,
+      levelChanged,
+    ]);
+
+    return <Box className={classes.vuMeter}>{barElements}</Box>;
+  },
+  (prevProps, nextProps) => {
+    // Optimized comparison - only re-render if change is significant
+    const threshold = VU_METER_OPTIMIZATIONS.RENDER_THRESHOLD * 255;
+    return Math.abs(prevProps.level - nextProps.level) < threshold;
+  }
+);
 
 VUMeter.displayName = 'VUMeter';
