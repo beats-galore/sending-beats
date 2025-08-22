@@ -1,10 +1,9 @@
 import { Card, Stack, Group, Title, Button, Badge, Text, Progress, Select, Switch, NumberInput, Tooltip, Alert, TextInput } from '@mantine/core';
-import { FileButton } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { IconCircleFilled, IconPlayerStop, IconSettings, IconFileMusic, IconAlertCircle, IconFolder } from '@tabler/icons-react';
 import { memo, useState, useCallback, useEffect } from 'react';
 import { useRecording, RecordingConfig, RecordingFormat } from '../../hooks/use-recording';
-import { open } from '@tauri-apps/api/dialog';
+import { invoke } from '@tauri-apps/api/core';
 
 type RecordingControlsCardProps = {
   disabled?: boolean;
@@ -186,13 +185,9 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
     
     const handleDirectorySelect = useCallback(async () => {
       try {
-        const selectedPath = await open({
-          directory: true,
-          multiple: false,
-          title: 'Select Recording Output Directory',
-        });
+        const selectedPath = await invoke<string | null>('select_recording_directory');
         
-        if (selectedPath && typeof selectedPath === 'string') {
+        if (selectedPath) {
           setQuickConfig(prev => ({
             ...prev,
             output_directory: selectedPath,
