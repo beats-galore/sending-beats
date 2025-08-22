@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use cpal::{Device, Host};
 use cpal::traits::{DeviceTrait, HostTrait};
 use std::collections::HashMap;
@@ -446,10 +446,12 @@ impl AudioDeviceManager {
             println!("4. CoreAudio routing configuration");
         }
         
-        let input_devices = self.host.input_devices()
-            .context("Failed to get input devices")?;
-        let output_devices = self.host.output_devices()
-            .context("Failed to get output devices")?;
+        // **CRASH PREVENTION**: Use safe enumeration for both input and output devices
+        println!("🛡️ Using crash-safe CPAL enumeration for input devices...");
+        let input_devices_result = self.safe_enumerate_cpal_devices(true).await;
+        
+        println!("🛡️ Using crash-safe CPAL enumeration for output devices...");
+        let output_devices_result = self.safe_enumerate_cpal_devices(false).await;
         
         let default_input = self.host.default_input_device();
         let default_output = self.host.default_output_device();
@@ -460,64 +462,77 @@ impl AudioDeviceManager {
         let mut devices = Vec::new();
         let mut devices_map = HashMap::new();
 
-        // Process input devices
-        for (_index, device) in input_devices.enumerate() {
-            let is_default = if let Some(ref default_device) = default_input {
-                device.name().unwrap_or_default() == default_device.name().unwrap_or_default()
-            } else {
-                false
-            };
-            
-            if let Ok(device_info) = self.get_device_info(&device, true, false, is_default) {
-                devices.push(device_info.clone());
-                devices_map.insert(device_info.id.clone(), device_info);
+        // Process input devices safely
+        match input_devices_result {
+            Ok(input_devices) => {
+                println!("✅ Safely found {} input devices", input_devices.len());
+                for (device, device_name) in input_devices {
+                    let is_default = if let Some(ref default_device) = default_input {
+                        device_name == default_device.name().unwrap_or_default()
+                    } else {
+                        false
+                    };
+                    
+                    if let Ok(device_info) = self.get_device_info(&device, true, false, is_default) {
+                        devices.push(device_info.clone());
+                        devices_map.insert(device_info.id.clone(), device_info);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("⚠️ Failed to safely enumerate input devices: {}", e);
+                eprintln!("   Continuing with output device enumeration...");
             }
         }
 
-        // Process output devices
-        println!("Processing output devices...");
-        let output_devices_vec: Vec<_> = output_devices.collect();
-        println!("Total output devices found: {}", output_devices_vec.len());
-        
-        for (_index, device) in output_devices_vec.into_iter().enumerate() {
-            let device_name = device.name().unwrap_or_else(|_| "Unknown Device".to_string());
-            println!("Found output device: {}", device_name);
-            
-            // Try to get more detailed device information
-            match device.supported_output_configs() {
-                Ok(configs) => {
-                    println!("  Supported configs:");
-                    for (i, config) in configs.enumerate() {
-                        if i < 3 { // Limit output to prevent spam
-                            println!("    - Sample rate: {}-{}, Channels: {}, Format: {:?}", 
-                                config.min_sample_rate().0, 
-                                config.max_sample_rate().0,
-                                config.channels(),
-                                config.sample_format()
-                            );
+        // Process output devices safely
+        match output_devices_result {
+            Ok(output_devices) => {
+                println!("✅ Safely found {} output devices", output_devices.len());
+                for (device, device_name) in output_devices {
+                    println!("Processing output device: {}", device_name);
+                    
+                    // Try to get more detailed device information
+                    match device.supported_output_configs() {
+                        Ok(configs) => {
+                            println!("  Supported configs:");
+                            for (i, config) in configs.enumerate() {
+                                if i < 3 { // Limit output to prevent spam
+                                    println!("    - Sample rate: {}-{}, Channels: {}, Format: {:?}", 
+                                        config.min_sample_rate().0, 
+                                        config.max_sample_rate().0,
+                                        config.channels(),
+                                        config.sample_format()
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            println!("  Failed to get configs: {}", e);
+                        }
+                    }
+                    
+                    let is_default = if let Some(ref default_device) = default_output {
+                        device_name == default_device.name().unwrap_or_default()
+                    } else {
+                        false
+                    };
+                    
+                    match self.get_device_info(&device, false, true, is_default) {
+                        Ok(device_info) => {
+                            println!("Successfully added output device: {} (ID: {})", device_info.name, device_info.id);
+                            devices.push(device_info.clone());
+                            devices_map.insert(device_info.id.clone(), device_info);
+                        }
+                        Err(e) => {
+                            println!("Failed to process output device '{}': {}", device_name, e);
                         }
                     }
                 }
-                Err(e) => {
-                    println!("  Failed to get configs: {}", e);
-                }
             }
-            
-            let is_default = if let Some(ref default_device) = default_output {
-                device.name().unwrap_or_default() == default_device.name().unwrap_or_default()
-            } else {
-                false
-            };
-            
-            match self.get_device_info(&device, false, true, is_default) {
-                Ok(device_info) => {
-                    println!("Successfully added output device: {} (ID: {})", device_info.name, device_info.id);
-                    devices.push(device_info.clone());
-                    devices_map.insert(device_info.id.clone(), device_info);
-                }
-                Err(e) => {
-                    println!("Failed to process output device '{}': {}", device_name, e);
-                }
+            Err(e) => {
+                eprintln!("⚠️ Failed to safely enumerate output devices: {}", e);
+                eprintln!("   This may prevent output device switching from working correctly.");
             }
         }
 
@@ -986,113 +1001,223 @@ impl AudioDeviceManager {
         Err(anyhow::anyhow!("CoreAudio not available on this platform"))
     }
 
-    /// Find actual cpal Device by device_id for real audio I/O
+    /// Find actual cpal Device by device_id for real audio I/O with crash prevention
     pub async fn find_cpal_device(&self, device_id: &str, is_input: bool) -> Result<Device> {
-        println!("Searching for cpal device: {} (input: {})", device_id, is_input);
+        println!("🔍 CPAL DEVICE SEARCH: Looking for {} device: {}", 
+            if is_input { "input" } else { "output" }, device_id);
         
         // First check if this is a known device from our cache
         let device_info = self.get_device(device_id).await;
         if let Some(info) = device_info {
-            println!("Found device info: {} -> {}", device_id, info.name);
+            println!("📋 CACHE HIT: Found device info: {} -> {}", device_id, info.name);
         }
         
-        // Get all available devices from cpal
-        if is_input {
-            let input_devices = self.host.input_devices()
-                .context("Failed to enumerate input devices")?;
+        // Use CPAL-safe device enumeration that prevents crashes
+        match self.safe_enumerate_cpal_devices(is_input).await {
+            Ok(devices) => {
+                println!("✅ SAFE ENUMERATION: Found {} {} devices", 
+                    devices.len(), if is_input { "input" } else { "output" });
                 
-            for device in input_devices {
-                let device_name = device.name().unwrap_or_else(|_| "Unknown".to_string());
-                let generated_id = format!("input_{}", 
-                    device_name.replace(" ", "_").replace("(", "").replace(")", "").to_lowercase());
-                
-                println!("Checking input device: '{}' -> '{}'", device_name, generated_id);
-                
-                if generated_id == device_id {
-                    println!("Found matching input device: {}", device_name);
-                    return Ok(device);
+                // Search through the safely enumerated devices
+                for (index, (device, device_name)) in devices.into_iter().enumerate() {
+                    let generated_id = format!("{}_{}", 
+                        if is_input { "input" } else { "output" },
+                        device_name.replace(" ", "_").replace("(", "").replace(")", "").to_lowercase());
+                    
+                    println!("🔍 DEVICE CHECK [{}]: '{}' -> '{}'", index, device_name, generated_id);
+                    
+                    if generated_id == device_id {
+                        println!("✅ DEVICE MATCH: Found {} device: {}", 
+                            if is_input { "input" } else { "output" }, device_name);
+                        return Ok(device);
+                    }
                 }
+                
+                // If exact match fails, try partial name matching
+                println!("🔄 FALLBACK: Trying partial name matching for '{}'", device_id);
+                return self.find_device_by_partial_match(device_id, is_input).await;
             }
-        } else {
-            let output_devices = self.host.output_devices()
-                .context("Failed to enumerate output devices")?;
+            Err(e) => {
+                eprintln!("❌ ENUMERATION FAILED: CPAL device enumeration crashed: {}", e);
+                eprintln!("   Device: {}, Input: {}", device_id, is_input);
+                eprintln!("   This indicates a deeper CPAL/CoreAudio issue");
                 
-            for device in output_devices {
-                let device_name = device.name().unwrap_or_else(|_| "Unknown".to_string());
-                let generated_id = format!("output_{}", 
-                    device_name.replace(" ", "_").replace("(", "").replace(")", "").to_lowercase());
-                
-                println!("Checking output device: '{}' -> '{}'", device_name, generated_id);
-                
-                if generated_id == device_id {
-                    println!("Found matching output device: {}", device_name);
-                    return Ok(device);
+                // Try system default as absolute fallback
+                if device_id.contains("default") {
+                    println!("🆘 LAST RESORT: Attempting system default device");
+                    return self.get_system_default_device(is_input).await;
                 }
+                
+                return Err(anyhow::anyhow!(
+                    "CPAL enumeration failure: Cannot access {} device '{}' due to system crash. Error: {}", 
+                    if is_input { "input" } else { "output" }, device_id, e
+                ));
             }
         }
+    }
+
+    /// Safely enumerate CPAL devices with crash prevention
+    async fn safe_enumerate_cpal_devices(&self, is_input: bool) -> Result<Vec<(Device, String)>> {
+        println!("🛡️  SAFE ENUMERATION: Starting crash-protected CPAL device enumeration");
         
-        // If not found by exact match, try to find by partial name match
-        println!("No exact match found, trying partial name matching...");
+        // Use std::panic::catch_unwind to prevent CPAL crashes from killing the app
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if is_input {
+                println!("🔍 SAFE ENUMERATION: Getting input devices iterator");
+                let input_devices = self.host.input_devices()?;
+                
+                println!("🔍 SAFE ENUMERATION: Starting device iteration with individual error handling");
+                let mut devices = Vec::new();
+                let mut device_count = 0;
+                
+                for device in input_devices {
+                    println!("🔍 SAFE ENUMERATION: Processing input device #{}", device_count);
+                    
+                    // Safely get device name with individual error handling
+                    match device.name() {
+                        Ok(name) => {
+                            println!("✅ SAFE ENUMERATION: Successfully got input device name: {}", name);
+                            devices.push((device, name));
+                        }
+                        Err(e) => {
+                            println!("⚠️  SAFE ENUMERATION: Skipping input device #{} due to name access error: {}", device_count, e);
+                            // Continue processing other devices instead of failing completely
+                        }
+                    }
+                    
+                    device_count += 1;
+                    
+                    // Safety limit to prevent infinite loops or excessive processing
+                    if device_count > 50 {
+                        println!("⚠️  SAFE ENUMERATION: Stopping after 50 input devices for safety");
+                        break;
+                    }
+                }
+                
+                println!("✅ SAFE ENUMERATION: Successfully processed {} input devices", devices.len());
+                Ok(devices)
+            } else {
+                println!("🔍 SAFE ENUMERATION: Getting output devices iterator");
+                let output_devices = self.host.output_devices()?;
+                
+                println!("🔍 SAFE ENUMERATION: Starting output device iteration");
+                let mut devices = Vec::new();
+                let mut device_count = 0;
+                
+                for device in output_devices {
+                    println!("🔍 SAFE ENUMERATION: Processing output device #{}", device_count);
+                    
+                    // Safely get device name with individual error handling
+                    match device.name() {
+                        Ok(name) => {
+                            println!("✅ SAFE ENUMERATION: Successfully got output device name: {}", name);
+                            devices.push((device, name));
+                        }
+                        Err(e) => {
+                            println!("⚠️  SAFE ENUMERATION: Skipping output device #{} due to name access error: {}", device_count, e);
+                            // Continue processing other devices instead of failing completely
+                        }
+                    }
+                    
+                    device_count += 1;
+                    
+                    // Safety limit to prevent infinite loops or excessive processing
+                    if device_count > 50 {
+                        println!("⚠️  SAFE ENUMERATION: Stopping after 50 output devices for safety");
+                        break;
+                    }
+                }
+                
+                println!("✅ SAFE ENUMERATION: Successfully processed {} output devices", devices.len());
+                Ok(devices)
+            }
+        }));
+        
+        match result {
+            Ok(device_result) => {
+                match device_result {
+                    Ok(devices) => {
+                        println!("🎉 SAFE ENUMERATION: Successfully enumerated {} {} devices without crash", 
+                            devices.len(), if is_input { "input" } else { "output" });
+                        Ok(devices)
+                    }
+                    Err(e) => {
+                        eprintln!("❌ SAFE ENUMERATION: CPAL enumeration failed: {}", e);
+                        Err(e)
+                    }
+                }
+            }
+            Err(panic_payload) => {
+                let panic_msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
+                    s.to_string()
+                } else if let Some(s) = panic_payload.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "Unknown panic".to_string()
+                };
+                
+                eprintln!("💥 PANIC CAUGHT: CPAL enumeration caused a panic: {}", panic_msg);
+                eprintln!("   This prevents the app from crashing but indicates a serious CPAL/CoreAudio issue");
+                
+                Err(anyhow::anyhow!("CPAL enumeration panic: {}", panic_msg))
+            }
+        }
+    }
+
+    /// Find device by partial name matching as fallback
+    async fn find_device_by_partial_match(&self, device_id: &str, is_input: bool) -> Result<Device> {
+        println!("🔄 PARTIAL MATCH: Attempting partial name matching for '{}'", device_id);
+        
         let target_name_parts: Vec<&str> = device_id.split('_').skip(1).collect(); // Skip "input" or "output" prefix
         
-        if is_input {
-            let input_devices = self.host.input_devices()
-                .context("Failed to enumerate input devices for partial match")?;
-                
-            for device in input_devices {
-                let device_name = device.name().unwrap_or_else(|_| "Unknown".to_string());
-                let name_lower = device_name.to_lowercase();
-                
-                // Check if device name contains any of the target name parts (must be at least 3 characters)
-                let matches = target_name_parts.iter().any(|&part| {
-                    !part.is_empty() && part.len() >= 3 && name_lower.contains(part)
-                });
-                
-                if matches {
-                    println!("Found partial match for input device: '{}' matches '{}'", device_name, device_id);
-                    return Ok(device);
+        // Use safe enumeration for partial matching too
+        match self.safe_enumerate_cpal_devices(is_input).await {
+            Ok(devices) => {
+                for (device, device_name) in devices {
+                    let name_lower = device_name.to_lowercase();
+                    
+                    // Check if device name contains any of the target name parts (must be at least 3 characters)
+                    let matches = target_name_parts.iter().any(|&part| {
+                        !part.is_empty() && part.len() >= 3 && name_lower.contains(part)
+                    });
+                    
+                    if matches {
+                        println!("✅ PARTIAL MATCH: Found {} device: '{}' matches '{}'", 
+                            if is_input { "input" } else { "output" }, device_name, device_id);
+                        return Ok(device);
+                    }
                 }
+                
+                // No partial match found, try system default
+                println!("🔄 FALLBACK: No partial match found, trying system default");
+                self.get_system_default_device(is_input).await
+            }
+            Err(e) => {
+                eprintln!("❌ PARTIAL MATCH: Safe enumeration failed for partial matching: {}", e);
+                // Try system default as last resort
+                self.get_system_default_device(is_input).await
+            }
+        }
+    }
+
+    /// Get system default device as absolute fallback
+    async fn get_system_default_device(&self, is_input: bool) -> Result<Device> {
+        println!("🆘 SYSTEM DEFAULT: Attempting to use system default {} device", 
+            if is_input { "input" } else { "output" });
+        
+        if is_input {
+            if let Some(default_device) = self.host.default_input_device() {
+                println!("✅ SYSTEM DEFAULT: Using system default input device");
+                return Ok(default_device);
             }
         } else {
-            let output_devices = self.host.output_devices()
-                .context("Failed to enumerate output devices for partial match")?;
-                
-            for device in output_devices {
-                let device_name = device.name().unwrap_or_else(|_| "Unknown".to_string());
-                let name_lower = device_name.to_lowercase();
-                
-                // Check if device name contains any of the target name parts (must be at least 3 characters)
-                let matches = target_name_parts.iter().any(|&part| {
-                    !part.is_empty() && part.len() >= 3 && name_lower.contains(part)
-                });
-                
-                if matches {
-                    println!("Found partial match for output device: '{}' matches '{}'", device_name, device_id);
-                    return Ok(device);
-                }
+            if let Some(default_device) = self.host.default_output_device() {
+                println!("✅ SYSTEM DEFAULT: Using system default output device");
+                return Ok(default_device);
             }
         }
         
-        // As a last resort, check if this is a request for system default
-        if device_id.contains("system_default") || device_id.contains("default") {
-            println!("Attempting to use system default device for: {}", device_id);
-            if is_input {
-                if let Some(default_device) = self.host.default_input_device() {
-                    println!("Using system default input device");
-                    return Ok(default_device);
-                }
-            } else {
-                if let Some(default_device) = self.host.default_output_device() {
-                    println!("Using system default output device");
-                    return Ok(default_device);
-                }
-            }
-        }
-        
-        // Device not found
-        println!("No device found for '{}' after all matching attempts", device_id);
-        
-        Err(anyhow::anyhow!("No suitable {} device found for ID: {}", 
-            if is_input { "input" } else { "output" }, device_id))
+        Err(anyhow::anyhow!("No system default {} device available", 
+            if is_input { "input" } else { "output" }))
     }
 }

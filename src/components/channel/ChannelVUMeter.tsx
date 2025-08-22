@@ -1,9 +1,10 @@
 // Channel-specific stereo VU meter component with separate L/R channels
 import { Text, Center, Box, Stack } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
-import { memo } from 'react';
+import { memo, useMemo, useRef } from 'react';
 
 import { VUMeter } from '../ui';
+import { VU_METER_OPTIMIZATIONS } from '../../utils/performance-helpers';
 
 const useStyles = createStyles((theme) => ({
   vuContainer: {
@@ -49,41 +50,81 @@ type ChannelVUMeterProps = {
 export const ChannelVUMeter = memo<ChannelVUMeterProps>(
   ({ levels }) => {
     const { classes } = useStyles();
+    const previousLevelsRef = useRef<StereoChannelLevels & { 
+      meterElements?: React.ReactNode 
+    }>({
+      left: { peak: 0, rms: 0 },
+      right: { peak: 0, rms: 0 },
+      peak: 0,
+      rms: 0,
+    });
+
+    // Check if levels have changed significantly enough to warrant re-render
+    const levelsChanged = useMemo(() => {
+      const prev = previousLevelsRef.current;
+      const changed = 
+        !VU_METER_OPTIMIZATIONS.levelsEqual(prev.left, levels.left) ||
+        !VU_METER_OPTIMIZATIONS.levelsEqual(prev.right, levels.right);
+      
+      if (changed) {
+        previousLevelsRef.current = levels;
+      }
+      return changed;
+    }, [levels]);
+
+    // Memoize the VU meter elements to prevent unnecessary re-renders
+    const meterElements = useMemo(() => {
+      if (!levelsChanged && previousLevelsRef.current.left.peak > 0) {
+        return previousLevelsRef.current.meterElements;
+      }
+
+      const elements = (
+        <Stack gap={1}>
+          {/* Left Channel */}
+          <div className={classes.meterRow}>
+            <Text className={classes.channelTag}>L</Text>
+            <VUMeter
+              peakLevel={levels.left.peak}
+              rmsLevel={levels.left.rms}
+              height={10}
+              width={250}
+              vertical={false}
+              showLabels={false} // Optimize by removing labels for channel meters
+            />
+          </div>
+          {/* Right Channel */}
+          <div className={classes.meterRow}>
+            <Text className={classes.channelTag}>R</Text>
+            <VUMeter
+              peakLevel={levels.right.peak}
+              rmsLevel={levels.right.rms}
+              height={10}
+              width={250}
+              vertical={false}
+              showLabels={false} // Optimize by removing labels for channel meters
+            />
+          </div>
+        </Stack>
+      );
+
+      // Cache the elements
+      previousLevelsRef.current.meterElements = elements;
+      return elements;
+    }, [levels, classes.meterRow, classes.channelTag, levelsChanged]);
 
     return (
       <Center>
         <div className={classes.vuContainer}>
-          <Stack gap={1}>
-            {/* Left Channel */}
-            <div className={classes.meterRow}>
-              <Text className={classes.channelTag}>L</Text>
-              <VUMeter
-                peakLevel={levels.left.peak}
-                rmsLevel={levels.left.rms}
-                height={10}
-                width={250}
-                vertical={false}
-              />
-            </div>
-            {/* Right Channel */}
-            <div className={classes.meterRow}>
-              <Text className={classes.channelTag}>R</Text>
-              <VUMeter
-                peakLevel={levels.right.peak}
-                rmsLevel={levels.right.rms}
-                height={10}
-                width={250}
-                vertical={false}
-              />
-            </div>
-          </Stack>
+          {meterElements}
         </div>
       </Center>
     );
   },
-  (prev, next) =>
-    prev.levels.left.peak === next.levels.left.peak &&
-    prev.levels.left.rms === next.levels.left.rms &&
-    prev.levels.right.peak === next.levels.right.peak &&
-    prev.levels.right.rms === next.levels.right.rms
+  (prev, next) => {
+    // Use optimized comparison with threshold
+    return (
+      VU_METER_OPTIMIZATIONS.levelsEqual(prev.levels.left, next.levels.left) &&
+      VU_METER_OPTIMIZATIONS.levelsEqual(prev.levels.right, next.levels.right)
+    );
+  }
 );

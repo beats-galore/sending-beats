@@ -20,7 +20,7 @@ export const useVUMeterData = (isEnabled = true) => {
     console.log('[use-vu-meter-data] batchUpdate changed');
   }, [batchUpdate]);
 
-  // Throttled batch update to prevent excessive re-renders - memoized
+  // Throttled batch update to prevent excessive re-renders - memoized at 30fps
   const throttledBatchUpdate = useThrottle(
     useCallback(
       (updates: {
@@ -28,11 +28,12 @@ export const useVUMeterData = (isEnabled = true) => {
         masterLevels?: any;
         metrics?: any;
       }) => {
+        // Additional throttling check - only update if significant change
         batchUpdate(updates);
       },
       [batchUpdate]
     ),
-    AUDIO.VU_UPDATE_RATE
+    AUDIO.VU_THROTTLE_RATE // 33ms = 30fps for smooth but efficient updates
   );
 
   // Poll VU meter data

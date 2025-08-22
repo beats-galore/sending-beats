@@ -1,10 +1,8 @@
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool, Row};
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// VU meter level data for real-time buffering
 #[derive(Debug, Clone, Serialize, Deserialize)]

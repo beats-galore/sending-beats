@@ -1,5 +1,7 @@
 pub mod streaming;
 pub mod audio;
+pub mod icecast_source;
+pub mod streaming_service;
 
 use streaming::{StreamConfig, StreamManager, StreamMetadata, StreamStatus};
 // Re-export audio types for testing and external use
@@ -7,11 +9,14 @@ pub use audio::{
     AudioDeviceManager, VirtualMixer, MixerConfig, AudioDeviceInfo, AudioChannel, 
     AudioMetrics, MixerCommand, AudioConfigFactory, EQBand, ThreeBandEqualizer, 
     Compressor, Limiter, PeakDetector, RmsDetector, AudioDatabase, AudioEventBus,
-    VULevelData, MasterLevelData, ChannelConfig, OutputRouteConfig
+    VULevelData, MasterLevelData, ChannelConfig, OutputRouteConfig, DeviceMonitorStats,
+    initialize_device_monitoring, get_device_monitoring_stats as get_monitoring_stats_impl, 
+    stop_device_monitoring as stop_monitoring_impl
 };
 use std::sync::{Arc, Mutex};
 use tauri::State;
 use tokio::sync::Mutex as AsyncMutex;
+use tracing::error;
 
 // Global state management
 struct StreamState(Mutex<Option<StreamManager>>);
@@ -194,16 +199,35 @@ async fn create_mixer(
     audio_state: State<'_, AudioState>,
     config: MixerConfig,
 ) -> Result<(), String> {
-    // Create and automatically start the mixer (always-running approach)
-    let mut mixer = VirtualMixer::new(config)
-        .await
-        .map_err(|e| e.to_string())?;
+    // **CRASH FIX**: Add comprehensive error handling for mixer creation
+    println!("🎛️ Creating mixer with {} channels...", config.channels.len());
     
-    // Automatically start the mixer - no separate start/stop needed
-    mixer.start().await.map_err(|e| e.to_string())?;
-    println!("🎛️ Mixer created and automatically started (always-running mode)");
+    // Create the mixer with enhanced error handling
+    let mut mixer = match VirtualMixer::new(config).await {
+        Ok(mixer) => {
+            println!("✅ Mixer structure created successfully");
+            mixer
+        }
+        Err(e) => {
+            error!("Failed to create mixer: {}", e);
+            return Err(format!("Failed to create mixer: {}", e));
+        }
+    };
     
+    // **CRASH FIX**: Start the mixer with better error handling
+    match mixer.start().await {
+        Ok(()) => {
+            println!("✅ Mixer started successfully (always-running mode)");
+        }
+        Err(e) => {
+            error!("Failed to start mixer: {}", e);
+            return Err(format!("Failed to start mixer: {}", e));
+        }
+    }
+    
+    // Store the initialized mixer
     *audio_state.mixer.lock().await = Some(mixer);
+    println!("🎛️ Mixer created, started, and stored successfully");
     Ok(())
 }
 
@@ -354,20 +378,46 @@ async fn safe_switch_input_device(
     old_device_id: Option<String>,
     new_device_id: String,
 ) -> Result<(), String> {
+    // **CRASH FIX**: Validate input device ID
+    if new_device_id.trim().is_empty() {
+        return Err("Device ID cannot be empty".to_string());
+    }
+    if new_device_id.len() > 256 {
+        return Err("Device ID too long".to_string());
+    }
+    
     let mixer_guard = audio_state.mixer.lock().await;
     if let Some(ref mixer) = *mixer_guard {
+        println!("🔄 Switching input device from {:?} to {}", old_device_id, new_device_id);
+        
         // Remove old device if specified
         if let Some(old_id) = old_device_id {
-            if let Err(e) = mixer.remove_input_stream(&old_id).await {
-                eprintln!("Warning: Failed to remove old input device {}: {}", old_id, e);
-                // Continue anyway - don't fail the entire operation
+            if !old_id.trim().is_empty() {
+                println!("🗑️ Removing old input device: {}", old_id);
+                if let Err(e) = mixer.remove_input_stream(&old_id).await {
+                    eprintln!("Warning: Failed to remove old input device {}: {}", old_id, e);
+                    // Continue anyway - don't fail the entire operation
+                }
+                // **CRASH FIX**: Add delay to allow cleanup
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             }
         }
         
-        // Add new device
-        mixer.add_input_stream(&new_device_id).await.map_err(|e| e.to_string())
+        // **CRASH FIX**: Add new device with better error handling
+        println!("➕ Adding new input device: {}", new_device_id);
+        match mixer.add_input_stream(&new_device_id).await {
+            Ok(()) => {
+                println!("✅ Successfully switched input device to: {}", new_device_id);
+                Ok(())
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to add input stream for {}: {}", new_device_id, e);
+                Err(format!("Failed to add input device: {}", e))
+            }
+        }
     } else {
-        Err("No mixer created".to_string())
+        eprintln!("❌ Cannot switch input device: No mixer has been created yet");
+        Err("No mixer created - please create mixer first".to_string())
     }
 }
 
@@ -376,11 +426,32 @@ async fn safe_switch_output_device(
     audio_state: State<'_, AudioState>,
     new_device_id: String,
 ) -> Result<(), String> {
+    // **CRASH FIX**: Validate output device ID
+    if new_device_id.trim().is_empty() {
+        return Err("Device ID cannot be empty".to_string());
+    }
+    if new_device_id.len() > 256 {
+        return Err("Device ID too long".to_string());
+    }
+    
     let mixer_guard = audio_state.mixer.lock().await;
     if let Some(ref mixer) = *mixer_guard {
-        mixer.set_output_stream(&new_device_id).await.map_err(|e| e.to_string())
+        println!("🔊 Switching output device to: {}", new_device_id);
+        
+        // **CRASH FIX**: Better error handling and logging
+        match mixer.set_output_stream(&new_device_id).await {
+            Ok(()) => {
+                println!("✅ Successfully switched output device to: {}", new_device_id);
+                Ok(())
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to set output stream for {}: {}", new_device_id, e);
+                Err(format!("Failed to set output device: {}", e))
+            }
+        }
     } else {
-        Err("No mixer created".to_string())
+        eprintln!("❌ Cannot switch output device: No mixer has been created yet");
+        Err("No mixer created - please create mixer first".to_string())
     }
 }
 
@@ -821,14 +892,30 @@ async fn add_input_stream(
     audio_state: State<'_, AudioState>,
     device_id: String,
 ) -> Result<(), String> {
+    // **CRASH FIX**: Validate device ID
+    if device_id.trim().is_empty() {
+        return Err("Device ID cannot be empty".to_string());
+    }
+    if device_id.len() > 256 {
+        return Err("Device ID too long".to_string());
+    }
+    
     let mixer_guard = audio_state.mixer.lock().await;
     if let Some(ref mixer) = *mixer_guard {
-        // Use enhanced health-checked version
-        mixer.add_input_stream_safe(&device_id).await.map_err(|e| e.to_string())?;
+        // **CRASH FIX**: Use basic add_input_stream for better compatibility
+        match mixer.add_input_stream(&device_id).await {
+            Ok(()) => {
+                println!("✅ Successfully added input stream: {}", device_id);
+                Ok(())
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to add input stream for {}: {}", device_id, e);
+                Err(format!("Failed to add input stream: {}", e))
+            }
+        }
     } else {
-        return Err("No mixer created".to_string());
+        Err("No mixer created".to_string())
     }
-    Ok(())
 }
 
 #[tauri::command]
@@ -850,13 +937,66 @@ async fn set_output_stream(
     audio_state: State<'_, AudioState>,
     device_id: String,
 ) -> Result<(), String> {
+    // **CRASH FIX**: Validate device ID
+    if device_id.trim().is_empty() {
+        return Err("Device ID cannot be empty".to_string());
+    }
+    if device_id.len() > 256 {
+        return Err("Device ID too long".to_string());
+    }
+    
     let mixer_guard = audio_state.mixer.lock().await;
     if let Some(ref mixer) = *mixer_guard {
-        mixer.set_output_stream(&device_id).await.map_err(|e| e.to_string())?;
+        match mixer.set_output_stream(&device_id).await {
+            Ok(()) => {
+                println!("✅ Successfully set output stream: {}", device_id);
+                Ok(())
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to set output stream for {}: {}", device_id, e);
+                Err(format!("Failed to set output stream: {}", e))
+            }
+        }
     } else {
-        return Err("No mixer created".to_string());
+        Err("No mixer created".to_string())
     }
-    Ok(())
+}
+
+// Device monitoring commands
+#[tauri::command]
+async fn start_device_monitoring(
+    audio_state: State<'_, AudioState>,
+) -> Result<String, String> {
+    let mixer_guard = audio_state.mixer.lock().await;
+    
+    if mixer_guard.is_some() {
+        // For now, just return success. The actual device monitoring implementation
+        // needs refactoring to work with the app's mixer storage pattern.
+        // This is a placeholder until we can properly integrate it.
+        println!("✅ Device monitoring started (placeholder implementation)");
+        Ok("Device monitoring started successfully (placeholder)".to_string())
+    } else {
+        Err("No mixer created - cannot start device monitoring".to_string())
+    }
+}
+
+#[tauri::command]
+async fn stop_device_monitoring() -> Result<String, String> {
+    match stop_monitoring_impl().await {
+        Ok(()) => {
+            println!("✅ Device monitoring stopped");
+            Ok("Device monitoring stopped successfully".to_string())
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to stop device monitoring: {}", e);
+            Err(format!("Failed to stop device monitoring: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn get_device_monitoring_stats() -> Result<Option<DeviceMonitorStats>, String> {
+    Ok(get_monitoring_stats_impl().await)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -954,8 +1094,146 @@ pub fn run() {
             safe_switch_input_device,
             safe_switch_output_device,
             set_audio_debug_enabled,
-            get_audio_debug_enabled
+            get_audio_debug_enabled,
+            initialize_icecast_streaming,
+            start_icecast_streaming,
+            stop_icecast_streaming,
+            update_icecast_metadata,
+            get_icecast_streaming_status,
+            start_device_monitoring,
+            stop_device_monitoring,
+            get_device_monitoring_stats
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+// ================================================================================================
+// ENHANCED ICECAST STREAMING COMMANDS  
+// ================================================================================================
+
+#[tauri::command]
+async fn initialize_icecast_streaming(
+    server_host: String,
+    server_port: u16,
+    mount_point: String,
+    password: String,
+    stream_name: String,
+    bitrate: u32,
+    state: State<'_, AudioState>
+) -> Result<String, String> {
+    use crate::streaming_service::{initialize_streaming, connect_streaming_to_mixer, StreamingServiceConfig};
+    use crate::icecast_source::{AudioFormat, AudioCodec};
+    
+    println!("🔧 Initializing Icecast streaming: {}:{}{}", server_host, server_port, mount_point);
+    
+    // Create streaming configuration
+    let config = StreamingServiceConfig {
+        server_host: server_host.clone(),
+        server_port,
+        mount_point: mount_point.clone(),
+        password,
+        stream_name,
+        stream_description: "Live radio stream from Sendin Beats".to_string(),
+        stream_genre: "Electronic".to_string(),
+        stream_url: "https://sendinbeats.com".to_string(),
+        is_public: true,
+        audio_format: AudioFormat {
+            sample_rate: 48000,
+            channels: 2,
+            bitrate,
+            codec: AudioCodec::Mp3,
+        },
+        auto_reconnect: true,
+        max_reconnect_attempts: 5,
+        reconnect_delay_ms: 3000,
+    };
+    
+    // Initialize streaming service
+    if let Err(e) = initialize_streaming(config).await {
+        eprintln!("❌ Failed to initialize streaming service: {}", e);
+        return Err(format!("Failed to initialize streaming: {}", e));
+    }
+    
+    // Connect to mixer if available
+    if let Some(mixer_ref) = &*state.mixer.lock().await {
+        if let Err(e) = connect_streaming_to_mixer(mixer_ref).await {
+            eprintln!("❌ Failed to connect streaming to mixer: {}", e);
+            return Err(format!("Failed to connect to mixer: {}", e));
+        }
+        println!("✅ Streaming service connected to mixer");
+    } else {
+        println!("⚠️ No mixer available - streaming initialized but not connected");
+    }
+    
+    Ok(format!("Icecast streaming initialized: {}:{}{}", server_host, server_port, mount_point))
+}
+
+#[tauri::command]
+async fn start_icecast_streaming() -> Result<String, String> {
+    use crate::streaming_service::start_streaming;
+    
+    println!("🎯 Starting Icecast streaming...");
+    
+    match start_streaming().await {
+        Ok(()) => {
+            println!("✅ Icecast streaming started successfully");
+            Ok("Streaming started successfully".to_string())
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to start streaming: {}", e);
+            Err(format!("Failed to start streaming: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn stop_icecast_streaming() -> Result<String, String> {
+    use crate::streaming_service::stop_streaming;
+    
+    println!("🛑 Stopping Icecast streaming...");
+    
+    match stop_streaming().await {
+        Ok(()) => {
+            println!("✅ Icecast streaming stopped successfully");
+            Ok("Streaming stopped successfully".to_string())
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to stop streaming: {}", e);
+            Err(format!("Failed to stop streaming: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn update_icecast_metadata(title: String, artist: String) -> Result<String, String> {
+    use crate::streaming_service::update_stream_metadata;
+    
+    println!("📝 Updating stream metadata: {} - {}", artist, title);
+    
+    match update_stream_metadata(title.clone(), artist.clone()).await {
+        Ok(()) => {
+            println!("✅ Stream metadata updated successfully");
+            Ok(format!("Metadata updated: {} - {}", artist, title))
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to update metadata: {}", e);
+            Err(format!("Failed to update metadata: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn get_icecast_streaming_status() -> Result<serde_json::Value, String> {
+    use crate::streaming_service::get_streaming_status;
+    
+    let status = get_streaming_status().await;
+    
+    match serde_json::to_value(&status) {
+        Ok(json_status) => Ok(json_status),
+        Err(e) => {
+            eprintln!("❌ Failed to serialize streaming status: {}", e);
+            Err(format!("Failed to get status: {}", e))
+        }
+    }
 }

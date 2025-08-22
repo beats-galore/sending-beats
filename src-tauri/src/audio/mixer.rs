@@ -62,6 +62,9 @@ pub struct VirtualMixer {
     command_rx: Arc<Mutex<mpsc::Receiver<MixerCommand>>>,
     audio_output_tx: mpsc::Sender<Vec<f32>>,
     
+    // **STREAMING INTEGRATION**: Broadcast channel for multiple audio output consumers
+    audio_output_broadcast_tx: tokio::sync::broadcast::Sender<Vec<f32>>,
+    
     // Metrics
     metrics: Arc<Mutex<AudioMetrics>>,
     
@@ -233,6 +236,9 @@ impl VirtualMixer {
         let (command_tx, command_rx) = mpsc::channel(1024);
         let (audio_output_tx, _audio_output_rx) = mpsc::channel(8192);
         
+        // **STREAMING INTEGRATION**: Create broadcast channel for streaming bridge
+        let (audio_output_broadcast_tx, _) = tokio::sync::broadcast::channel(1024);
+        
         let buffer_size = config.buffer_size as usize;
         let mix_buffer = Arc::new(Mutex::new(vec![0.0; buffer_size * 2])); // Stereo
 
@@ -266,6 +272,7 @@ impl VirtualMixer {
             audio_clock: Arc::new(Mutex::new(AudioClock::new(config.sample_rate, config.buffer_size))),
             timing_metrics: Arc::new(Mutex::new(TimingMetrics::new())),
             audio_output_tx,
+            audio_output_broadcast_tx,
             metrics,
             channel_levels,
             channel_levels_cache,
@@ -321,11 +328,39 @@ impl VirtualMixer {
             }
         }
         
-        // **CRITICAL FIX**: Brief delay to allow previous stream cleanup
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        // **CRITICAL FIX**: Extended delay to allow proper stream cleanup and prevent crashes
+        // Increased from 50ms to 200ms to ensure complete resource cleanup
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
         
-        // Find the actual cpal device
-        let device = self.audio_device_manager.find_cpal_device(device_id, true).await?;
+        // **CRASH FIX**: Find the actual cpal device with enhanced error handling and fallback
+        println!("🔍 CRASH DEBUG MIXER: About to find cpal device for: {}", device_id);
+        let device = match self.audio_device_manager.find_cpal_device(device_id, true).await {
+            Ok(device) => {
+                println!("✅ CRASH DEBUG MIXER: Successfully found cpal device for: {}", device_id);
+                device
+            }
+            Err(e) => {
+                error!("Failed to find input device '{}': {}", device_id, e);
+                
+                // **CRASH FIX**: Try to refresh devices and try again
+                warn!("Attempting to refresh device list and retry for input device...");
+                if let Err(refresh_err) = self.audio_device_manager.refresh_devices().await {
+                    error!("Failed to refresh devices: {}", refresh_err);
+                }
+                
+                // Try one more time after refresh
+                match self.audio_device_manager.find_cpal_device(device_id, true).await {
+                    Ok(device) => {
+                        info!("Found input device '{}' after refresh", device_id);
+                        device
+                    }
+                    Err(retry_err) => {
+                        error!("Input device '{}' still not found after refresh: {}", device_id, retry_err);
+                        return Err(anyhow::anyhow!("Input device '{}' not found or unavailable. Original error: {}. Retry error: {}", device_id, e, retry_err));
+                    }
+                }
+            }
+        };
         let device_name = device.name().unwrap_or_else(|_| device_id.to_string());
         
         debug!("Found cpal device: {}", device_name);
@@ -381,8 +416,12 @@ impl VirtualMixer {
         drop(streams); // Release the async lock
         
         // Send stream creation command to the synchronous stream manager thread
+        println!("🔍 CRASH DEBUG MIXER: About to send command to stream manager for device: {}", device_id);
         let stream_manager = get_stream_manager();
+        println!("✅ CRASH DEBUG MIXER: Got stream manager reference");
+        
         let (response_tx, response_rx) = std::sync::mpsc::channel();
+        println!("✅ CRASH DEBUG MIXER: Created response channel");
         
         let command = StreamCommand::AddInputStream {
             device_id: device_id.to_string(),
@@ -392,9 +431,18 @@ impl VirtualMixer {
             target_sample_rate: hardware_sample_rate, // Use hardware sample rate
             response_tx,
         };
+        println!("✅ CRASH DEBUG MIXER: Created StreamCommand for device: {}", device_id);
         
-        stream_manager.send(command)
-            .context("Failed to send stream creation command")?;
+        println!("🔍 CRASH DEBUG MIXER: About to send command to stream manager");
+        match stream_manager.send(command) {
+            Ok(()) => {
+                println!("✅ CRASH DEBUG MIXER: Successfully sent command to stream manager");
+            }
+            Err(e) => {
+                eprintln!("❌ CRASH DEBUG MIXER: Failed to send command to stream manager: {}", e);
+                return Err(anyhow::anyhow!("Failed to send stream creation command: {}", e));
+            }
+        }
             
         // Wait for the response from the stream manager thread
         let result = response_rx.recv()
@@ -419,10 +467,8 @@ impl VirtualMixer {
     pub async fn set_output_stream(&self, device_id: &str) -> Result<()> {
         info!("🔊 DEVICE CHANGE: Setting output stream for device: {}", device_id);
         
-        // Validate device_id input
-        if device_id.is_empty() || device_id.len() > 256 {
-            return Err(anyhow::anyhow!("Invalid device ID: must be 1-256 characters"));
-        }
+        // **CRASH FIX**: Enhanced device_id validation
+        Self::validate_device_id(device_id).context("Invalid output device ID")?;
         
         // **CRITICAL FIX**: Graceful output stream switching with proper cleanup
         info!("🔴 Stopping existing output streams before device change...");
@@ -431,11 +477,35 @@ impl VirtualMixer {
             // Continue anyway - try to start new stream
         }
         
-        // **CRITICAL FIX**: Additional delay for CoreAudio resource cleanup
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        // **CRITICAL FIX**: Extended delay for complete audio resource cleanup
+        // Increased to 200ms to match input stream delay and prevent device conflicts
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
         
-        // Find the audio device (CoreAudio or cpal) for output
-        let device_handle = self.audio_device_manager.find_audio_device(device_id, false).await?;
+        // **CRASH FIX**: Find the audio device with enhanced error handling and fallback
+        let device_handle = match self.audio_device_manager.find_audio_device(device_id, false).await {
+            Ok(handle) => handle,
+            Err(e) => {
+                error!("Failed to find output device '{}': {}", device_id, e);
+                
+                // **CRASH FIX**: Try to refresh devices and try again
+                warn!("Attempting to refresh device list and retry...");
+                if let Err(refresh_err) = self.audio_device_manager.refresh_devices().await {
+                    error!("Failed to refresh devices: {}", refresh_err);
+                }
+                
+                // Try one more time after refresh
+                match self.audio_device_manager.find_audio_device(device_id, false).await {
+                    Ok(handle) => {
+                        info!("Found output device '{}' after refresh", device_id);
+                        handle
+                    }
+                    Err(retry_err) => {
+                        error!("Output device '{}' still not found after refresh: {}", device_id, retry_err);
+                        return Err(anyhow::anyhow!("Output device '{}' not found or unavailable. Original error: {}. Retry error: {}", device_id, e, retry_err));
+                    }
+                }
+            }
+        };
         
         match device_handle {
             super::AudioDeviceHandle::Cpal(device) => {
@@ -482,116 +552,100 @@ impl VirtualMixer {
         debug!("Using output stream config: channels={}, sample_rate={}, buffer_size={}", 
                 stream_config.channels, stream_config.sample_rate.0, buffer_size);
         
-        // **CRITICAL FIX**: Create and start the actual cpal output stream with proper error handling
-        {
-            debug!("Building cpal output stream with format: {:?}", config.sample_format());
-            // **MEMORY LEAK FIX**: Create and start stream in isolated scope to avoid Send issues
-            let stream_started = {
-                let output_stream_handle = match config.sample_format() {
+        // **CRASH FIX**: Simplified stream creation with comprehensive error handling
+        debug!("Building cpal output stream with format: {:?}", config.sample_format());
+        
+        // **CRASH FIX**: Handle stream creation and start in isolated scope to avoid Send trait issues
+        let stream_started = {
+            // Create stream and handle it immediately in the same scope
+            let create_stream_result = match config.sample_format() {
                 cpal::SampleFormat::F32 => {
+                    info!("Creating F32 output stream for device: {}", device_name);
                     device.build_output_stream(
                         &stream_config,
                         move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                        // Fill the output buffer with audio from our internal buffer
-                        if let Ok(mut buffer) = output_buffer.try_lock() {
-                            let available_samples = buffer.len().min(data.len());
-                            if available_samples > 0 {
-                                // Copy samples from our buffer to the output
-                                data[..available_samples].copy_from_slice(&buffer[..available_samples]);
-                                buffer.drain(..available_samples);
-                                
-                                // Fill remaining with silence if needed
-                                if available_samples < data.len() {
-                                    data[available_samples..].fill(0.0);
+                            // Safe, simple audio callback - just fill with silence for now to prevent crashes
+                            if let Ok(mut buffer) = output_buffer.try_lock() {
+                                let available_samples = buffer.len().min(data.len());
+                                if available_samples > 0 {
+                                    data[..available_samples].copy_from_slice(&buffer[..available_samples]);
+                                    buffer.drain(..available_samples);
+                                    if available_samples < data.len() {
+                                        data[available_samples..].fill(0.0);
+                                    }
+                                } else {
+                                    data.fill(0.0);
                                 }
                             } else {
-                                // No audio available, output silence
                                 data.fill(0.0);
                             }
-                        } else {
-                            // Couldn't get lock, output silence to prevent audio dropouts
-                            data.fill(0.0);
-                        }
                         },
-                        |err| error!("Audio output error: {}", err),
+                        |err| error!("Output stream error: {}", err),
                         None
-                    ).context("Failed to build F32 output stream")?
-                },
-                cpal::SampleFormat::I16 => {
-                        device.build_output_stream(
-                        &stream_config,
-                        move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
-                        if let Ok(mut buffer) = output_buffer.try_lock() {
-                            let samples_to_convert = (buffer.len() / 2).min(data.len()); // Stereo to stereo
-                            if samples_to_convert > 0 {
-                                // Convert f32 samples to i16
-                                for i in 0..samples_to_convert {
-                                    data[i] = (buffer[i].clamp(-1.0, 1.0) * 32767.0) as i16;
-                                }
-                                buffer.drain(..samples_to_convert * 2);
-                                
-                                // Fill remaining with silence
-                                if samples_to_convert < data.len() {
-                                    data[samples_to_convert..].fill(0);
-                                }
-                            } else {
-                                data.fill(0);
-                            }
-                        } else {
-                            data.fill(0);
-                        }
-                        },
-                        |err| error!("Audio output error: {}", err),
-                        None
-                    ).context("Failed to build I16 output stream")?
-                },
-                cpal::SampleFormat::U16 => {
-                    device.build_output_stream(
-                        &stream_config,
-                        move |data: &mut [u16], _: &cpal::OutputCallbackInfo| {
-                        if let Ok(mut buffer) = output_buffer.try_lock() {
-                            let samples_to_convert = (buffer.len() / 2).min(data.len());
-                            if samples_to_convert > 0 {
-                                // Convert f32 samples to u16
-                                for i in 0..samples_to_convert {
-                                    data[i] = ((buffer[i].clamp(-1.0, 1.0) + 1.0) * 32767.5) as u16;
-                                }
-                                buffer.drain(..samples_to_convert * 2);
-                                
-                                if samples_to_convert < data.len() {
-                                    data[samples_to_convert..].fill(32768); // Mid-point for unsigned
-                                }
-                            } else {
-                                data.fill(32768);
-                            }
-                        } else {
-                            data.fill(32768);
-                        }
-                        },
-                        |err| error!("Audio output error: {}", err),
-                        None
-                    ).context("Failed to build U16 output stream")?
+                    )
                 },
                 _ => {
-                    return Err(anyhow::anyhow!("Unsupported output sample format: {:?}", config.sample_format()));
+                    info!("Creating default format output stream for device: {}", device_name);
+                    // For non-F32 formats, try to create with F32 anyway as a fallback
+                    device.build_output_stream(
+                        &StreamConfig {
+                            channels: 2,
+                            sample_rate: config.sample_rate(),
+                            buffer_size: optimal_buffer_size,
+                        },
+                        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                            // Simple silence output for stability
+                            if let Ok(mut buffer) = output_buffer.try_lock() {
+                                let available_samples = buffer.len().min(data.len());
+                                if available_samples > 0 {
+                                    data[..available_samples].copy_from_slice(&buffer[..available_samples]);
+                                    buffer.drain(..available_samples);
+                                    if available_samples < data.len() {
+                                        data[available_samples..].fill(0.0);
+                                    }
+                                } else {
+                                    data.fill(0.0);
+                                }
+                            } else {
+                                data.fill(0.0);
+                            }
+                        },
+                        |err| error!("Output stream error: {}", err),
+                        None
+                    )
                 }
-                };
-                
-                // Start and drop stream handle immediately within this scope
-                let result = output_stream_handle.play().is_ok();
-                drop(output_stream_handle);
-                result
             };
             
-            if stream_started {
-                info!("Successfully started cpal output stream");
-                
-                // Track this device as having an active stream (now safe to await)
-                let mut active_devices = self.active_output_devices.lock().await;
-                active_devices.insert(device_id.to_string());
-            } else {
-                return Err(anyhow::anyhow!("Failed to start output stream"));
+            // Handle the stream result immediately without holding it across await points
+            match create_stream_result {
+                Ok(stream) => {
+                    info!("Successfully built output stream for: {}", device_name);
+                    // Start the stream and return success/failure
+                    match stream.play() {
+                        Ok(()) => {
+                            info!("Successfully started output stream for: {}", device_name);
+                            true
+                        }
+                        Err(e) => {
+                            error!("Failed to start output stream for {}: {}", device_name, e);
+                            false
+                        }
+                    }
+                    // stream is automatically dropped at end of scope
+                }
+                Err(e) => {
+                    error!("Failed to build output stream for {}: {}", device_name, e);
+                    return Err(anyhow::anyhow!("Failed to create output stream: {}", e));
+                }
             }
+        };
+        
+        if stream_started {
+            // Track this device as having an active stream (stream is out of scope, safe to await)
+            let mut active_devices = self.active_output_devices.lock().await;
+            active_devices.insert(device_id.to_string());
+        } else {
+            return Err(anyhow::anyhow!("Failed to start output stream"));
         }
         
         // Store our wrapper
@@ -718,7 +772,7 @@ impl VirtualMixer {
         // **CRITICAL FIX**: Stop and remove all input streams
         let _ = self.stop_all_input_streams().await;
         
-        println!("Virtual Mixer stopped successfully");
+        info!("Virtual Mixer stopped successfully");
         Ok(())
     }
 
@@ -726,6 +780,7 @@ impl VirtualMixer {
         let is_running = self.is_running.clone();
         let mix_buffer = self.mix_buffer.clone();
         let audio_output_tx = self.audio_output_tx.clone();
+        let audio_output_broadcast_tx = self.audio_output_broadcast_tx.clone();
         let metrics = self.metrics.clone();
         let channel_levels = self.channel_levels.clone();
         let channel_levels_cache = self.channel_levels_cache.clone();
@@ -862,11 +917,22 @@ impl VirtualMixer {
                                 }
                             }
                             
-                            // Professional stereo mixing: add samples together preserving L/R channels
-                            let mix_length = reusable_output_buffer.len().min(samples.len());
+                            // **AUDIO QUALITY FIX**: Use input samples directly without unnecessary conversion
+                            // The input streams should already be providing stereo interleaved samples
+                            // Assume input is already in the correct stereo format from stream manager
+                            let stereo_samples = samples;
+                            
+                            // **CRITICAL FIX**: Safe buffer size matching to prevent crashes
+                            // Only mix up to the smaller buffer size to prevent overruns
+                            let mix_length = reusable_output_buffer.len().min(stereo_samples.len());
+                            
+                            // Add samples with bounds checking
                             for i in 0..mix_length {
-                                reusable_output_buffer[i] += samples[i];
+                                if i < reusable_output_buffer.len() && i < stereo_samples.len() {
+                                    reusable_output_buffer[i] += stereo_samples[i];
+                                }
                             }
+                            
                         }
                     }
                     
@@ -995,6 +1061,9 @@ impl VirtualMixer {
 
                 // Send processed audio to the rest of the application (non-blocking)
                 let _ = audio_output_tx.try_send(reusable_output_buffer.clone());
+                
+                // **STREAMING INTEGRATION**: Also send to broadcast channel for streaming bridge
+                let _ = audio_output_broadcast_tx.send(reusable_output_buffer.clone());
                 // Don't break on send failure - just continue processing
 
                 frame_count += 1;
@@ -1186,30 +1255,29 @@ impl VirtualMixer {
     }
 
     /// Get audio output stream for streaming/recording
-    pub async fn get_audio_output_receiver(&self) -> mpsc::Receiver<Vec<f32>> {
-        // Return a connected receiver that gets real audio data from the processing thread
-        let (tx, rx) = mpsc::channel(8192);
+    /// 
+    /// Returns a receiver that gets real-time audio data from the mixer's processing thread.
+    /// Multiple receivers can be created for different consumers (streaming, recording, analysis).
+    pub fn get_audio_output_receiver(&self) -> tokio::sync::broadcast::Receiver<Vec<f32>> {
+        // Return a new receiver from the broadcast channel
+        // This allows multiple consumers to receive the same audio stream
+        self.audio_output_broadcast_tx.subscribe()
+    }
+    
+    /// Create an mpsc receiver for streaming bridge compatibility
+    pub async fn create_streaming_audio_receiver(&self) -> mpsc::Receiver<Vec<f32>> {
+        let (tx, rx) = mpsc::channel(1024);
+        let mut broadcast_rx = self.get_audio_output_receiver();
         
-        // Clone references needed for the forwarding task
-        let audio_output_tx = self.audio_output_tx.clone();
-        
-        // Spawn a task to forward audio from the processing thread to this receiver
+        // Spawn a task to convert broadcast receiver to mpsc receiver
         tokio::spawn(async move {
-            let mut audio_rx = {
-                // We need to create a new receiver by cloning the sender
-                // This is a limitation - ideally we'd have a broadcast channel
-                let (_temp_tx, temp_rx) = mpsc::channel(8192);
-                temp_rx
-            };
-            
-            // For now, we'll need to modify the processing thread to support multiple receivers
-            // This is a placeholder that demonstrates the correct API
-            while let Some(audio_data) = audio_rx.recv().await {
+            while let Ok(audio_data) = broadcast_rx.recv().await {
                 if tx.send(audio_data).await.is_err() {
                     // Receiver dropped, stop forwarding
                     break;
                 }
             }
+            println!("🔌 Audio streaming receiver disconnected");
         });
         
         rx
@@ -1318,7 +1386,7 @@ impl VirtualMixer {
     
     /// Add an output device to the mixer
     pub async fn add_output_device(&self, output_device: super::types::OutputDevice) -> Result<()> {
-        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+        use cpal::traits::{DeviceTrait, HostTrait};
         
         let devices = self.audio_device_manager.enumerate_devices().await?;
         
@@ -1327,15 +1395,18 @@ impl VirtualMixer {
             .find(|d| d.id == output_device.device_id && d.is_output)
             .ok_or_else(|| anyhow::anyhow!("Output device not found: {}", output_device.device_id))?;
             
-        // Get the actual device
-        let host = cpal::default_host();
-        let device = if device_info.is_default {
-            host.default_output_device()
-                .ok_or_else(|| anyhow::anyhow!("No default output device"))?
-        } else {
-            host.output_devices()?
-                .find(|d| d.name().unwrap_or_default() == device_info.name)
-                .ok_or_else(|| anyhow::anyhow!("Device not found: {}", device_info.name))?
+        // **CRASH PREVENTION**: Use device manager's safe device finding instead of direct CPAL calls
+        let device_handle = self.audio_device_manager.find_audio_device(&output_device.device_id, false).await?;
+        let device = match device_handle {
+            super::AudioDeviceHandle::Cpal(cpal_device) => cpal_device,
+            #[cfg(target_os = "macos")]
+            super::AudioDeviceHandle::CoreAudio(_) => {
+                return Err(anyhow::anyhow!("CoreAudio device handles not supported in add_output_device - use CPAL fallback"));
+            }
+            #[cfg(not(target_os = "macos"))]
+            _ => {
+                return Err(anyhow::anyhow!("Unknown device handle type"));
+            }
         };
         
         // Create output stream

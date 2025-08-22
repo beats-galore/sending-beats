@@ -35,7 +35,7 @@ pub struct StreamStatus {
     pub error_message: Option<String>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct StreamManager {
     config: StreamConfig,
     status: Arc<Mutex<StreamStatus>>,

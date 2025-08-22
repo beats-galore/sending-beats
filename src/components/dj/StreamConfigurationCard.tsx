@@ -84,7 +84,7 @@ export const StreamConfigurationCard = memo<StreamConfigurationCardProps>(
               <TextInput
                 type="password"
                 label="Password"
-                placeholder="hackme"
+                placeholder="Enter Icecast password"
                 value={streamConfig.password}
                 onChange={(e) => onConfigChange({ ...streamConfig, password: e.target.value })}
               />

@@ -75,7 +75,7 @@ const DJClient = memo(() => {
     icecast_url: 'http://localhost:8000',
     mount_point: 'live',
     username: 'source',
-    password: 'hackme',
+    password: '',
     bitrate: 128,
     sample_rate: 44100,
     channels: 2,
