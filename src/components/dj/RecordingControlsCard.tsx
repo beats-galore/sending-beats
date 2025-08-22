@@ -132,6 +132,7 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
             name: 'Quick Recording',
             // Keep user's text inputs, only load technical defaults
             filename_template: prev.filename_template || '',
+            output_directory: prev.output_directory || defaultConfig.output_directory || '',
             metadata: {
               title: prev.metadata?.title || '',
               artist: prev.metadata?.artist || '',
@@ -187,18 +188,27 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
       console.log('Browse button clicked');
       try {
         console.log('Calling select_recording_directory...');
-        const selectedPath = await invoke<string>('select_recording_directory');
+        const selectedPath = await invoke<string | null>('select_recording_directory');
         console.log('Received path:', selectedPath);
+        console.log('Current output directory before update:', quickConfig.output_directory);
         
-        console.log('Setting output directory to:', selectedPath);
-        setQuickConfig(prev => ({
-          ...prev,
-          output_directory: selectedPath,
-        }));
+        if (selectedPath) {
+          console.log('Setting output directory to:', selectedPath);
+          setQuickConfig(prev => {
+            const newConfig = {
+              ...prev,
+              output_directory: selectedPath,
+            };
+            console.log('New config after update:', newConfig);
+            return newConfig;
+          });
+        } else {
+          console.log('User cancelled folder selection');
+        }
       } catch (err) {
         console.error('Failed to select directory:', err);
       }
-    }, []);
+    }, [quickConfig.output_directory]);
 
     const handleFormatChange = useCallback((value: string | null) => {
       if (value) {
@@ -368,7 +378,11 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
                   </Text>
                   <Group gap="sm">
                     <Text size="sm" c="#909296" style={{ flex: 1, minWidth: 0 }}>
-                      {quickConfig.output_directory || 'Default (~/Music)'}
+                      {(() => {
+                        const displayValue = quickConfig.output_directory || 'Default (~/Music)';
+                        console.log('Rendering output directory display:', displayValue);
+                        return displayValue;
+                      })()}
                     </Text>
                     <Button
                       size="sm"
