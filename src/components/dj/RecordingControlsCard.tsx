@@ -102,7 +102,7 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
     const [quickConfig, setQuickConfig] = useState<Partial<RecordingConfig>>({
       name: 'Quick Recording',
       format: { mp3: { bitrate: 192 } },
-      filename_template: '{timestamp}_{title}',
+      filename_template: 'live_recording',
       metadata: {
         title: 'Live Recording',
         artist: 'Sendin Beats',
@@ -126,14 +126,15 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
       const loadDefaultConfig = async () => {
         try {
           const defaultConfig = await actions.createDefaultConfig();
-          setQuickConfig({
+          setQuickConfig(prev => ({
             ...defaultConfig,
             name: 'Quick Recording',
             metadata: {
-              title: 'Live Recording',
-              artist: 'Sendin Beats',
+              ...defaultConfig.metadata,
+              title: prev.metadata?.title || 'Live Recording',
+              artist: prev.metadata?.artist || 'Sendin Beats',
             },
-          });
+          }));
         } catch (err) {
           console.error('Failed to load default config:', err);
         }
@@ -310,10 +311,20 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
                     label="Title"
                     placeholder="Enter recording title"
                     value={quickConfig.metadata?.title || ''}
-                    onChange={(e) => setQuickConfig(prev => ({
-                      ...prev,
-                      metadata: { ...prev.metadata, title: e.target.value }
-                    }))}
+                    onChange={(e) => {
+                      console.log('Title changing to:', e.target.value);
+                      setQuickConfig(prev => {
+                        const newConfig = {
+                          ...prev,
+                          metadata: { 
+                            ...prev.metadata,
+                            title: e.target.value 
+                          }
+                        };
+                        console.log('New config:', newConfig);
+                        return newConfig;
+                      });
+                    }}
                     size="sm"
                     styles={{
                       label: { color: '#C1C2C5' },
@@ -324,10 +335,20 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
                     label="Artist"
                     placeholder="Enter artist name"
                     value={quickConfig.metadata?.artist || ''}
-                    onChange={(e) => setQuickConfig(prev => ({
-                      ...prev,
-                      metadata: { ...prev.metadata, artist: e.target.value }
-                    }))}
+                    onChange={(e) => {
+                      console.log('Artist changing to:', e.target.value);
+                      setQuickConfig(prev => {
+                        const newConfig = {
+                          ...prev,
+                          metadata: { 
+                            ...prev.metadata,
+                            artist: e.target.value 
+                          }
+                        };
+                        console.log('New config:', newConfig);
+                        return newConfig;
+                      });
+                    }}
                     size="sm"
                     styles={{
                       label: { color: '#C1C2C5' },
@@ -364,8 +385,8 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
                     }}
                   />
                   <TextInput
-                    label="Filename Template"
-                    placeholder="{timestamp}_{title}"
+                    label="Filename"
+                    placeholder="Enter filename (without extension)"
                     value={quickConfig.filename_template || ''}
                     onChange={(e) => setQuickConfig(prev => ({
                       ...prev,
