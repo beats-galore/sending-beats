@@ -4,7 +4,7 @@ import { createStyles } from '@mantine/styles';
 import { IconCircleFilled, IconPlayerStop, IconSettings, IconFileMusic, IconAlertCircle, IconFolder } from '@tabler/icons-react';
 import { memo, useState, useCallback, useEffect } from 'react';
 import { useRecording, RecordingConfig, RecordingFormat } from '../../hooks/use-recording';
-import { open } from '@tauri-apps/plugin-dialog';
+import { open } from '@tauri-apps/api/dialog';
 
 type RecordingControlsCardProps = {
   disabled?: boolean;
