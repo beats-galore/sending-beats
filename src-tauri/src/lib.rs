@@ -1426,15 +1426,18 @@ async fn create_default_recording_config() -> Result<RecordingConfig, String> {
 }
 
 #[tauri::command]
-async fn select_recording_directory() -> Result<Option<String>, String> {
-    use std::path::PathBuf;
+async fn select_recording_directory() -> Result<String, String> {
+    println!("🔍 select_recording_directory command called");
     
     // For now, return the default Music directory path
     // In a full implementation, this would show a native directory picker
     let home_dir = dirs::home_dir().ok_or("Could not find home directory")?;
     let music_dir = home_dir.join("Music");
+    let path_str = music_dir.to_string_lossy().to_string();
+    
+    println!("📁 Returning directory path: {}", path_str);
     
     // Return the Music directory as default for now
     // TODO: Implement actual directory picker dialog
-    Ok(Some(music_dir.to_string_lossy().to_string()))
+    Ok(path_str)
 }

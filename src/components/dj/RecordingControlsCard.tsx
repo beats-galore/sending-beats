@@ -184,15 +184,17 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
     }, [actions]);
     
     const handleDirectorySelect = useCallback(async () => {
+      console.log('Browse button clicked');
       try {
-        const selectedPath = await invoke<string | null>('select_recording_directory');
+        console.log('Calling select_recording_directory...');
+        const selectedPath = await invoke<string>('select_recording_directory');
+        console.log('Received path:', selectedPath);
         
-        if (selectedPath) {
-          setQuickConfig(prev => ({
-            ...prev,
-            output_directory: selectedPath,
-          }));
-        }
+        console.log('Setting output directory to:', selectedPath);
+        setQuickConfig(prev => ({
+          ...prev,
+          output_directory: selectedPath,
+        }));
       } catch (err) {
         console.error('Failed to select directory:', err);
       }
