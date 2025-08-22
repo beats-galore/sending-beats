@@ -1,5 +1,5 @@
 // Professional Virtual Mixer - Refactored with modern architecture
-import { Box, Title, Stack, Alert, Button, Group } from '@mantine/core';
+import { Box, Title, Stack, Alert, Button, Group, Grid } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { IconAlertCircle, IconRefresh } from '@tabler/icons-react';
 import { memo, useEffect, useCallback } from 'react';
@@ -15,6 +15,13 @@ import { ErrorBoundary, FullScreenLoader } from '../layout';
 import { ChannelGrid } from './ChannelGrid';
 import { MasterSection } from './MasterSection';
 import { MixerControls } from './MixerControls';
+
+// Import recording components
+import {
+  RecordingControlsCard,
+  RecordingConfigCard,
+  RecordingHistoryCard,
+} from '../dj';
 
 const useStyles = createStyles((theme) => ({
   container: {
@@ -128,6 +135,30 @@ const VirtualMixer = memo(() => {
 
         {/* Master Section */}
         {isReady && <MasterSection />}
+
+        {/* Recording Section */}
+        {isReady && (
+          <Stack gap="md">
+            <Title order={3} c="red.4">
+              Audio Recording
+            </Title>
+            
+            <Grid>
+              {/* Recording Controls */}
+              <Grid.Col span={{ base: 12, md: 6 }}>
+                <RecordingControlsCard />
+              </Grid.Col>
+
+              {/* Recording Configuration */}
+              <Grid.Col span={{ base: 12, md: 6 }}>
+                <RecordingConfigCard />
+              </Grid.Col>
+            </Grid>
+
+            {/* Recording History */}
+            <RecordingHistoryCard maxHeight={250} />
+          </Stack>
+        )}
       </Stack>
     </Box>
   );

@@ -15,7 +15,15 @@ import {
   Menu,
 } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
-import { IconChevronDown, IconChevronRight, IconRefresh, IconPlus, IconAdjustmentsHorizontal, IconVolume, IconShield } from '@tabler/icons-react';
+import {
+  IconChevronDown,
+  IconChevronRight,
+  IconRefresh,
+  IconPlus,
+  IconAdjustmentsHorizontal,
+  IconVolume,
+  IconShield,
+} from '@tabler/icons-react';
 import { memo, useCallback, useMemo, useState, useEffect } from 'react';
 
 import { useMixerState, useAudioDevices, useChannelLevels } from '../../hooks';
@@ -133,11 +141,11 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
 
   const levels = useChannelLevels(channel.id);
 
-  // State for expandable sections  
+  // State for expandable sections
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showEQ, setShowEQ] = useState(false);
   const [showEffects, setShowEffects] = useState(false);
-  
+
   // State for effects
   const [activeEffects, setActiveEffects] = useState<string[]>([]);
 
@@ -191,17 +199,20 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
   );
 
   // Effect handling
-  const handleAddEffect = useCallback(async (effectType: string) => {
-    try {
-      console.log('Adding effect', effectType, 'to channel', channel.id);
-      await audioService.addChannelEffect(channel.id, effectType);
-      setActiveEffects((prev) => [...prev, effectType]);
-      setShowAdvanced(true); // Show the effects section
-      console.log('Effect added successfully');
-    } catch (error) {
-      console.error('Failed to add effect:', error);
-    }
-  }, [channel.id]);
+  const handleAddEffect = useCallback(
+    async (effectType: string) => {
+      try {
+        console.log('Adding effect', effectType, 'to channel', channel.id);
+        await audioService.addChannelEffect(channel.id, effectType);
+        setActiveEffects((prev) => [...prev, effectType]);
+        setShowAdvanced(true); // Show the effects section
+        console.log('Effect added successfully');
+      } catch (error) {
+        console.error('Failed to add effect:', error);
+      }
+    },
+    [channel.id]
+  );
 
   const availableToAdd = AVAILABLE_EFFECTS.filter(
     (effect) => !activeEffects.includes(effect.value)

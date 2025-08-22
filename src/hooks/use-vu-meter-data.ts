@@ -106,15 +106,14 @@ export const useVUMeterData = (isEnabled = true) => {
           intervalRef.current = undefined;
         }
       };
-    } 
-      console.debug('🚫 VU polling disabled or no config');
-      // Clean up if disabled
-      if (intervalRef.current) {
-        console.debug('🛑 Cleaning up VU meter polling...');
-        clearInterval(intervalRef.current);
-        intervalRef.current = undefined;
-      }
-    
+    }
+    console.debug('🚫 VU polling disabled or no config');
+    // Clean up if disabled
+    if (intervalRef.current) {
+      console.debug('🛑 Cleaning up VU meter polling...');
+      clearInterval(intervalRef.current);
+      intervalRef.current = undefined;
+    }
   }, [isEnabled, hasConfig, pollVUData]);
 
   // Clean up on unmount

@@ -91,10 +91,10 @@ const memoizeVuPosition = (() => {
 export const VUMeter = memo<VUMeterProps>(
   ({ peakLevel, rmsLevel, vertical = true, height = 200, width = 20, showLabels = true }) => {
     const { classes } = useStyles();
-    const previousLevelsRef = useRef<{ 
-      peakLevel: number; 
-      rmsLevel: number; 
-      segmentElements?: React.ReactNode[] 
+    const previousLevelsRef = useRef<{
+      peakLevel: number;
+      rmsLevel: number;
+      segmentElements?: React.ReactNode[];
     }>({ peakLevel: 0, rmsLevel: 0 });
 
     // Use memoized conversion functions for better performance
@@ -106,8 +106,8 @@ export const VUMeter = memo<VUMeterProps>(
     const rmsPosition = useMemo(() => memoizeVuPosition(dbRms), [dbRms]);
 
     const segments = 30;
-    const segmentSize = useMemo(() => 
-      vertical ? height / segments : width / segments, 
+    const segmentSize = useMemo(
+      () => (vertical ? height / segments : width / segments),
       [vertical, height, width, segments]
     );
 
@@ -124,9 +124,10 @@ export const VUMeter = memo<VUMeterProps>(
     const levelsChanged = useMemo(() => {
       const prev = previousLevelsRef.current;
       const threshold = 0.001; // Only re-render if change is > 0.1%
-      const changed = Math.abs(peakLevel - prev.peakLevel) > threshold || 
-                     Math.abs(rmsLevel - prev.rmsLevel) > threshold;
-      
+      const changed =
+        Math.abs(peakLevel - prev.peakLevel) > threshold ||
+        Math.abs(rmsLevel - prev.rmsLevel) > threshold;
+
       if (changed) {
         previousLevelsRef.current = { peakLevel, rmsLevel };
       }
@@ -139,9 +140,8 @@ export const VUMeter = memo<VUMeterProps>(
         return VU_METER_COLORS.GREEN;
       } else if (segmentValue < VU_METER_ZONES.YELLOW_THRESHOLD) {
         return VU_METER_COLORS.YELLOW;
-      } else {
-        return VU_METER_COLORS.RED;
       }
+      return VU_METER_COLORS.RED;
     }, []);
 
     // Memoize segments rendering - only re-render if positions change significantly
@@ -189,7 +189,16 @@ export const VUMeter = memo<VUMeterProps>(
       // Cache the rendered elements for reuse
       (previousLevelsRef.current as any).segmentElements = elements;
       return elements;
-    }, [segments, peakPosition, rmsPosition, vertical, segmentSize, getSegmentColor, classes.segment, levelsChanged]);
+    }, [
+      segments,
+      peakPosition,
+      rmsPosition,
+      vertical,
+      segmentSize,
+      getSegmentColor,
+      classes.segment,
+      levelsChanged,
+    ]);
 
     // Memoize labels rendering (only depends on dimensions and orientation)
     const labelElements = useMemo(() => {
