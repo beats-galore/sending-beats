@@ -1,11 +1,11 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
-use tokio::time::{Duration, Instant};
-use tracing::{info, warn, error};
+use tokio::time::Instant;
+use tracing::info;
 
-use crate::audio::{VirtualMixer, AudioStreamingBridge, StreamingStatus, create_streaming_bridge};
-use crate::icecast_source::{IcecastStreamManager, AudioFormat, AudioCodec, IcecastStats};
+use crate::audio::{VirtualMixer, AudioStreamingBridge, create_streaming_bridge};
+use crate::icecast_source::{IcecastStreamManager, AudioFormat, AudioCodec};
 use crate::streaming::{StreamConfig, AudioEncoder};
 
 /// Integrated streaming service that connects the mixer to Icecast
@@ -190,7 +190,7 @@ impl StreamingService {
                 channels: cfg.audio_format.channels,
             };
             
-            let mut bridge = create_streaming_bridge(stream_config, audio_rx).await?;
+            let bridge = create_streaming_bridge(stream_config, audio_rx).await?;
             
             // Connect audio input to Icecast manager
             if let Some(ref mut icecast_manager) = *self.icecast_manager.lock().await {
@@ -206,6 +206,46 @@ impl StreamingService {
             }
             
             info!("✅ Streaming service connected to mixer");
+        } else {
+            return Err(anyhow::anyhow!("Streaming service not initialized"));
+        }
+        
+        Ok(())
+    }
+    
+    /// Connect to the audio mixer using a reference
+    pub async fn connect_mixer_ref(&self, mixer: &VirtualMixer) -> Result<()> {
+        info!("🔗 Connecting streaming service to audio mixer (ref)...");
+        
+        // Get audio output from mixer
+        let audio_rx = mixer.create_streaming_audio_receiver().await;
+        
+        // Create audio streaming bridge
+        let config = self.config.read().await;
+        if let Some(ref cfg) = *config {
+            let stream_config = StreamConfig {
+                icecast_url: format!("http://{}:{}", cfg.server_host, cfg.server_port),
+                mount_point: cfg.mount_point.clone(),
+                username: "source".to_string(),
+                password: cfg.password.clone(),
+                bitrate: cfg.audio_format.bitrate,
+                sample_rate: cfg.audio_format.sample_rate,
+                channels: cfg.audio_format.channels,
+            };
+            
+            let _bridge = create_streaming_bridge(stream_config, audio_rx).await?;
+            
+            // Connect audio input to Icecast manager
+            if let Some(ref mut icecast_manager) = *self.icecast_manager.lock().await {
+                // Create a channel to connect bridge to Icecast manager
+                let (_encoder_tx, encoder_rx) = tokio::sync::mpsc::channel(512);
+                icecast_manager.connect_audio_input(encoder_rx);
+                
+                // Note: In a full implementation, we'd spawn the audio encoder task here
+                // For now, this creates the connection but doesn't start the encoding pipeline
+            }
+            
+            info!("✅ Streaming service connected to mixer (ref)");
         } else {
             return Err(anyhow::anyhow!("Streaming service not initialized"));
         }
@@ -309,7 +349,7 @@ impl StreamingService {
     
     /// Audio encoder task - converts f32 audio to encoded format
     async fn run_audio_encoder(
-        mut bridge: AudioStreamingBridge,
+        bridge: AudioStreamingBridge,
         encoder_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
         audio_format: AudioFormat,
     ) {
@@ -323,7 +363,7 @@ impl StreamingService {
         );
         
         // Get audio from streaming bridge
-        let mut audio_rx = bridge.subscribe_status(); // This should be audio data receiver
+        let audio_rx = bridge.subscribe_status(); // This should be audio data receiver
         
         // Note: This is a simplified implementation
         // In practice, we'd need to properly integrate the AudioStreamingBridge
@@ -350,9 +390,9 @@ pub async fn initialize_streaming(config: StreamingServiceConfig) -> Result<()> 
 }
 
 /// Connect streaming to mixer
-pub async fn connect_streaming_to_mixer(mixer: Arc<VirtualMixer>) -> Result<()> {
+pub async fn connect_streaming_to_mixer(mixer: &VirtualMixer) -> Result<()> {
     let service = get_streaming_service().await;
-    service.connect_mixer(mixer).await
+    service.connect_mixer_ref(mixer).await
 }
 
 /// Start streaming

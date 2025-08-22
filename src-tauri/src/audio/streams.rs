@@ -1,5 +1,4 @@
-use anyhow::{Context, Result};
-use cpal::SampleFormat;
+use anyhow::Result;
 use cpal::traits::DeviceTrait;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -376,7 +375,7 @@ impl StreamManager {
                 // Debug counters
                 let mut callback_count = 0u64;
                 let mut total_samples_captured = 0u64;
-                let mut last_debug_time = std::time::Instant::now();
+                let last_debug_time = std::time::Instant::now();
                 
                 println!("🔍 CRASH DEBUG: About to call device.build_input_stream for F32 format");
                 let build_result = device.build_input_stream(
@@ -838,8 +837,8 @@ impl VirtualMixerHandle {
     
     /// Add a new output device stream
     pub async fn add_output_device(&self, output_device: super::types::OutputDevice) -> anyhow::Result<()> {
-        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-        use std::sync::mpsc;
+        use cpal::traits::{DeviceTrait, HostTrait};
+        
         
         let device_manager = super::devices::AudioDeviceManager::new()?;
         let devices = device_manager.enumerate_devices().await?;

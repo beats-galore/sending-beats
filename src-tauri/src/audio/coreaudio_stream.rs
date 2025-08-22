@@ -8,7 +8,7 @@ use coreaudio_sys::{
     kAudioOutputUnitProperty_CurrentDevice, kAudioUnitProperty_StreamFormat,
     kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, kAudioUnitScope_Output,
     kAudioUnitScope_Global, AudioStreamBasicDescription, kAudioFormatLinearPCM,
-    kAudioFormatFlagIsFloat, kAudioFormatFlagIsPacked, kAudioFormatFlagIsNonInterleaved,
+    kAudioFormatFlagIsFloat, kAudioFormatFlagIsPacked,
     AudioComponentFindNext, AudioComponentInstanceNew, AudioUnitInitialize,
     AudioUnitSetProperty, AudioOutputUnitStart, AudioOutputUnitStop,
     AudioUnitUninitialize, AudioComponentInstanceDispose,

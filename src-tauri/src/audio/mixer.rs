@@ -780,6 +780,7 @@ impl VirtualMixer {
         let is_running = self.is_running.clone();
         let mix_buffer = self.mix_buffer.clone();
         let audio_output_tx = self.audio_output_tx.clone();
+        let audio_output_broadcast_tx = self.audio_output_broadcast_tx.clone();
         let metrics = self.metrics.clone();
         let channel_levels = self.channel_levels.clone();
         let channel_levels_cache = self.channel_levels_cache.clone();
@@ -1080,7 +1081,7 @@ impl VirtualMixer {
                 let _ = audio_output_tx.try_send(reusable_output_buffer.clone());
                 
                 // **STREAMING INTEGRATION**: Also send to broadcast channel for streaming bridge
-                let _ = self.audio_output_broadcast_tx.send(reusable_output_buffer.clone());
+                let _ = audio_output_broadcast_tx.send(reusable_output_buffer.clone());
                 // Don't break on send failure - just continue processing
 
                 frame_count += 1;
@@ -1403,7 +1404,7 @@ impl VirtualMixer {
     
     /// Add an output device to the mixer
     pub async fn add_output_device(&self, output_device: super::types::OutputDevice) -> Result<()> {
-        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+        use cpal::traits::{DeviceTrait, HostTrait};
         
         let devices = self.audio_device_manager.enumerate_devices().await?;
         

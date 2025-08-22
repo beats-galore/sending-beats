@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use cpal::{Device, Host};
 use cpal::traits::{DeviceTrait, HostTrait};
 use std::collections::HashMap;

@@ -1115,7 +1115,7 @@ async fn initialize_icecast_streaming(
     
     // Connect to mixer if available
     if let Some(mixer_ref) = &*state.mixer.lock().await {
-        if let Err(e) = connect_streaming_to_mixer(Arc::clone(mixer_ref)).await {
+        if let Err(e) = connect_streaming_to_mixer(mixer_ref).await {
             eprintln!("❌ Failed to connect streaming to mixer: {}", e);
             return Err(format!("Failed to connect to mixer: {}", e));
         }
