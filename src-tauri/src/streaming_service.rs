@@ -64,7 +64,7 @@ impl Default for StreamingServiceConfig {
             server_host: "localhost".to_string(),
             server_port: 8000,
             mount_point: "/live".to_string(),
-            password: "hackme".to_string(),
+            password: std::env::var("ICECAST_PASSWORD").unwrap_or_else(|_| "changeme".to_string()),
             stream_name: "Sendin Beats Radio".to_string(),
             stream_description: "Live radio stream from Sendin Beats".to_string(),
             stream_genre: "Electronic".to_string(),

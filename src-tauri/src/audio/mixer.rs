@@ -772,7 +772,7 @@ impl VirtualMixer {
         // **CRITICAL FIX**: Stop and remove all input streams
         let _ = self.stop_all_input_streams().await;
         
-        println!("Virtual Mixer stopped successfully");
+        info!("Virtual Mixer stopped successfully");
         Ok(())
     }
 
