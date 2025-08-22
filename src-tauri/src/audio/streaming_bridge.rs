@@ -31,7 +31,7 @@ pub struct AudioStreamingBridge {
     control_rx: Option<mpsc::Receiver<StreamingCommand>>,
     
     /// Audio processing statistics
-    stats: Arc<Mutex<StreamingStats>>,
+    pub stats: Arc<Mutex<StreamingStats>>,
     
     /// Buffer for audio format conversion
     conversion_buffer: Vec<u8>,

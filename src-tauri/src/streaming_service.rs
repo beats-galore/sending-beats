@@ -27,6 +27,9 @@ pub struct StreamingService {
     /// Audio streaming bridge
     streaming_bridge: Arc<Mutex<Option<AudioStreamingBridge>>>,
     
+    /// Direct reference to streaming stats for efficient access
+    streaming_stats: Arc<Mutex<Option<Arc<Mutex<crate::audio::streaming_bridge::StreamingStats>>>>>,
+    
     /// Service state
     state: Arc<Mutex<ServiceState>>,
     
@@ -140,6 +143,7 @@ impl StreamingService {
             mixer: Arc::new(RwLock::new(None)),
             icecast_manager: Arc::new(Mutex::new(None)),
             streaming_bridge: Arc::new(Mutex::new(None)),
+            streaming_stats: Arc::new(Mutex::new(None)),
             state: Arc::new(Mutex::new(ServiceState::default())),
             config: Arc::new(RwLock::new(None)),
         }
@@ -191,6 +195,9 @@ impl StreamingService {
             };
             
             let bridge = create_streaming_bridge(stream_config, audio_rx).await?;
+            
+            // Store stats reference for efficient access
+            *self.streaming_stats.lock().await = Some(bridge.stats.clone());
             
             // Connect audio input to Icecast manager
             if let Some(ref mut icecast_manager) = *self.icecast_manager.lock().await {
@@ -323,6 +330,19 @@ impl StreamingService {
             .map(|start| start.elapsed().as_secs())
             .unwrap_or(0);
         
+        // Get audio streaming stats from stored stats reference
+        let audio_stats = if let Some(ref stats_ref) = *self.streaming_stats.lock().await {
+            let bridge_stats = stats_ref.lock().await;
+            Some(AudioStreamingStats {
+                samples_processed: bridge_stats.total_samples_processed,
+                samples_per_second: bridge_stats.samples_per_second,
+                buffer_overruns: bridge_stats.buffer_overruns,
+                encoding_errors: bridge_stats.encoding_errors,
+            })
+        } else {
+            None
+        };
+
         // Get Icecast stats
         let icecast_stats = if let Some(ref icecast_manager) = *self.icecast_manager.lock().await {
             let stats = icecast_manager.get_stats();
@@ -341,7 +361,7 @@ impl StreamingService {
             is_connected: state.is_connected,
             is_streaming: state.is_streaming,
             uptime_seconds: uptime,
-            audio_stats: None, // TODO: Get from streaming bridge
+            audio_stats,
             icecast_stats,
             last_error: state.last_error.clone(),
         }
