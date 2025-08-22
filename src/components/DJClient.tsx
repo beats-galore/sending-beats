@@ -1,5 +1,5 @@
 // Professional DJ Streaming Client - Modernized with Mantine
-import { Box, Stack, Group, Text, Title, Alert, Grid, LoadingOverlay, Badge } from '@mantine/core';
+import { Box, Stack, Group, Text, Title, Alert, Grid, LoadingOverlay, Badge, ScrollArea } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { IconAlertCircle, IconWifi, IconWifiOff } from '@tabler/icons-react';
 import { memo, useState, useRef, useEffect, useCallback } from 'react';
@@ -62,6 +62,14 @@ const useStyles = createStyles((theme) => ({
     padding: theme.spacing.md,
     maxWidth: 1200,
     margin: '0 auto',
+    height: '100vh',
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  
+  scrollContent: {
+    flex: 1,
+    paddingRight: theme.spacing.sm,
   },
 
   statusIndicator: {
@@ -396,28 +404,31 @@ const DJClient = memo(() => {
       <Box className={classes.container} pos="relative">
         <LoadingOverlay visible={isConnecting} />
 
-        <Stack gap="lg">
-          <Group justify="space-between" align="center">
-            <Title order={1} c="blue.4">
-              DJ Streaming Client
-            </Title>
-            <Group className={classes.statusIndicator}>
-              {isConnected ? (
-                <IconWifi size={20} color="#51cf66" />
-              ) : (
-                <IconWifiOff size={20} color="#fa5252" />
-              )}
-              <Badge color={isConnected ? 'green' : 'red'} variant="light" size="md">
-                {isConnected ? 'Connected' : 'Disconnected'}
-              </Badge>
-            </Group>
+        {/* Fixed Header */}
+        <Group justify="space-between" align="center" mb="lg">
+          <Title order={1} c="blue.4">
+            DJ Streaming Client
+          </Title>
+          <Group className={classes.statusIndicator}>
+            {isConnected ? (
+              <IconWifi size={20} color="#51cf66" />
+            ) : (
+              <IconWifiOff size={20} color="#fa5252" />
+            )}
+            <Badge color={isConnected ? 'green' : 'red'} variant="light" size="md">
+              {isConnected ? 'Connected' : 'Disconnected'}
+            </Badge>
           </Group>
+        </Group>
 
-          {error && (
-            <Alert icon={<IconAlertCircle size={16} />} title="Error" color="red" variant="light">
-              {error}
-            </Alert>
-          )}
+        {/* Scrollable Content */}
+        <ScrollArea className={classes.scrollContent}>
+          <Stack gap="lg">
+            {error && (
+              <Alert icon={<IconAlertCircle size={16} />} title="Error" color="red" variant="light">
+                {error}
+              </Alert>
+            )}
 
           <StreamStatusCard
             streamStatus={
@@ -513,12 +524,13 @@ const DJClient = memo(() => {
             </Grid.Col>
           </Grid>
 
-          {/* Recording History */}
-          <RecordingHistoryCard
-            disabled={!isConnected}
-            maxHeight={300}
-          />
-        </Stack>
+            {/* Recording History */}
+            <RecordingHistoryCard
+              disabled={!isConnected}
+              maxHeight={300}
+            />
+          </Stack>
+        </ScrollArea>
       </Box>
     </ErrorBoundary>
   );
