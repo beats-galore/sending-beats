@@ -122,11 +122,13 @@ export const useRecording = (pollingInterval = 1000) => {
 
   const startRecording = useCallback(async (config: RecordingConfig): Promise<string> => {
     try {
+      console.log('useRecording: Calling start_recording with config:', config);
       const sessionId = await invoke<string>('start_recording', { config });
+      console.log('useRecording: Got session ID:', sessionId);
       await fetchStatus(); // Refresh status immediately
       return sessionId;
     } catch (err) {
-      console.error('Failed to start recording:', err);
+      console.error('useRecording: Failed to start recording:', err);
       throw err;
     }
   }, [fetchStatus]);

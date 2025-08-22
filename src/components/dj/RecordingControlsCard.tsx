@@ -1,4 +1,4 @@
-import { Card, Stack, Group, Title, Button, Badge, Text, Progress, Select, Switch, NumberInput, Tooltip, Alert } from '@mantine/core';
+import { Card, Stack, Group, Title, Button, Badge, Text, Progress, Select, Switch, NumberInput, Tooltip, Alert, TextInput } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { IconCircleFilled, IconPlayerStop, IconSettings, IconFileMusic, IconAlertCircle } from '@tabler/icons-react';
 import { memo, useState, useCallback, useEffect } from 'react';
@@ -162,9 +162,12 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
           bit_depth: quickConfig.bit_depth || 24,
         };
         
+        console.log('Starting recording with config:', fullConfig);
         await actions.startRecording(fullConfig);
+        console.log('Recording started successfully');
       } catch (err) {
         console.error('Failed to start recording:', err);
+        alert(`Failed to start recording: ${err}`);
       }
     }, [quickConfig, actions]);
     
@@ -300,12 +303,57 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
                   </Button>
                 </Group>
                 
+                {/* Essential Recording Fields */}
+                <Group grow>
+                  <TextInput
+                    label="Title"
+                    placeholder="Enter recording title"
+                    value={quickConfig.metadata?.title || ''}
+                    onChange={(e) => setQuickConfig(prev => ({
+                      ...prev,
+                      metadata: { ...prev.metadata, title: e.target.value }
+                    }))}
+                    size="sm"
+                  />
+                  <TextInput
+                    label="Artist"
+                    placeholder="Enter artist name"
+                    value={quickConfig.metadata?.artist || ''}
+                    onChange={(e) => setQuickConfig(prev => ({
+                      ...prev,
+                      metadata: { ...prev.metadata, artist: e.target.value }
+                    }))}
+                    size="sm"
+                  />
+                </Group>
+
+                <TextInput
+                  label="Output Directory"
+                  placeholder="Leave empty for default (~/Music)"
+                  value={quickConfig.output_directory || ''}
+                  onChange={(e) => setQuickConfig(prev => ({
+                    ...prev,
+                    output_directory: e.target.value
+                  }))}
+                  size="sm"
+                />
+
                 <Group grow>
                   <Select
                     label="Format"
                     value={formatToValue(quickConfig.format || { mp3: { bitrate: 192 } })}
                     onChange={handleFormatChange}
                     data={getRecordingFormatOptions()}
+                    size="sm"
+                  />
+                  <TextInput
+                    label="Filename Template"
+                    placeholder="{timestamp}_{title}"
+                    value={quickConfig.filename_template || ''}
+                    onChange={(e) => setQuickConfig(prev => ({
+                      ...prev,
+                      filename_template: e.target.value
+                    }))}
                     size="sm"
                   />
                 </Group>
