@@ -1,5 +1,13 @@
 import { invoke } from '@tauri-apps/api/core';
 import React, { useState, useEffect, useRef } from 'react';
+import { MantineProvider, Box, Grid } from '@mantine/core';
+
+// Import recording components
+import {
+  RecordingControlsCard,
+  RecordingConfigCard,
+  RecordingHistoryCard,
+} from './dj';
 
 // Type definitions for the audio system
 // Debug: Testing compilation
@@ -818,6 +826,31 @@ const VirtualMixer: React.FC = () => {
                 </div>
               </div>
             )}
+
+            {/* Recording Section */}
+            <div className="mt-6 border-t border-surface pt-6">
+              <h3 className="text-lg font-medium text-white mb-4">Audio Recording</h3>
+              <MantineProvider>
+                <Box style={{ background: 'transparent' }}>
+                  <Grid gutter="md">
+                    {/* Recording Controls */}
+                    <Grid.Col span={{ base: 12, md: 6 }}>
+                      <RecordingControlsCard />
+                    </Grid.Col>
+
+                    {/* Recording Configuration */}
+                    <Grid.Col span={{ base: 12, md: 6 }}>
+                      <RecordingConfigCard />
+                    </Grid.Col>
+                  </Grid>
+
+                  {/* Recording History */}
+                  <Box mt="md">
+                    <RecordingHistoryCard maxHeight={250} />
+                  </Box>
+                </Box>
+              </MantineProvider>
+            </div>
           </div>
         )}
       </div>

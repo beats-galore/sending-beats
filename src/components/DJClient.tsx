@@ -13,9 +13,6 @@ import {
   AudioControlsCard,
   MetadataCard,
   VariableBitrateCard,
-  RecordingControlsCard,
-  RecordingConfigCard,
-  RecordingHistoryCard,
 } from './dj';
 import { ErrorBoundary } from './layout';
 
@@ -507,28 +504,6 @@ const DJClient = memo(() => {
             onUpdateMetadata={updateMetadata}
           />
 
-          {/* Recording Section */}
-          <Grid>
-            {/* Recording Controls */}
-            <Grid.Col span={{ base: 12, md: 6 }}>
-              <RecordingControlsCard
-                disabled={!isConnected}
-              />
-            </Grid.Col>
-
-            {/* Recording Configuration */}
-            <Grid.Col span={{ base: 12, md: 6 }}>
-              <RecordingConfigCard
-                disabled={!isConnected}
-              />
-            </Grid.Col>
-          </Grid>
-
-            {/* Recording History */}
-            <RecordingHistoryCard
-              disabled={!isConnected}
-              maxHeight={300}
-            />
           </Stack>
         </ScrollArea>
       </Box>
