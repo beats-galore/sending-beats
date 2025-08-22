@@ -2,10 +2,18 @@
 import { Box, Stack, Group, Text, Title, Alert, Grid, LoadingOverlay, Badge } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { IconAlertCircle, IconWifi, IconWifiOff } from '@tabler/icons-react';
-import { invoke } from '@tauri-apps/api/core';
 import { memo, useState, useRef, useEffect, useCallback } from 'react';
 
-import { StreamStatusCard, StreamConfigurationCard, AudioControlsCard, MetadataCard } from './dj';
+import { useStreamingStatus, useStreamingControls } from '../hooks';
+
+import {
+  StreamStatusCard,
+  StreamConfigurationCard,
+  StreamDiagnosticsCard,
+  AudioControlsCard,
+  MetadataCard,
+  VariableBitrateCard,
+} from './dj';
 import { ErrorBoundary } from './layout';
 
 type AudioDevice = {
@@ -62,22 +70,32 @@ const useStyles = createStyles((theme) => ({
 
 const DJClient = memo(() => {
   const { classes } = useStyles();
-  const [isConnected, setIsConnected] = useState(false);
-  const [isStreaming, setIsStreaming] = useState(false);
+
+  // Use new streaming hooks
+  const {
+    status: streamingStatus,
+    isLoading: isStatusLoading,
+    error: statusError,
+    actions: statusActions,
+  } = useStreamingStatus();
+  const { state: controlsState, actions: controlsActions } = useStreamingControls();
+
   const [selectedDevice, setSelectedDevice] = useState<string>('');
   const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([]);
   const [streamSettings, setStreamSettings] = useState<StreamSettings>({
-    bitrate: 128,
-    sampleRate: 44100,
+    bitrate: streamingStatus?.bitrate_info.current_bitrate || 192,
+    sampleRate: 48000,
     channels: 2,
   });
+
+  const [availableBitrates, setAvailableBitrates] = useState<number[]>([]);
   const [streamConfig, setStreamConfig] = useState<StreamConfig>({
     icecast_url: 'http://localhost:8000',
-    mount_point: 'live',
+    mount_point: '/live',
     username: 'source',
     password: '',
-    bitrate: 128,
-    sample_rate: 44100,
+    bitrate: 192,
+    sample_rate: 48000,
     channels: 2,
   });
   const [metadata, setMetadata] = useState({
@@ -86,10 +104,14 @@ const DJClient = memo(() => {
     album: '',
   });
   const [audioLevel, setAudioLevel] = useState(0);
-  const [error, setError] = useState<string>('');
-  const [streamStatus, setStreamStatus] = useState<StreamStatus | null>(null);
-  const [isConnecting, setIsConnecting] = useState(false);
+  const [legacyStreamStatus, setLegacyStreamStatus] = useState<StreamStatus | null>(null);
   const [isRefreshingDevices, setIsRefreshingDevices] = useState(false);
+
+  // Derived state from new streaming status
+  const isConnected = streamingStatus?.is_connected ?? false;
+  const isStreaming = streamingStatus?.is_streaming ?? false;
+  const isConnecting = controlsState.isConnecting;
+  const error = controlsState.error ?? statusError;
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -127,12 +149,39 @@ const DJClient = memo(() => {
         setSelectedDevice(allDevices[0].deviceId);
       }
     } catch (err) {
-      setError('Failed to get audio devices');
-      console.error(err);
+      controlsActions.clearError();
+      console.error('Failed to get audio devices:', err);
     } finally {
       setIsRefreshingDevices(false);
     }
   }, [selectedDevice]);
+
+  // Load available bitrates on mount
+  useEffect(() => {
+    const loadBitrates = async () => {
+      try {
+        const bitrates = await statusActions.getAvailableBitrates();
+        setAvailableBitrates(bitrates);
+      } catch (err) {
+        console.error('Failed to load available bitrates:', err);
+      }
+    };
+
+    void loadBitrates();
+  }, [statusActions]);
+
+  // Sync current bitrate from streaming status
+  useEffect(() => {
+    if (
+      streamingStatus?.bitrate_info.current_bitrate &&
+      streamingStatus.bitrate_info.current_bitrate !== streamSettings.bitrate
+    ) {
+      setStreamSettings((prev) => ({
+        ...prev,
+        bitrate: streamingStatus.bitrate_info.current_bitrate,
+      }));
+    }
+  }, [streamingStatus?.bitrate_info.current_bitrate, streamSettings.bitrate]);
 
   useEffect(() => {
     void getAudioDevices();
@@ -149,28 +198,30 @@ const DJClient = memo(() => {
     };
   }, [getAudioDevices]);
 
-  // Update stream status periodically
-  useEffect(() => {
-    if (isConnected) {
-      const updateStatus = async () => {
-        try {
-          const status = await invoke<StreamStatus>('get_stream_status');
-          setStreamStatus(status);
-        } catch (err) {
-          console.error('Failed to get stream status:', err);
-        }
-      };
+  // Handle bitrate changes from configuration
+  const handleBitrateChange = useCallback(
+    async (newBitrate: number) => {
+      try {
+        await statusActions.setBitrate(newBitrate);
+        setStreamSettings((prev) => ({ ...prev, bitrate: newBitrate }));
+      } catch (err) {
+        console.error('Failed to set bitrate:', err);
+      }
+    },
+    [statusActions]
+  );
 
-      updateStatus();
-      streamIntervalRef.current = window.setInterval(updateStatus, 5000); // Update every 5 seconds
-
-      return () => {
-        if (streamIntervalRef.current) {
-          window.clearInterval(streamIntervalRef.current);
-        }
-      };
-    }
-  }, [isConnected]);
+  // Handle variable bitrate changes
+  const handleVariableBitrateChange = useCallback(
+    async (enabled: boolean, quality: number) => {
+      try {
+        await statusActions.setVariableBitrate(enabled, quality);
+      } catch (err) {
+        console.error('Failed to set variable bitrate:', err);
+      }
+    },
+    [statusActions]
+  );
 
   // Audio level monitoring
   const updateAudioLevel = () => {
@@ -247,8 +298,7 @@ const DJClient = memo(() => {
 
       updateAudioLevel();
     } catch (err) {
-      setError('Failed to start audio monitoring');
-      console.error(err);
+      console.error('Failed to start audio monitoring:', err);
     }
   };
 
@@ -271,95 +321,72 @@ const DJClient = memo(() => {
 
   const connectToStream = useCallback(async () => {
     try {
-      setIsConnecting(true);
-      setError('');
+      controlsActions.clearError();
 
-      // Update stream config with current settings
-      const config: StreamConfig = {
-        ...streamConfig,
+      // Parse URL to get host and port
+      const url = new URL(streamConfig.icecast_url);
+      const host = url.hostname;
+      const port = parseInt(url.port) || 8000;
+
+      // Initialize streaming with new backend
+      await controlsActions.initialize({
+        server_host: host,
+        server_port: port,
+        mount_point: streamConfig.mount_point,
+        password: streamConfig.password,
+        stream_name: 'Sendin Beats Live Stream',
         bitrate: streamSettings.bitrate,
-        sample_rate: streamSettings.sampleRate,
-        channels: streamSettings.channels,
-      };
+      });
 
-      const status = await invoke<StreamStatus>('connect_to_stream', { config });
-      setStreamStatus(status);
-      setIsConnected(status.is_connected);
-
-      if (status.is_connected) {
-        await startAudioMonitoring();
-      } else if (status.error_message) {
-        setError(status.error_message);
-      }
+      await startAudioMonitoring();
     } catch (err) {
-      setError(`Failed to connect to stream: ${err}`);
-      setIsConnected(false);
-    } finally {
-      setIsConnecting(false);
+      console.error('Failed to connect to stream:', err);
     }
-  }, [streamConfig, streamSettings]);
+  }, [streamConfig, streamSettings, controlsActions]);
 
   const disconnectFromStream = useCallback(async () => {
     try {
-      await invoke('disconnect_from_stream');
+      await controlsActions.stopStreaming();
       stopAudioMonitoring();
-      setIsConnected(false);
-      setIsStreaming(false);
-      setStreamStatus(null);
-      setError('');
     } catch (err) {
-      setError(`Failed to disconnect: ${err}`);
+      console.error('Failed to disconnect:', err);
     }
-  }, []);
+  }, [controlsActions]);
 
   const startStreaming = useCallback(async () => {
-    if (!isConnected) return;
-
     try {
-      setIsStreaming(true);
+      await controlsActions.startStreaming();
 
-      // Set up audio data sender
+      // Set up audio data sender (legacy approach for browser audio)
       streamSenderRef.current = async (audioData: Uint8Array) => {
-        try {
-          await invoke('start_streaming', { audioData: Array.from(audioData) });
-        } catch (err) {
-          console.error('Failed to send audio data:', err);
-          setIsStreaming(false);
-        }
+        // Note: In the new architecture, audio comes from the mixer
+        // This is kept for backward compatibility but may not be used
+        console.debug('Browser audio data available:', audioData.length);
       };
     } catch (err) {
-      setError(`Failed to start streaming: ${err}`);
-      setIsStreaming(false);
+      console.error('Failed to start streaming:', err);
     }
-  }, [isConnected]);
+  }, [controlsActions]);
 
   const stopStreaming = useCallback(async () => {
     try {
-      await invoke('stop_streaming');
-      setIsStreaming(false);
+      await controlsActions.stopStreaming();
       streamSenderRef.current = null;
     } catch (err) {
-      setError(`Failed to stop streaming: ${err}`);
+      console.error('Failed to stop streaming:', err);
     }
-  }, []);
+  }, [controlsActions]);
 
   const updateMetadata = useCallback(async () => {
     if (!metadata.title || !metadata.artist) return;
 
     try {
-      const streamMetadata: StreamMetadata = {
-        title: metadata.title,
-        artist: metadata.artist,
-        album: metadata.album || undefined,
-        genre: 'Electronic',
-      };
-
-      await invoke('update_metadata', { metadata: streamMetadata });
+      await controlsActions.updateMetadata(metadata.title, metadata.artist);
       console.debug('Metadata updated successfully');
     } catch (err) {
-      setError(`Failed to update metadata: ${err}`);
+      console.error('Failed to update metadata:', err);
     }
-  }, [metadata]);
+  }, [metadata, controlsActions]);
 
   return (
     <ErrorBoundary>
@@ -389,7 +416,37 @@ const DJClient = memo(() => {
             </Alert>
           )}
 
-          <StreamStatusCard streamStatus={streamStatus} />
+          <StreamStatusCard
+            streamStatus={
+              legacyStreamStatus || {
+                is_connected: isConnected,
+                is_streaming: isStreaming,
+                current_listeners: 0,
+                peak_listeners: 0,
+                stream_duration: streamingStatus?.uptime_seconds || 0,
+                bitrate: streamingStatus?.bitrate_info.current_bitrate || 0,
+                error_message: error || undefined,
+              }
+            }
+          />
+
+          {/* New Advanced Diagnostics */}
+          {streamingStatus && (
+            <StreamDiagnosticsCard
+              connectionDiagnostics={streamingStatus.connection_diagnostics}
+              bitrateInfo={streamingStatus.bitrate_info}
+              audioStats={streamingStatus.audio_stats}
+            />
+          )}
+
+          {/* Variable Bitrate Configuration */}
+          {streamingStatus && (
+            <VariableBitrateCard
+              bitrateInfo={streamingStatus.bitrate_info}
+              onVariableBitrateChange={handleVariableBitrateChange}
+              disabled={!isConnected}
+            />
+          )}
 
           <Grid>
             {/* Stream Configuration */}
@@ -397,10 +454,16 @@ const DJClient = memo(() => {
               <StreamConfigurationCard
                 streamConfig={streamConfig}
                 streamSettings={streamSettings}
+                availableBitrates={availableBitrates}
                 isConnected={isConnected}
                 isConnecting={isConnecting}
                 onConfigChange={setStreamConfig}
-                onSettingsChange={setStreamSettings}
+                onSettingsChange={(settings) => {
+                  setStreamSettings(settings);
+                  if (settings.bitrate !== streamSettings.bitrate) {
+                    handleBitrateChange(settings.bitrate);
+                  }
+                }}
                 onConnect={connectToStream}
                 onDisconnect={disconnectFromStream}
               />
