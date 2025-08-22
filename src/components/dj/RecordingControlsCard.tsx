@@ -31,9 +31,10 @@ const useStyles = createStyles((theme) => ({
   },
   
   configSection: {
-    backgroundColor: theme.colors.dark[7],
+    backgroundColor: theme.colors.dark[6],
     padding: theme.spacing.md,
     borderRadius: theme.radius.md,
+    border: `1px solid ${theme.colors.dark[4]}`,
   },
 }));
 
@@ -314,6 +315,10 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
                       metadata: { ...prev.metadata, title: e.target.value }
                     }))}
                     size="sm"
+                    styles={{
+                      label: { color: '#C1C2C5' },
+                      input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' }
+                    }}
                   />
                   <TextInput
                     label="Artist"
@@ -324,6 +329,10 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
                       metadata: { ...prev.metadata, artist: e.target.value }
                     }))}
                     size="sm"
+                    styles={{
+                      label: { color: '#C1C2C5' },
+                      input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' }
+                    }}
                   />
                 </Group>
 
@@ -336,6 +345,10 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
                     output_directory: e.target.value
                   }))}
                   size="sm"
+                  styles={{
+                    label: { color: '#C1C2C5' },
+                    input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' }
+                  }}
                 />
 
                 <Group grow>
@@ -345,6 +358,10 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
                     onChange={handleFormatChange}
                     data={getRecordingFormatOptions()}
                     size="sm"
+                    styles={{
+                      label: { color: '#C1C2C5' },
+                      input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' }
+                    }}
                   />
                   <TextInput
                     label="Filename Template"
@@ -355,6 +372,10 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
                       filename_template: e.target.value
                     }))}
                     size="sm"
+                    styles={{
+                      label: { color: '#C1C2C5' },
+                      input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' }
+                    }}
                   />
                 </Group>
                 
@@ -369,6 +390,10 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
                         auto_stop_on_silence: event.currentTarget.checked,
                       }))}
                       size="sm"
+                      styles={{
+                        label: { color: '#C1C2C5' },
+                        description: { color: '#909296' }
+                      }}
                     />
                     
                     <Group grow>
@@ -383,6 +408,10 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
                         min={1}
                         max={1440} // 24 hours
                         size="sm"
+                        styles={{
+                          label: { color: '#C1C2C5' },
+                          input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' }
+                        }}
                       />
                       <NumberInput
                         label="Max File Size (MB)"
@@ -395,6 +424,10 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
                         min={1}
                         max={10000}
                         size="sm"
+                        styles={{
+                          label: { color: '#C1C2C5' },
+                          input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' }
+                        }}
                       />
                     </Group>
                   </Stack>
