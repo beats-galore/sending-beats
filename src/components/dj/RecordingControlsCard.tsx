@@ -1,8 +1,10 @@
 import { Card, Stack, Group, Title, Button, Badge, Text, Progress, Select, Switch, NumberInput, Tooltip, Alert, TextInput } from '@mantine/core';
+import { FileButton } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
-import { IconCircleFilled, IconPlayerStop, IconSettings, IconFileMusic, IconAlertCircle } from '@tabler/icons-react';
+import { IconCircleFilled, IconPlayerStop, IconSettings, IconFileMusic, IconAlertCircle, IconFolder } from '@tabler/icons-react';
 import { memo, useState, useCallback, useEffect } from 'react';
 import { useRecording, RecordingConfig, RecordingFormat } from '../../hooks/use-recording';
+import { open } from '@tauri-apps/plugin-dialog';
 
 type RecordingControlsCardProps = {
   disabled?: boolean;
@@ -102,10 +104,10 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
     const [quickConfig, setQuickConfig] = useState<Partial<RecordingConfig>>({
       name: 'Quick Recording',
       format: { mp3: { bitrate: 192 } },
-      filename_template: 'live_recording',
+      filename_template: '',
       metadata: {
-        title: 'Live Recording',
-        artist: 'Sendin Beats',
+        title: '',
+        artist: '',
       },
       auto_stop_on_silence: false,
       silence_threshold_db: -60.0,
@@ -121,7 +123,7 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
     const currentSession = status?.current_session;
     const availableSpace = status?.available_space_gb ?? 0;
     
-    // Load default config on first render
+    // Load default config on first render (only non-text fields)
     useEffect(() => {
       const loadDefaultConfig = async () => {
         try {
@@ -129,10 +131,11 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
           setQuickConfig(prev => ({
             ...defaultConfig,
             name: 'Quick Recording',
+            // Keep user's text inputs, only load technical defaults
+            filename_template: prev.filename_template || '',
             metadata: {
-              ...defaultConfig.metadata,
-              title: prev.metadata?.title || 'Live Recording',
-              artist: prev.metadata?.artist || 'Sendin Beats',
+              title: prev.metadata?.title || '',
+              artist: prev.metadata?.artist || '',
             },
           }));
         } catch (err) {
@@ -181,6 +184,25 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
       }
     }, [actions]);
     
+    const handleDirectorySelect = useCallback(async () => {
+      try {
+        const selectedPath = await open({
+          directory: true,
+          multiple: false,
+          title: 'Select Recording Output Directory',
+        });
+        
+        if (selectedPath && typeof selectedPath === 'string') {
+          setQuickConfig(prev => ({
+            ...prev,
+            output_directory: selectedPath,
+          }));
+        }
+      } catch (err) {
+        console.error('Failed to select directory:', err);
+      }
+    }, []);
+
     const handleFormatChange = useCallback((value: string | null) => {
       if (value) {
         setQuickConfig(prev => ({
@@ -311,20 +333,13 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
                     label="Title"
                     placeholder="Enter recording title"
                     value={quickConfig.metadata?.title || ''}
-                    onChange={(e) => {
-                      console.log('Title changing to:', e.target.value);
-                      setQuickConfig(prev => {
-                        const newConfig = {
-                          ...prev,
-                          metadata: { 
-                            ...prev.metadata,
-                            title: e.target.value 
-                          }
-                        };
-                        console.log('New config:', newConfig);
-                        return newConfig;
-                      });
-                    }}
+                    onChange={(e) => setQuickConfig(prev => ({
+                      ...prev,
+                      metadata: { 
+                        ...prev.metadata,
+                        title: e.target.value 
+                      }
+                    }))}
                     size="sm"
                     styles={{
                       label: { color: '#C1C2C5' },
@@ -335,20 +350,13 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
                     label="Artist"
                     placeholder="Enter artist name"
                     value={quickConfig.metadata?.artist || ''}
-                    onChange={(e) => {
-                      console.log('Artist changing to:', e.target.value);
-                      setQuickConfig(prev => {
-                        const newConfig = {
-                          ...prev,
-                          metadata: { 
-                            ...prev.metadata,
-                            artist: e.target.value 
-                          }
-                        };
-                        console.log('New config:', newConfig);
-                        return newConfig;
-                      });
-                    }}
+                    onChange={(e) => setQuickConfig(prev => ({
+                      ...prev,
+                      metadata: { 
+                        ...prev.metadata,
+                        artist: e.target.value 
+                      }
+                    }))}
                     size="sm"
                     styles={{
                       label: { color: '#C1C2C5' },
@@ -357,20 +365,24 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
                   />
                 </Group>
 
-                <TextInput
-                  label="Output Directory"
-                  placeholder="Leave empty for default (~/Music)"
-                  value={quickConfig.output_directory || ''}
-                  onChange={(e) => setQuickConfig(prev => ({
-                    ...prev,
-                    output_directory: e.target.value
-                  }))}
-                  size="sm"
-                  styles={{
-                    label: { color: '#C1C2C5' },
-                    input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' }
-                  }}
-                />
+                <Stack gap="xs">
+                  <Text size="sm" fw={500} c="#C1C2C5">
+                    Output Directory
+                  </Text>
+                  <Group gap="sm">
+                    <Text size="sm" c="#909296" style={{ flex: 1, minWidth: 0 }}>
+                      {quickConfig.output_directory || 'Default (~/Music)'}
+                    </Text>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      leftSection={<IconFolder size={16} />}
+                      onClick={handleDirectorySelect}
+                    >
+                      Browse
+                    </Button>
+                  </Group>
+                </Stack>
 
                 <Group grow>
                   <Select
