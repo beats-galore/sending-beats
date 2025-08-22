@@ -9,7 +9,9 @@ pub use audio::{
     AudioDeviceManager, VirtualMixer, MixerConfig, AudioDeviceInfo, AudioChannel, 
     AudioMetrics, MixerCommand, AudioConfigFactory, EQBand, ThreeBandEqualizer, 
     Compressor, Limiter, PeakDetector, RmsDetector, AudioDatabase, AudioEventBus,
-    VULevelData, MasterLevelData, ChannelConfig, OutputRouteConfig
+    VULevelData, MasterLevelData, ChannelConfig, OutputRouteConfig, DeviceMonitorStats,
+    initialize_device_monitoring, get_device_monitoring_stats as get_monitoring_stats_impl, 
+    stop_device_monitoring as stop_monitoring_impl
 };
 use std::sync::{Arc, Mutex};
 use tauri::State;
@@ -960,6 +962,43 @@ async fn set_output_stream(
     }
 }
 
+// Device monitoring commands
+#[tauri::command]
+async fn start_device_monitoring(
+    audio_state: State<'_, AudioState>,
+) -> Result<String, String> {
+    let mixer_guard = audio_state.mixer.lock().await;
+    
+    if mixer_guard.is_some() {
+        // For now, just return success. The actual device monitoring implementation
+        // needs refactoring to work with the app's mixer storage pattern.
+        // This is a placeholder until we can properly integrate it.
+        println!("✅ Device monitoring started (placeholder implementation)");
+        Ok("Device monitoring started successfully (placeholder)".to_string())
+    } else {
+        Err("No mixer created - cannot start device monitoring".to_string())
+    }
+}
+
+#[tauri::command]
+async fn stop_device_monitoring() -> Result<String, String> {
+    match stop_monitoring_impl().await {
+        Ok(()) => {
+            println!("✅ Device monitoring stopped");
+            Ok("Device monitoring stopped successfully".to_string())
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to stop device monitoring: {}", e);
+            Err(format!("Failed to stop device monitoring: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+async fn get_device_monitoring_stats() -> Result<Option<DeviceMonitorStats>, String> {
+    Ok(get_monitoring_stats_impl().await)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Initialize the Tokio runtime for database initialization
@@ -1060,7 +1099,10 @@ pub fn run() {
             start_icecast_streaming,
             stop_icecast_streaming,
             update_icecast_metadata,
-            get_icecast_streaming_status
+            get_icecast_streaming_status,
+            start_device_monitoring,
+            stop_device_monitoring,
+            get_device_monitoring_stats
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

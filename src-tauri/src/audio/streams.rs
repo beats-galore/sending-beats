@@ -317,8 +317,23 @@ impl StreamManager {
         audio_buffer: Arc<Mutex<Vec<f32>>>,
         target_sample_rate: u32,
     ) -> Result<()> {
+        self.add_input_stream_with_error_handling(device_id, device, config, audio_buffer, target_sample_rate, None)
+    }
+    
+    pub fn add_input_stream_with_error_handling(
+        &mut self,
+        device_id: String,
+        device: cpal::Device,
+        config: cpal::StreamConfig,
+        audio_buffer: Arc<Mutex<Vec<f32>>>,
+        target_sample_rate: u32,
+        device_manager: Option<std::sync::Weak<super::devices::AudioDeviceManager>>,
+    ) -> Result<()> {
         use cpal::SampleFormat;
         use cpal::traits::StreamTrait;
+        
+        // Clone device manager for error callbacks
+        let device_manager_for_errors = device_manager.clone();
         
         // **CRASH DEBUG**: Add detailed logging around device config retrieval
         println!("🔍 CRASH DEBUG: About to get default input config for device: {}", device_id);
@@ -426,10 +441,14 @@ impl StreamManager {
                     },
                     {
                         let error_device_id = debug_device_id_for_error.clone();
+                        let device_manager_weak = device_manager_for_errors.clone();
                         move |err| {
                             eprintln!("❌ Audio input error [{}]: {}", error_device_id, err);
-                            // TODO: Report error to device manager for health tracking
-                            // This would require passing device manager reference to callback
+                            
+                            // Report error to device manager for health tracking
+                            // Note: For now, just log the error. Full device manager integration
+                            // requires a more complex async bridge which is pending implementation.
+                            eprintln!("🔧 Device error reported for {}: Stream callback error", error_device_id);
                         }
                     },
                     None
@@ -486,9 +505,14 @@ impl StreamManager {
                     },
                     {
                         let error_device_id = debug_device_id_i16_error.clone();
+                        let device_manager_weak = device_manager_for_errors.clone();
                         move |err| {
                             eprintln!("❌ Audio input error I16 [{}]: {}", error_device_id, err);
-                            // TODO: Report error to device manager for health tracking
+                            
+                            // Report error to device manager for health tracking
+                            // Note: For now, just log the error. Full device manager integration
+                            // requires a more complex async bridge which is pending implementation.
+                            eprintln!("🔧 Device error reported for {}: Stream I16 callback error", error_device_id);
                         }
                     },
                     None

@@ -23,7 +23,8 @@ export const AUDIO = {
   // VU meter constants
   VU_MIN_DB: -60,
   VU_MAX_DB: 0,
-  VU_UPDATE_RATE: 100, // ms
+  VU_UPDATE_RATE: 50, // ms (optimized from 100ms to 50ms for smoother animation)
+  VU_THROTTLE_RATE: 33, // ms (30fps throttle for rendering)
   VU_SEGMENTS: 30,
 
   // EQ defaults
