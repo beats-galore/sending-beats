@@ -50,7 +50,9 @@ type ChannelVUMeterProps = {
 export const ChannelVUMeter = memo<ChannelVUMeterProps>(
   ({ levels }) => {
     const { classes } = useStyles();
-    const previousLevelsRef = useRef<StereoChannelLevels>({
+    const previousLevelsRef = useRef<StereoChannelLevels & { 
+      meterElements?: React.ReactNode 
+    }>({
       left: { peak: 0, rms: 0 },
       right: { peak: 0, rms: 0 },
       peak: 0,
@@ -73,7 +75,7 @@ export const ChannelVUMeter = memo<ChannelVUMeterProps>(
     // Memoize the VU meter elements to prevent unnecessary re-renders
     const meterElements = useMemo(() => {
       if (!levelsChanged && previousLevelsRef.current.left.peak > 0) {
-        return (previousLevelsRef.current as any).meterElements;
+        return previousLevelsRef.current.meterElements;
       }
 
       const elements = (
@@ -106,7 +108,7 @@ export const ChannelVUMeter = memo<ChannelVUMeterProps>(
       );
 
       // Cache the elements
-      (previousLevelsRef.current as any).meterElements = elements;
+      previousLevelsRef.current.meterElements = elements;
       return elements;
     }, [levels, classes.meterRow, classes.channelTag, levelsChanged]);
 

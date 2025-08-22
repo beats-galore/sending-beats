@@ -63,7 +63,9 @@ const memoizeDbConversion = (() => {
       // Prevent memory leaks - keep cache size reasonable
       if (cache.size > 1000) {
         const firstKey = cache.keys().next().value;
-        cache.delete(firstKey);
+        if (firstKey !== undefined) {
+          cache.delete(firstKey);
+        }
       }
     }
     return cache.get(level)!;
@@ -77,7 +79,9 @@ const memoizeVuPosition = (() => {
       cache.set(dbLevel, audioCalculations.dbToVuPosition(dbLevel));
       if (cache.size > 1000) {
         const firstKey = cache.keys().next().value;
-        cache.delete(firstKey);
+        if (firstKey !== undefined) {
+          cache.delete(firstKey);
+        }
       }
     }
     return cache.get(dbLevel)!;
@@ -87,7 +91,11 @@ const memoizeVuPosition = (() => {
 export const VUMeter = memo<VUMeterProps>(
   ({ peakLevel, rmsLevel, vertical = true, height = 200, width = 20, showLabels = true }) => {
     const { classes } = useStyles();
-    const previousLevelsRef = useRef<{ peakLevel: number; rmsLevel: number }>({ peakLevel: 0, rmsLevel: 0 });
+    const previousLevelsRef = useRef<{ 
+      peakLevel: number; 
+      rmsLevel: number; 
+      segmentElements?: React.ReactNode[] 
+    }>({ peakLevel: 0, rmsLevel: 0 });
 
     // Use memoized conversion functions for better performance
     const dbPeak = useMemo(() => memoizeDbConversion(peakLevel), [peakLevel]);

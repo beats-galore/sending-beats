@@ -139,7 +139,9 @@ export const VU_METER_OPTIMIZATIONS = {
         // Keep cache size under control
         if (cache.size >= maxSize) {
           const firstKey = cache.keys().next().value;
-          cache.delete(firstKey);
+          if (firstKey !== undefined) {
+            cache.delete(firstKey);
+          }
         }
         cache.set(value, value > 0 ? 20 * Math.log10(value) : -60);
       }
