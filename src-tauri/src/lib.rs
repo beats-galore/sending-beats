@@ -1055,6 +1055,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(StreamState(Mutex::new(None)))
         .manage(audio_state)
         .manage(recording_state)
@@ -1426,18 +1427,50 @@ async fn create_default_recording_config() -> Result<RecordingConfig, String> {
 }
 
 #[tauri::command]
-async fn select_recording_directory() -> Result<String, String> {
+async fn select_recording_directory(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    use std::sync::{Arc, Mutex};
+    use tokio::time::Duration;
+    
     println!("🔍 select_recording_directory command called");
     
-    // For now, return the default Music directory path
-    // In a full implementation, this would show a native directory picker
-    let home_dir = dirs::home_dir().ok_or("Could not find home directory")?;
-    let music_dir = home_dir.join("Music");
-    let path_str = music_dir.to_string_lossy().to_string();
+    // Use a shared result to capture the callback result
+    let result: Arc<Mutex<Option<Option<String>>>> = Arc::new(Mutex::new(None));
+    let result_clone = result.clone();
     
-    println!("📁 Returning directory path: {}", path_str);
+    // Show directory picker dialog with callback
+    app.dialog().file().pick_folder(move |folder_path| {
+        let path_result = if let Some(path) = folder_path {
+            let path_str = path.to_string();
+            println!("📁 User selected directory: {}", path_str);
+            Some(path_str)
+        } else {
+            println!("📁 User cancelled directory selection");
+            None
+        };
+        
+        // Store the result
+        if let Ok(mut guard) = result_clone.lock() {
+            *guard = Some(path_result);
+        }
+    });
     
-    // Return the Music directory as default for now
-    // TODO: Implement actual directory picker dialog
-    Ok(path_str)
+    // Wait for the dialog result with timeout
+    let timeout_duration = Duration::from_secs(30); // 30 second timeout
+    let start_time = std::time::Instant::now();
+    
+    loop {
+        if start_time.elapsed() > timeout_duration {
+            return Err("Dialog timeout".to_string());
+        }
+        
+        if let Ok(guard) = result.lock() {
+            if let Some(path_result) = guard.as_ref() {
+                return Ok(path_result.clone());
+            }
+        }
+        
+        // Small delay to avoid busy waiting
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
