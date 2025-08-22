@@ -917,23 +917,10 @@ impl VirtualMixer {
                                 }
                             }
                             
-                            // **CRITICAL FIX**: Ensure safe mixing with different sample rates and channel counts
-                            // The reusable_output_buffer is stereo (interleaved L/R) at the mixer sample rate
-                            let mixer_sample_rate = sample_rate as f32;
-                            
-                            // Convert mono input to stereo if needed
-                            let stereo_samples = if samples.len() % 2 == 0 {
-                                // Already stereo (even number of samples)
-                                samples.clone()
-                            } else {
-                                // Mono input - duplicate to both L/R channels
-                                let mut stereo = Vec::with_capacity(samples.len() * 2);
-                                for &mono_sample in samples.iter() {
-                                    stereo.push(mono_sample); // Left channel
-                                    stereo.push(mono_sample); // Right channel (duplicate)
-                                }
-                                stereo
-                            };
+                            // **AUDIO QUALITY FIX**: Use input samples directly without unnecessary conversion
+                            // The input streams should already be providing stereo interleaved samples
+                            // Assume input is already in the correct stereo format from stream manager
+                            let stereo_samples = samples;
                             
                             // **CRITICAL FIX**: Safe buffer size matching to prevent crashes
                             // Only mix up to the smaller buffer size to prevent overruns
@@ -946,11 +933,6 @@ impl VirtualMixer {
                                 }
                             }
                             
-                            // Debug sample rate mismatches occasionally
-                            if frame_count % 500 == 0 && samples.len() > 0 {
-                                println!("🔧 MIXER DEBUG: Device {} - Original: {} samples, Stereo: {} samples, Mixed: {} samples", 
-                                    device_id, samples.len(), stereo_samples.len(), mix_length);
-                            }
                         }
                     }
                     

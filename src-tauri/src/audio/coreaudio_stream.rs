@@ -8,7 +8,7 @@ use coreaudio_sys::{
     kAudioOutputUnitProperty_CurrentDevice, kAudioUnitProperty_StreamFormat,
     kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, kAudioUnitScope_Output,
     kAudioUnitScope_Global, AudioStreamBasicDescription, kAudioFormatLinearPCM,
-    kAudioFormatFlagIsFloat, kAudioFormatFlagIsPacked,
+    kAudioFormatFlagIsFloat, kAudioFormatFlagIsPacked, kAudioFormatFlagIsNonInterleaved,
     AudioComponentFindNext, AudioComponentInstanceNew, AudioUnitInitialize,
     AudioUnitSetProperty, AudioOutputUnitStart, AudioOutputUnitStop,
     AudioUnitUninitialize, AudioComponentInstanceDispose,
@@ -157,14 +157,14 @@ impl CoreAudioOutputStream {
             return Err(anyhow::anyhow!("Failed to set current device: {}", status));
         }
 
-        // Step 5: Configure the audio format (INTERLEAVED for better compatibility)
+        // Step 5: Configure the audio format (INTERLEAVED for compatibility)
         let format = AudioStreamBasicDescription {
             mSampleRate: self.sample_rate as f64,
             mFormatID: kAudioFormatLinearPCM,
-            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked, // REMOVED kAudioFormatFlagIsNonInterleaved
-            mBytesPerPacket: (std::mem::size_of::<f32>() * self.channels as usize) as u32, // Fixed for interleaved
+            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
+            mBytesPerPacket: (std::mem::size_of::<f32>() * self.channels as usize) as u32, // Interleaved: all channels per packet
             mFramesPerPacket: 1,
-            mBytesPerFrame: (std::mem::size_of::<f32>() * self.channels as usize) as u32, // Fixed for interleaved  
+            mBytesPerFrame: (std::mem::size_of::<f32>() * self.channels as usize) as u32, // Interleaved: all channels per frame
             mChannelsPerFrame: self.channels as u32,
             mBitsPerChannel: 32,
             mReserved: 0,
@@ -400,7 +400,7 @@ extern "C" fn render_callback(
         
         // Try to get audio data, but always ensure we fill the output buffers
         if let Ok(mut buffer) = input_buffer.try_lock() {
-            // INTERLEAVED AUDIO: Process single buffer with all channels mixed
+            // INTERLEAVED AUDIO: Process single buffer with all channels
             if buffer_list.mNumberBuffers > 0 {
                 let audio_buffer = unsafe { &mut *buffer_list.mBuffers.as_mut_ptr() };
                 let output_data = audio_buffer.mData as *mut f32;
@@ -411,7 +411,7 @@ extern "C" fn render_callback(
                     let samples_to_copy = total_samples.min(buffer.len());
                     
                     if samples_to_copy > 0 && !buffer.is_empty() {
-                        // Copy interleaved audio samples safely
+                        // Copy interleaved audio samples directly
                         unsafe {
                             std::ptr::copy_nonoverlapping(
                                 buffer.as_ptr(),
@@ -459,7 +459,7 @@ extern "C" fn render_callback(
 
 /// Helper function to safely fill all audio buffers with silence (INTERLEAVED)
 #[cfg(target_os = "macos")]
-fn fill_buffers_with_silence(buffer_list: &mut AudioBufferList, frames_needed: usize) {
+fn fill_buffers_with_silence(buffer_list: &mut AudioBufferList, _frames_needed: usize) {
     // INTERLEAVED AUDIO: Fill single buffer with silence
     if buffer_list.mNumberBuffers > 0 {
         let audio_buffer = unsafe { &mut *buffer_list.mBuffers.as_mut_ptr() };
