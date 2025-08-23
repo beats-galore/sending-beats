@@ -15,6 +15,8 @@ pub mod mixer;
 pub mod database;
 pub mod streaming_bridge;
 pub mod device_monitor;
+pub mod file_player;
+pub mod file_player_manager;
 
 #[cfg(target_os = "macos")]
 pub mod coreaudio_stream;
@@ -55,6 +57,14 @@ pub use streaming_bridge::{
 pub use device_monitor::{
     DeviceMonitor, DeviceMonitorConfig, DeviceMonitorStats,
     initialize_device_monitoring, get_device_monitor, stop_device_monitoring, get_device_monitoring_stats,
+};
+
+pub use file_player::{
+    AudioFilePlayer, FilePlayerDevice, QueuedTrack, PlaybackState, PlaybackStatus, PlaybackMode, RepeatMode,
+};
+
+pub use file_player_manager::{
+    FilePlayerManager, FilePlayerService, FilePlayerConfig, PlaybackAction,
 };
 
 // Global audio debug logging control
