@@ -113,7 +113,7 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(
       silence_duration_sec: 5.0,
       sample_rate: 48000,
       channels: 2,
-      bit_depth: 24,
+      bit_depth: 16, // Changed to 16-bit for better QuickTime compatibility
     });
     
     const [showAdvanced, setShowAdvanced] = useState(false);

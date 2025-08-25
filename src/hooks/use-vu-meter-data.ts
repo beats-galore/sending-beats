@@ -12,14 +12,6 @@ export const useVUMeterData = (isEnabled = true) => {
   const hasConfig = useMixerStore((state) => state.config !== null);
   const batchUpdate = useMixerStore((state) => state.batchUpdate);
 
-  useEffect(() => {
-    console.log('[use-vu-meter-data] hasConfig changed', hasConfig);
-  }, [hasConfig]);
-
-  useEffect(() => {
-    console.log('[use-vu-meter-data] batchUpdate changed');
-  }, [batchUpdate]);
-
   // Throttled batch update to prevent excessive re-renders - memoized at 30fps
   const throttledBatchUpdate = useThrottle(
     useCallback(
@@ -75,11 +67,11 @@ export const useVUMeterData = (isEnabled = true) => {
         masterLevelsData.some((level) => level > 0);
 
       if (hasAnyLevels) {
-        console.debug('📊 VU Data:', {
-          channels: Object.keys(channelLevels).length,
-          master: `L:${masterLevelsData[0]?.toFixed(3)}/R:${masterLevelsData[2]?.toFixed(3)}`,
-          cpu: metricsData?.cpu_usage?.toFixed(1),
-        });
+        // console.debug('📊 VU Data:', {
+        //   channels: Object.keys(channelLevels).length,
+        //   master: `L:${masterLevelsData[0]?.toFixed(3)}/R:${masterLevelsData[2]?.toFixed(3)}`,
+        //   cpu: metricsData?.cpu_usage?.toFixed(1),
+        // });
       }
     } catch (error) {
       console.error('Failed to poll VU meter data:', error);

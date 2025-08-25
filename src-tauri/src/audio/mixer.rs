@@ -237,7 +237,7 @@ impl VirtualMixer {
         let (audio_output_tx, _audio_output_rx) = mpsc::channel(8192);
         
         // **STREAMING INTEGRATION**: Create broadcast channel for streaming bridge
-        let (audio_output_broadcast_tx, _) = tokio::sync::broadcast::channel(1024);
+        let (audio_output_broadcast_tx, _) = tokio::sync::broadcast::channel(8192); // Increase capacity for recording
         
         let buffer_size = config.buffer_size as usize;
         let mix_buffer = Arc::new(Mutex::new(vec![0.0; buffer_size * 2])); // Stereo
@@ -1063,7 +1063,22 @@ impl VirtualMixer {
                 let _ = audio_output_tx.try_send(reusable_output_buffer.clone());
                 
                 // **STREAMING INTEGRATION**: Also send to broadcast channel for streaming bridge
-                let _ = audio_output_broadcast_tx.send(reusable_output_buffer.clone());
+                match audio_output_broadcast_tx.send(reusable_output_buffer.clone()) {
+                    Ok(_) => {
+                        // Success - always log receiver count for debugging
+                        if frame_count % 480 == 0 { // Log every ~100ms at 48kHz
+                            println!("📡 Mixer broadcast: sent {} samples to {} receivers", 
+                                reusable_output_buffer.len(), 
+                                audio_output_broadcast_tx.receiver_count());
+                        }
+                    },
+                    Err(tokio::sync::broadcast::error::SendError(_)) => {
+                        // Channel overflow or no receivers - this is normal, just log occasionally
+                        if frame_count % 480 == 0 {
+                            println!("📡 Mixer broadcast: no active receivers (recording/streaming stopped)");
+                        }
+                    }
+                }
                 // Don't break on send failure - just continue processing
 
                 frame_count += 1;

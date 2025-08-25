@@ -16,8 +16,19 @@ pub async fn start_recording(
     // Get audio output receiver from mixer
     let mixer_guard = audio_state.mixer.lock().await;
     if let Some(ref mixer) = *mixer_guard {
-        let audio_rx = mixer.get_audio_output_receiver();
+        println!("🔄 Mixer found, getting audio output receiver...");
+        let mut audio_rx = mixer.get_audio_output_receiver();
+        println!("🔄 Created broadcast receiver successfully");
         
+        // Immediately test the receiver to see if it works
+        match audio_rx.try_recv() {
+            Ok(samples) => println!("🎵 Receiver is working! Got {} samples immediately", samples.len()),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty) => println!("📭 Receiver connected but empty (good)"),
+            Err(tokio::sync::broadcast::error::TryRecvError::Closed) => println!("❌ Receiver is CLOSED immediately!"),
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => println!("⚠️ Receiver lagged immediately by {} messages", n),
+        }
+        
+        println!("🔄 Starting recording service with audio receiver...");
         match recording_state.service.start_recording(config, audio_rx).await {
             Ok(session_id) => {
                 println!("✅ Recording started with session ID: {}", session_id);
@@ -29,6 +40,7 @@ pub async fn start_recording(
             }
         }
     } else {
+        println!("❌ No mixer available - please create mixer first");
         Err("No mixer available - please create mixer first".to_string())
     }
 }
@@ -59,7 +71,14 @@ pub async fn stop_recording(
 pub async fn get_recording_status(
     recording_state: State<'_, RecordingState>,
 ) -> Result<RecordingStatus, String> {
-    Ok(recording_state.service.get_status().await)
+    let status = recording_state.service.get_status().await;
+    if status.is_recording {
+        println!("🔍 get_recording_status API called - is_recording: {}, session: {:?}", 
+            status.is_recording, 
+            status.current_session.as_ref().map(|s| format!("{}s, {}B", s.duration_seconds, s.file_size_bytes))
+        );
+    }
+    Ok(status)
 }
 
 #[tauri::command]
