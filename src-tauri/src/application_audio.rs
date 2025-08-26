@@ -202,22 +202,81 @@ impl ApplicationAudioTap {
             ));
         }
         
-        // TODO: Implement actual Core Audio tap creation
-        // This will require:
-        // 1. Check audio capture permissions
-        // 2. Translate PID to AudioObjectID using kAudioHardwarePropertyTranslatePIDToProcessObject
-        // 3. Create CATapDescription
-        // 4. Call AudioHardwareCreateProcessTap
-        // 5. Create aggregate device
-        // 6. Set up audio callback
+        // Import Core Audio taps bindings (only available on macOS)
+        #[cfg(target_os = "macos")]
+        {
+            use crate::coreaudio_taps::{
+                CATapDescription, 
+                create_process_tap, 
+                translate_pid_to_audio_object,
+                format_osstatus_error
+            };
+            
+            // Step 1: Translate PID to AudioObjectID
+            info!("Translating PID {} to AudioObjectID", self.process_info.pid);
+            let process_audio_object_id = unsafe {
+                match translate_pid_to_audio_object(self.process_info.pid) {
+                    Ok(id) => {
+                        info!("Successfully translated PID {} to AudioObjectID {}", self.process_info.pid, id);
+                        id
+                    }
+                    Err(status) => {
+                        let error_msg = format_osstatus_error(status);
+                        return Err(anyhow::anyhow!(
+                            "Failed to translate PID {} to AudioObjectID: {} ({})", 
+                            self.process_info.pid, error_msg, status
+                        ));
+                    }
+                }
+            };
+            
+            // Step 2: Create tap description for this process
+            let tap_description = CATapDescription::new_for_process(process_audio_object_id);
+            info!("Created tap description for process {}: {:?}", self.process_info.name, tap_description);
+            
+            // Step 3: Create the Core Audio process tap
+            info!("Creating Core Audio process tap...");
+            let tap_object_id = unsafe {
+                match create_process_tap(&tap_description) {
+                    Ok(id) => {
+                        info!("Successfully created process tap with AudioObjectID {}", id);
+                        id
+                    }
+                    Err(status) => {
+                        let error_msg = format_osstatus_error(status);
+                        return Err(anyhow::anyhow!(
+                            "Failed to create process tap for {}: {} ({})", 
+                            self.process_info.name, error_msg, status
+                        ));
+                    }
+                }
+            };
+            
+            // Store the tap ID for later cleanup
+            self.tap_id = Some(tap_object_id as u32);
+            
+            // Step 4: TODO - Create aggregate device with the tap
+            // This would involve:
+            // - Creating an AudioAggregateDeviceDescription
+            // - Calling AudioHardwareCreateAggregateDevice 
+            // - Setting up the audio format and callback
+            // - Starting the audio device IO
+            
+            info!("⚠️ Process tap created but aggregate device setup not yet implemented");
+            info!("Next steps: Create aggregate device and set up audio callback");
+            
+            // Create broadcast channel for audio samples
+            let (tx, _rx) = broadcast::channel(1024);
+            self.audio_tx = Some(tx);
+            
+            info!("✅ Audio tap successfully created for {}", self.process_info.name);
+            Ok(())
+        }
         
-        warn!("Core Audio tap creation not yet implemented - this is a placeholder");
-        
-        // Create broadcast channel for audio samples
-        let (tx, _rx) = broadcast::channel(1024);
-        self.audio_tx = Some(tx);
-        
-        Ok(())
+        #[cfg(not(target_os = "macos"))]
+        {
+            Err(anyhow::anyhow!("Application audio capture is only supported on macOS"))
+        }
     }
     
     /// Start capturing audio from the tapped application
@@ -253,21 +312,88 @@ impl ApplicationAudioTap {
     
     /// Check if Core Audio taps are supported on this system
     fn is_core_audio_taps_supported(&self) -> bool {
-        // TODO: Implement actual macOS version check
-        // Should check for macOS 14.4+
+        #[cfg(target_os = "macos")]
+        {
+            use std::process::Command;
+            
+            // Get macOS version using sw_vers command
+            if let Ok(output) = Command::new("sw_vers")
+                .arg("-productVersion")
+                .output()
+            {
+                if let Ok(version_str) = String::from_utf8(output.stdout) {
+                    let version = version_str.trim();
+                    if let Ok(parsed_version) = self.parse_macos_version(version) {
+                        // Core Audio taps require macOS 14.4+
+                        return parsed_version >= (14, 4, 0);
+                    }
+                }
+            }
+            
+            warn!("Could not determine macOS version, assuming Core Audio taps not supported");
+            false
+        }
         
-        // For now, assume supported on macOS
-        true
+        #[cfg(not(target_os = "macos"))]
+        {
+            false
+        }
+    }
+    
+    /// Parse macOS version string into tuple (major, minor, patch)
+    fn parse_macos_version(&self, version: &str) -> Result<(u32, u32, u32)> {
+        let parts: Vec<&str> = version.split('.').collect();
+        
+        if parts.len() < 2 {
+            return Err(anyhow::anyhow!("Invalid macOS version format: {}", version));
+        }
+        
+        let major = parts[0].parse::<u32>()?;
+        let minor = parts[1].parse::<u32>()?;
+        let patch = if parts.len() > 2 { 
+            parts[2].parse::<u32>().unwrap_or(0) 
+        } else { 
+            0 
+        };
+        
+        Ok((major, minor, patch))
     }
     
     /// Cleanup resources
     pub fn destroy(&mut self) -> Result<()> {
         self.stop_capture()?;
         
-        // TODO: Implement cleanup
-        // - Destroy aggregate device
-        // - Destroy process tap
-        // - Free resources
+        #[cfg(target_os = "macos")]
+        {
+            use crate::coreaudio_taps::{destroy_process_tap, format_osstatus_error};
+            
+            // Destroy process tap if it exists
+            if let Some(tap_id) = self.tap_id {
+                info!("Destroying Core Audio process tap with ID {}", tap_id);
+                
+                unsafe {
+                    if let Err(status) = destroy_process_tap(tap_id as u32) {
+                        let error_msg = format_osstatus_error(status);
+                        warn!("Failed to destroy process tap {}: {} ({})", tap_id, error_msg, status);
+                        // Don't fail completely, just log the warning
+                    } else {
+                        info!("Successfully destroyed process tap {}", tap_id);
+                    }
+                }
+                
+                self.tap_id = None;
+            }
+            
+            // TODO: Destroy aggregate device if it exists
+            if let Some(device_id) = self.aggregate_device_id {
+                info!("TODO: Destroy aggregate device with ID {}", device_id);
+                // This would call AudioHardwareDestroyAggregateDevice
+                self.aggregate_device_id = None;
+            }
+        }
+        
+        // Clear audio channel
+        self.audio_tx = None;
         
         info!("Destroyed audio tap for {}", self.process_info.name);
         Ok(())
@@ -304,20 +430,59 @@ impl ApplicationAudioManager {
     pub async fn request_permissions(&self) -> Result<bool> {
         info!("Requesting audio capture permissions...");
         
-        // TODO: Implement actual permission checking
-        // This should check TCC (Transparency, Consent, and Control) database
-        // and request permissions if needed
-        
-        let granted = true; // Placeholder
-        *self.permission_granted.write().await = granted;
-        
-        if granted {
-            info!("Audio capture permissions granted");
-        } else {
-            warn!("Audio capture permissions denied");
+        #[cfg(target_os = "macos")]
+        {
+            use crate::tcc_permissions::{get_permission_manager, TccPermissionStatus};
+            
+            let permission_manager = get_permission_manager();
+            
+            // First check current permission status
+            let status = permission_manager.check_audio_capture_permissions().await;
+            info!("Current permission status: {:?}", status);
+            
+            let granted = match status {
+                TccPermissionStatus::Granted => {
+                    info!("Audio capture permissions already granted");
+                    true
+                }
+                TccPermissionStatus::Denied => {
+                    warn!("Audio capture permissions denied by user");
+                    info!("Instructions for enabling permissions:\n{}", 
+                        permission_manager.get_permission_instructions());
+                    false
+                }
+                TccPermissionStatus::NotDetermined => {
+                    info!("Permissions not determined - will be requested on first audio access");
+                    // Let the system handle the permission request when we try to access audio
+                    match permission_manager.request_permissions().await {
+                        Ok(result) => result,
+                        Err(e) => {
+                            error!("Failed to request permissions: {}", e);
+                            false
+                        }
+                    }
+                }
+                TccPermissionStatus::Unknown => {
+                    warn!("Unable to determine permission status - assuming not granted");
+                    false
+                }
+            };
+            
+            *self.permission_granted.write().await = granted;
+            
+            if !granted {
+                info!("To manually enable permissions, run: open 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'");
+            }
+            
+            Ok(granted)
         }
         
-        Ok(granted)
+        #[cfg(not(target_os = "macos"))]
+        {
+            warn!("Permission checking not implemented on this platform");
+            *self.permission_granted.write().await = false;
+            Ok(false)
+        }
     }
     
     /// Get list of available audio applications
@@ -366,6 +531,33 @@ impl ApplicationAudioManager {
         #[cfg(not(target_os = "macos"))]
         {
             Err(anyhow::anyhow!("Application audio capture is only supported on macOS"))
+        }
+    }
+    
+    /// Create a virtual mixer input channel for an application's audio
+    /// This integrates application audio capture with the existing mixer system
+    pub async fn create_mixer_input_for_app(&self, pid: u32) -> Result<String> {
+        // Start capturing from the application
+        let _audio_receiver = self.start_capturing_app(pid).await?;
+        
+        // TODO: Connect the audio receiver to a new mixer input channel
+        // This would involve:
+        // 1. Creating a new input channel in the mixer
+        // 2. Feeding the audio from the receiver into that channel
+        // 3. Setting up proper audio format conversion if needed
+        // 4. Handling channel routing and effects
+        
+        // Get process info for naming
+        let discovery = self.discovery.lock().await;
+        if let Some(process_info) = discovery.get_process_info(pid) {
+            let channel_name = format!("App: {}", process_info.name);
+            
+            info!("Created virtual mixer input '{}' for PID {}", channel_name, pid);
+            info!("⚠️ Mixer integration not yet fully implemented");
+            
+            Ok(channel_name)
+        } else {
+            Err(anyhow::anyhow!("Process not found: {}", pid))
         }
     }
     

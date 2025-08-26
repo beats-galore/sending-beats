@@ -5,6 +5,12 @@ pub mod streaming_service;
 pub mod recording_service;
 pub mod application_audio;
 
+#[cfg(target_os = "macos")]
+pub mod coreaudio_taps;
+
+#[cfg(target_os = "macos")]
+pub mod tcc_permissions;
+
 use streaming::{StreamManager};
 use recording_service::{RecordingService};
 use application_audio::{ApplicationAudioManager};
@@ -224,7 +230,8 @@ pub fn run() {
             check_audio_capture_permissions,
             request_audio_capture_permissions,
             get_application_info,
-            refresh_audio_applications
+            refresh_audio_applications,
+            create_mixer_input_for_application
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

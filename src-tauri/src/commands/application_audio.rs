@@ -216,3 +216,22 @@ pub async fn refresh_audio_applications(
     // This will force a new scan by calling get_available_applications
     get_available_audio_applications(app_audio_state).await
 }
+
+#[tauri::command]
+pub async fn create_mixer_input_for_application(
+    app_audio_state: State<'_, ApplicationAudioState>,
+    pid: u32,
+) -> Result<String, String> {
+    println!("🎛️ Creating mixer input for application (PID: {})", pid);
+    
+    match app_audio_state.manager.create_mixer_input_for_app(pid).await {
+        Ok(channel_name) => {
+            println!("✅ Created mixer input: {}", channel_name);
+            Ok(channel_name)
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to create mixer input for PID {}: {}", pid, e);
+            Err(format!("Failed to create mixer input: {}", e))
+        }
+    }
+}
