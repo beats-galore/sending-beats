@@ -3,9 +3,11 @@ pub mod audio;
 pub mod icecast_source;
 pub mod streaming_service;
 pub mod recording_service;
+pub mod application_audio;
 
 use streaming::{StreamManager};
 use recording_service::{RecordingService};
+use application_audio::{ApplicationAudioManager};
 
 // Import command modules
 pub mod commands;
@@ -33,6 +35,7 @@ use commands::recording::*;
 use commands::icecast::*;
 use commands::debug::*;
 use commands::file_player::*;
+use commands::application_audio::*;
 
 // File player state for managing multiple file players
 use commands::file_player::FilePlayerState;
@@ -47,6 +50,9 @@ struct AudioState {
 }
 struct RecordingState {
     service: Arc<RecordingService>,
+}
+struct ApplicationAudioState {
+    manager: Arc<ApplicationAudioManager>,
 }
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -104,6 +110,11 @@ pub fn run() {
     let file_player_state = FilePlayerState {
         service: FilePlayerService::new(),
     };
+    
+    // Initialize application audio manager
+    let application_audio_state = ApplicationAudioState {
+        manager: Arc::new(ApplicationAudioManager::new()),
+    };
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -112,6 +123,7 @@ pub fn run() {
         .manage(audio_state)
         .manage(recording_state)
         .manage(file_player_state)
+        .manage(application_audio_state)
         .invoke_handler(tauri::generate_handler![
             // Streaming commands
             greet,
@@ -201,7 +213,18 @@ pub fn run() {
             get_player_status,
             browse_audio_files,
             get_supported_audio_formats,
-            validate_audio_file
+            validate_audio_file,
+            // Application audio commands
+            get_available_audio_applications,
+            get_known_audio_applications,
+            start_application_audio_capture,
+            stop_application_audio_capture,
+            get_active_audio_captures,
+            stop_all_audio_captures,
+            check_audio_capture_permissions,
+            request_audio_capture_permissions,
+            get_application_info,
+            refresh_audio_applications
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

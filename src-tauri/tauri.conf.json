@@ -37,7 +37,7 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "entitlements": null,
+      "entitlements": "./entitlements.plist",
       "exceptionDomain": null,
       "frameworks": ["AudioUnit", "CoreAudio", "AudioToolbox"],
       "providerShortName": null,

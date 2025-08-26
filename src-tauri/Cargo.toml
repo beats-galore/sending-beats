@@ -41,6 +41,7 @@ cpal = "0.15"              # Cross-platform audio I/O
 rtrb = "0.2"               # Real-time ring buffer
 rubato = "0.15"            # High-quality sample rate conversion
 rustfft = "6.2"            # Fast Fourier Transform for spectrum analysis
+sysinfo = "0.30"           # System process enumeration for application audio capture
 
 # Recording and file management
 dirs = "5.0"               # Platform-specific directory paths

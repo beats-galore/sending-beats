@@ -7,6 +7,7 @@ pub mod recording;
 pub mod icecast;
 pub mod debug;
 pub mod file_player;
+pub mod application_audio;
 
 // Re-export all command functions for easy access
 pub use streaming::*;
@@ -17,3 +18,4 @@ pub use recording::*;
 pub use icecast::*;
 pub use debug::*;
 pub use file_player::*;
+pub use application_audio::*;
