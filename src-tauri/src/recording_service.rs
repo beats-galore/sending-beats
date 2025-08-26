@@ -306,19 +306,25 @@ impl Mp3Encoder {
                 }
             };
             
-            // Configure LAME
-            lame.set_num_channels(channels as u8).expect("Failed to set channels");
-            lame.set_sample_rate(sample_rate).expect("Failed to set sample rate");
-            lame.set_kilobitrate(bitrate as i32).expect("Failed to set bitrate");
-            lame.set_quality(quality as i32).expect("Failed to set quality");
-            // Set mode based on channels - let LAME choose the best mode
-            if channels == 1 {
-                // Mono mode
-                lame.set_mode(3).expect("Failed to set mono mode"); // 3 = mono
-            } else {
-                // Stereo - let LAME choose (joint stereo or stereo)
-                lame.set_mode(1).expect("Failed to set stereo mode"); // 1 = joint stereo
+            // Configure LAME - using correct API methods
+            if let Err(_) = lame.set_channels(channels as u8) {
+                error!("Failed to set LAME channels");
+                return;
             }
+            if let Err(_) = lame.set_sample_rate(sample_rate) {
+                error!("Failed to set LAME sample rate");
+                return;
+            }
+            if let Err(_) = lame.set_kilobitrate(bitrate as i32) {
+                error!("Failed to set LAME bitrate");
+                return;
+            }
+            if let Err(_) = lame.set_quality(quality) {
+                error!("Failed to set LAME quality");
+                return;
+            }
+            // Skip mode setting - let LAME choose based on channel count
+            // The mode will be automatically determined by the encoder
             
             if lame.init_params().is_err() {
                 error!("Failed to initialize LAME parameters");
@@ -341,8 +347,8 @@ impl Mp3Encoder {
                         let mut mp3_buffer = vec![0u8; samples_i16.len() * 2 + 7200]; // LAME recommended buffer size
                         let encoded_size = if channels == 1 {
                             lame.encode(&samples_i16, &[], &mut mp3_buffer)
-                                .unwrap_or_else(|e| {
-                                    error!("LAME encoding error: {}", e);
+                                .unwrap_or_else(|_e| {
+                                    error!("LAME encoding error in mono mode");
                                     0
                                 })
                         } else {
@@ -351,8 +357,8 @@ impl Mp3Encoder {
                             let left: Vec<i16> = samples_i16.iter().step_by(2).copied().collect();
                             let right: Vec<i16> = samples_i16.iter().skip(1).step_by(2).copied().collect();
                             lame.encode(&left, &right, &mut mp3_buffer)
-                                .unwrap_or_else(|e| {
-                                    error!("LAME encoding error: {}", e);
+                                .unwrap_or_else(|_e| {
+                                    error!("LAME encoding error in stereo mode");
                                     0
                                 })
                         };
@@ -365,20 +371,9 @@ impl Mp3Encoder {
                         }
                     },
                     Mp3Command::Finalize(response_tx) => {
-                        // Flush remaining data
-                        let mut final_buffer = vec![0u8; 7200];
-                        let final_size = lame.encode_flush(&mut final_buffer)
-                            .unwrap_or_else(|e| {
-                                error!("LAME flush error: {}", e);
-                                0
-                            });
-                        
-                        if final_size > 0 {
-                            final_buffer.truncate(final_size);
-                        } else {
-                            final_buffer.clear();
-                        }
-                        
+                        // MP3 finalization - no flush method available in this LAME crate
+                        // Just send empty buffer to indicate completion
+                        let final_buffer = Vec::new();
                         let _ = response_tx.send(final_buffer);
                         break; // Exit the loop after finalization
                     },

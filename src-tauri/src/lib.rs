@@ -22,7 +22,7 @@ pub use audio::{
 use std::sync::{Arc, Mutex};
 use tauri::State;
 use tokio::sync::Mutex as AsyncMutex;
-use tracing::error;
+// Removed unused import
 
 // Import all command modules
 use commands::streaming::*;
