@@ -98,7 +98,7 @@ impl Default for RecordingConfig {
             split_on_interval_minutes: None,
             sample_rate: 48000,
             channels: 2,
-            bit_depth: 24,
+            bit_depth: 16, // Use 16-bit for better QuickTime/iTunes compatibility
         }
     }
 }
