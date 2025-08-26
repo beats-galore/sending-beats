@@ -4,11 +4,15 @@ const MIN_DB: f32 = -100.0;
 const MAX_DB: f32 = 40.0;
 const MIN_LOG_INPUT: f32 = 1e-10;
 
-/// Denormal protection - force very small numbers to zero
+/// **BASS POPPING FIX**: More aggressive denormal protection for filter stability
 #[inline]
 fn flush_denormal(x: f32) -> f32 {
-    if x.abs() < DENORMAL_THRESHOLD {
+    let abs_x = x.abs();
+    if abs_x < DENORMAL_THRESHOLD || !x.is_finite() {
         0.0
+    } else if abs_x > 100.0 {
+        // Clamp extreme values that could cause instability
+        if x > 0.0 { 100.0 } else { -100.0 }
     } else {
         x
     }
@@ -251,6 +255,7 @@ impl std::fmt::Debug for SpectrumAnalyzer {
 /// Real-time audio effects chain
 #[derive(Debug)]
 pub struct AudioEffectsChain {
+    dc_blocker: BiquadFilter,  // **BASS POPPING FIX**: DC offset removal
     equalizer: ThreeBandEqualizer,
     compressor: Compressor,
     limiter: Limiter,
@@ -260,6 +265,7 @@ pub struct AudioEffectsChain {
 impl AudioEffectsChain {
     pub fn new(sample_rate: u32) -> Self {
         Self {
+            dc_blocker: BiquadFilter::high_pass(sample_rate, 20.0, 0.7), // Remove DC and sub-20Hz
             equalizer: ThreeBandEqualizer::new(sample_rate),
             compressor: Compressor::new(sample_rate),
             limiter: Limiter::new(sample_rate),
@@ -272,7 +278,10 @@ impl AudioEffectsChain {
             return;
         }
 
-        // Apply effects in chain: EQ -> Compressor -> Limiter
+        // **BASS POPPING FIX**: Process in order: DC Blocker -> EQ -> Compressor -> Limiter
+        for sample in samples.iter_mut() {
+            *sample = self.dc_blocker.process(*sample);
+        }
         self.equalizer.process(samples);
         self.compressor.process(samples);
         self.limiter.process(samples);
@@ -299,6 +308,7 @@ impl AudioEffectsChain {
     
     /// Reset all effects to prevent accumulated instabilities
     pub fn reset(&mut self) {
+        self.dc_blocker.reset();  // **BASS POPPING FIX**: Reset DC blocker too
         self.equalizer.reset();
         self.compressor.reset();
         self.limiter.reset();
@@ -340,15 +350,16 @@ impl ThreeBandEqualizer {
     }
 
     pub fn set_gain(&mut self, band: EQBand, gain_db: f32) {
+        // **BASS POPPING FIX**: Update coefficients without destroying filter state
         match band {
             EQBand::Low => {
-                self.low_shelf = BiquadFilter::low_shelf(self.sample_rate, 200.0, 0.7, gain_db);
+                self.low_shelf.update_low_shelf_coeffs(self.sample_rate, 200.0, 0.7, gain_db);
             }
             EQBand::Mid => {
-                self.mid_peak = BiquadFilter::peak(self.sample_rate, 1000.0, 0.7, gain_db);
+                self.mid_peak.update_peak_coeffs(self.sample_rate, 1000.0, 0.7, gain_db);
             }
             EQBand::High => {
-                self.high_shelf = BiquadFilter::high_shelf(self.sample_rate, 8000.0, 0.7, gain_db);
+                self.high_shelf.update_high_shelf_coeffs(self.sample_rate, 8000.0, 0.7, gain_db);
             }
         }
     }
@@ -458,6 +469,33 @@ impl BiquadFilter {
             y2: 0.0,
         }
     }
+    
+    /// **BASS POPPING FIX**: High-pass filter for DC blocking
+    pub fn high_pass(sample_rate: u32, freq: f32, q: f32) -> Self {
+        let w0 = 2.0 * std::f32::consts::PI * freq / sample_rate as f32;
+        let cos_w0 = w0.cos();
+        let sin_w0 = w0.sin();
+        let alpha = sin_w0 / (2.0 * q);
+
+        let b0 = (1.0 + cos_w0) / 2.0;
+        let b1 = -(1.0 + cos_w0);
+        let b2 = (1.0 + cos_w0) / 2.0;
+        let a0 = 1.0 + alpha;
+        let a1 = -2.0 * cos_w0;
+        let a2 = 1.0 - alpha;
+
+        Self {
+            a0: b0 / a0,
+            a1: a1 / a0,
+            a2: a2 / a0,
+            b1: b1 / a0,
+            b2: b2 / a0,
+            x1: 0.0,
+            x2: 0.0,
+            y1: 0.0,
+            y2: 0.0,
+        }
+    }
 
     pub fn process(&mut self, input: f32) -> f32 {
         let input_safe = validate_float(input);
@@ -478,6 +516,72 @@ impl BiquadFilter {
         self.x2 = 0.0;
         self.y1 = 0.0;
         self.y2 = 0.0;
+    }
+    
+    /// **BASS POPPING FIX**: Update low shelf coefficients without destroying delay line
+    pub fn update_low_shelf_coeffs(&mut self, sample_rate: u32, freq: f32, q: f32, gain_db: f32) {
+        let gain = 10.0_f32.powf(gain_db / 20.0);
+        let w0 = 2.0 * std::f32::consts::PI * freq / sample_rate as f32;
+        let cos_w0 = w0.cos();
+        let sin_w0 = w0.sin();
+        let beta = (gain / q).sqrt();
+
+        let b1 = 2.0 * gain * ((gain - 1.0) - (gain + 1.0) * cos_w0);
+        let b2 = gain * ((gain + 1.0) - (gain - 1.0) * cos_w0 - beta * sin_w0);
+        let a0 = (gain + 1.0) + (gain - 1.0) * cos_w0 + beta * sin_w0;
+        let a1 = -2.0 * ((gain - 1.0) + (gain + 1.0) * cos_w0);
+        let a2 = (gain + 1.0) + (gain - 1.0) * cos_w0 - beta * sin_w0;
+
+        // Update coefficients only - preserve delay line state!
+        self.a0 = a0;
+        self.a1 = a1 / a0;
+        self.a2 = a2 / a0;
+        self.b1 = b1 / a0;
+        self.b2 = b2 / a0;
+    }
+    
+    /// **BASS POPPING FIX**: Update high shelf coefficients without destroying delay line
+    pub fn update_high_shelf_coeffs(&mut self, sample_rate: u32, freq: f32, q: f32, gain_db: f32) {
+        let gain = 10.0_f32.powf(gain_db / 20.0);
+        let w0 = 2.0 * std::f32::consts::PI * freq / sample_rate as f32;
+        let cos_w0 = w0.cos();
+        let sin_w0 = w0.sin();
+        let beta = (gain / q).sqrt();
+
+        let b1 = -2.0 * gain * ((gain - 1.0) + (gain + 1.0) * cos_w0);
+        let b2 = gain * ((gain + 1.0) + (gain - 1.0) * cos_w0 - beta * sin_w0);
+        let a0 = (gain + 1.0) - (gain - 1.0) * cos_w0 + beta * sin_w0;
+        let a1 = 2.0 * ((gain - 1.0) - (gain + 1.0) * cos_w0);
+        let a2 = (gain + 1.0) - (gain - 1.0) * cos_w0 - beta * sin_w0;
+
+        // Update coefficients only - preserve delay line state!
+        self.a0 = a0;
+        self.a1 = a1 / a0;
+        self.a2 = a2 / a0;
+        self.b1 = b1 / a0;
+        self.b2 = b2 / a0;
+    }
+    
+    /// **BASS POPPING FIX**: Update peak coefficients without destroying delay line
+    pub fn update_peak_coeffs(&mut self, sample_rate: u32, freq: f32, q: f32, gain_db: f32) {
+        let gain = 10.0_f32.powf(gain_db / 20.0);
+        let w0 = 2.0 * std::f32::consts::PI * freq / sample_rate as f32;
+        let cos_w0 = w0.cos();
+        let sin_w0 = w0.sin();
+        let alpha = sin_w0 / (2.0 * q);
+
+        let b1 = -2.0 * cos_w0;
+        let b2 = 1.0 - alpha * gain;
+        let a0 = 1.0 + alpha / gain;
+        let a1 = -2.0 * cos_w0;
+        let a2 = 1.0 - alpha / gain;
+
+        // Update coefficients only - preserve delay line state!
+        self.a0 = a0;
+        self.a1 = a1 / a0;
+        self.a2 = a2 / a0;
+        self.b1 = b1 / a0;
+        self.b2 = b2 / a0;
     }
 }
 
@@ -505,8 +609,8 @@ impl Compressor {
             gain_reduction: 0.0,
         };
 
-        compressor.set_attack(5.0); // 5ms attack
-        compressor.set_release(100.0); // 100ms release
+        compressor.set_attack(10.0); // 10ms attack - slower to prevent bass pumping
+        compressor.set_release(200.0); // 200ms release - slower for smoother compression
         compressor
     }
 
@@ -588,7 +692,7 @@ pub struct Limiter {
 
 impl Limiter {
     pub fn new(sample_rate: u32) -> Self {
-        let lookahead_samples = (sample_rate as f32 * 0.005) as usize; // 5ms lookahead
+        let lookahead_samples = (sample_rate as f32 * 0.002) as usize; // **BASS POPPING FIX**: 2ms lookahead - reduces transient artifacts
         
         let mut limiter = Self {
             sample_rate,

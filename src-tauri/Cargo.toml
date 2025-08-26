@@ -46,6 +46,11 @@ rustfft = "6.2"            # Fast Fourier Transform for spectrum analysis
 dirs = "5.0"               # Platform-specific directory paths
 flac-bound = "0.3"         # FLAC encoding for high-quality recording
 
+# Audio file decoding for media player
+symphonia = { version = "0.5", features = ["aac", "mp3", "isomp4", "ogg", "flac", "wav"] }
+symphonia-format-ogg = "0.5"
+symphonia-codec-vorbis = "0.5"
+
 # Database and storage
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "chrono", "migrate"] }
 crossbeam = "0.8"          # Lock-free data structures for audio threading
