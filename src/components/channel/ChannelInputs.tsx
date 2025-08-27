@@ -37,7 +37,7 @@ export const ChannelInputs = memo<ChannelInputsProps>(
         {/* Enhanced Input Device Selection with Application Sources */}
         <EnhancedDeviceSelector
           inputDevices={inputDevices}
-          selectedDeviceId={channel.input_device_id}
+          selectedDeviceId={channel.input_device_id ?? null}
           onInputDeviceChange={onInputDeviceChange}
           onRefreshDevices={onRefreshDevices}
         />

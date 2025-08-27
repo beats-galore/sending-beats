@@ -156,7 +156,9 @@ export const useMixerStore = create<MixerStore>()(
         const newInputDeviceId = updatedChannel.input_device_id;
 
         // Update channel configuration first
+        console.log(`🔧 FRONTEND STORE: About to call mixerService.updateMixerChannel(${channelId}, channel with device_id: ${updatedChannel.input_device_id})`);
         await mixerService.updateMixerChannel(channelId, updatedChannel);
+        console.log(`✅ FRONTEND STORE: Successfully called mixerService.updateMixerChannel`);;
 
         // Handle input stream management with crash-safe switching
         if (newInputDeviceId !== previousInputDeviceId && newInputDeviceId) {

@@ -24,15 +24,18 @@ export const useApplicationAudio = () => {
 
   // Refresh available audio applications
   const refreshApplications = useCallback(async () => {
+    console.log('🔄 useApplicationAudio: Starting refreshApplications...');
     setState(prev => ({ ...prev, isLoading: true, error: null }));
     
     try {
+      console.log('📞 useApplicationAudio: Calling Tauri commands...');
       const [availableApps, knownApps, activeCaptures, permissionsGranted] = await Promise.all([
         invoke<ProcessInfo[]>('get_available_audio_applications'),
         invoke<ProcessInfo[]>('get_known_audio_applications'),
         invoke<ProcessInfo[]>('get_active_audio_captures'),
         invoke<boolean>('check_audio_capture_permissions'),
       ]);
+      console.log('✅ useApplicationAudio: All Tauri commands completed successfully');
 
       setState(prev => ({
         ...prev,
@@ -50,7 +53,8 @@ export const useApplicationAudio = () => {
         permissionsGranted,
       });
     } catch (error) {
-      console.error('❌ Failed to refresh applications:', error);
+      console.error('❌ useApplicationAudio: Failed to refresh applications:', error);
+      console.error('❌ useApplicationAudio: Error details:', JSON.stringify(error, null, 2));
       setState(prev => ({
         ...prev,
         isLoading: false,
@@ -60,11 +64,12 @@ export const useApplicationAudio = () => {
   }, []);
 
   // Request audio capture permissions
-  const requestPermissions = useCallback(async (): Promise<boolean> => {
+  const requestPermissions = useCallback(async (): Promise<{ granted: boolean; message: string }> => {
     setState(prev => ({ ...prev, isLoading: true, error: null }));
     
     try {
-      const granted = await invoke<boolean>('request_audio_capture_permissions');
+      const message = await invoke<string>('request_audio_capture_permissions');
+      const granted = message.includes('already granted');
       
       setState(prev => ({
         ...prev,
@@ -77,10 +82,10 @@ export const useApplicationAudio = () => {
         // Refresh applications now that we have permissions
         await refreshApplications();
       } else {
-        console.warn('❌ Audio capture permissions denied');
+        console.warn('❌ Audio capture permissions denied or need manual setup');
       }
 
-      return granted;
+      return { granted, message };
     } catch (error) {
       console.error('❌ Failed to request permissions:', error);
       setState(prev => ({
@@ -88,7 +93,7 @@ export const useApplicationAudio = () => {
         isLoading: false,
         error: error as string,
       }));
-      return false;
+      return { granted: false, message: 'Failed to check permissions' };
     }
   }, [refreshApplications]);
 

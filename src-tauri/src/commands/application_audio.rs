@@ -1,5 +1,5 @@
 use tauri::State;
-use crate::{ApplicationAudioState, application_audio::{ProcessInfo, ApplicationAudioError}};
+use crate::{ApplicationAudioState, application_audio::{ProcessInfo, ApplicationAudioError, TapStats}};
 
 // ================================================================================================
 // APPLICATION AUDIO COMMANDS
@@ -38,9 +38,17 @@ pub async fn get_known_audio_applications(
     
     match app_audio_state.manager.get_available_applications().await {
         Ok(all_apps) => {
-            // Filter for apps with bundle IDs (known apps)
+            println!("🔍 Processing {} total apps for known app filtering", all_apps.len());
+            
+            // Filter for apps with bundle IDs (known apps)  
             let known_apps: Vec<ProcessInfo> = all_apps.into_iter()
-                .filter(|app| app.bundle_id.is_some())
+                .filter(|app| {
+                    let has_bundle = app.bundle_id.is_some();
+                    if has_bundle {
+                        println!("✅ Known app found: {} [{}]", app.name, app.bundle_id.as_ref().unwrap());
+                    }
+                    has_bundle
+                })
                 .collect();
             
             println!("✅ Found {} known audio applications", known_apps.len());
@@ -142,44 +150,6 @@ pub async fn stop_all_audio_captures(
     }
 }
 
-#[tauri::command]
-pub async fn check_audio_capture_permissions(
-    app_audio_state: State<'_, ApplicationAudioState>,
-) -> Result<bool, String> {
-    println!("🔐 Checking audio capture permissions...");
-    
-    let has_permissions = app_audio_state.manager.has_permissions().await;
-    
-    if has_permissions {
-        println!("✅ Audio capture permissions are granted");
-    } else {
-        println!("⚠️ Audio capture permissions not granted");
-    }
-    
-    Ok(has_permissions)
-}
-
-#[tauri::command]
-pub async fn request_audio_capture_permissions(
-    app_audio_state: State<'_, ApplicationAudioState>,
-) -> Result<bool, String> {
-    println!("🙋 Requesting audio capture permissions...");
-    
-    match app_audio_state.manager.request_permissions().await {
-        Ok(granted) => {
-            if granted {
-                println!("✅ Audio capture permissions granted");
-            } else {
-                println!("❌ Audio capture permissions denied");
-            }
-            Ok(granted)
-        }
-        Err(e) => {
-            eprintln!("❌ Failed to request permissions: {}", e);
-            Err(format!("Failed to request permissions: {}", e))
-        }
-    }
-}
 
 #[tauri::command]
 pub async fn get_application_info(
@@ -232,6 +202,69 @@ pub async fn create_mixer_input_for_application(
         Err(e) => {
             eprintln!("❌ Failed to create mixer input for PID {}: {}", pid, e);
             Err(format!("Failed to create mixer input: {}", e))
+        }
+    }
+}
+
+// ================================================================================================
+// TAP LIFECYCLE MANAGEMENT COMMANDS
+// ================================================================================================
+
+#[tauri::command]
+pub async fn get_tap_statistics(
+    app_audio_state: State<'_, ApplicationAudioState>,
+) -> Result<Vec<TapStats>, String> {
+    println!("📊 Getting tap statistics...");
+    
+    let stats = app_audio_state.manager.get_tap_stats().await;
+    
+    println!("✅ Retrieved statistics for {} active taps", stats.len());
+    for stat in &stats {
+        println!("  - {} (PID: {}) - Age: {:?}, Errors: {}, Active: {}, Alive: {}",
+            stat.process_name,
+            stat.pid,
+            stat.age,
+            stat.error_count,
+            stat.is_capturing,
+            stat.process_alive
+        );
+    }
+    
+    Ok(stats)
+}
+
+#[tauri::command]
+pub async fn cleanup_stale_taps(
+    app_audio_state: State<'_, ApplicationAudioState>,
+) -> Result<usize, String> {
+    println!("🧹 Performing manual cleanup of stale taps...");
+    
+    match app_audio_state.manager.cleanup_stale_taps().await {
+        Ok(cleaned_count) => {
+            println!("✅ Cleaned up {} stale taps", cleaned_count);
+            Ok(cleaned_count)
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to cleanup stale taps: {}", e);
+            Err(format!("Failed to cleanup stale taps: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn shutdown_application_audio_manager(
+    app_audio_state: State<'_, ApplicationAudioState>,
+) -> Result<String, String> {
+    println!("🛑 Shutting down Application Audio Manager...");
+    
+    match app_audio_state.manager.shutdown().await {
+        Ok(()) => {
+            println!("✅ Application Audio Manager shutdown complete");
+            Ok("Application Audio Manager shutdown successfully".to_string())
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to shutdown Application Audio Manager: {}", e);
+            Err(format!("Failed to shutdown Application Audio Manager: {}", e))
         }
     }
 }

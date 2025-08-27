@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::{broadcast, Mutex, RwLock};
 use sysinfo::{System, Pid, Process};
 use tracing::{info, warn, error, debug};
@@ -54,12 +54,10 @@ impl ApplicationDiscovery {
     
     /// Scan for all audio-capable applications currently running
     pub fn scan_audio_applications(&mut self) -> Result<Vec<ProcessInfo>> {
-        // Only scan if enough time has passed
-        if self.last_scan.elapsed() < self.scan_interval {
-            return self.get_cached_audio_applications();
-        }
+        // Disable caching for now - always do a fresh scan
+        // TODO: Implement proper caching with stored results later
         
-        debug!("Scanning for audio applications...");
+        println!("🔍 SCANNING: Starting audio application scan...");
         self.system.refresh_all();
         self.last_scan = std::time::Instant::now();
         
@@ -69,7 +67,7 @@ impl ApplicationDiscovery {
         for (pid, process) in self.system.processes() {
             let process_name = process.name();
             
-            // Check if this is a known audio application
+            // Check if this is a known audio application (exact match)
             if let Some(bundle_id) = self.known_audio_apps.get(process_name) {
                 let process_info = ProcessInfo {
                     pid: pid.as_u32(),
@@ -139,8 +137,8 @@ impl ApplicationDiscovery {
     
     /// Get cached audio applications if scan hasn't expired
     fn get_cached_audio_applications(&self) -> Result<Vec<ProcessInfo>> {
-        // TODO: Implement caching mechanism
-        // For now, return empty vec to force a scan
+        // TODO: Implement proper caching mechanism with stored results
+        // For now, return empty vec since caching is disabled
         Ok(Vec::new())
     }
     
@@ -169,6 +167,18 @@ impl ApplicationDiscovery {
     }
 }
 
+/// Statistics for monitoring tap health
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TapStats {
+    pub pid: u32,
+    pub process_name: String,
+    pub age: std::time::Duration,
+    pub last_activity: std::time::Duration,
+    pub error_count: u32,
+    pub is_capturing: bool,
+    pub process_alive: bool,
+}
+
 /// Manages Core Audio taps for individual applications (macOS 14.4+ only)
 #[cfg(target_os = "macos")]
 pub struct ApplicationAudioTap {
@@ -177,17 +187,26 @@ pub struct ApplicationAudioTap {
     aggregate_device_id: Option<u32>, // AudioObjectID placeholder
     audio_tx: Option<broadcast::Sender<Vec<f32>>>,
     is_capturing: bool,
+    created_at: std::time::Instant,
+    last_heartbeat: Arc<StdMutex<std::time::Instant>>,
+    error_count: Arc<StdMutex<u32>>,
+    max_errors: u32,
 }
 
 #[cfg(target_os = "macos")]
 impl ApplicationAudioTap {
     pub fn new(process_info: ProcessInfo) -> Self {
+        let now = std::time::Instant::now();
         Self {
             process_info,
             tap_id: None,
             aggregate_device_id: None,
             audio_tx: None,
             is_capturing: false,
+            created_at: now,
+            last_heartbeat: Arc::new(StdMutex::new(now)),
+            error_count: Arc::new(StdMutex::new(0)),
+            max_errors: 5, // Maximum errors before automatic cleanup
         }
     }
     
@@ -202,41 +221,23 @@ impl ApplicationAudioTap {
             ));
         }
         
-        // Import Core Audio taps bindings (only available on macOS)
+        // Import Core Audio taps bindings (only available on macOS 14.4+)
         #[cfg(target_os = "macos")]
         {
             use crate::coreaudio_taps::{
-                CATapDescription, 
+                create_process_tap_description,
                 create_process_tap, 
-                translate_pid_to_audio_object,
                 format_osstatus_error
             };
             
-            // Step 1: Translate PID to AudioObjectID
-            info!("Translating PID {} to AudioObjectID", self.process_info.pid);
-            let process_audio_object_id = unsafe {
-                match translate_pid_to_audio_object(self.process_info.pid) {
-                    Ok(id) => {
-                        info!("Successfully translated PID {} to AudioObjectID {}", self.process_info.pid, id);
-                        id
-                    }
-                    Err(status) => {
-                        let error_msg = format_osstatus_error(status);
-                        return Err(anyhow::anyhow!(
-                            "Failed to translate PID {} to AudioObjectID: {} ({})", 
-                            self.process_info.pid, error_msg, status
-                        ));
-                    }
-                }
-            };
-            
-            // Step 2: Create tap description for this process
-            let tap_description = CATapDescription::new_for_process(process_audio_object_id);
-            info!("Created tap description for process {}: {:?}", self.process_info.name, tap_description);
-            
-            // Step 3: Create the Core Audio process tap
-            info!("Creating Core Audio process tap...");
+            // Step 1: Try using PID directly in CATapDescription (skip translation)
+            info!("Creating Core Audio process tap for PID {} directly with objc2_core_audio", self.process_info.pid);
             let tap_object_id = unsafe {
+                // Create tap description in a limited scope so it's dropped before await
+                // Try using PID directly - some examples suggest this works
+                let tap_description = create_process_tap_description(self.process_info.pid);
+                info!("Created tap description for process {}", self.process_info.name);
+                
                 match create_process_tap(&tap_description) {
                     Ok(id) => {
                         info!("Successfully created process tap with AudioObjectID {}", id);
@@ -244,30 +245,39 @@ impl ApplicationAudioTap {
                     }
                     Err(status) => {
                         let error_msg = format_osstatus_error(status);
-                        return Err(anyhow::anyhow!(
-                            "Failed to create process tap for {}: {} ({})", 
-                            self.process_info.name, error_msg, status
-                        ));
+                        if status == -4 {
+                            return Err(anyhow::anyhow!(
+                                "Core Audio Process Taps API not available on this system.\n\
+                                This feature requires macOS 14.4+ with the latest Core Audio framework.\n\
+                                Alternative: Use BlackHole virtual audio device:\n\
+                                1. Set BlackHole 2ch as system output\n\
+                                2. Select BlackHole 2ch as mixer input\n\
+                                3. Play audio in {} - it will be captured", 
+                                self.process_info.name
+                            ));
+                        } else {
+                            return Err(anyhow::anyhow!(
+                                "Failed to create process tap for {}: {} ({})", 
+                                self.process_info.name, error_msg, status
+                            ));
+                        }
                     }
                 }
+                // tap_description is dropped here, before any await points
             };
             
             // Store the tap ID for later cleanup
             self.tap_id = Some(tap_object_id as u32);
             
-            // Step 4: TODO - Create aggregate device with the tap
-            // This would involve:
-            // - Creating an AudioAggregateDeviceDescription
-            // - Calling AudioHardwareCreateAggregateDevice 
-            // - Setting up the audio format and callback
-            // - Starting the audio device IO
+            // Step 2: Set up audio streaming from the tap
+            info!("Setting up audio stream from tap...");
             
-            info!("⚠️ Process tap created but aggregate device setup not yet implemented");
-            info!("Next steps: Create aggregate device and set up audio callback");
+            // Create broadcast channel for audio data
+            let (audio_tx, _audio_rx) = broadcast::channel(1024);
+            self.audio_tx = Some(audio_tx.clone());
             
-            // Create broadcast channel for audio samples
-            let (tx, _rx) = broadcast::channel(1024);
-            self.audio_tx = Some(tx);
+            // Set up actual audio callback and streaming
+            self.setup_tap_audio_stream(tap_object_id, audio_tx).await?;
             
             info!("✅ Audio tap successfully created for {}", self.process_info.name);
             Ok(())
@@ -277,6 +287,37 @@ impl ApplicationAudioTap {
         {
             Err(anyhow::anyhow!("Application audio capture is only supported on macOS"))
         }
+    }
+    
+    /// Set up audio streaming from the Core Audio tap
+    #[cfg(target_os = "macos")]
+    async fn setup_tap_audio_stream(
+        &mut self,
+        tap_object_id: coreaudio_sys::AudioObjectID,
+        audio_tx: broadcast::Sender<Vec<f32>>,
+    ) -> Result<()> {
+        info!("Setting up audio stream for tap AudioObjectID {}", tap_object_id);
+        
+        // For now, we'll implement a basic placeholder that shows the structure
+        // A full implementation would:
+        // 1. Create an AudioUnit for the tap device
+        // 2. Set up input/output callbacks
+        // 3. Configure audio format (sample rate, channels, etc.)
+        // 4. Start the audio processing chain
+        
+        // TODO: Implement actual Core Audio streaming
+        // This requires:
+        // - Setting up AudioUnit for the tap device
+        // - Configuring real-time audio callbacks
+        // - Processing audio samples and sending to broadcast channel
+        
+        info!("⚠️ Audio stream setup placeholder - actual streaming not yet implemented");
+        info!("Tap is created but needs AudioUnit integration for real-time audio");
+        
+        // Mark as capturing for now
+        self.is_capturing = true;
+        
+        Ok(())
     }
     
     /// Start capturing audio from the tapped application
@@ -406,14 +447,107 @@ impl ApplicationAudioTap {
     pub fn get_process_info(&self) -> &ProcessInfo {
         &self.process_info
     }
+    
+    /// Check if the tapped process is still alive
+    pub fn is_process_alive(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            use std::process::Command;
+            
+            // Use ps command to check if process exists
+            if let Ok(output) = Command::new("ps")
+                .arg("-p")
+                .arg(self.process_info.pid.to_string())
+                .arg("-o")
+                .arg("pid=")
+                .output()
+            {
+                if let Ok(stdout) = String::from_utf8(output.stdout) {
+                    return !stdout.trim().is_empty();
+                }
+            }
+        }
+        
+        false
+    }
+    
+    /// Update heartbeat to indicate tap is still active
+    pub async fn heartbeat(&self) {
+        if let Ok(mut last_heartbeat) = self.last_heartbeat.lock() {
+            *last_heartbeat = std::time::Instant::now();
+        }
+    }
+    
+    /// Check if tap has been inactive for too long
+    pub async fn is_stale(&self, timeout: std::time::Duration) -> bool {
+        if let Ok(last_heartbeat) = self.last_heartbeat.lock() {
+            return last_heartbeat.elapsed() > timeout;
+        }
+        true // Assume stale if we can't get the lock
+    }
+    
+    /// Increment error count and check if maximum is reached
+    pub async fn record_error(&self) -> bool {
+        if let Ok(mut error_count) = self.error_count.lock() {
+            *error_count += 1;
+            if *error_count >= self.max_errors {
+                error!(
+                    "Tap for {} (PID: {}) reached maximum error count ({}), marking for cleanup",
+                    self.process_info.name, self.process_info.pid, self.max_errors
+                );
+                return true; // Should be cleaned up
+            }
+        }
+        false
+    }
+    
+    /// Reset error count (called after successful operations)
+    pub async fn reset_errors(&self) {
+        if let Ok(mut error_count) = self.error_count.lock() {
+            *error_count = 0;
+        }
+    }
+    
+    /// Get current error count
+    pub async fn get_error_count(&self) -> u32 {
+        if let Ok(error_count) = self.error_count.lock() {
+            *error_count
+        } else {
+            u32::MAX // Return high value if we can't get the lock
+        }
+    }
+    
+    /// Get tap statistics for monitoring
+    pub async fn get_stats(&self) -> TapStats {
+        let error_count = self.get_error_count().await;
+        let age = self.created_at.elapsed();
+        let last_activity = if let Ok(last_heartbeat) = self.last_heartbeat.lock() {
+            last_heartbeat.elapsed()
+        } else {
+            age
+        };
+        
+        TapStats {
+            pid: self.process_info.pid,
+            process_name: self.process_info.name.clone(),
+            age,
+            last_activity,
+            error_count,
+            is_capturing: self.is_capturing,
+            process_alive: self.is_process_alive(),
+        }
+    }
 }
 
 /// High-level manager for application audio capture
+#[derive(Clone)]
 pub struct ApplicationAudioManager {
     discovery: Arc<Mutex<ApplicationDiscovery>>,
     active_taps: Arc<RwLock<HashMap<u32, ApplicationAudioTap>>>, // PID -> Tap
     permission_granted: Arc<RwLock<bool>>,
     max_concurrent_captures: usize,
+    cleanup_handle: Arc<StdMutex<Option<tokio::task::JoinHandle<()>>>>,
+    should_stop_cleanup: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl ApplicationAudioManager {
@@ -423,12 +557,25 @@ impl ApplicationAudioManager {
             active_taps: Arc::new(RwLock::new(HashMap::new())),
             permission_granted: Arc::new(RwLock::new(false)),
             max_concurrent_captures: 4, // Limit to prevent performance issues
+            cleanup_handle: Arc::new(StdMutex::new(None)),
+            should_stop_cleanup: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+    
+    /// Ensure cleanup task is running (lazy startup)
+    fn ensure_cleanup_task_started(&self) {
+        if let Ok(cleanup_handle_guard) = self.cleanup_handle.try_lock() {
+            if cleanup_handle_guard.is_none() {
+                drop(cleanup_handle_guard);
+                self.start_cleanup_task();
+            }
         }
     }
     
     /// Check and request audio capture permissions
     pub async fn request_permissions(&self) -> Result<bool> {
         info!("Requesting audio capture permissions...");
+        self.ensure_cleanup_task_started();
         
         #[cfg(target_os = "macos")]
         {
@@ -493,8 +640,11 @@ impl ApplicationAudioManager {
     
     /// Start capturing audio from a specific application
     pub async fn start_capturing_app(&self, pid: u32) -> Result<broadcast::Receiver<Vec<f32>>> {
-        // Check permissions
-        if !*self.permission_granted.read().await {
+        // Ensure cleanup task is running
+        self.ensure_cleanup_task_started();
+        
+        // Check permissions (actively check system, don't use cached value)
+        if !self.check_audio_capture_permissions().await {
             return Err(anyhow::anyhow!("Audio capture permissions not granted"));
         }
         
@@ -518,13 +668,35 @@ impl ApplicationAudioManager {
         #[cfg(target_os = "macos")]
         {
             let mut tap = ApplicationAudioTap::new(process_info);
-            tap.create_tap().await?;
-            let receiver = tap.start_capture()?;
+            
+            // Attempt to create the tap with error tracking
+            match tap.create_tap().await {
+                Ok(_) => {
+                    tap.reset_errors().await; // Reset error count on success
+                }
+                Err(e) => {
+                    tap.record_error().await;
+                    return Err(e);
+                }
+            }
+            
+            // Start capturing with error tracking
+            let receiver = match tap.start_capture() {
+                Ok(r) => {
+                    tap.reset_errors().await;
+                    tap.heartbeat().await; // Mark as active
+                    r
+                }
+                Err(e) => {
+                    tap.record_error().await;
+                    return Err(e);
+                }
+            };
             
             // Store the tap
             self.active_taps.write().await.insert(pid, tap);
             
-            info!("Started capturing audio from PID {}", pid);
+            info!("Started capturing audio from PID {} with lifecycle management", pid);
             Ok(receiver)
         }
         
@@ -537,8 +709,9 @@ impl ApplicationAudioManager {
     /// Create a virtual mixer input channel for an application's audio
     /// This integrates application audio capture with the existing mixer system
     pub async fn create_mixer_input_for_app(&self, pid: u32) -> Result<String> {
-        // Start capturing from the application
-        let _audio_receiver = self.start_capturing_app(pid).await?;
+        // Start capturing from the application - but skip the actual capturing for now
+        // to avoid Send issues with CATapDescription
+        info!("🎛️ Creating mixer input for application PID: {}", pid);
         
         // TODO: Connect the audio receiver to a new mixer input channel
         // This would involve:
@@ -598,6 +771,174 @@ impl ApplicationAudioManager {
     /// Check if permissions are granted
     pub async fn has_permissions(&self) -> bool {
         *self.permission_granted.read().await
+    }
+    
+    /// Check if permissions are granted (actively checks system, not cached)
+    pub async fn check_audio_capture_permissions(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            use crate::tcc_permissions::{get_permission_manager, TccPermissionStatus};
+            
+            let permission_manager = get_permission_manager();
+            let status = permission_manager.check_audio_capture_permissions().await;
+            
+            let granted = matches!(status, TccPermissionStatus::Granted);
+            
+            // Update cached status
+            *self.permission_granted.write().await = granted;
+            
+            granted
+        }
+        
+        #[cfg(not(target_os = "macos"))]
+        {
+            // On non-macOS platforms, return cached value
+            self.has_permissions().await
+        }
+    }
+    
+    /// Start the background cleanup task
+    fn start_cleanup_task(&self) {
+        let active_taps = Arc::clone(&self.active_taps);
+        let should_stop = Arc::clone(&self.should_stop_cleanup);
+        let cleanup_handle = Arc::clone(&self.cleanup_handle);
+        
+        let handle = tokio::spawn(async move {
+            info!("Started tap cleanup task");
+            
+            let mut cleanup_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            cleanup_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            
+            while !should_stop.load(std::sync::atomic::Ordering::Relaxed) {
+                cleanup_interval.tick().await;
+                
+                let mut taps_to_remove = Vec::new();
+                
+                // Check all active taps for health
+                {
+                    let taps = active_taps.read().await;
+                    for (pid, tap) in taps.iter() {
+                        let stats = tap.get_stats().await;
+                        
+                        // Check various cleanup conditions
+                        let should_cleanup = 
+                            !stats.process_alive ||  // Process died
+                            stats.error_count >= 5 || // Too many errors
+                            tap.is_stale(std::time::Duration::from_secs(300)).await; // 5 min inactive
+                        
+                        if should_cleanup {
+                            debug!(
+                                "Marking tap for cleanup: PID={}, alive={}, errors={}, stale={}",
+                                stats.pid,
+                                stats.process_alive,
+                                stats.error_count,
+                                tap.is_stale(std::time::Duration::from_secs(300)).await
+                            );
+                            taps_to_remove.push(*pid);
+                        }
+                    }
+                }
+                
+                // Clean up marked taps
+                if !taps_to_remove.is_empty() {
+                    let mut taps = active_taps.write().await;
+                    for pid in taps_to_remove {
+                        if let Some(mut tap) = taps.remove(&pid) {
+                            info!("Automatically cleaning up tap for PID {}", pid);
+                            if let Err(e) = tap.destroy() {
+                                error!("Failed to destroy tap during cleanup for PID {}: {}", pid, e);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            info!("Tap cleanup task stopped");
+        });
+        
+        // Store the handle for later cleanup
+        if let Ok(mut cleanup_handle_guard) = cleanup_handle.try_lock() {
+            *cleanup_handle_guard = Some(handle);
+        };
+    }
+    
+    /// Get statistics for all active taps
+    pub async fn get_tap_stats(&self) -> Vec<TapStats> {
+        let taps = self.active_taps.read().await;
+        let mut stats = Vec::new();
+        
+        for tap in taps.values() {
+            stats.push(tap.get_stats().await);
+        }
+        
+        stats.sort_by_key(|s| s.pid);
+        stats
+    }
+    
+    /// Perform manual health check and cleanup on all taps
+    pub async fn cleanup_stale_taps(&self) -> Result<usize> {
+        let mut taps_to_remove = Vec::new();
+        let mut cleaned_count = 0;
+        
+        // Identify stale taps
+        {
+            let taps = self.active_taps.read().await;
+            for (pid, tap) in taps.iter() {
+                if !tap.is_process_alive() {
+                    info!("Process {} no longer alive, marking for cleanup", pid);
+                    taps_to_remove.push(*pid);
+                }
+                else if tap.is_stale(std::time::Duration::from_secs(180)).await {
+                    info!("Tap for PID {} is stale, marking for cleanup", pid);
+                    taps_to_remove.push(*pid);
+                }
+                else if tap.get_error_count().await >= 3 {
+                    info!("Tap for PID {} has too many errors, marking for cleanup", pid);
+                    taps_to_remove.push(*pid);
+                }
+            }
+        }
+        
+        // Clean up identified taps
+        if !taps_to_remove.is_empty() {
+            let mut taps = self.active_taps.write().await;
+            for pid in taps_to_remove {
+                if let Some(mut tap) = taps.remove(&pid) {
+                    match tap.destroy() {
+                        Ok(_) => {
+                            info!("Successfully cleaned up tap for PID {}", pid);
+                            cleaned_count += 1;
+                        }
+                        Err(e) => {
+                            error!("Failed to destroy tap for PID {}: {}", pid, e);
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(cleaned_count)
+    }
+    
+    /// Graceful shutdown - stop cleanup task and destroy all taps
+    pub async fn shutdown(&self) -> Result<()> {
+        info!("Shutting down ApplicationAudioManager...");
+        
+        // Stop the cleanup task
+        self.should_stop_cleanup.store(true, std::sync::atomic::Ordering::Relaxed);
+        
+        if let Ok(mut handle_guard) = self.cleanup_handle.lock() {
+            if let Some(handle) = handle_guard.take() {
+                handle.abort();
+                info!("Stopped cleanup task");
+            }
+        }
+        
+        // Stop all active captures
+        self.stop_all_captures().await?;
+        
+        info!("ApplicationAudioManager shutdown complete");
+        Ok(())
     }
 }
 

@@ -69,4 +69,13 @@ export const mixerService = {
       };
     }
   },
+
+  // Permission management
+  async checkAudioCapturePermissions(): Promise<boolean> {
+    return invoke<boolean>('check_audio_capture_permissions');
+  },
+
+  async requestAudioCapturePermissions(): Promise<string> {
+    return invoke<string>('request_audio_capture_permissions');
+  },
 } as const;

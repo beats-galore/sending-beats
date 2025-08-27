@@ -27,9 +27,12 @@ pub use audio::{
     initialize_device_monitoring, get_device_monitoring_stats as get_monitoring_stats_impl, 
     stop_device_monitoring as stop_monitoring_impl, FilePlayerService
 };
+// Re-export application audio types
+pub use application_audio::{ProcessInfo, TapStats, ApplicationAudioError};
 use std::sync::{Arc, Mutex};
 use tauri::State;
 use tokio::sync::Mutex as AsyncMutex;
+use tracing_subscriber::prelude::*;
 // Removed unused import
 
 // Import all command modules
@@ -61,10 +64,57 @@ struct ApplicationAudioState {
     manager: Arc<ApplicationAudioManager>,
 }
 
+// Initialize logging to output to both console and macOS Console.app
+fn init_logging() {
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+    
+    // Create a formatting layer for console output
+    let console_layer = tracing_subscriber::fmt::layer()
+        .with_target(true)
+        .with_file(false)
+        .with_line_number(false)
+        .with_level(true)
+        .with_thread_ids(false)
+        .with_thread_names(false);
+    
+    // On macOS, create a simple layer that forwards to os_log via println!
+    // This is a simpler approach that will show up in Console.app
+    #[cfg(target_os = "macos")]
+    {
+        // Use the env_logger-style initialization but customize it for our needs
+        tracing_subscriber::registry()
+            .with(console_layer)
+            .with(tracing_subscriber::filter::LevelFilter::INFO)
+            .init();
+            
+        // Also set up a simple forwarding to system logger
+        // macOS will automatically capture stdout/stderr from GUI apps and show them in Console.app
+        // under the app's bundle identifier
+        println!("🚀 SendinBeats logging initialized - logs will appear in Console.app under 'com.sendinbeats.app'");
+    }
+    
+    #[cfg(not(target_os = "macos"))]
+    {
+        tracing_subscriber::registry()
+            .with(console_layer)
+            .with(tracing_subscriber::filter::LevelFilter::INFO)
+            .init();
+    }
+    
+    tracing::info!("🚀 SendinBeats logging system ready");
+}
+
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Initialize logging system that sends logs to macOS Console.app
+    init_logging();
+    
+    // Enable console logging for debugging signed app
+    #[cfg(debug_assertions)]
+    println!("🐛 DEBUG: Console logging enabled for signed app");
+    
     // Initialize the Tokio runtime for database initialization
     let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
     
@@ -78,13 +128,18 @@ pub fn run() {
             }
         };
         
-        // Initialize SQLite database in src-tauri directory for now
-        let database_path = std::env::current_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("."))
-            .join("data")
+        // Initialize SQLite database in user's home directory for app bundle compatibility
+        let database_path = dirs::home_dir()
+            .map(|home| home.join(".sendin_beats").join("data"))
+            .unwrap_or_else(|| {
+                // Fallback to current directory for development
+                std::env::current_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    .join("data")
+            })
             .join("sendin_beats.db");
             
-        println!("🗄️  Initializing database at: {}", database_path.display());
+        tracing::info!("🗄️ Initializing database at: {}", database_path.display());
         
         let database = match AudioDatabase::new(&database_path).await {
             Ok(db) => Arc::new(db),
@@ -97,7 +152,7 @@ pub fn run() {
         // Initialize event bus for lock-free audio data transfer
         let event_bus = Arc::new(AudioEventBus::new(1000)); // Buffer up to 1000 events
         
-        println!("✅ Audio system initialization complete");
+        tracing::info!("✅ Audio system initialization complete");
         
         AudioState {
             device_manager: audio_device_manager,
@@ -167,6 +222,9 @@ pub fn run() {
             send_mixer_command,
             get_dj_mixer_config,
             get_streaming_mixer_config,
+            check_audio_capture_permissions,
+            request_audio_capture_permissions,
+            open_system_preferences_privacy,
             add_output_device,
             remove_output_device,
             update_output_device,
@@ -227,11 +285,13 @@ pub fn run() {
             stop_application_audio_capture,
             get_active_audio_captures,
             stop_all_audio_captures,
-            check_audio_capture_permissions,
-            request_audio_capture_permissions,
             get_application_info,
             refresh_audio_applications,
-            create_mixer_input_for_application
+            create_mixer_input_for_application,
+            // Tap lifecycle management commands
+            get_tap_statistics,
+            cleanup_stale_taps,
+            shutdown_application_audio_manager
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

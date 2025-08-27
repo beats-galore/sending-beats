@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "sendin-beats",
+  "productName": "SendinBeats",
   "version": "0.1.0",
-  "identifier": "com.sendin-beats.app",
+  "identifier": "com.SendinBeats",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -39,9 +39,10 @@
     "macOS": {
       "entitlements": "./entitlements.plist",
       "exceptionDomain": null,
-      "frameworks": ["AudioUnit", "CoreAudio", "AudioToolbox"],
+      "frameworks": [],
       "providerShortName": null,
-      "signingIdentity": null
+      "signingIdentity": null,
+      "hardenedRuntime": false
     }
   }
 }

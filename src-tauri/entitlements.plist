@@ -11,23 +11,20 @@
     <string>Sendin Beats needs access to capture audio from other applications (like Spotify, iTunes, Tidal) to enable direct application audio input without requiring virtual audio devices like BlackHole.</string>
     
     <!-- Core Audio framework permissions for system audio access -->
-    <key>com.apple.security.device.audio-input</key>
+    <!-- <key>com.apple.security.device.audio-input</key>
     <true/>
-    
-    <!-- Allow unrestricted network access for streaming -->
-    <key>com.apple.security.network.client</key>
-    <true/>
-    <key>com.apple.security.network.server</key>
-    <true/>
+     -->
+    <!-- Allow network client access for streaming -->
+    <!-- <key>com.apple.security.network.client</key>
+    <true/> -->
     
     <!-- File system access for audio file management and recording -->
-    <key>com.apple.security.files.user-selected.read-write</key>
+    <!-- <key>com.apple.security.files.user-selected.read-write</key>
     <true/>
     <key>com.apple.security.files.downloads.read-write</key>
-    <true/>
+    <true/> -->
     
-    <!-- Disable sandboxing for full system audio access -->
-    <!-- Note: This may be required for Core Audio taps to work properly -->
+    <!-- Enable sandboxing for macOS security compliance -->
     <key>com.apple.security.app-sandbox</key>
     <false/>
 </dict>

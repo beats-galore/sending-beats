@@ -59,53 +59,73 @@ impl TccPermissionManager {
     
     /// Check permissions using tccutil command line tool
     async fn check_via_tccutil(&self) -> Result<TccPermissionStatus> {
-        // Get the bundle identifier of our application
-        let bundle_id = self.get_bundle_identifier()?;
-        
-        info!("Checking TCC permissions for bundle: {}", bundle_id);
-        
-        // Use tccutil to check microphone permissions
-        let output = Command::new("tccutil")
-            .args(&["query", "Microphone", &bundle_id])
-            .output()?;
-            
-        if !output.status.success() {
-            return Ok(TccPermissionStatus::Unknown);
-        }
-        
-        let stdout = String::from_utf8(output.stdout)?;
-        let status = match stdout.trim() {
-            "granted" => TccPermissionStatus::Granted,
-            "denied" => TccPermissionStatus::Denied,
-            "not_determined" => TccPermissionStatus::NotDetermined,
-            _ => TccPermissionStatus::Unknown,
-        };
-        
-        info!("TCC permission status: {:?}", status);
-        Ok(status)
+        // tccutil on macOS only supports 'reset' command, not 'query'
+        // This method will always fail, so we rely on the fallback method
+        info!("tccutil does not support querying permissions on this macOS version");
+        Err(anyhow::anyhow!("tccutil query not supported"))
     }
     
     /// Fallback method: Try to access audio devices to infer permission status
     async fn check_via_audio_device_access(&self) -> TccPermissionStatus {
-        // This is a heuristic approach - try to enumerate audio input devices
-        // If we can access them, permissions are likely granted
+        // This is a heuristic approach - try to actually create an input stream
+        // If we can create one, permissions are granted
         
-        use cpal::traits::{DeviceTrait, HostTrait};
+        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
         
-        match cpal::default_host().input_devices() {
-            Ok(devices) => {
-                let device_count = devices.count();
-                if device_count > 0 {
-                    info!("Can access {} audio input devices - permissions likely granted", device_count);
-                    TccPermissionStatus::Granted
-                } else {
-                    warn!("No audio input devices found - permissions may be denied");
-                    TccPermissionStatus::NotDetermined
-                }
-            }
+        // First check if we can enumerate devices
+        let devices = match cpal::default_host().input_devices() {
+            Ok(devices) => devices,
             Err(e) => {
                 error!("Failed to enumerate audio devices: {} - permissions likely denied", e);
-                TccPermissionStatus::Denied
+                return TccPermissionStatus::Denied;
+            }
+        };
+        
+        // Try to get the default input device
+        let device = match cpal::default_host().default_input_device() {
+            Some(device) => device,
+            None => {
+                warn!("No default input device found - permissions may be denied or no mic available");
+                return TccPermissionStatus::NotDetermined;
+            }
+        };
+        
+        // Try to get default input config
+        let config = match device.default_input_config() {
+            Ok(config) => config,
+            Err(e) => {
+                error!("Failed to get default input config: {} - permissions likely denied", e);
+                return TccPermissionStatus::Denied;
+            }
+        };
+        
+        // Try to build an input stream (this is where permission is actually checked)
+        let stream_result = device.build_input_stream(
+            &config.into(),
+            move |_data: &[f32], _: &cpal::InputCallbackInfo| {
+                // Empty callback - we just want to test if we can create the stream
+            },
+            move |err| {
+                error!("Audio stream error during permission test: {}", err);
+            },
+            None
+        );
+        
+        match stream_result {
+            Ok(_stream) => {
+                info!("Successfully created test audio input stream - permissions granted");
+                TccPermissionStatus::Granted
+            },
+            Err(e) => {
+                // Check the error message to determine if it's a permission issue
+                let error_str = e.to_string().to_lowercase();
+                if error_str.contains("permission") || error_str.contains("access") || error_str.contains("denied") {
+                    error!("Permission denied when creating audio stream: {}", e);
+                    TccPermissionStatus::Denied
+                } else {
+                    warn!("Unknown error creating audio stream: {} - assuming not determined", e);
+                    TccPermissionStatus::NotDetermined
+                }
             }
         }
     }
@@ -122,7 +142,7 @@ impl TccPermissionManager {
         
         // Fallback to the identifier from tauri.conf.json
         // This should match what's in the configuration
-        Ok("com.sendin-beats.app".to_string())
+        Ok("com.SendinBeats".to_string())
     }
     
     /// Show system preferences for microphone permissions

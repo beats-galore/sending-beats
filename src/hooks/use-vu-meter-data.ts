@@ -85,11 +85,11 @@ export const useVUMeterData = (isEnabled = true) => {
     if (isEnabled && hasConfig) {
       console.debug('🔄 Starting VU meter polling...');
 
-      // Start immediate poll
-      pollVUData();
+      // // Start immediate poll
+      // void pollVUData();
 
-      // Set up interval
-      intervalRef.current = setInterval(pollVUData, AUDIO.VU_UPDATE_RATE);
+      // // Set up interval
+      // intervalRef.current = setInterval(() => void pollVUData(), AUDIO.VU_UPDATE_RATE);
 
       return () => {
         if (intervalRef.current) {

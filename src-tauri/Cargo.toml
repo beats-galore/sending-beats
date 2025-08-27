@@ -1,5 +1,5 @@
 [package]
-name = "sendin-beats"
+name = "SendinBeats"
 version = "0.1.0"
 description = "A Tauri App"
 authors = ["you"]
@@ -29,6 +29,7 @@ futures = "0.3"
 anyhow = "1"
 thiserror = "1"
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 base64 = "0.21"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
@@ -62,6 +63,9 @@ coreaudio-rs = "0.13"     # macOS Core Audio integration
 libc = "0.2"               # System calls for thread priority
 core-foundation = "0.9"   # Core Foundation framework  
 coreaudio-sys = "0.2"     # Low-level Core Audio bindings
+objc2-core-audio = { version = "0.3", features = ["AudioHardware", "objc2", "objc2-foundation"] }  # Modern Core Audio process taps
+objc2-foundation = "0.3"  # Foundation types for NSArray, NSNumber
+objc2 = "0.6"  # Core Objective-C 2.0 runtime
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.52", features = ["Win32_Media_Audio"] }  # WASAPI integration

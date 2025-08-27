@@ -26,7 +26,7 @@ import {
 } from '@tabler/icons-react';
 import { memo, useCallback, useMemo, useState, useEffect } from 'react';
 
-import { useMixerState, useAudioDevices, useChannelLevels } from '../../hooks';
+import { useMixerState, useAudioDevices, useChannelLevels, useApplicationAudio } from '../../hooks';
 import { audioService } from '../../services';
 
 import { ChannelEffects } from './ChannelEffects';
@@ -138,6 +138,7 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
   } = useMixerState();
 
   const { inputDevices, refreshDevices } = useAudioDevices();
+  const applicationAudio = useApplicationAudio();
 
   const levels = useChannelLevels(channel.id);
 
@@ -163,22 +164,26 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
   }, [channel.id]);
 
   const handleMuteToggle = useCallback(() => {
-    toggleChannelMute(channel.id);
+    void toggleChannelMute(channel.id);
   }, [channel.id, toggleChannelMute]);
 
   const handleSoloToggle = useCallback(() => {
-    toggleChannelSolo(channel.id);
+    void toggleChannelSolo(channel.id);
   }, [channel.id, toggleChannelSolo]);
 
   const handleInputDeviceChange = useCallback(
     async (deviceId: string | null) => {
+      console.log(`🔧 FRONTEND: handleInputDeviceChange called for channel ${channel.id} with deviceId:`, deviceId);
       if (deviceId) {
         try {
+          console.log(`🔧 FRONTEND: Calling setChannelInputDevice(${channel.id}, ${deviceId})`);
           await setChannelInputDevice(channel.id, deviceId);
           console.debug(`✅ Channel ${channel.id} input device set to: ${deviceId}`);
         } catch (error) {
           console.error(`❌ Failed to set input device for channel ${channel.id}:`, error);
         }
+      } else {
+        console.log(`🔧 FRONTEND: deviceId is null, not setting input device`);
       }
     },
     [channel.id, setChannelInputDevice]
@@ -193,7 +198,7 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
 
   const handlePanChange = useCallback(
     (pan: number) => {
-      updateChannelPan(channel.id, pan);
+      void updateChannelPan(channel.id, pan);
     },
     [channel.id, updateChannelPan]
   );
@@ -229,13 +234,40 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
         ? `R${Math.round(channel.pan * 100)}`
         : `L${Math.round(Math.abs(channel.pan) * 100)}`;
 
-  // Memoize input device options to prevent re-renders
+  // Memoize input device options to prevent re-renders (including application sources)
   const inputDeviceOptions = useMemo(() => {
-    return inputDevices.map((device) => ({
+    const hardwareOptions = inputDevices.map((device) => ({
       value: device.id,
       label: device.name.length > 20 ? `${device.name.substring(0, 20)}...` : device.name,
     }));
-  }, [inputDevices]);
+
+    const appOptions = applicationAudio.knownApps.map((app) => ({
+      value: `app-${app.pid}`,
+      label: app.name.length > 20 ? `${app.name.substring(0, 20)}...` : app.name,
+    }));
+
+    console.log('🎛️ ChannelStrip device options:', {
+      hardware: hardwareOptions.length,
+      applications: appOptions.length,
+      totalKnownApps: applicationAudio.knownApps.length,
+    });
+
+    // Mantine Select expects grouped data in a different format
+    if (appOptions.length > 0) {
+      return [
+        {
+          group: 'Hardware Devices',
+          items: hardwareOptions,
+        },
+        {
+          group: 'Applications',
+          items: appOptions,
+        },
+      ];
+    }
+    // No apps available, just return flat array
+    return hardwareOptions;
+  }, [inputDevices, applicationAudio.knownApps]);
 
   return (
     <Stack gap={0}>
@@ -251,7 +283,7 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
                 <Select
                   size="xs"
                   placeholder="No Input"
-                  value={channel.input_device_id || null}
+                  value={channel.input_device_id ?? null}
                   onChange={handleInputDeviceChange}
                   data={inputDeviceOptions}
                   className={`${classes.inputSelect} ${classes.customSelectInput}`}
@@ -352,7 +384,7 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
                   <Menu.Item
                     key={effect.value}
                     leftSection={<effect.icon size={16} />}
-                    onClick={() => handleAddEffect(effect.value)}
+                    onClick={() => void handleAddEffect(effect.value)}
                   >
                     {effect.label}
                   </Menu.Item>
