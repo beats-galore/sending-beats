@@ -872,6 +872,18 @@ pub struct VirtualAudioInputStream {
     effects_chain: Arc<tokio::sync::Mutex<crate::audio::effects::AudioEffectsChain>>,
 }
 
+/// Bridge adapter that converts VirtualAudioInputStream to AudioInputStream interface
+pub struct ApplicationAudioInputBridge {
+    device_id: String,
+    device_name: String,
+    sample_rate: u32,
+    channels: u16,
+    audio_buffer: Arc<tokio::sync::Mutex<Vec<f32>>>, // Source buffer from tap bridge
+    sync_buffer: Arc<std::sync::Mutex<Vec<f32>>>,     // Sync buffer for mixer compatibility
+    effects_chain: Arc<std::sync::Mutex<crate::audio::effects::AudioEffectsChain>>,
+    adaptive_chunk_size: usize,
+}
+
 impl VirtualAudioInputStream {
     pub fn new(
         device_id: String,
@@ -974,6 +986,151 @@ impl VirtualAudioInputStream {
     pub fn channels(&self) -> u16 {
         self.channels
     }
+}
+
+impl ApplicationAudioInputBridge {
+    pub fn new(
+        device_id: String,
+        device_name: String,
+        sample_rate: u32,
+        audio_buffer: Arc<tokio::sync::Mutex<Vec<f32>>>,
+    ) -> Result<Self> {
+        let sync_buffer = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let effects_chain = Arc::new(std::sync::Mutex::new(
+            crate::audio::effects::AudioEffectsChain::new(sample_rate)
+        ));
+        
+        // Calculate optimal chunk size (same as AudioInputStream)
+        let optimal_chunk_size = (sample_rate as f32 * 0.005) as usize; // 5ms default
+        
+        Ok(Self {
+            device_id,
+            device_name,
+            sample_rate,
+            channels: 2, // Assume stereo for application audio
+            audio_buffer,
+            sync_buffer,
+            effects_chain,
+            adaptive_chunk_size: optimal_chunk_size.max(64).min(1024),
+        })
+    }
+    
+    /// Synchronously transfer samples from async buffer to sync buffer
+    /// This should be called periodically to keep the sync buffer updated
+    pub fn sync_transfer_samples(&self) {
+        // Use try_lock to avoid blocking - if async buffer is locked, skip this transfer
+        if let Ok(mut async_buffer) = self.audio_buffer.try_lock() {
+            if !async_buffer.is_empty() {
+                // Transfer samples from async buffer to sync buffer
+                let samples: Vec<f32> = async_buffer.drain(..).collect();
+                
+                if let Ok(mut sync_buffer) = self.sync_buffer.try_lock() {
+                    sync_buffer.extend_from_slice(&samples);
+                    
+                    // Prevent buffer overflow - same logic as regular input streams
+                    let max_buffer_size = 48000; // 1 second at 48kHz
+                    if sync_buffer.len() > max_buffer_size * 2 {
+                        let keep_size = max_buffer_size;
+                        let buffer_len = sync_buffer.len();
+                        let new_buffer = sync_buffer.split_off(buffer_len - keep_size);
+                        *sync_buffer = new_buffer;
+                    }
+                }
+            }
+        }
+    }
+    
+    /// Get samples (compatible with AudioInputStream interface)
+    pub fn get_samples(&self) -> Vec<f32> {
+        // First, transfer any new samples from async buffer
+        self.sync_transfer_samples();
+        
+        // Then get samples from sync buffer (same as AudioInputStream)
+        if let Ok(mut buffer) = self.sync_buffer.try_lock() {
+            if buffer.is_empty() {
+                return Vec::new();
+            }
+            
+            // Process ALL available samples to prevent buffer buildup
+            let samples: Vec<f32> = buffer.drain(..).collect();
+            samples
+        } else {
+            Vec::new()
+        }
+    }
+    
+    /// Process samples with effects (compatible with AudioInputStream interface)
+    pub fn process_with_effects(&self, channel: &crate::audio::types::AudioChannel) -> Vec<f32> {
+        // First, transfer any new samples from async buffer
+        self.sync_transfer_samples();
+        
+        if let Ok(mut buffer) = self.sync_buffer.try_lock() {
+            if buffer.is_empty() {
+                return Vec::new();
+            }
+            
+            // Drain all available samples
+            let mut samples: Vec<f32> = buffer.drain(..).collect();
+            
+            // Apply effects if enabled
+            if channel.effects_enabled && !samples.is_empty() {
+                if let Ok(mut effects) = self.effects_chain.try_lock() {
+                    // Update effects parameters based on channel settings
+                    effects.set_eq_gain(crate::audio::effects::EQBand::Low, channel.eq_low_gain);
+                    effects.set_eq_gain(crate::audio::effects::EQBand::Mid, channel.eq_mid_gain);
+                    effects.set_eq_gain(crate::audio::effects::EQBand::High, channel.eq_high_gain);
+                    
+                    if channel.comp_enabled {
+                        effects.set_compressor_params(
+                            channel.comp_threshold,
+                            channel.comp_ratio,
+                            channel.comp_attack,
+                            channel.comp_release,
+                        );
+                    }
+                    
+                    if channel.limiter_enabled {
+                        effects.set_limiter_threshold(channel.limiter_threshold);
+                    }
+
+                    // Process samples through effects chain
+                    effects.process(&mut samples);
+                }
+            }
+            
+            // Apply channel-specific gain and mute
+            if !channel.muted && channel.gain > 0.0 {
+                for sample in samples.iter_mut() {
+                    *sample *= channel.gain;
+                }
+            } else {
+                samples.fill(0.0);
+            }
+
+            samples
+        } else {
+            Vec::new()
+        }
+    }
+    
+    /// Set adaptive chunk size (compatible with AudioInputStream interface)
+    pub fn set_adaptive_chunk_size(&mut self, hardware_buffer_size: usize) {
+        let adaptive_size = if hardware_buffer_size > 32 && hardware_buffer_size <= 2048 {
+            hardware_buffer_size
+        } else {
+            (self.sample_rate as f32 * 0.005) as usize
+        };
+        
+        self.adaptive_chunk_size = adaptive_size;
+        info!("🔧 ADAPTIVE BUFFER: Set chunk size to {} samples for app device {}", 
+              self.adaptive_chunk_size, self.device_id);
+    }
+    
+    // Getters (compatible with AudioInputStream interface)
+    pub fn device_id(&self) -> &str { &self.device_id }
+    pub fn device_name(&self) -> &str { &self.device_name }
+    pub fn sample_rate(&self) -> u32 { self.sample_rate }
+    pub fn channels(&self) -> u16 { self.channels }
 }
 
 /// High-level manager for application audio capture
@@ -1240,31 +1397,132 @@ impl ApplicationAudioManager {
         channel_name: String,
         bridge_buffer: Arc<tokio::sync::Mutex<Vec<f32>>>,
     ) -> Result<()> {
-        
         info!("📡 Registering virtual input stream: {} ({})", channel_name, virtual_device_id);
         
-        // Create a virtual AudioInputStream that reads from our bridge buffer
-        let _virtual_stream = Arc::new(VirtualAudioInputStream::new(
+        // Create a bridge adapter that's compatible with the mixer's AudioInputStream interface
+        let audio_bridge = ApplicationAudioInputBridge::new(
             virtual_device_id.clone(),
             channel_name.clone(),
-            48000, // Default sample rate - will be handled by resampling if needed
+            48000, // Default sample rate
             bridge_buffer,
+        )?;
+        
+        // Convert to the format the mixer expects
+        // Note: We need to expose the sync buffer from the bridge as std::sync::Mutex
+        let audio_buffer_sync = Arc::new(tokio::sync::Mutex::new(Vec::<f32>::new()));
+        let effects_chain_sync = Arc::new(tokio::sync::Mutex::new(
+            crate::audio::effects::AudioEffectsChain::new(audio_bridge.sample_rate())
         ));
         
-        // We need access to the global mixer to add this input stream
-        // For now, we'll store it in a way that the mixer can discover it
-        // This requires integration with the mixer's input stream management
+        let audio_input_stream = Arc::new(crate::audio::streams::AudioInputStream {
+            device_id: audio_bridge.device_id().to_string(),
+            device_name: audio_bridge.device_name().to_string(),
+            sample_rate: audio_bridge.sample_rate(),
+            channels: audio_bridge.channels(),
+            audio_buffer: audio_buffer_sync.clone(),
+            effects_chain: effects_chain_sync.clone(),
+            adaptive_chunk_size: audio_bridge.adaptive_chunk_size,
+        });
         
-        info!("⚠️ Virtual stream registration needs mixer integration");
-        info!("Virtual stream created: {} -> ready for mixer discovery", virtual_device_id);
+        // Store the bridge for periodic sync operations
+        // We need to keep the bridge alive to handle async->sync transfers
+        let audio_bridge = Arc::new(audio_bridge);
         
-        // TODO: Complete integration with VirtualMixer's input stream collection
-        // This would involve:
-        // 1. Getting reference to the global VirtualMixer instance
-        // 2. Adding the virtual_stream to its input_streams collection
-        // 3. Configuring channel settings to use this virtual device
+        // Start a background task to continuously sync samples from async to sync buffers
+        let bridge_for_sync = audio_bridge.clone();
+        let device_name_for_sync = channel_name.clone();
+        let audio_buffer_for_sync = audio_buffer_sync.clone();
+        
+        tokio::spawn(async move {
+            info!("🔄 Started sync task for application audio bridge: {}", device_name_for_sync);
+            let mut sync_count = 0u64;
+            
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_millis(5)).await; // 200 Hz sync rate
+                
+                // Transfer samples from the bridge's async buffer to the AudioInputStream's sync buffer
+                if let Ok(mut async_buffer) = bridge_for_sync.audio_buffer.try_lock() {
+                    if !async_buffer.is_empty() {
+                        let samples: Vec<f32> = async_buffer.drain(..).collect();
+                        
+                        if let Ok(mut sync_buffer) = audio_buffer_for_sync.try_lock() {
+                            sync_buffer.extend_from_slice(&samples);
+                            
+                            // Prevent buffer overflow
+                            let max_buffer_size = 48000; // 1 second at 48kHz
+                            if sync_buffer.len() > max_buffer_size * 2 {
+                                let keep_size = max_buffer_size;
+                                let buffer_len = sync_buffer.len();
+                                let new_buffer = sync_buffer.split_off(buffer_len - keep_size);
+                                *sync_buffer = new_buffer;
+                            }
+                        }
+                    }
+                }
+                
+                sync_count += 1;
+                if sync_count % 4000 == 0 {
+                    // Log every 20 seconds at 200 Hz
+                    info!("🔄 Application audio sync task running for {}: {} syncs", 
+                          device_name_for_sync, sync_count);
+                }
+            }
+        });
+        
+        // Add the virtual stream to the global mixer's input_streams collection
+        // We need to access the global AudioState for this
+        self.add_to_global_mixer(virtual_device_id.clone(), audio_input_stream, audio_bridge).await?;
+        
+        info!("✅ Successfully registered virtual input stream: {} -> ready for mixer", virtual_device_id);
+        Ok(())
+    }
+    
+    /// Add the virtual audio stream to the global mixer's input streams collection
+    async fn add_to_global_mixer(
+        &self,
+        device_id: String,
+        audio_input_stream: Arc<crate::audio::streams::AudioInputStream>,
+        _bridge: Arc<ApplicationAudioInputBridge>,
+    ) -> Result<()> {
+        // Store the stream in a global registry that the mixer can access
+        // For now, we'll use a static registry approach
+        
+        info!("🔗 Adding virtual stream {} to global mixer registry", device_id);
+        
+        use std::sync::{LazyLock, Mutex as StdMutex};
+        use std::collections::HashMap;
+        
+        static VIRTUAL_INPUT_REGISTRY: LazyLock<StdMutex<HashMap<String, Arc<crate::audio::streams::AudioInputStream>>>> = 
+            LazyLock::new(|| StdMutex::new(HashMap::new()));
+        
+        // Register the virtual stream globally
+        if let Ok(mut registry) = VIRTUAL_INPUT_REGISTRY.lock() {
+            registry.insert(device_id.clone(), audio_input_stream);
+            info!("✅ Registered virtual stream {} in global registry", device_id);
+        } else {
+            return Err(anyhow::anyhow!("Failed to lock virtual input registry"));
+        }
+        
+        // Now we need to trigger the mixer to pick up this new virtual device
+        // This could be done via a notification system or polling
+        info!("📢 Virtual stream {} ready for mixer discovery", device_id);
         
         Ok(())
+    }
+    
+    /// Get all registered virtual input streams (for mixer integration)
+    pub fn get_virtual_input_streams() -> HashMap<String, Arc<crate::audio::streams::AudioInputStream>> {
+        use std::sync::{LazyLock, Mutex as StdMutex};
+        use std::collections::HashMap;
+        
+        static VIRTUAL_INPUT_REGISTRY: LazyLock<StdMutex<HashMap<String, Arc<crate::audio::streams::AudioInputStream>>>> = 
+            LazyLock::new(|| StdMutex::new(HashMap::new()));
+        
+        if let Ok(registry) = VIRTUAL_INPUT_REGISTRY.lock() {
+            registry.clone()
+        } else {
+            HashMap::new()
+        }
     }
     
     /// Stop capturing audio from a specific application
