@@ -84,15 +84,14 @@ pub async fn start_application_audio_capture(
         }
     }
     
-    match app_audio_state.manager.start_capturing_app(pid).await {
-        Ok(_receiver) => {
-            // TODO: Connect the receiver to the mixer input
-            println!("✅ Started audio capture for PID: {}", pid);
-            Ok(format!("Successfully started capturing audio from application (PID: {})", pid))
+    match app_audio_state.manager.create_mixer_input_for_app(pid).await {
+        Ok(channel_name) => {
+            println!("✅ Created mixer input for PID {}: {}", pid, channel_name);
+            Ok(format!("Successfully created mixer input for application: {}", channel_name))
         }
         Err(e) => {
-            eprintln!("❌ Failed to start audio capture for PID {}: {}", pid, e);
-            Err(format!("Failed to start audio capture: {}", e))
+            eprintln!("❌ Failed to create mixer input for PID {}: {}", pid, e);
+            Err(format!("Failed to create mixer input: {}", e))
         }
     }
 }

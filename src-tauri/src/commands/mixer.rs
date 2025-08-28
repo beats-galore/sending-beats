@@ -104,10 +104,10 @@ pub async fn update_mixer_channel(
             if let Ok(pid_str) = device_id.strip_prefix("app-").unwrap_or("").parse::<u32>() {
                 println!("🎵 Creating audio tap for application PID: {}", pid_str);
                 
-                match app_audio_state.manager.start_capturing_app(pid_str).await {
-                    Ok(_receiver) => {
-                        println!("✅ Successfully created audio tap for PID: {}", pid_str);
-                        // TODO: Connect the receiver to the mixer channel
+                match app_audio_state.manager.create_mixer_input_for_app(pid_str).await {
+                    Ok(channel_name) => {
+                        println!("✅ Successfully created mixer input for PID {}: {}", pid_str, channel_name);
+                        // Virtual stream is now registered and ready for mixer
                     }
                     Err(e) => {
                         let error_msg = e.to_string();

@@ -6,6 +6,14 @@ use tokio::sync::{broadcast, Mutex, RwLock};
 use sysinfo::{System, Pid};
 use tracing::{info, warn, error, debug};
 
+/// Centralized virtual input stream registry to ensure mixer can find registered streams
+fn get_virtual_input_registry() -> &'static StdMutex<HashMap<String, Arc<crate::audio::streams::AudioInputStream>>> {
+    use std::sync::LazyLock;
+    static VIRTUAL_INPUT_REGISTRY: LazyLock<StdMutex<HashMap<String, Arc<crate::audio::streams::AudioInputStream>>>> = 
+        LazyLock::new(|| StdMutex::new(HashMap::new()));
+    &VIRTUAL_INPUT_REGISTRY
+}
+
 /// Context data for Core Audio tap IOProc callback
 #[cfg(target_os = "macos")]
 struct CoreAudioTapCallbackContext {
@@ -1526,21 +1534,27 @@ impl ApplicationAudioManager {
     pub async fn create_mixer_input_for_app(&self, pid: u32) -> Result<String> {
         info!("🎛️ Creating mixer input for application PID: {}", pid);
         
-        // Start capturing from the application first
-        let audio_receiver = self.start_capturing_app(pid).await?;
-        
-        // Get process info for naming
+        // Get process info for naming FIRST
         let discovery = self.discovery.lock().await;
         let process_info = discovery.get_process_info(pid)
             .ok_or_else(|| anyhow::anyhow!("Process not found: {}", pid))?;
         drop(discovery);
         
         let channel_name = format!("App: {}", process_info.name);
+        let virtual_device_id = format!("app-{}", pid);
         
-        // Create a bridge between the broadcast receiver and the mixer input system
-        self.bridge_tap_audio_to_mixer(pid, audio_receiver, channel_name.clone()).await?;
+        // CRITICAL: Register virtual stream FIRST, before starting capture
+        info!("📡 Pre-registering virtual stream {} before capture", virtual_device_id);
+        let bridge_buffer = Arc::new(tokio::sync::Mutex::new(Vec::<f32>::new()));
+        self.register_virtual_input_stream_sync(virtual_device_id.clone(), channel_name.clone(), bridge_buffer.clone()).await?;
         
-        info!("✅ Created virtual mixer input '{}' for PID {} with audio bridge", channel_name, pid);
+        // NOW start capturing from the application 
+        let audio_receiver = self.start_capturing_app(pid).await?;
+        
+        // Bridge the audio to the pre-registered stream
+        self.bridge_tap_audio_to_existing_stream(pid, audio_receiver, bridge_buffer).await?;
+        
+        info!("✅ Created virtual mixer input '{}' for PID {} with pre-registered stream", channel_name, pid);
         Ok(channel_name)
     }
     
@@ -1608,6 +1622,102 @@ impl ApplicationAudioManager {
         // Now we need to register this virtual audio source with the mixer system
         // We'll create a virtual AudioInputStream that reads from our bridge buffer
         self.register_virtual_input_stream(virtual_device_id, channel_name, bridge_buffer).await?;
+        
+        Ok(())
+    }
+    
+    /// Register virtual stream synchronously BEFORE capture starts  
+    async fn register_virtual_input_stream_sync(
+        &self,
+        virtual_device_id: String,
+        channel_name: String,
+        bridge_buffer: Arc<tokio::sync::Mutex<Vec<f32>>>,
+    ) -> Result<()> {
+        info!("📡 SYNC: Registering virtual input stream: {} ({})", channel_name, virtual_device_id);
+        
+        // Create the AudioInputStream immediately and register it
+        let audio_input_stream = Arc::new(crate::audio::streams::AudioInputStream {
+            device_id: virtual_device_id.clone(),
+            device_name: channel_name.clone(),
+            sample_rate: 48000,
+            channels: 2,
+            audio_buffer: bridge_buffer.clone(), 
+            effects_chain: Arc::new(tokio::sync::Mutex::new(
+                crate::audio::effects::AudioEffectsChain::new(48000)
+            )),
+            adaptive_chunk_size: 480, // 10ms at 48kHz
+        });
+        
+        // Store in global registry IMMEDIATELY
+        self.add_to_global_mixer_sync(virtual_device_id.clone(), audio_input_stream).await?;
+        
+        info!("✅ SYNC: Virtual stream {} registered and ready for mixer", virtual_device_id);
+        Ok(())
+    }
+    
+    /// Synchronously add virtual stream to global mixer registry
+    async fn add_to_global_mixer_sync(
+        &self,
+        device_id: String,
+        audio_input_stream: Arc<crate::audio::streams::AudioInputStream>,
+    ) -> Result<()> {
+        info!("🔗 SYNC: Adding virtual stream {} to global mixer registry", device_id);
+        
+        // Use centralized registry function
+        let registry = get_virtual_input_registry();
+        if let Ok(mut reg) = registry.lock() {
+            reg.insert(device_id.clone(), audio_input_stream);
+            info!("✅ SYNC: Registered virtual stream {} in global registry (total: {})", device_id, reg.len());
+        } else {
+            return Err(anyhow::anyhow!("Failed to lock virtual input registry"));
+        }
+        
+        Ok(())
+    }
+    
+    /// Bridge existing audio receiver to pre-registered stream buffer
+    async fn bridge_tap_audio_to_existing_stream(
+        &self,
+        pid: u32,
+        mut audio_receiver: broadcast::Receiver<Vec<f32>>,
+        bridge_buffer: Arc<tokio::sync::Mutex<Vec<f32>>>,
+    ) -> Result<()> {
+        let process_name = format!("PID-{}", pid);
+        
+        info!("🌉 Setting up audio bridge to existing stream for {}", process_name);
+        
+        // Start background task to bridge audio data
+        tokio::spawn(async move {
+            info!("🔗 Audio bridge task started for {}", process_name);
+            let mut sample_count = 0u64;
+            
+            while let Ok(audio_samples) = audio_receiver.recv().await {
+                sample_count += audio_samples.len() as u64;
+                
+                // Transfer samples to the pre-registered stream buffer
+                if let Ok(mut buffer) = bridge_buffer.try_lock() {
+                    buffer.extend_from_slice(&audio_samples);
+                    
+                    // Buffer overflow protection
+                    let max_buffer_size = 48000; // 1 second at 48kHz
+                    if buffer.len() > max_buffer_size * 2 {
+                        let keep_size = max_buffer_size;
+                        let buffer_len = buffer.len();
+                        let new_buffer = buffer.split_off(buffer_len - keep_size);
+                        *buffer = new_buffer;
+                    }
+                    
+                    // Log periodically
+                    if sample_count % 4800 == 0 {
+                        let peak = audio_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                        info!("🌉 BRIDGE [{}]: {} total samples bridged, recent peak: {:.4}", 
+                              process_name, sample_count, peak);
+                    }
+                }
+            }
+            
+            info!("🔗 Audio bridge task ended for {}", process_name);
+        });
         
         Ok(())
     }
@@ -1734,14 +1844,10 @@ impl ApplicationAudioManager {
     
     /// Get all registered virtual input streams (for mixer integration)
     pub fn get_virtual_input_streams() -> HashMap<String, Arc<crate::audio::streams::AudioInputStream>> {
-        use std::sync::{LazyLock, Mutex as StdMutex};
-        use std::collections::HashMap;
-        
-        static VIRTUAL_INPUT_REGISTRY: LazyLock<StdMutex<HashMap<String, Arc<crate::audio::streams::AudioInputStream>>>> = 
-            LazyLock::new(|| StdMutex::new(HashMap::new()));
-        
-        if let Ok(registry) = VIRTUAL_INPUT_REGISTRY.lock() {
-            registry.clone()
+        // Use centralized registry function
+        let registry = get_virtual_input_registry();
+        if let Ok(reg) = registry.lock() {
+            reg.clone()
         } else {
             HashMap::new()
         }
