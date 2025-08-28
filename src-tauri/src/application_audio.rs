@@ -664,8 +664,27 @@ impl ApplicationAudioTap {
             error!("   FourCC: '{}'", error_str);
             error!("   This might indicate the tap device doesn't support IOProc callbacks");
             
-            warn!("⚠️ IOProc creation failed, trying alternative property listener approach...");
-            return self.setup_tap_property_listener(tap_object_id, audio_tx, sample_rate, channels).await;
+            warn!("⚠️ IOProc creation failed on tap directly - trying aggregate device approach...");
+            info!("🎯 CORRECT APPROACH: Core Audio taps need aggregate device with tap as subdevice!");
+            info!("🔧 Creating aggregate device that includes tap {} as subdevice", tap_object_id);
+            
+            // The correct approach: Create aggregate device with tap as subdevice, then IOProc on aggregate
+            match self.create_aggregate_device_with_tap(tap_object_id).await {
+                Ok(aggregate_device_id) => {
+                    info!("✅ Successfully created aggregate device {}, now setting up IOProc on it", aggregate_device_id);
+                    return self.setup_ioproc_on_aggregate_device(aggregate_device_id, audio_tx, sample_rate, channels).await;
+                }
+                Err(e) => {
+                    warn!("⚠️ Aggregate device creation failed: {}", e);
+                    info!("🔄 FALLBACK: Using direct tap property reading as last resort");
+                    let format = AudioFormatInfo {
+                        sample_rate: sample_rate as f64,
+                        channels: channels as u32,
+                        bits_per_sample: 32,
+                    };
+                    return self.setup_direct_tap_reading(tap_object_id, audio_tx, format).await;
+                }
+            }
         }
         
         info!("✅ Created IOProc for tap device: {:?}", io_proc_id);
@@ -825,9 +844,13 @@ impl ApplicationAudioTap {
         let device_dict = self.create_aggregate_device_dictionary(&tap_uuid)?;
         
         // Step 3: Create the aggregate device using Core Audio HAL
-        // NOTE: Testing with null dictionary to see what AudioHardwareCreateAggregateDevice does
         let aggregate_device_id = unsafe {
-            self.create_core_audio_aggregate_device(device_dict)?
+            let result = self.create_core_audio_aggregate_device(device_dict);
+            
+            // Release the dictionary now that the API call is complete
+            core_foundation::base::CFRelease(device_dict as core_foundation::base::CFTypeRef);
+            
+            result?
         };
         
         info!("✅ Created aggregate device {} with tap {}", aggregate_device_id, tap_object_id);
@@ -881,19 +904,67 @@ impl ApplicationAudioTap {
     /// Create CoreFoundation dictionary for aggregate device configuration  
     #[cfg(target_os = "macos")]
     fn create_aggregate_device_dictionary(&self, tap_uuid: &str) -> Result<*const std::os::raw::c_void> {
-        info!("🔧 SKIP COMPLEX: Testing with empty dictionary to debug AudioHardwareCreateAggregateDevice");
-        info!("📋 Will create a simple aggregate device first, then add tap integration later");
-        warn!("🔄 Using empty dictionary to test AudioHardwareCreateAggregateDevice API behavior");
+        use core_foundation::dictionary::CFDictionary;
+        use core_foundation::string::CFString;
+        use core_foundation::array::CFArray;
+        use core_foundation::base::{TCFType, CFTypeRef};
+        use core_foundation::number::CFNumber;
         
-        // Skip the complex CoreFoundation dictionary for now
-        // Let's see what AudioHardwareCreateAggregateDevice does with an empty/null dictionary
-        // This will tell us if the API works at all and what it expects
+        info!("🔧 Creating proper CoreFoundation dictionary for AudioHardwareCreateAggregateDevice");
+        info!("📋 Using tap UUID: {}", tap_uuid);
         
-        info!("📋 Testing AudioHardwareCreateAggregateDevice with empty config");
-        info!("📋 If successful, we'll see a new aggregate device in CPAL enumeration");
+        // Create device name and UID
+        let device_name = format!("SendinBeats-Tap-{}", self.process_info.pid);
+        let device_uid = format!("com.sendinbeats.tap.{}", self.process_info.pid);
         
-        // Return null to test the API - this is a diagnostic step
-        Ok(std::ptr::null())
+        info!("📋 Aggregate device name: {}", device_name);
+        info!("📋 Aggregate device UID: {}", device_uid);
+        
+        // Use the correct Core Audio constants for aggregate device dictionary
+        let name_key = CFString::new("name");  // kAudioAggregateDeviceNameKey
+        let uid_key = CFString::new("uid");    // kAudioAggregateDeviceUIDKey
+        let subdevices_key = CFString::new("subdevice list");  // kAudioAggregateDeviceSubDeviceListKey
+        let master_key = CFString::new("master");  // kAudioAggregateDeviceMasterSubDeviceKey
+        let is_stacked_key = CFString::new("stacked");  // kAudioAggregateDeviceIsStackedKey
+        
+        // Values
+        let name_value = CFString::new(&device_name);
+        let uid_value = CFString::new(&device_uid);
+        
+        // CRITICAL: Include the tap UUID in the subdevices array
+        // This is how Core Audio taps are supposed to work - tap becomes part of aggregate device
+        let tap_uuid_cf = CFString::new(tap_uuid);
+        let subdevices_array = CFArray::<CFString>::from_CFTypes(&[tap_uuid_cf]);
+        
+        // Set is_stacked to 1 (true) for multi-output behavior  
+        let is_stacked_value = CFNumber::from(1i32);
+        
+        info!("🔧 Creating aggregate device dictionary with tap as subdevice");
+        info!("🔧 Including tap UUID {} in subdevices array", tap_uuid);
+        
+        // Create the dictionary with proper Core Audio keys
+        let pairs = [
+            (name_key.as_CFType(), name_value.as_CFType()),
+            (uid_key.as_CFType(), uid_value.as_CFType()),
+            (subdevices_key.as_CFType(), subdevices_array.as_CFType()),
+            (is_stacked_key.as_CFType(), is_stacked_value.as_CFType()),
+        ];
+        
+        let dict = CFDictionary::from_CFType_pairs(&pairs);
+        
+        info!("📋 Created CoreFoundation dictionary with {} keys", pairs.len());
+        info!("📋 Dictionary keys: name, uid, subdevice list, stacked");
+        
+        // Keep the dictionary alive and return a retained reference
+        let dict_ref = dict.as_concrete_TypeRef() as *const std::os::raw::c_void;
+        
+        // Explicitly retain the dictionary to prevent deallocation
+        unsafe {
+            core_foundation::base::CFRetain(dict_ref as CFTypeRef);
+        }
+        
+        info!("📋 Dictionary retained and ready for AudioHardwareCreateAggregateDevice");
+        Ok(dict_ref)
     }
     
     /// Create the actual Core Audio aggregate device
@@ -920,6 +991,115 @@ impl ApplicationAudioTap {
         Ok(aggregate_device_id)
     }
     
+    /// Set up IOProc callback on aggregate device to receive tap data
+    #[cfg(target_os = "macos")]
+    async fn setup_ioproc_on_aggregate_device(
+        &mut self,
+        aggregate_device_id: coreaudio_sys::AudioObjectID,
+        audio_tx: broadcast::Sender<Vec<f32>>,
+        sample_rate: f64,
+        channels: u32,
+    ) -> Result<()> {
+        use coreaudio_sys::{AudioDeviceCreateIOProcID, AudioDeviceStart, AudioObjectID, AudioDeviceIOProcID};
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        
+        info!("🔧 Setting up IOProc callback on aggregate device {}", aggregate_device_id);
+        info!("📋 Aggregate device format: {:.0} Hz, {} channels", sample_rate, channels);
+        
+        // Create context for the callback
+        let audio_tx_clone = audio_tx.clone();
+        let process_name = self.process_info.name.clone();
+        let is_running = Arc::new(AtomicBool::new(true));
+        
+        // Box the callback context to pass to C
+        let callback_context = Box::new((audio_tx_clone, process_name, is_running.clone()));
+        let context_ptr = Box::into_raw(callback_context);
+        
+        // Define the IOProc callback function
+        extern "C" fn aggregate_ioproc_callback(
+            device_id: AudioObjectID,
+            _now: *const coreaudio_sys::AudioTimeStamp,
+            input_data: *const coreaudio_sys::AudioBufferList,
+            _input_time: *const coreaudio_sys::AudioTimeStamp,
+            _output_data: *mut coreaudio_sys::AudioBufferList,
+            _output_time: *const coreaudio_sys::AudioTimeStamp,
+            client_data: *mut std::os::raw::c_void,
+        ) -> i32 {
+            if client_data.is_null() || input_data.is_null() {
+                return 0;
+            }
+            
+            let context = unsafe { &*(client_data as *const (broadcast::Sender<Vec<f32>>, String, Arc<AtomicBool>)) };
+            let (audio_tx, process_name, is_running) = context;
+            
+            if !is_running.load(Ordering::Relaxed) {
+                return 0;
+            }
+            
+            unsafe {
+                let buffer_list = &*input_data;
+                if buffer_list.mNumberBuffers == 0 {
+                    return 0;
+                }
+                
+                // Get the first buffer (should contain interleaved stereo data)
+                let buffer = &buffer_list.mBuffers[0];
+                let data_ptr = buffer.mData as *const f32;
+                let frame_count = buffer.mDataByteSize / 8; // 2 channels * 4 bytes per sample
+                
+                if !data_ptr.is_null() && frame_count > 0 {
+                    let samples = std::slice::from_raw_parts(data_ptr, (frame_count * 2) as usize);
+                    let sample_vec = samples.to_vec();
+                    
+                    // Calculate peak level for logging
+                    let peak = sample_vec.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                    
+                    if peak > 0.001 {
+                        println!("🎵 REAL APPLE MUSIC DATA [{}]: {} samples, peak: {:.4}", 
+                                process_name, sample_vec.len(), peak);
+                    }
+                    
+                    // Send real Apple Music audio data to the mixer!
+                    if let Err(_) = audio_tx.send(sample_vec) {
+                        // Channel closed, stop processing
+                        is_running.store(false, Ordering::Relaxed);
+                    }
+                }
+            }
+            
+            0 // noErr
+        }
+        
+        // Create IOProc on the aggregate device
+        let mut io_proc_id: AudioDeviceIOProcID = None;
+        let status = unsafe {
+            AudioDeviceCreateIOProcID(
+                aggregate_device_id,
+                Some(aggregate_ioproc_callback),
+                context_ptr as *mut std::os::raw::c_void,
+                &mut io_proc_id,
+            )
+        };
+        
+        if status != 0 {
+            unsafe { drop(Box::from_raw(context_ptr)); }
+            return Err(anyhow::anyhow!("AudioDeviceCreateIOProcID failed on aggregate device: OSStatus {}", status));
+        }
+        
+        info!("✅ Created IOProc on aggregate device: {:?}", io_proc_id);
+        
+        // Start the aggregate device
+        let start_status = unsafe { AudioDeviceStart(aggregate_device_id, io_proc_id) };
+        if start_status != 0 {
+            return Err(anyhow::anyhow!("AudioDeviceStart failed on aggregate device: OSStatus {}", start_status));
+        }
+        
+        info!("🎉 BREAKTHROUGH: Aggregate device started - real Apple Music audio should flow through IOProc!");
+        
+        Ok(())
+    }
+
     /// Set up CPAL input stream from aggregate device
     #[cfg(target_os = "macos")]
     async fn setup_cpal_stream_from_aggregate_device(

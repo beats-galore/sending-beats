@@ -54,19 +54,21 @@ pub fn create_process_tap_description(pid: u32) -> objc2::rc::Retained<CATapDesc
     use tracing::info;
     
     unsafe {
-        // The initStereoMixdownOfProcesses method likely expects AudioObjectIDs, not PIDs
-        // Since PID translation is failing, let's try creating a global tap instead
-        // and then filter the specific process later
+        // BREAKTHROUGH: Create process-specific tap using initStereoMixdownOfProcesses
+        // This should capture ONLY the specified process (Apple Music)
         
-        info!("Creating global stereo tap instead of process-specific tap due to PID translation issues");
+        info!("Creating process-specific tap for PID: {}", pid);
         
-        // Create and initialize a global tap that captures all processes
         let alloc = CATapDescription::alloc();
         
-        // Try using initStereoGlobalTapButExcludeProcesses with empty exclusion list
-        // This should capture all system audio
-        let empty_array = NSArray::from_slice(&[] as &[&NSNumber]);
-        CATapDescription::initStereoGlobalTapButExcludeProcesses(alloc, &empty_array)
+        // Create NSNumber for the PID and put it in an NSArray
+        let pid_number = NSNumber::new_u32(pid);
+        let process_array = NSArray::from_slice(&[&*pid_number]);
+        
+        info!("Created process array with PID {} for process-specific tap", pid);
+        
+        // Use initStereoMixdownOfProcesses to create a tap that captures ONLY this process
+        CATapDescription::initStereoMixdownOfProcesses(alloc, &process_array)
     }
 }
 
