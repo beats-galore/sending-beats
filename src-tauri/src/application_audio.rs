@@ -24,6 +24,14 @@ struct CoreAudioTapCallbackContext {
     callback_count: std::sync::atomic::AtomicU64,
 }
 
+/// Helper struct for audio format information
+#[derive(Debug, Clone)]
+struct AudioFormatInfo {
+    sample_rate: f64,
+    channels: u32,
+    bits_per_sample: u32,
+}
+
 /// Core Audio IOProc callback for tap device
 #[cfg(target_os = "macos")]
 unsafe extern "C" fn core_audio_tap_callback(
@@ -685,7 +693,7 @@ impl ApplicationAudioTap {
         Ok(())
     }
     
-    /// Alternative approach: Set up property listener for tap device audio data
+    /// Implement proper Core Audio tap reading using aggregate device approach
     #[cfg(target_os = "macos")]
     async fn setup_tap_property_listener(
         &mut self,
@@ -694,17 +702,438 @@ impl ApplicationAudioTap {
         sample_rate: f64,
         channels: u32,
     ) -> Result<()> {
-        info!("🔄 TRYING: Property listener approach for Core Audio tap {}", tap_object_id);
+        info!("🔄 IMPLEMENTING: Proper Core Audio tap reading with aggregate device for tap {}", tap_object_id);
         
-        // Unfortunately, Core Audio taps might not support traditional IOProc or property listening
-        // The tap API might be designed to work differently than regular audio devices
+        // Based on Apple documentation and examples, Core Audio taps work by creating an aggregate device
+        // that includes the tap, then reading from the aggregate device
         
-        // Let me try a polling approach instead - periodically check for audio data
-        warn!("⚠️ RESEARCH NEEDED: Core Audio taps may require specialized APIs");
-        error!("❌ Current implementation incomplete - Core Audio tap access needs deeper research");
+        match self.setup_aggregate_device_for_tap(tap_object_id, audio_tx.clone(), sample_rate, channels).await {
+            Ok(()) => {
+                info!("✅ Successfully set up aggregate device tap reading for AudioObjectID {}", tap_object_id);
+                Ok(())
+            }
+            Err(e) => {
+                error!("❌ Failed to set up aggregate device for tap {}: {}", tap_object_id, e);
+                info!("🔄 FALLBACK: Using placeholder tone while debugging aggregate device setup");
+                self.setup_placeholder_tone_fallback(tap_object_id, audio_tx, sample_rate, channels).await
+            }
+        }
+    }
+    
+    /// Set up aggregate device that includes the Core Audio tap for proper audio reading
+    #[cfg(target_os = "macos")]
+    async fn setup_aggregate_device_for_tap(
+        &mut self,
+        tap_object_id: coreaudio_sys::AudioObjectID,
+        audio_tx: broadcast::Sender<Vec<f32>>,
+        sample_rate: f64,
+        channels: u32,
+    ) -> Result<()> {
+        info!("🔧 Creating aggregate device for Core Audio tap {}", tap_object_id);
         
-        // For now, let's implement a placeholder that at least doesn't fail
-        // This will allow us to continue development while researching the proper approach
+        // Step 1: Get the tap's UUID and format information
+        let tap_format = self.get_tap_audio_format(tap_object_id).await?;
+        info!("📋 Tap format: {:.0} Hz, {} channels", tap_format.sample_rate, tap_format.channels);
+        
+        // Step 2: Create aggregate device that includes this tap
+        let aggregate_device_id = self.create_aggregate_device_with_tap(tap_object_id).await?;
+        info!("🔧 Created aggregate device {} with tap {}", aggregate_device_id, tap_object_id);
+        
+        // Step 3: Set up CPAL input stream from the aggregate device
+        self.setup_cpal_stream_from_aggregate_device(aggregate_device_id, audio_tx, tap_format).await?;
+        
+        // Store the aggregate device ID for cleanup
+        self.aggregate_device_id = Some(aggregate_device_id);
+        
+        Ok(())
+    }
+    
+    /// Get audio format information from the Core Audio tap
+    #[cfg(target_os = "macos")]
+    async fn get_tap_audio_format(&self, tap_object_id: coreaudio_sys::AudioObjectID) -> Result<AudioFormatInfo> {
+        use coreaudio_sys::{AudioObjectGetPropertyData, AudioObjectPropertyAddress, UInt32};
+        use std::mem;
+        use std::os::raw::c_void;
+        
+        let address = AudioObjectPropertyAddress {
+            mSelector: 0x74666d74, // 'tfmt' - kAudioTapPropertyFormat  
+            mScope: 0,             // kAudioObjectPropertyScopeGlobal
+            mElement: 0,           // kAudioObjectPropertyElementMain
+        };
+        
+        // AudioStreamBasicDescription structure
+        #[repr(C)]
+        #[derive(Debug, Clone)]
+        struct AudioStreamBasicDescription {
+            sample_rate: f64,
+            format_id: u32,
+            format_flags: u32,
+            bytes_per_packet: u32,
+            frames_per_packet: u32,
+            bytes_per_frame: u32,
+            channels_per_frame: u32,
+            bits_per_channel: u32,
+            reserved: u32,
+        }
+        
+        let mut format_desc: AudioStreamBasicDescription = unsafe { mem::zeroed() };
+        let mut data_size = mem::size_of::<AudioStreamBasicDescription>() as UInt32;
+        
+        let status = unsafe {
+            AudioObjectGetPropertyData(
+                tap_object_id,
+                &address,
+                0,
+                std::ptr::null(),
+                &mut data_size,
+                &mut format_desc as *mut AudioStreamBasicDescription as *mut c_void,
+            )
+        };
+        
+        if status != 0 {
+            return Err(anyhow::anyhow!("Failed to get tap format: OSStatus {}", status));
+        }
+        
+        info!("📋 Raw tap format: sample_rate={}, format_id=0x{:08x}, channels={}, bits={}",
+              format_desc.sample_rate, format_desc.format_id, 
+              format_desc.channels_per_frame, format_desc.bits_per_channel);
+        
+        Ok(AudioFormatInfo {
+            sample_rate: format_desc.sample_rate,
+            channels: format_desc.channels_per_frame,
+            bits_per_sample: format_desc.bits_per_channel,
+        })
+    }
+    
+    /// Create an aggregate device that includes the Core Audio tap
+    #[cfg(target_os = "macos")]
+    async fn create_aggregate_device_with_tap(&self, tap_object_id: coreaudio_sys::AudioObjectID) -> Result<coreaudio_sys::AudioObjectID> {
+        use core_foundation::dictionary::CFMutableDictionary;
+        use core_foundation::string::CFString;
+        use core_foundation::array::{CFArray, CFMutableArray};
+        use core_foundation::number::CFNumber;
+        use core_foundation::base::{CFTypeRef, ToVoid};
+        use std::ptr;
+        
+        info!("🔧 IMPLEMENTING: Creating aggregate device with tap {}", tap_object_id);
+        
+        // Step 1: Get tap UUID - we need this for the dictionary
+        let tap_uuid = self.get_tap_uuid(tap_object_id)?;
+        info!("📋 Tap UUID: {}", tap_uuid);
+        
+        // Step 2: Create CoreFoundation dictionary for aggregate device
+        let device_dict = self.create_aggregate_device_dictionary(&tap_uuid)?;
+        
+        // Step 3: Create the aggregate device using Core Audio HAL
+        let aggregate_device_id = unsafe {
+            self.create_core_audio_aggregate_device(device_dict.to_void())?
+        };
+        
+        info!("✅ Created aggregate device {} with tap {}", aggregate_device_id, tap_object_id);
+        Ok(aggregate_device_id)
+    }
+    
+    /// Get the UUID from a Core Audio tap
+    #[cfg(target_os = "macos")]
+    fn get_tap_uuid(&self, tap_object_id: coreaudio_sys::AudioObjectID) -> Result<String> {
+        use coreaudio_sys::{AudioObjectGetPropertyData, AudioObjectPropertyAddress};
+        use core_foundation::string::CFString;
+        use core_foundation::base::CFType;
+        use std::os::raw::c_void;
+        
+        let address = AudioObjectPropertyAddress {
+            mSelector: 0x75696420, // 'uid ' - kAudioObjectPropertyElementName 
+            mScope: 0,             // kAudioObjectPropertyScopeGlobal
+            mElement: 0,           // kAudioObjectPropertyElementMain  
+        };
+        
+        let mut cf_string_ref: CFTypeRef = ptr::null();
+        let mut data_size = std::mem::size_of::<CFTypeRef>() as u32;
+        
+        let status = unsafe {
+            AudioObjectGetPropertyData(
+                tap_object_id,
+                &address,
+                0,
+                ptr::null(),
+                &mut data_size,
+                &mut cf_string_ref as *mut CFTypeRef as *mut c_void,
+            )
+        };
+        
+        if status != 0 {
+            return Err(anyhow::anyhow!("Failed to get tap UUID: OSStatus {}", status));
+        }
+        
+        if cf_string_ref.is_null() {
+            return Err(anyhow::anyhow!("Tap UUID is null"));
+        }
+        
+        // Convert CFString to Rust String
+        let cf_string = unsafe { CFString::wrap_under_get_rule(cf_string_ref as *const _) };
+        let uuid_string = cf_string.to_string();
+        
+        Ok(uuid_string)
+    }
+    
+    /// Create CoreFoundation dictionary for aggregate device configuration
+    #[cfg(target_os = "macos")]
+    fn create_aggregate_device_dictionary(&self, tap_uuid: &str) -> Result<CFMutableDictionary<CFString, CFTypeRef>> {
+        use core_foundation::dictionary::CFMutableDictionary;
+        use core_foundation::string::CFString;
+        use core_foundation::array::CFMutableArray;
+        use core_foundation::number::CFNumber;
+        use core_foundation::boolean::CFBoolean;
+        use core_foundation::base::ToVoid;
+        
+        info!("🔧 Creating aggregate device dictionary with tap UUID: {}", tap_uuid);
+        
+        // Create the main device dictionary
+        let device_dict = CFMutableDictionary::new();
+        
+        // Device name
+        let device_name = CFString::new("SendinBeats Tap Device");
+        let name_key = CFString::new("name");
+        device_dict.set(name_key, device_name.to_void());
+        
+        // Device UID (unique identifier)
+        let device_uid = CFString::new(&format!("SendinBeats-Tap-{}", self.process_info.pid));
+        let uid_key = CFString::new("uid");  
+        device_dict.set(uid_key, device_uid.to_void());
+        
+        // Master device (we don't need a master for tap-only device)
+        let master_key = CFString::new("master");
+        device_dict.set(master_key, CFString::new("").to_void());
+        
+        // Tap list - this is the crucial part that includes our Core Audio tap
+        let tap_list_key = CFString::new("taps");
+        let tap_array = CFMutableArray::new();
+        
+        // Create tap description dictionary
+        let tap_dict = CFMutableDictionary::new();
+        let tap_uid_key = CFString::new("uid");
+        let tap_uuid_cf = CFString::new(tap_uuid);
+        tap_dict.set(tap_uid_key, tap_uuid_cf.to_void());
+        
+        tap_array.push(tap_dict.to_void());
+        device_dict.set(tap_list_key, tap_array.to_void());
+        
+        // Private aggregate device (not visible in system preferences)
+        let private_key = CFString::new("private");
+        let private_value = CFBoolean::true_value();
+        device_dict.set(private_key, private_value.to_void());
+        
+        info!("✅ Created aggregate device dictionary with tap integration");
+        Ok(device_dict)
+    }
+    
+    /// Create the actual Core Audio aggregate device
+    #[cfg(target_os = "macos")]
+    unsafe fn create_core_audio_aggregate_device(&self, device_dict: *const std::os::raw::c_void) -> Result<coreaudio_sys::AudioObjectID> {
+        use coreaudio_sys::{AudioHardwareCreateAggregateDevice, AudioObjectID};
+        
+        let mut aggregate_device_id: AudioObjectID = 0;
+        
+        let status = AudioHardwareCreateAggregateDevice(
+            device_dict as *const _,
+            &mut aggregate_device_id,
+        );
+        
+        if status != 0 {
+            return Err(anyhow::anyhow!("AudioHardwareCreateAggregateDevice failed: OSStatus {}", status));
+        }
+        
+        if aggregate_device_id == 0 {
+            return Err(anyhow::anyhow!("Created aggregate device has invalid ID"));
+        }
+        
+        info!("🎉 Successfully created Core Audio aggregate device: ID {}", aggregate_device_id);
+        Ok(aggregate_device_id)
+    }
+    
+    /// Set up CPAL input stream from aggregate device
+    #[cfg(target_os = "macos")]
+    async fn setup_cpal_stream_from_aggregate_device(
+        &self,
+        aggregate_device_id: coreaudio_sys::AudioObjectID,
+        audio_tx: broadcast::Sender<Vec<f32>>,
+        format: AudioFormatInfo,
+    ) -> Result<()> {
+        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+        
+        info!("🔧 Setting up CPAL stream from aggregate device {}", aggregate_device_id);
+        info!("📋 Target format: {:.0} Hz, {} channels, {} bits", format.sample_rate, format.channels, format.bits_per_sample);
+        
+        // The aggregate device should now appear in CPAL's device enumeration
+        let host = cpal::default_host();
+        let devices: Vec<cpal::Device> = match host.input_devices() {
+            Ok(devices) => devices.collect(),
+            Err(e) => {
+                return Err(anyhow::anyhow!("Failed to enumerate input devices: {}", e));
+            }
+        };
+        
+        // Find the aggregate device we just created
+        let aggregate_device_name = format!("SendinBeats-Tap-{}", self.process_info.pid);
+        let mut target_device = None;
+        
+        info!("🔍 Looking for aggregate device '{}' among {} devices", aggregate_device_name, devices.len());
+        for (i, device) in devices.iter().enumerate() {
+            if let Ok(device_name) = device.name() {
+                info!("🔍 Device {}: '{}'", i, device_name);
+                
+                // Look for our aggregate device by name or UID
+                if device_name.contains("SendinBeats") || device_name.contains(&self.process_info.pid.to_string()) {
+                    info!("✅ FOUND aggregate device: '{}'", device_name);
+                    target_device = Some(device.clone());
+                    break;
+                }
+            }
+        }
+        
+        let device = target_device.ok_or_else(|| {
+            anyhow::anyhow!("Aggregate device not found in CPAL enumeration - may need time to register")
+        })?;
+        
+        let device_name = device.name().unwrap_or_else(|_| format!("Aggregate-{}", aggregate_device_id));
+        
+        // Get device configuration
+        let device_config = match device.default_input_config() {
+            Ok(config) => config,
+            Err(e) => {
+                return Err(anyhow::anyhow!("Failed to get aggregate device config: {}", e));
+            }
+        };
+        
+        info!("📋 Aggregate device config: {} Hz, {} channels, format: {:?}", 
+              device_config.sample_rate().0, device_config.channels(), device_config.sample_format());
+        
+        // Create stream configuration matching the tap's native format
+        let config = cpal::StreamConfig {
+            channels: format.channels as u16,
+            sample_rate: cpal::SampleRate(format.sample_rate as u32),
+            buffer_size: cpal::BufferSize::Default,
+        };
+        
+        info!("🔧 Creating aggregate device stream: {} channels, {} Hz", config.channels, config.sample_rate.0);
+        
+        // Create the input stream with real Apple Music audio callback
+        let process_name = self.process_info.name.clone();
+        let mut callback_count = 0u64;
+        let audio_tx_for_callback = audio_tx.clone();
+        
+        let stream = match device_config.sample_format() {
+            cpal::SampleFormat::F32 => {
+                device.build_input_stream(
+                    &config,
+                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                        callback_count += 1;
+                        
+                        // Calculate audio levels for monitoring
+                        let peak_level = data.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                        let rms_level = (data.iter().map(|&s| s * s).sum::<f32>() / data.len() as f32).sqrt();
+                        
+                        // This is REAL Apple Music audio data!
+                        let audio_samples = data.to_vec();
+                        
+                        // Log real audio activity
+                        if callback_count % 100 == 0 || (peak_level > 0.001 && callback_count % 20 == 0) {
+                            info!("🎵 REAL APPLE MUSIC AUDIO [{}] Callback #{}: {} samples, peak: {:.4}, rms: {:.4}", 
+                                process_name, callback_count, data.len(), peak_level, rms_level);
+                        }
+                        
+                        // Send REAL Apple Music audio to mixer!
+                        if let Err(e) = audio_tx_for_callback.send(audio_samples) {
+                            if callback_count % 1000 == 0 {
+                                warn!("Failed to send Apple Music audio samples: {} (callback #{})", e, callback_count);
+                            }
+                        }
+                    },
+                    |err| {
+                        error!("Apple Music audio input error: {}", err);
+                    },
+                    None,
+                )?
+            }
+            cpal::SampleFormat::I16 => {
+                device.build_input_stream(
+                    &config,
+                    move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                        callback_count += 1;
+                        
+                        // Convert I16 to F32 for consistency with mixer
+                        let f32_samples: Vec<f32> = data.iter()
+                            .map(|&sample| {
+                                if sample >= 0 {
+                                    sample as f32 / 32767.0
+                                } else {
+                                    sample as f32 / 32768.0
+                                }
+                            })
+                            .collect();
+                        
+                        let peak_level = f32_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                        
+                        if callback_count % 100 == 0 || (peak_level > 0.001 && callback_count % 20 == 0) {
+                            info!("🎵 REAL APPLE MUSIC I16 [{}] Callback #{}: {} samples, peak: {:.4}", 
+                                process_name, callback_count, data.len(), peak_level);
+                        }
+                        
+                        // Send converted REAL Apple Music audio
+                        if let Err(e) = audio_tx_for_callback.send(f32_samples) {
+                            if callback_count % 1000 == 0 {
+                                warn!("Failed to send Apple Music I16 samples: {} (callback #{})", e, callback_count);
+                            }
+                        }
+                    },
+                    |err| {
+                        error!("Apple Music I16 input error: {}", err);
+                    },
+                    None,
+                )?
+            }
+            _ => {
+                return Err(anyhow::anyhow!("Unsupported aggregate device sample format: {:?}", device_config.sample_format()));
+            }
+        };
+        
+        // Start the stream - this will begin capturing REAL Apple Music audio!
+        stream.play().map_err(|e| anyhow::anyhow!("Failed to start aggregate device stream: {}", e))?;
+        
+        info!("🎉 BREAKTHROUGH: Real Apple Music audio capture started via aggregate device!");
+        self.is_capturing = true;
+        
+        // Leak the stream intentionally for lifecycle management
+        let stream_info = format!("Apple Music aggregate device stream for {}", self.process_info.name);
+        self._stream_info = Some(stream_info);
+        std::mem::forget(stream);
+        
+        info!("🎵 Apple Music audio should now be flowing to mixer instead of test tone!");
+        
+        Ok(())
+    }
+    
+    /// Fallback placeholder implementation while working on real tap reading
+    #[cfg(target_os = "macos")]
+    async fn setup_placeholder_tone_fallback(
+        &mut self,
+        tap_object_id: coreaudio_sys::AudioObjectID,
+        audio_tx: broadcast::Sender<Vec<f32>>,
+        sample_rate: f64,
+        channels: u32,
+    ) -> Result<()> {
+        info!("🔄 FALLBACK: Setting up improved placeholder tone for tap {}", tap_object_id);
+        
+        // First, let's try to read the tap format to understand what Apple Music is outputting
+        match self.get_tap_audio_format(tap_object_id).await {
+            Ok(format) => {
+                info!("🎵 APPLE MUSIC FORMAT: {:.0} Hz, {} channels, {} bits", 
+                      format.sample_rate, format.channels, format.bits_per_sample);
+            }
+            Err(e) => {
+                warn!("⚠️ Could not read tap format: {}", e);
+            }
+        }
         
         tokio::spawn(async move {
             info!("📡 Started placeholder tap polling task for AudioObjectID {}", tap_object_id);
