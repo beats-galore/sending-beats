@@ -653,6 +653,7 @@ pub struct VirtualMixerHandle {
 impl VirtualMixerHandle {
     /// Get samples from all active input streams with effects processing
     /// Also checks CoreAudio streams when CPAL streams have no data
+    /// Now includes virtual application audio input streams
     pub async fn collect_input_samples_with_effects(&self, channels: &[AudioChannel]) -> HashMap<String, Vec<f32>> {
         let mut samples = HashMap::new();
         let streams = self.input_streams.lock().await;
@@ -671,7 +672,7 @@ impl VirtualMixerHandle {
         let num_streams = streams.len();
         let num_channels = channels.len();
         
-        // First try to get samples from CPAL input streams
+        // First collect samples from regular CPAL input streams
         for (device_id, stream) in streams.iter() {
             // Find the channel configuration for this stream
             if let Some(channel) = channels.iter().find(|ch| {
@@ -704,18 +705,55 @@ impl VirtualMixerHandle {
             }
         }
         
+        // **NEW**: Collect samples from virtual application audio input streams
+        let virtual_streams = crate::application_audio::ApplicationAudioManager::get_virtual_input_streams();
+        for (device_id, virtual_stream) in virtual_streams.iter() {
+            // Find the channel configuration for this virtual stream
+            if let Some(channel) = channels.iter().find(|ch| {
+                ch.input_device_id.as_ref() == Some(device_id)
+            }) {
+                let stream_samples = virtual_stream.process_with_effects(channel);
+                if !stream_samples.is_empty() {
+                    let peak = stream_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                    let rms = (stream_samples.iter().map(|&s| s * s).sum::<f32>() / stream_samples.len() as f32).sqrt();
+                    
+                    if collection_count % 200 == 0 || (peak > 0.01 && collection_count % 50 == 0) {
+                        crate::audio_debug!("🎯 COLLECT VIRTUAL APP [{}]: {} samples collected, peak: {:.4}, rms: {:.4}, channel: {}", 
+                            device_id, stream_samples.len(), peak, rms, channel.name);
+                    }
+                    samples.insert(device_id.clone(), stream_samples);
+                }
+            } else {
+                // No channel config found, use raw samples from virtual stream
+                let stream_samples = virtual_stream.get_samples();
+                if !stream_samples.is_empty() {
+                    let peak = stream_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                    let rms = (stream_samples.iter().map(|&s| s * s).sum::<f32>() / stream_samples.len() as f32).sqrt();
+                    
+                    if collection_count % 200 == 0 || (peak > 0.01 && collection_count % 50 == 0) {
+                        crate::audio_debug!("🎯 COLLECT VIRTUAL APP RAW [{}]: {} samples collected, peak: {:.4}, rms: {:.4} (no channel config)", 
+                            device_id, stream_samples.len(), peak, rms);
+                    }
+                    samples.insert(device_id.clone(), stream_samples);
+                }
+            }
+        }
+        
+        let streams_len = streams.len(); // Get length before drop
+        drop(streams); // Release the lock before potentially expensive operations
+        
         // **CRITICAL FIX**: Since CPAL sample collection is failing but audio processing is working,
         // we need to generate VU meter data from the working audio pipeline. 
         // The real audio processing (PROCESS_WITH_EFFECTS logs) is happening but not accessible here.
         // As a bridge solution, generate channel levels based on active audio processing.
         
-        if samples.is_empty() && num_streams > 0 {
+        if samples.is_empty() && streams_len > 0 {
             // Audio is being processed (we see logs) but sample collection is failing
             // Check if real levels are already available, otherwise generate representative levels
             
             if collection_count % 200 == 0 {
                 crate::audio_debug!("🔧 DEBUG: Bridge condition met - samples empty but {} streams active, checking {} channels", 
-                    num_streams, num_channels);
+                    streams_len, num_channels);
             }
             
             // First, check if we already have real levels from the audio processing thread
@@ -781,17 +819,20 @@ impl VirtualMixerHandle {
         // Debug: Log collection summary
         if collection_count % 1000 == 0 {
             crate::audio_debug!("📈 COLLECTION SUMMARY: {} streams available, {} channels configured, {} samples collected", 
-                num_streams, num_channels, samples.len());
+                streams_len, num_channels, samples.len());
             
-            if samples.is_empty() && num_streams > 0 {
-                crate::audio_debug!("⚠️  NO SAMPLES COLLECTED despite {} active streams - potential issue!", num_streams);
+            if samples.is_empty() && streams_len > 0 {
+                crate::audio_debug!("⚠️  NO SAMPLES COLLECTED despite {} active streams - potential issue!", streams_len);
                 
-                // Debug each stream buffer state
-                for (device_id, stream) in streams.iter() {
-                    if let Ok(buffer_guard) = stream.audio_buffer.try_lock() {
-                        crate::audio_debug!("   Stream [{}]: buffer has {} samples", device_id, buffer_guard.len());
-                    } else {
-                        crate::audio_debug!("   Stream [{}]: buffer locked", device_id);
+                // Reacquire the lock for debugging if needed
+                if let Ok(streams_debug) = self.input_streams.try_lock() {
+                    // Debug each stream buffer state
+                    for (device_id, stream) in streams_debug.iter() {
+                        if let Ok(buffer_guard) = stream.audio_buffer.try_lock() {
+                            crate::audio_debug!("   Stream [{}]: buffer has {} samples", device_id, buffer_guard.len());
+                        } else {
+                            crate::audio_debug!("   Stream [{}]: buffer locked", device_id);
+                        }
                     }
                 }
             }

@@ -10,6 +10,8 @@ import { ErrorBoundary } from './components/layout';
 import ListenerPlayer from './components/ListenerPlayer';
 import { VirtualMixerWithErrorBoundary as VirtualMixer } from './components/mixer';
 import { AppHeader, AppFooter, Navigation, HomeView } from './components/shell';
+import { PermissionModal } from './components/ui/PermissionModal';
+import { useStartupPermissionCheck } from './hooks/useStartupPermissionCheck';
 
 type ViewType = 'home' | 'dj' | 'admin' | 'listener' | 'mixer';
 
@@ -44,6 +46,14 @@ const App = memo(() => {
   const [mobileOpened, { toggle: toggleMobile }] = useDisclosure(false);
   const [desktopOpened, { toggle: toggleDesktop }] = useDisclosure(false);
   const [currentView, setCurrentView] = useState<ViewType>('mixer');
+  
+  // Permission check for application audio capture
+  const {
+    showPermissionModal,
+    handleCloseModal,
+    handleOpenSystemPreferences,
+    isLoading: permissionLoading,
+  } = useStartupPermissionCheck();
 
   console.log('re-rendered app');
 
@@ -102,6 +112,14 @@ const App = memo(() => {
 
         <AppFooter />
       </AppShell>
+      
+      {/* Permission Modal for Application Audio Capture */}
+      <PermissionModal
+        isOpen={showPermissionModal}
+        onClose={handleCloseModal}
+        onOpenSystemPreferences={handleOpenSystemPreferences}
+        isLoading={permissionLoading}
+      />
     </ErrorBoundary>
   );
 });

@@ -1,7 +1,8 @@
-import { AppShell, Group, Title, Badge, Burger, ActionIcon } from '@mantine/core';
+import { AppShell, Group, Title, Badge, Burger, ActionIcon, Button } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
-import { IconMenu2, IconMenuDeep } from '@tabler/icons-react';
-import { memo } from 'react';
+import { IconMenu2, IconMenuDeep, IconMicrophone } from '@tabler/icons-react';
+import { memo, useCallback } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 
 type ViewType = 'home' | 'dj' | 'admin' | 'listener' | 'mixer';
 
@@ -35,6 +36,19 @@ export const AppHeader = memo<AppHeaderProps>(
   ({ mobileOpened, desktopOpened, toggleMobile, toggleDesktop, currentView }) => {
     const { classes } = useStyles();
 
+    // Development helper to trigger permission request
+    const handleRequestPermissions = useCallback(async () => {
+      console.log('🔐 Requesting audio capture permissions...');
+      try {
+        const result = await invoke<string>('request_audio_capture_permissions');
+        console.log('✅ Permission request result:', result);
+        alert(`Permission Request Result:\n\n${result}`);
+      } catch (error) {
+        console.error('❌ Permission request failed:', error);
+        alert(`Permission request failed: ${error}`);
+      }
+    }, []);
+
     return (
       <AppShell.Header className={classes.header}>
         <Group className={classes.headerContent}>
@@ -54,9 +68,22 @@ export const AppHeader = memo<AppHeaderProps>(
             </Title>
           </Group>
 
-          <Badge color={currentView === 'mixer' ? 'green' : 'gray'} variant="light" size="sm">
-            {currentView === 'mixer' ? 'Mixer Active' : 'Studio Offline'}
-          </Badge>
+          <Group gap="xs">
+            {/* Permission request button for development */}
+            <Button
+              size="xs"
+              variant="light"
+              color="orange"
+              leftSection={<IconMicrophone size={14} />}
+              onClick={handleRequestPermissions}
+              title="Trigger permission request - will add app to System Preferences"
+            >
+              Request Permissions
+            </Button>
+            <Badge color={currentView === 'mixer' ? 'green' : 'gray'} variant="light" size="sm">
+              {currentView === 'mixer' ? 'Mixer Active' : 'Studio Offline'}
+            </Badge>
+          </Group>
         </Group>
       </AppShell.Header>
     );

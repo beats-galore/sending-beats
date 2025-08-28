@@ -21,3 +21,7 @@ export { useStreamingControls } from './use-streaming-controls';
 
 // Recording hooks
 export { useRecording } from './use-recording';
+
+// Application audio hooks
+export { useApplicationAudio } from './useApplicationAudio';
+export { useAudioPermissions } from './use-audio-permissions';

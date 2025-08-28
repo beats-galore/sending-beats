@@ -169,7 +169,7 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(({ disable
     };
 
     void loadDefaultConfig();
-  }, [actions]);
+  }, []);
 
   const handleStartRecording = useCallback(async () => {
     try {
@@ -408,11 +408,7 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(({ disable
                 </Text>
                 <Group gap="sm">
                   <Text size="sm" c="#909296" style={{ flex: 1, minWidth: 0 }}>
-                    {(() => {
-                      const displayValue = quickConfig.output_directory || 'Default (~/Music)';
-                      console.log('Rendering output directory display:', displayValue);
-                      return displayValue;
-                    })()}
+                    {quickConfig.output_directory || 'Default (~/Music)'}
                   </Text>
                   <Button
                     size="sm"

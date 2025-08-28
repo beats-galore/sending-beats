@@ -315,6 +315,21 @@ impl VirtualMixer {
         
         info!("🎧 DEVICE CHANGE: Adding input stream for device: {}", device_id);
         
+        // **NEW: Check for virtual input streams first (for app-* devices)**
+        if device_id.starts_with("app-") {
+            info!("🎯 VIRTUAL STREAM CHECK: Looking for virtual input stream: {}", device_id);
+            if let Some(virtual_stream) = self.get_virtual_input_stream(device_id).await {
+                info!("✅ FOUND VIRTUAL STREAM: Using pre-registered stream for {}", device_id);
+                let mut streams = self.input_streams.lock().await;
+                streams.insert(device_id.to_string(), virtual_stream);
+                info!("✅ Successfully added virtual input stream: {}", device_id);
+                return Ok(());
+            } else {
+                warn!("❌ VIRTUAL STREAM NOT FOUND: {} not in registry, falling back to CPAL", device_id);
+                // Continue with normal CPAL device handling instead of erroring out
+            }
+        }
+        
         // **CRITICAL FIX**: Check if device is already active to prevent duplicate streams
         {
             let streams = self.input_streams.lock().await;
@@ -1494,6 +1509,21 @@ impl VirtualMixer {
     pub async fn get_output_devices(&self) -> Vec<super::types::OutputDevice> {
         let config_guard = self.shared_config.lock().unwrap();
         config_guard.output_devices.clone()
+    }
+    
+    /// Get a virtual input stream from the ApplicationAudioManager registry
+    pub async fn get_virtual_input_stream(&self, device_id: &str) -> Option<Arc<AudioInputStream>> {
+        info!("🔍 Looking up virtual input stream for device: {}", device_id);
+        
+        let virtual_streams = crate::application_audio::ApplicationAudioManager::get_virtual_input_streams();
+        if let Some(stream) = virtual_streams.get(device_id) {
+            info!("✅ Found virtual input stream for device: {}", device_id);
+            Some(stream.clone())
+        } else {
+            info!("❌ No virtual input stream found for device: {} (available: {:?})", 
+                  device_id, virtual_streams.keys().collect::<Vec<_>>());
+            None
+        }
     }
     
     /// Enhanced add input stream with device health checking
