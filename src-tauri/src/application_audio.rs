@@ -703,25 +703,44 @@ impl ApplicationAudioTap {
             let mut poll_count = 0u64;
             
             loop {
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await; // 10 Hz polling
+                tokio::time::sleep(tokio::time::Duration::from_millis(20)).await; // 50 Hz polling (approximating audio rate)
                 poll_count += 1;
                 
-                if poll_count % 50 == 0 {
-                    info!("📡 TAP POLL #{}: No audio data (placeholder implementation)", poll_count);
+                // Generate test audio data to verify pipeline is working
+                // This will be replaced with real Core Audio tap data reading
+                let sample_count = (sample_rate as usize * 20) / 1000; // 20ms worth of samples
+                let mut test_samples = Vec::with_capacity(sample_count);
+                
+                // Generate a low-amplitude sine wave test tone (440 Hz)
+                let frequency = 440.0;
+                let amplitude = 0.1; // Low volume
+                for i in 0..sample_count {
+                    let t = (poll_count as f64 * 20.0 / 1000.0) + (i as f64 / sample_rate);
+                    let sample = (amplitude * (2.0 * std::f64::consts::PI * frequency * t).sin()) as f32;
+                    
+                    // Add to both channels if stereo
+                    test_samples.push(sample);
+                    if channels >= 2 {
+                        test_samples.push(sample);
+                    }
                 }
                 
-                // TODO: Implement actual Core Audio tap data reading
-                // This might require:
-                // 1. Different Core Audio APIs specifically for taps
-                // 2. AudioUnit-based approach
-                // 3. Lower-level HAL APIs
+                // Send test audio to broadcast channel
+                if let Err(_) = audio_tx.send(test_samples) {
+                    if poll_count % 100 == 0 {
+                        warn!("Failed to send test audio samples (poll #{})", poll_count);
+                    }
+                } else if poll_count % 250 == 0 {
+                    info!("📡 TAP POLL #{}: Generated {} test samples (440Hz tone) - PLACEHOLDER", 
+                          poll_count, sample_count * channels as usize);
+                }
             }
         });
         
         self.is_capturing = true;
         
-        warn!("⚠️ PLACEHOLDER: Tap marked as capturing but no actual audio will flow");
-        warn!("⚠️ This allows UI testing while researching proper Core Audio tap access");
+        warn!("⚠️ PLACEHOLDER: Generating test 440Hz tone instead of real tap audio");
+        warn!("⚠️ This verifies the pipeline works while researching proper Core Audio tap access");
         
         Ok(())
     }
@@ -1542,7 +1561,8 @@ impl ApplicationAudioManager {
         let bridge_buffer_for_task = bridge_buffer.clone();
         
         // Create a virtual device ID for this application audio source
-        let virtual_device_id = format!("app-tap-{}", pid);
+        // IMPORTANT: This must match the ID used in mixer channel configuration
+        let virtual_device_id = format!("app-{}", pid);
         
         // Spawn a task to bridge audio from broadcast channel to mixer buffer
         let bridge_task_name = channel_name.clone();
