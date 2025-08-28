@@ -11,6 +11,7 @@ dependencies = [
  "base64 0.21.7",
  "chrono",
  "core-foundation 0.9.4",
+ "core-foundation-sys",
  "coreaudio-rs 0.13.0",
  "coreaudio-sys",
  "cpal",
