@@ -710,7 +710,11 @@ impl VirtualMixerHandle {
         }
         
         // **NEW**: Collect samples from virtual application audio input streams
-        let virtual_streams = crate::audio::tap::application_audio::ApplicationAudioManager::get_virtual_input_streams();
+        let virtual_streams = if let Ok(streams) = crate::audio::tap::get_virtual_input_registry().lock() {
+            streams.clone()
+        } else {
+            std::collections::HashMap::new()
+        };
         for (device_id, virtual_stream) in virtual_streams.iter() {
             // Find the channel configuration for this virtual stream
             if let Some(channel) = channels.iter().find(|ch| {

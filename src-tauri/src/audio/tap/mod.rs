@@ -1,15 +1,52 @@
-// Audio tap module - Audio tapping and system audio capture functionality  
+// Audio tap module - Application-specific audio capture and management
 //
-// This module provides comprehensive audio tapping capabilities:
-// - coreaudio_taps: Low-level CoreAudio tap implementation (macOS)
-// - application_audio: Application-specific audio capture and management
+// This module provides comprehensive audio tapping capabilities for capturing
+// audio from specific applications on macOS. It includes process discovery,
+// Core Audio tap integration, virtual stream bridging, and high-level management.
+//
+// ## Module Structure:
+// - `types`: Common types and error definitions
+// - `process_discovery`: Application detection and process management  
+// - `core_audio_tap`: Low-level Core Audio tap implementation (macOS only)
+// - `virtual_stream`: Audio stream abstraction and mixer integration
+// - `manager`: High-level orchestration and public API
 
+// Core module declarations
+pub mod types;
+pub mod process_discovery;
+pub mod virtual_stream;
+pub mod manager;
+
+// Platform-specific modules
+#[cfg(target_os = "macos")]
+pub mod core_audio_tap;
+
+// Conditional re-export of coreaudio_taps module
 #[cfg(target_os = "macos")]
 pub mod coreaudio_taps;
 
-pub mod application_audio;
-
-// Re-export application audio types
-pub use application_audio::{
-    ApplicationAudioManager, ProcessInfo, TapStats, ApplicationAudioError,
+// Re-export commonly used types
+pub use types::{
+    ProcessInfo, TapStats, AudioFormatInfo, ApplicationAudioError,
 };
+
+// Re-export process discovery
+pub use process_discovery::ApplicationDiscovery;
+
+// Re-export virtual stream components
+pub use virtual_stream::{
+    VirtualAudioInputStream, ApplicationAudioInputBridge, get_virtual_input_registry,
+};
+
+// Re-export high-level manager (main public API)
+pub use manager::ApplicationAudioManager;
+
+// Platform-specific re-exports
+#[cfg(target_os = "macos")]
+pub use core_audio_tap::ApplicationAudioTap;
+
+#[cfg(target_os = "macos")]
+pub use types::CoreAudioTapCallbackContext;
+
+// Convenience type aliases
+pub type Result<T> = std::result::Result<T, ApplicationAudioError>;

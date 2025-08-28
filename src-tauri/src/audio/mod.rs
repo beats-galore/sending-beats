@@ -61,6 +61,8 @@ pub use recording::{
 
 pub use tap::{
     ApplicationAudioManager, ProcessInfo, TapStats, ApplicationAudioError,
+    ApplicationDiscovery, VirtualAudioInputStream, ApplicationAudioInputBridge,
+    get_virtual_input_registry,
 };
 
 pub use file_player::{

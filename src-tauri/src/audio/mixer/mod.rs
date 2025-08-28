@@ -1528,7 +1528,11 @@ impl VirtualMixer {
     pub async fn get_virtual_input_stream(&self, device_id: &str) -> Option<Arc<AudioInputStream>> {
         info!("🔍 Looking up virtual input stream for device: {}", device_id);
         
-        let virtual_streams = crate::audio::tap::application_audio::ApplicationAudioManager::get_virtual_input_streams();
+        let virtual_streams = if let Ok(streams) = crate::audio::tap::get_virtual_input_registry().lock() {
+            streams.clone()
+        } else {
+            std::collections::HashMap::new()
+        };
         if let Some(stream) = virtual_streams.get(device_id) {
             info!("✅ Found virtual input stream for device: {}", device_id);
             Some(stream.clone())
