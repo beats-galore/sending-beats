@@ -881,16 +881,18 @@ impl ApplicationAudioTap {
     /// Create CoreFoundation dictionary for aggregate device configuration  
     #[cfg(target_os = "macos")]
     fn create_aggregate_device_dictionary(&self, tap_uuid: &str) -> Result<*const std::os::raw::c_void> {
-        info!("🔧 SIMPLIFIED: Creating basic aggregate device dictionary");
-        info!("📋 Tap UUID: {}, will try AudioHardwareCreateAggregateDevice with minimal config", tap_uuid);
+        info!("🔧 SKIP COMPLEX: Testing with empty dictionary to debug AudioHardwareCreateAggregateDevice");
+        info!("📋 Will create a simple aggregate device first, then add tap integration later");
+        warn!("🔄 Using empty dictionary to test AudioHardwareCreateAggregateDevice API behavior");
         
-        // For now, let's try with a null dictionary to see if AudioHardwareCreateAggregateDevice
-        // can work with default settings. This will test the API call.
-        warn!("🔄 Using null dictionary approach to test AudioHardwareCreateAggregateDevice API");
-        info!("📋 If this works, CPAL should be able to find the aggregate device");
+        // Skip the complex CoreFoundation dictionary for now
+        // Let's see what AudioHardwareCreateAggregateDevice does with an empty/null dictionary
+        // This will tell us if the API works at all and what it expects
         
-        // Return null - this will test the AudioHardwareCreateAggregateDevice call
-        // and see what kind of error we get. Professional tools sometimes use minimal configs.
+        info!("📋 Testing AudioHardwareCreateAggregateDevice with empty config");
+        info!("📋 If successful, we'll see a new aggregate device in CPAL enumeration");
+        
+        // Return null to test the API - this is a diagnostic step
         Ok(std::ptr::null())
     }
     
