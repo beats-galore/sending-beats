@@ -4,8 +4,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use super::effects::AudioEffectsChain;
-use super::types::AudioChannel;
+use crate::audio::effects::{AudioEffectsChain, EQBand};
+use crate::audio::types::{AudioChannel, MixerConfig, AudioDeviceHandle, OutputDevice};
+use crate::audio::devices::AudioDeviceManager;
+
+#[cfg(target_os = "macos")]
+use crate::audio::devices::coreaudio_stream::CoreAudioOutputStream;
 
 /// Optimized I16 to F32 conversion
 #[inline]
@@ -197,9 +201,9 @@ impl AudioInputStream {
             if channel.effects_enabled && !samples.is_empty() {
                 if let Ok(mut effects) = self.effects_chain.try_lock() {
                     // Update effects parameters based on channel settings
-                    effects.set_eq_gain(super::effects::EQBand::Low, channel.eq_low_gain);
-                    effects.set_eq_gain(super::effects::EQBand::Mid, channel.eq_mid_gain);
-                    effects.set_eq_gain(super::effects::EQBand::High, channel.eq_high_gain);
+                    effects.set_eq_gain(EQBand::Low, channel.eq_low_gain);
+                    effects.set_eq_gain(EQBand::Mid, channel.eq_mid_gain);
+                    effects.set_eq_gain(EQBand::High, channel.eq_high_gain);
                     
                     if channel.comp_enabled {
                         effects.set_compressor_params(
@@ -327,7 +331,7 @@ impl StreamManager {
         config: cpal::StreamConfig,
         audio_buffer: Arc<Mutex<Vec<f32>>>,
         target_sample_rate: u32,
-        device_manager: Option<std::sync::Weak<super::devices::AudioDeviceManager>>,
+        device_manager: Option<std::sync::Weak<crate::audio::devices::AudioDeviceManager>>,
     ) -> Result<()> {
         use cpal::SampleFormat;
         use cpal::traits::StreamTrait;
@@ -645,9 +649,9 @@ pub struct VirtualMixerHandle {
     pub output_stream: Arc<Mutex<Option<Arc<AudioOutputStream>>>>, // Legacy single output
     pub output_streams: Arc<Mutex<HashMap<String, Arc<AudioOutputStream>>>>, // New multiple outputs
     #[cfg(target_os = "macos")]
-    pub coreaudio_stream: Arc<Mutex<Option<super::coreaudio_stream::CoreAudioOutputStream>>>,
+    pub coreaudio_stream: Arc<Mutex<Option<crate::audio::devices::coreaudio_stream::CoreAudioOutputStream>>>,
     pub channel_levels: Arc<Mutex<std::collections::HashMap<u32, (f32, f32, f32, f32)>>>,
-    pub config: Arc<std::sync::Mutex<super::types::MixerConfig>>,
+    pub config: Arc<std::sync::Mutex<MixerConfig>>,
 }
 
 impl VirtualMixerHandle {
@@ -706,7 +710,7 @@ impl VirtualMixerHandle {
         }
         
         // **NEW**: Collect samples from virtual application audio input streams
-        let virtual_streams = crate::application_audio::ApplicationAudioManager::get_virtual_input_streams();
+        let virtual_streams = crate::audio::tap::application_audio::ApplicationAudioManager::get_virtual_input_streams();
         for (device_id, virtual_stream) in virtual_streams.iter() {
             // Find the channel configuration for this virtual stream
             if let Some(channel) = channels.iter().find(|ch| {
@@ -901,11 +905,11 @@ impl VirtualMixerHandle {
     }
     
     /// Add a new output device stream
-    pub async fn add_output_device(&self, output_device: super::types::OutputDevice) -> anyhow::Result<()> {
+    pub async fn add_output_device(&self, output_device: OutputDevice) -> anyhow::Result<()> {
         use cpal::traits::{DeviceTrait, HostTrait};
         
         
-        let device_manager = super::devices::AudioDeviceManager::new()?;
+        let device_manager = crate::audio::devices::AudioDeviceManager::new()?;
         let devices = device_manager.enumerate_devices().await?;
         
         // Find the device
@@ -916,9 +920,9 @@ impl VirtualMixerHandle {
         // **CRASH PREVENTION**: Use device manager's safe device finding instead of direct CPAL calls
         let device_handle = device_manager.find_audio_device(&output_device.device_id, false).await?;
         let device = match device_handle {
-            super::types::AudioDeviceHandle::Cpal(cpal_device) => cpal_device,
+            AudioDeviceHandle::Cpal(cpal_device) => cpal_device,
             #[cfg(target_os = "macos")]
-            super::types::AudioDeviceHandle::CoreAudio(_) => {
+            AudioDeviceHandle::CoreAudio(_) => {
                 return Err(anyhow::anyhow!("CoreAudio device handles not supported in add_output_device - use CPAL fallback"));
             }
             #[cfg(not(target_os = "macos"))]
@@ -975,7 +979,7 @@ impl VirtualMixerHandle {
     }
     
     /// Update output device configuration
-    pub async fn update_output_device(&self, device_id: &str, updated_device: super::types::OutputDevice) -> anyhow::Result<()> {
+    pub async fn update_output_device(&self, device_id: &str, updated_device: OutputDevice) -> anyhow::Result<()> {
         // Update config
         {
             let mut config_guard = self.config.lock().unwrap();

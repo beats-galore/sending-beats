@@ -7,9 +7,9 @@ use sysinfo::{System, Pid};
 use tracing::{info, warn, error, debug};
 
 /// Centralized virtual input stream registry to ensure mixer can find registered streams
-fn get_virtual_input_registry() -> &'static StdMutex<HashMap<String, Arc<crate::audio::streams::AudioInputStream>>> {
+fn get_virtual_input_registry() -> &'static StdMutex<HashMap<String, Arc<crate::audio::mixer::transformer::AudioInputStream>>> {
     use std::sync::LazyLock;
-    static VIRTUAL_INPUT_REGISTRY: LazyLock<StdMutex<HashMap<String, Arc<crate::audio::streams::AudioInputStream>>>> = 
+    static VIRTUAL_INPUT_REGISTRY: LazyLock<StdMutex<HashMap<String, Arc<crate::audio::mixer::transformer::AudioInputStream>>>> = 
         LazyLock::new(|| StdMutex::new(HashMap::new()));
     &VIRTUAL_INPUT_REGISTRY
 }
@@ -325,7 +325,7 @@ impl ApplicationAudioTap {
         // Import Core Audio taps bindings (only available on macOS 14.4+)
         #[cfg(target_os = "macos")]
         {
-            use crate::coreaudio_taps::{
+            use super::coreaudio_taps::{
                 create_process_tap_description,
                 create_process_tap, 
                 format_osstatus_error
@@ -1667,7 +1667,7 @@ impl ApplicationAudioTap {
         
         #[cfg(target_os = "macos")]
         {
-            use crate::coreaudio_taps::{destroy_process_tap, format_osstatus_error};
+            use super::coreaudio_taps::{destroy_process_tap, format_osstatus_error};
             
             // Destroy process tap if it exists
             if let Some(tap_id) = self.tap_id {
@@ -2111,7 +2111,7 @@ impl ApplicationAudioManager {
         
         #[cfg(target_os = "macos")]
         {
-            use crate::tcc_permissions::{get_permission_manager, TccPermissionStatus};
+            use crate::permissions::{get_permission_manager, TccPermissionStatus};
             
             let permission_manager = get_permission_manager();
             
@@ -2345,7 +2345,7 @@ impl ApplicationAudioManager {
         info!("📡 SYNC: Registering virtual input stream: {} ({})", channel_name, virtual_device_id);
         
         // Create the AudioInputStream immediately and register it
-        let audio_input_stream = Arc::new(crate::audio::streams::AudioInputStream {
+        let audio_input_stream = Arc::new(crate::audio::mixer::transformer::AudioInputStream {
             device_id: virtual_device_id.clone(),
             device_name: channel_name.clone(),
             sample_rate: 48000,
@@ -2368,7 +2368,7 @@ impl ApplicationAudioManager {
     async fn add_to_global_mixer_sync(
         &self,
         device_id: String,
-        audio_input_stream: Arc<crate::audio::streams::AudioInputStream>,
+        audio_input_stream: Arc<crate::audio::mixer::transformer::AudioInputStream>,
     ) -> Result<()> {
         info!("🔗 SYNC: Adding virtual stream {} to global mixer registry", device_id);
         
@@ -2455,7 +2455,7 @@ impl ApplicationAudioManager {
             crate::audio::effects::AudioEffectsChain::new(audio_bridge.sample_rate())
         ));
         
-        let audio_input_stream = Arc::new(crate::audio::streams::AudioInputStream {
+        let audio_input_stream = Arc::new(crate::audio::mixer::transformer::AudioInputStream {
             device_id: audio_bridge.device_id().to_string(),
             device_name: audio_bridge.device_name().to_string(),
             sample_rate: audio_bridge.sample_rate(),
@@ -2522,7 +2522,7 @@ impl ApplicationAudioManager {
     async fn add_to_global_mixer(
         &self,
         device_id: String,
-        audio_input_stream: Arc<crate::audio::streams::AudioInputStream>,
+        audio_input_stream: Arc<crate::audio::mixer::transformer::AudioInputStream>,
         _bridge: Arc<ApplicationAudioInputBridge>,
     ) -> Result<()> {
         // Store the stream in a global registry that the mixer can access
@@ -2533,7 +2533,7 @@ impl ApplicationAudioManager {
         use std::sync::{LazyLock, Mutex as StdMutex};
         use std::collections::HashMap;
         
-        static VIRTUAL_INPUT_REGISTRY: LazyLock<StdMutex<HashMap<String, Arc<crate::audio::streams::AudioInputStream>>>> = 
+        static VIRTUAL_INPUT_REGISTRY: LazyLock<StdMutex<HashMap<String, Arc<crate::audio::mixer::transformer::AudioInputStream>>>> = 
             LazyLock::new(|| StdMutex::new(HashMap::new()));
         
         // Register the virtual stream globally
@@ -2552,7 +2552,7 @@ impl ApplicationAudioManager {
     }
     
     /// Get all registered virtual input streams (for mixer integration)
-    pub fn get_virtual_input_streams() -> HashMap<String, Arc<crate::audio::streams::AudioInputStream>> {
+    pub fn get_virtual_input_streams() -> HashMap<String, Arc<crate::audio::mixer::transformer::AudioInputStream>> {
         // Use centralized registry function
         let registry = get_virtual_input_registry();
         if let Ok(reg) = registry.lock() {
@@ -2605,7 +2605,7 @@ impl ApplicationAudioManager {
     pub async fn check_audio_capture_permissions(&self) -> bool {
         #[cfg(target_os = "macos")]
         {
-            use crate::tcc_permissions::{get_permission_manager, TccPermissionStatus};
+            use crate::permissions::{get_permission_manager, TccPermissionStatus};
             
             let permission_manager = get_permission_manager();
             let status = permission_manager.check_audio_capture_permissions().await;

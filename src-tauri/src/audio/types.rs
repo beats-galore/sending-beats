@@ -4,7 +4,7 @@ use cpal::traits::DeviceTrait;
 #[cfg(target_os = "macos")]
 use coreaudio_sys::AudioDeviceID;
 #[cfg(target_os = "macos")]
-use crate::audio::coreaudio_stream::CoreAudioOutputStream;
+use crate::audio::devices::coreaudio_stream::CoreAudioOutputStream;
 
 /// Audio device information
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,5 +1,6 @@
 use tauri::State;
-use crate::{AudioState, RecordingState, recording_service::{RecordingConfig, RecordingStatus, RecordingHistoryEntry}};
+use crate::{AudioState, RecordingState};
+use crate::audio::recording::{RecordingConfig, RecordingStatus, RecordingHistoryEntry};
 
 // ================================================================================================
 // RECORDING SERVICE COMMANDS

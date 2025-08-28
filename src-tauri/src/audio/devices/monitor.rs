@@ -5,8 +5,8 @@ use tokio::time::{interval, Instant};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{info, warn, debug};
 
-use super::devices::{AudioDeviceManager, DeviceStatus};
-use super::mixer::VirtualMixer;
+use super::{AudioDeviceManager, DeviceStatus};
+use crate::audio::mixer::VirtualMixer;
 
 /// Device monitoring service for automatic recovery and health tracking
 /// 

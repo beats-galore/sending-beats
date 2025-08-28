@@ -15,8 +15,8 @@ pub async fn initialize_icecast_streaming(
     bitrate: u32,
     state: State<'_, AudioState>
 ) -> Result<String, String> {
-    use crate::streaming_service::{initialize_streaming, connect_streaming_to_mixer, StreamingServiceConfig};
-    use crate::icecast_source::{AudioFormat, AudioCodec};
+    use crate::audio::broadcasting::service::{initialize_streaming, connect_streaming_to_mixer, StreamingServiceConfig};
+    use crate::audio::broadcasting::icecast_source::{AudioFormat, AudioCodec};
     
     println!("🔧 Initializing Icecast streaming: {}:{}{}", server_host, server_port, mount_point);
     
@@ -68,7 +68,7 @@ pub async fn initialize_icecast_streaming(
 
 #[tauri::command]
 pub async fn start_icecast_streaming() -> Result<String, String> {
-    use crate::streaming_service::start_streaming;
+    use crate::audio::broadcasting::service::start_streaming;
     
     println!("🎯 Starting Icecast streaming...");
     
@@ -86,7 +86,7 @@ pub async fn start_icecast_streaming() -> Result<String, String> {
 
 #[tauri::command]
 pub async fn stop_icecast_streaming() -> Result<String, String> {
-    use crate::streaming_service::stop_streaming;
+    use crate::audio::broadcasting::service::stop_streaming;
     
     println!("🛑 Stopping Icecast streaming...");
     
@@ -104,7 +104,7 @@ pub async fn stop_icecast_streaming() -> Result<String, String> {
 
 #[tauri::command]
 pub async fn update_icecast_metadata(title: String, artist: String) -> Result<String, String> {
-    use crate::streaming_service::update_stream_metadata;
+    use crate::audio::broadcasting::service::update_stream_metadata;
     
     println!("📝 Updating stream metadata: {} - {}", artist, title);
     
@@ -122,7 +122,7 @@ pub async fn update_icecast_metadata(title: String, artist: String) -> Result<St
 
 #[tauri::command]
 pub async fn get_icecast_streaming_status() -> Result<serde_json::Value, String> {
-    use crate::streaming_service::get_streaming_status;
+    use crate::audio::broadcasting::service::get_streaming_status;
     
     let status = get_streaming_status().await;
     
@@ -137,7 +137,7 @@ pub async fn get_icecast_streaming_status() -> Result<serde_json::Value, String>
 
 #[tauri::command]
 pub async fn set_stream_bitrate(bitrate: u32) -> Result<String, String> {
-    use crate::streaming_service::set_stream_bitrate;
+    use crate::audio::broadcasting::service::set_stream_bitrate;
     
     println!("🎵 Setting stream bitrate to {}kbps", bitrate);
     
@@ -155,7 +155,7 @@ pub async fn set_stream_bitrate(bitrate: u32) -> Result<String, String> {
 
 #[tauri::command]
 pub async fn get_available_stream_bitrates() -> Result<Vec<u32>, String> {
-    use crate::streaming_service::get_available_bitrates;
+    use crate::audio::broadcasting::service::get_available_bitrates;
     
     let bitrates = get_available_bitrates().await;
     Ok(bitrates)
@@ -163,7 +163,7 @@ pub async fn get_available_stream_bitrates() -> Result<Vec<u32>, String> {
 
 #[tauri::command]
 pub async fn get_current_stream_bitrate() -> Result<u32, String> {
-    use crate::streaming_service::get_current_stream_bitrate;
+    use crate::audio::broadcasting::service::get_current_stream_bitrate;
     
     let bitrate = get_current_stream_bitrate().await;
     Ok(bitrate)
@@ -171,7 +171,7 @@ pub async fn get_current_stream_bitrate() -> Result<u32, String> {
 
 #[tauri::command]
 pub async fn set_variable_bitrate_streaming(enabled: bool, quality: u8) -> Result<String, String> {
-    use crate::streaming_service::set_variable_bitrate_streaming;
+    use crate::audio::broadcasting::service::set_variable_bitrate_streaming;
     
     println!("🎵 Setting variable bitrate: enabled={}, quality=V{}", enabled, quality);
     
@@ -189,7 +189,7 @@ pub async fn set_variable_bitrate_streaming(enabled: bool, quality: u8) -> Resul
 
 #[tauri::command]
 pub async fn get_variable_bitrate_settings() -> Result<(bool, u8), String> {
-    use crate::streaming_service::get_variable_bitrate_settings;
+    use crate::audio::broadcasting::service::get_variable_bitrate_settings;
     
     let (enabled, quality) = get_variable_bitrate_settings().await;
     Ok((enabled, quality))

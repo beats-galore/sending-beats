@@ -4,8 +4,8 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use serde::{Serialize, Deserialize};
 
-use super::file_player::{AudioFilePlayer, FilePlayerDevice, PlaybackStatus, QueuedTrack};
-use super::types::AudioDeviceInfo;
+use super::player::{AudioFilePlayer, FilePlayerDevice, PlaybackStatus, QueuedTrack};
+use crate::audio::types::AudioDeviceInfo;
 
 /// Configuration for a file player instance
 #[derive(Debug, Clone, Serialize, Deserialize)]

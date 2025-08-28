@@ -5,8 +5,8 @@ use tokio::time::{Instant, Duration, sleep};
 use tracing::{info, warn, error};
 
 use crate::audio::{VirtualMixer, AudioStreamingBridge, create_streaming_bridge};
-use crate::icecast_source::{IcecastStreamManager, AudioFormat, AudioCodec};
-use crate::streaming::{StreamConfig, AudioEncoder};
+use super::icecast_source::{IcecastStreamManager, AudioFormat, AudioCodec};
+use super::streaming::{StreamConfig, AudioEncoder};
 
 /// Integrated streaming service that connects the mixer to Icecast
 /// 
@@ -28,7 +28,7 @@ pub struct StreamingService {
     streaming_bridge: Arc<Mutex<Option<AudioStreamingBridge>>>,
     
     /// Direct reference to streaming stats for efficient access
-    streaming_stats: Arc<Mutex<Option<Arc<Mutex<crate::audio::streaming_bridge::StreamingStats>>>>>,
+    streaming_stats: Arc<Mutex<Option<Arc<Mutex<super::bridge::StreamingStats>>>>>,
     
     /// Service state
     state: Arc<Mutex<ServiceState>>,

@@ -1,5 +1,6 @@
 use tauri::State;
-use crate::streaming::{StreamConfig, StreamManager, StreamMetadata, StreamStatus};
+use crate::audio::broadcasting::{StreamConfig, StreamManager};
+use crate::audio::broadcasting::streaming::{StreamMetadata, StreamStatus};
 use std::sync::Mutex;
 
 // State management for streaming

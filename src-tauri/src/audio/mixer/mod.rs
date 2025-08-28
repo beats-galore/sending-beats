@@ -1,3 +1,17 @@
+// Audio mixer module - Virtual mixer with audio transformation
+//
+// This module provides comprehensive mixer functionality:
+// - mod: Core virtual mixer implementation  
+// - transformer: Audio format transformation and stream processing
+
+pub mod transformer;
+
+// Re-export transformer types for easier access
+pub use transformer::{
+    AudioInputStream, AudioOutputStream, VirtualMixerHandle, StreamCommand,
+    StreamManager, get_stream_manager,
+};
+
 use anyhow::{Context, Result};
 use cpal::{StreamConfig, SampleRate, BufferSize};
 use cpal::traits::{DeviceTrait, StreamTrait};
@@ -42,7 +56,6 @@ use tracing::{info, warn, error, debug};
 
 use super::devices::AudioDeviceManager;
 use super::effects::AudioAnalyzer;
-use super::streams::{AudioInputStream, AudioOutputStream, VirtualMixerHandle, StreamCommand, get_stream_manager};
 use super::types::{AudioChannel, AudioMetrics, MixerCommand, MixerConfig};
 
 #[derive(Debug)]
@@ -89,7 +102,7 @@ pub struct VirtualMixer {
     // Track active output streams by device ID for cleanup (no direct stream storage due to Send/Sync)
     active_output_devices: Arc<Mutex<std::collections::HashSet<String>>>,
     #[cfg(target_os = "macos")]
-    coreaudio_stream: Arc<Mutex<Option<super::coreaudio_stream::CoreAudioOutputStream>>>,
+    coreaudio_stream: Arc<Mutex<Option<crate::audio::devices::coreaudio_stream::CoreAudioOutputStream>>>,
 }
 
 impl VirtualMixer {
@@ -678,7 +691,7 @@ impl VirtualMixer {
         info!("Creating CoreAudio output stream for device: {} (ID: {})", coreaudio_device.name, coreaudio_device.device_id);
         
         // Create the actual CoreAudio stream
-        let mut coreaudio_stream = super::coreaudio_stream::CoreAudioOutputStream::new(
+        let mut coreaudio_stream = crate::audio::devices::coreaudio_stream::CoreAudioOutputStream::new(
             coreaudio_device.device_id,
             coreaudio_device.name.clone(),
             self.config.sample_rate,
@@ -1515,7 +1528,7 @@ impl VirtualMixer {
     pub async fn get_virtual_input_stream(&self, device_id: &str) -> Option<Arc<AudioInputStream>> {
         info!("🔍 Looking up virtual input stream for device: {}", device_id);
         
-        let virtual_streams = crate::application_audio::ApplicationAudioManager::get_virtual_input_streams();
+        let virtual_streams = crate::audio::tap::application_audio::ApplicationAudioManager::get_virtual_input_streams();
         if let Some(stream) = virtual_streams.get(device_id) {
             info!("✅ Found virtual input stream for device: {}", device_id);
             Some(stream.clone())

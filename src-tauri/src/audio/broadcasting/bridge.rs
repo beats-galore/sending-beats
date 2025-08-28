@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, broadcast};
 use tokio::time::{Duration, Instant};
-use crate::streaming::{StreamManager, StreamConfig};
+use super::streaming::{StreamManager, StreamConfig};
 
 /// Real-time audio streaming bridge that connects the mixer output to Icecast
 /// 

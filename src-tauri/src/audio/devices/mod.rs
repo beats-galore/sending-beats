@@ -1,3 +1,24 @@
+// Audio devices module - Device management and hardware interfacing
+//
+// This module provides comprehensive audio device management:
+// - mod: Core device management and enumeration
+// - monitor: Device monitoring and health tracking  
+// - coreaudio_stream: Platform-specific CoreAudio streaming (macOS)
+
+pub mod monitor;
+
+#[cfg(target_os = "macos")]
+pub mod coreaudio_stream;
+
+// Re-export monitor types
+pub use monitor::{
+    DeviceMonitor, DeviceMonitorConfig, DeviceMonitorStats,
+    initialize_device_monitoring, get_device_monitor, stop_device_monitoring, get_device_monitoring_stats,
+};
+
+#[cfg(target_os = "macos")]
+pub use coreaudio_stream::CoreAudioOutputStream;
+
 use anyhow::Result;
 use cpal::{Device, Host};
 use cpal::traits::{DeviceTrait, HostTrait};
@@ -12,7 +33,7 @@ use core_foundation::string::{CFString, CFStringRef};
 #[cfg(target_os = "macos")]
 use core_foundation::base::TCFType;
 
-use super::types::{AudioDeviceInfo, AudioDeviceHandle};
+use crate::audio::types::{AudioDeviceInfo, AudioDeviceHandle};
 
 /// Device connection status for error handling
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

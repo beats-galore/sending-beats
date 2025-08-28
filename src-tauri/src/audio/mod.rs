@@ -10,16 +10,12 @@
 pub mod types;
 pub mod devices;
 pub mod effects;
-pub mod streams;
 pub mod mixer;
-pub mod database;
-pub mod streaming_bridge;
-pub mod device_monitor;
+pub mod broadcasting;
+pub mod recording;
+pub mod tap;
 pub mod file_player;
-pub mod file_player_manager;
 
-#[cfg(target_os = "macos")]
-pub mod coreaudio_stream;
 
 // Re-export commonly used types for easier imports
 pub use types::{
@@ -30,40 +26,45 @@ pub use types::{
 #[cfg(target_os = "macos")]
 pub use types::CoreAudioDevice;
 
-pub use devices::AudioDeviceManager;
 
 pub use effects::{
     AudioAnalyzer, AudioEffectsChain, EQBand, PeakDetector, RmsDetector,
     SpectrumAnalyzer, ThreeBandEqualizer, BiquadFilter, Compressor, Limiter,
 };
 
-pub use streams::{
+pub use mixer::{
+    VirtualMixer,
     AudioInputStream, AudioOutputStream, VirtualMixerHandle, StreamCommand,
-    StreamManager, get_stream_manager,
+    get_stream_manager,
 };
 
-pub use mixer::VirtualMixer;
-
-pub use database::{
+pub use crate::db::{
     AudioDatabase, AudioEventBus, VULevelData, MasterLevelData, 
     AudioDeviceConfig, ChannelConfig, OutputRouteConfig,
 };
 
-pub use streaming_bridge::{
+pub use broadcasting::{
     AudioStreamingBridge, StreamingStatus, StreamingCommand, StreamingStats,
-    create_streaming_bridge,
+    create_streaming_bridge, StreamManager, StreamConfig, StreamingService, 
+    AudioEncoder, IcecastSourceClient, IcecastStats, IcecastStreamManager,
 };
 
-pub use device_monitor::{
-    DeviceMonitor, DeviceMonitorConfig, DeviceMonitorStats,
+pub use devices::{
+    AudioDeviceManager, DeviceMonitor, DeviceMonitorConfig, DeviceMonitorStats,
     initialize_device_monitoring, get_device_monitor, stop_device_monitoring, get_device_monitoring_stats,
+};
+
+pub use recording::{
+    RecordingService, RecordingConfig, RecordingStatus, RecordingHistoryEntry,
+    RecordingFormat, RecordingMetadata, RecordingSession, RecordingWriter, RecordingCommand,
+};
+
+pub use tap::{
+    ApplicationAudioManager, ProcessInfo, TapStats, ApplicationAudioError,
 };
 
 pub use file_player::{
     AudioFilePlayer, FilePlayerDevice, QueuedTrack, PlaybackState, PlaybackStatus, PlaybackMode, RepeatMode,
-};
-
-pub use file_player_manager::{
     FilePlayerManager, FilePlayerService, FilePlayerConfig, PlaybackAction,
 };
 

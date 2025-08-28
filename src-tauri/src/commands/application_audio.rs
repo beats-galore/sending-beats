@@ -1,5 +1,6 @@
 use tauri::State;
-use crate::{ApplicationAudioState, application_audio::{ProcessInfo, ApplicationAudioError, TapStats}};
+use crate::ApplicationAudioState;
+use crate::audio::tap::{ProcessInfo, ApplicationAudioError, TapStats};
 
 // ================================================================================================
 // APPLICATION AUDIO COMMANDS
