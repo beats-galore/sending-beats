@@ -214,7 +214,8 @@ impl ApplicationAudioTap {
     
     /// Create a Core Audio tap for this application's process
     pub async fn create_tap(&mut self) -> Result<()> {
-        info!("Creating audio tap for {} (PID: {})", self.process_info.name, self.process_info.pid);
+        info!("🔧 DEBUG: Creating audio tap for {} (PID: {})", self.process_info.name, self.process_info.pid);
+        info!("🔧 DEBUG: Process bundle_id: {:?}", self.process_info.bundle_id);
         
         // Check macOS version compatibility
         if !self.is_core_audio_taps_supported() {
@@ -242,7 +243,8 @@ impl ApplicationAudioTap {
                 
                 match create_process_tap(&tap_description) {
                     Ok(id) => {
-                        info!("Successfully created process tap with AudioObjectID {}", id);
+                        info!("✅ SUCCESS: Created process tap with AudioObjectID {} for {} (PID: {})", 
+                              id, self.process_info.name, self.process_info.pid);
                         id
                     }
                     Err(status) => {
@@ -341,12 +343,19 @@ impl ApplicationAudioTap {
         let mut tap_device = None;
         let tap_id_str = tap_object_id.to_string();
         
-        for device in devices {
+        info!("🔍 DEBUG: Looking for tap device among {} available input devices", devices.len());
+        for (i, device) in devices.iter().enumerate() {
             if let Ok(device_name) = device.name() {
+                info!("🔍 DEBUG: Input device {}: '{}'", i, device_name);
+                
                 // Core Audio taps might appear with specific naming patterns
-                if device_name.contains("Tap") || device_name.contains(&tap_id_str) {
-                    info!("Found potential tap device: {}", device_name);
-                    tap_device = Some(device);
+                if device_name.contains("Tap") || device_name.contains(&tap_id_str) || device_name.contains("Aggregate") {
+                    info!("✅ FOUND: Potential tap device: '{}'", device_name);
+                    tap_device = Some(device.clone());
+                    break;
+                } else if device_name.contains(&self.process_info.name) {
+                    info!("✅ FOUND: Device matching process name: '{}'", device_name);
+                    tap_device = Some(device.clone());
                     break;
                 }
             }
@@ -354,7 +363,8 @@ impl ApplicationAudioTap {
         
         // If we can't find the tap device directly, create a virtual approach
         if tap_device.is_none() {
-            info!("Tap device not found in CPAL enumeration, using virtual audio bridge");
+            warn!("⚠️  TAP DEVICE NOT FOUND: No tap device found in CPAL enumeration!");
+            info!("🔄 FALLBACK: Using virtual audio bridge for tap AudioObjectID {}", tap_object_id);
             return self.setup_virtual_tap_bridge(tap_object_id, audio_tx, sample_rate, channels).await;
         }
         
@@ -407,8 +417,8 @@ impl ApplicationAudioTap {
                         };
                         
                         if callback_count % 100 == 0 || (peak_level > 0.01 && callback_count % 50 == 0) {
-                            info!("🔊 TAP AUDIO [{}] Callback #{}: {} samples, peak: {:.4}, rms: {:.4}", 
-                                process_name, callback_count, data.len(), peak_level, rms_level);
+                            info!("🔊 TAP AUDIO [{}] Device: '{}' | Callback #{}: {} samples, peak: {:.4}, rms: {:.4}", 
+                                process_name, device_name, callback_count, data.len(), peak_level, rms_level);
                         }
                         
                         // Send audio data to broadcast channel for mixer integration
@@ -503,25 +513,27 @@ impl ApplicationAudioTap {
         _sample_rate: f64,
         _channels: u32,
     ) -> Result<()> {
-        info!("Setting up virtual audio bridge for tap AudioObjectID {}", tap_object_id);
+        error!("❌ CRITICAL: Virtual tap bridge called - this means Core Audio tap not working!");
+        error!("❌ Tap AudioObjectID {} was created but not found in CPAL device enumeration", tap_object_id);
+        error!("❌ This usually means:");
+        error!("   1. The Core Audio tap was created but doesn't appear as a CPAL input device");
+        error!("   2. The tap isn't actually capturing audio from the target process");
+        error!("   3. We need direct Core Audio IOProc integration instead of CPAL");
         
-        // Use Core Audio APIs directly to set up audio callbacks on the tap device
-        // This is more complex but gives us direct access to the tap's audio stream
+        warn!("⚠️ PLACEHOLDER: Virtual tap bridge not implemented - NO AUDIO WILL FLOW");
+        warn!("⚠️ Any audio you hear is likely from a different source (e.g., default microphone)");
         
+        // TODO: This is the critical missing piece!
+        // We need to implement direct Core Audio IOProc setup here
+        // The tap exists but we're not actually reading audio from it
         
-        info!("⚠️ Virtual tap bridge not fully implemented yet");
-        info!("This requires direct Core Audio IOProc setup, which is complex");
-        info!("For now, marking as capturing but no actual audio will flow");
+        self.is_capturing = true; // This is misleading - we're not actually capturing
         
-        // TODO: Implement direct Core Audio IOProc for tap device
-        // This would involve:
-        // 1. AudioDeviceCreateIOProcID with tap_object_id
-        // 2. Setting up audio callback that receives raw samples
-        // 3. Converting and forwarding samples to audio_tx broadcast channel
-        // 4. AudioDeviceStart to begin the audio flow
-        
-        self.is_capturing = true;
-        Ok(())
+        Err(anyhow::anyhow!(
+            "Virtual tap bridge not implemented. Core Audio tap {} was created but cannot capture audio. \
+             This means the tap exists but we need direct Core Audio IOProc integration to read from it.",
+            tap_object_id
+        ))
     }
     
     /// Get sample rate from Core Audio tap device
