@@ -15,15 +15,14 @@
 pub mod types;
 pub mod process_discovery;
 pub mod virtual_stream;
-pub mod manager;
 
 // Platform-specific modules
 #[cfg(target_os = "macos")]
 pub mod core_audio_tap;
 
-// Conditional re-export of coreaudio_taps module
+// FFI bindings for Core Audio Taps API
 #[cfg(target_os = "macos")]
-pub mod coreaudio_taps;
+pub mod core_audio_bindings;
 
 // Re-export commonly used types
 pub use types::{
@@ -38,8 +37,6 @@ pub use virtual_stream::{
     VirtualAudioInputStream, ApplicationAudioInputBridge, get_virtual_input_registry,
 };
 
-// Re-export high-level manager (main public API)
-pub use manager::ApplicationAudioManager;
 
 // Platform-specific re-exports
 #[cfg(target_os = "macos")]

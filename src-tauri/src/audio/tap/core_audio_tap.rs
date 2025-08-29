@@ -134,7 +134,7 @@ impl ApplicationAudioTap {
         }
         
         // Import Core Audio taps bindings (only available on macOS 14.4+)
-        use super::coreaudio_taps::{
+        use super::core_audio_bindings::{
             create_process_tap_description,
             create_process_tap, 
             format_osstatus_error

@@ -15,6 +15,7 @@ pub mod broadcasting;
 pub mod recording;
 pub mod tap;
 pub mod file_player;
+pub mod manager;
 
 
 // Re-export commonly used types for easier imports
@@ -60,10 +61,13 @@ pub use recording::{
 };
 
 pub use tap::{
-    ApplicationAudioManager, ProcessInfo, TapStats, ApplicationAudioError,
+    ProcessInfo, TapStats, ApplicationAudioError,
     ApplicationDiscovery, VirtualAudioInputStream, ApplicationAudioInputBridge,
     get_virtual_input_registry,
 };
+
+// Re-export high-level audio manager
+pub use manager::ApplicationAudioManager;
 
 pub use file_player::{
     AudioFilePlayer, FilePlayerDevice, QueuedTrack, PlaybackState, PlaybackStatus, PlaybackMode, RepeatMode,

@@ -325,7 +325,7 @@ impl ApplicationAudioTap {
         // Import Core Audio taps bindings (only available on macOS 14.4+)
         #[cfg(target_os = "macos")]
         {
-            use super::coreaudio_taps::{
+            use super::core_audio_bindings::{
                 create_process_tap_description,
                 create_process_tap, 
                 format_osstatus_error
@@ -1667,7 +1667,7 @@ impl ApplicationAudioTap {
         
         #[cfg(target_os = "macos")]
         {
-            use super::coreaudio_taps::{destroy_process_tap, format_osstatus_error};
+            use super::core_audio_bindings::{destroy_process_tap, format_osstatus_error};
             
             // Destroy process tap if it exists
             if let Some(tap_id) = self.tap_id {

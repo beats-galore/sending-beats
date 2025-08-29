@@ -30,6 +30,9 @@ pub async fn update_channel_eq(
             updated_channel.eq_high_gain = gain.clamp(-12.0, 12.0);
         }
         
+        // **CRITICAL FIX**: Auto-enable effects when EQ is modified (this was missing!)
+        updated_channel.effects_enabled = true;
+        
         // Update the channel in the mixer to trigger real-time changes
         mixer.update_channel(channel_id, updated_channel.clone()).await.map_err(|e| e.to_string())?;
         println!("🎛️ Updated EQ for channel {}: low={:.1}, mid={:.1}, high={:.1}", 
@@ -77,6 +80,9 @@ pub async fn update_channel_compressor(
             updated_channel.comp_enabled = en;
         }
         
+        // **CRITICAL FIX**: Auto-enable effects when compressor is modified
+        updated_channel.effects_enabled = true;
+        
         // Update the channel in the mixer to trigger real-time changes
         mixer.update_channel(channel_id, updated_channel.clone()).await.map_err(|e| e.to_string())?;
         println!("🎛️ Updated compressor for channel {}: threshold={:.1}dB, ratio={:.1}:1, attack={:.1}ms, release={:.0}ms, enabled={}", 
@@ -111,6 +117,9 @@ pub async fn update_channel_limiter(
         if let Some(en) = enabled {
             updated_channel.limiter_enabled = en;
         }
+        
+        // **CRITICAL FIX**: Auto-enable effects when limiter is modified  
+        updated_channel.effects_enabled = true;
         
         // Update the channel in the mixer to trigger real-time changes
         mixer.update_channel(channel_id, updated_channel.clone()).await.map_err(|e| e.to_string())?;
@@ -164,6 +173,9 @@ pub async fn add_channel_effect(
             }
             _ => return Err(format!("Unknown effect type: {}", effect_type)),
         }
+        
+        // **CRITICAL FIX**: Auto-enable effects when any effect is added
+        updated_channel.effects_enabled = true;
         
         // Update the channel in the mixer to trigger real-time changes
         mixer.update_channel(channel_id, updated_channel.clone()).await.map_err(|e| e.to_string())?;

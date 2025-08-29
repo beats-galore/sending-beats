@@ -9,12 +9,12 @@ use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::{broadcast, Mutex, RwLock};
 use tracing::{info, warn, error};
 
-use super::types::{ProcessInfo, TapStats, ApplicationAudioError};
-use super::process_discovery::ApplicationDiscovery;
-use super::virtual_stream::get_virtual_input_registry;
+use super::tap::types::{ProcessInfo, TapStats, ApplicationAudioError};
+use super::tap::process_discovery::ApplicationDiscovery;
+use super::tap::virtual_stream::get_virtual_input_registry;
 
 #[cfg(target_os = "macos")]
-use super::core_audio_tap::ApplicationAudioTap;
+use super::tap::core_audio_tap::ApplicationAudioTap;
 
 /// High-level manager for application audio capture
 #[derive(Clone)]

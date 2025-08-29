@@ -6,7 +6,7 @@ pub mod permissions;
 
 use audio::broadcasting::{StreamManager};
 use audio::recording::{RecordingService};
-use audio::tap::{ApplicationAudioManager};
+use audio::{ApplicationAudioManager};
 
 // Import command modules
 pub mod commands;
