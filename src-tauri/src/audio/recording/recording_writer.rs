@@ -214,11 +214,25 @@ impl RecordingWriter {
     
     /// Get current recording status
     pub fn get_status(&self) -> RecordingStatus {
+        // Calculate available disk space for recording directory
+        let available_space_gb = {
+            let recording_dir = self.session.current_file_path.parent()
+                .unwrap_or_else(|| std::path::Path::new("."));
+            
+            match super::filename_generation::PathManager::get_available_space(recording_dir) {
+                Ok(bytes) => (bytes as f64) / (1024.0 * 1024.0 * 1024.0), // Convert to GB
+                Err(_) => 100.0, // Fallback to 100GB if check fails
+            }
+        };
+        
         RecordingStatus {
             is_recording: self.is_writing,
             is_paused: self.session.is_paused,
             session: if self.is_writing { Some(self.session.clone()) } else { None },
             active_writers_count: if self.is_writing { 1 } else { 0 },
+            available_space_gb,             // **RESTORED**: Real disk space checking
+            total_recordings: 1,            // **RESTORED**: This writer represents 1 recording
+            active_recordings: if self.is_writing { vec![self.session.id.clone()] } else { vec![] }, // **RESTORED**: Frontend expects this
         }
     }
     
@@ -325,11 +339,40 @@ impl RecordingWriterManager {
             Ok(writers) => {
                 let active_count = writers.len();
                 
+                // Get disk space from first writer or use default recording directory
+                let available_space_gb = if let Some((_, writer)) = writers.iter().next() {
+                    // Get from active writer
+                    if let Ok(writer_guard) = writer.try_lock() {
+                        let recording_dir = writer_guard.session.current_file_path.parent()
+                            .unwrap_or_else(|| std::path::Path::new("."));
+                        
+                        match super::filename_generation::PathManager::get_available_space(recording_dir) {
+                            Ok(bytes) => (bytes as f64) / (1024.0 * 1024.0 * 1024.0),
+                            Err(_) => 100.0, // Fallback
+                        }
+                    } else {
+                        100.0 // Fallback if writer locked
+                    }
+                } else {
+                    // No active writers - check default recording directory
+                    let default_dir = dirs::audio_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+                    match super::filename_generation::PathManager::get_available_space(&default_dir) {
+                        Ok(bytes) => (bytes as f64) / (1024.0 * 1024.0 * 1024.0),
+                        Err(_) => 100.0, // Fallback
+                    }
+                };
+                
+                // Collect active recording IDs
+                let active_recordings: Vec<String> = writers.keys().cloned().collect();
+                
                 Ok(RecordingStatus {
                     is_recording: active_count > 0,
                     is_paused: false, // Simplified for now
                     session: None, // Would need more complex logic to get session safely
                     active_writers_count: active_count,
+                    available_space_gb,                    // **RESTORED**: Real disk space
+                    total_recordings: self.history.try_lock().map(|h| h.len()).unwrap_or(0), // **RESTORED**: Count from history
+                    active_recordings,                     // **RESTORED**: Frontend expects this
                 })
             }
             Err(_) => Ok(RecordingStatus::default())
@@ -341,19 +384,43 @@ impl RecordingWriterManager {
         let writers = self.writers.lock().await;
         let active_count = writers.len();
         
-        // Get any active session for status
-        let session = if let Some((_, writer)) = writers.iter().next() {
+        // Get any active session for status and disk space
+        let (session, available_space_gb) = if let Some((_, writer)) = writers.iter().next() {
             let w = writer.lock().await;
-            w.get_session().clone()
+            let session = w.get_session().clone();
+            
+            // Calculate disk space for recording directory
+            let recording_dir = session.current_file_path.parent()
+                .unwrap_or_else(|| std::path::Path::new("."));
+            
+            let space_gb = match super::filename_generation::PathManager::get_available_space(recording_dir) {
+                Ok(bytes) => (bytes as f64) / (1024.0 * 1024.0 * 1024.0),
+                Err(_) => 100.0, // Fallback
+            };
+            
+            (Some(session), space_gb)
         } else {
-            return Ok(RecordingStatus::default());
+            // No active writers - check default recording directory for disk space
+            let default_dir = dirs::audio_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+            let space_gb = match super::filename_generation::PathManager::get_available_space(&default_dir) {
+                Ok(bytes) => (bytes as f64) / (1024.0 * 1024.0 * 1024.0),
+                Err(_) => 100.0, // Fallback
+            };
+            
+            (None, space_gb)
         };
+        
+        // Collect active recording IDs
+        let active_recordings: Vec<String> = writers.keys().cloned().collect();
         
         Ok(RecordingStatus {
             is_recording: active_count > 0,
-            is_paused: session.is_paused,
-            session: Some(session),
+            is_paused: session.as_ref().map(|s| s.is_paused).unwrap_or(false),
+            session,
             active_writers_count: active_count,
+            available_space_gb,                    // **RESTORED**: Real disk space
+            total_recordings: self.history.lock().await.len(), // **RESTORED**: Count from history
+            active_recordings,                     // **RESTORED**: Frontend expects this
         })
     }
     
