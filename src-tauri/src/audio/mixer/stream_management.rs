@@ -65,16 +65,14 @@ impl VirtualMixer {
         // Create input stream
         let input_stream = Arc::new(AudioInputStream::new(
             device_id.to_string(),
-            device_handle,
-            self.shared_config.clone(),
-            self.audio_output_broadcast_tx.clone(),
+            device_id.to_string(), // Use device_id as name for now
+            48000, // Default sample rate
         )?);
         
         // Initialize device health tracking
-        if let Ok(device_info) = self.audio_device_manager.get_device(device_id).await {
-            if let Some(info) = device_info {
-                self.audio_device_manager.initialize_device_health(&info).await;
-            }
+        if let Some(device_info) = self.audio_device_manager.get_device(device_id).await {
+            let info = device_info;
+            self.audio_device_manager.initialize_device_health(&info).await;
         }
         
         // Store the stream
@@ -102,16 +100,14 @@ impl VirtualMixer {
         // Create output stream
         let output_stream = Arc::new(AudioOutputStream::new(
             device_id.to_string(),
-            device_handle,
-            self.shared_config.clone(),
-            self.get_audio_output_receiver(),
+            device_id.to_string(), // Use device_id as name for now
+            48000, // Default sample rate
         )?);
         
         // Initialize device health tracking
-        if let Ok(device_info) = self.audio_device_manager.get_device(device_id).await {
-            if let Some(info) = device_info {
-                self.audio_device_manager.initialize_device_health(&info).await;
-            }
+        if let Some(device_info) = self.audio_device_manager.get_device(device_id).await {
+            let info = device_info;
+            self.audio_device_manager.initialize_device_health(&info).await;
         }
         
         // Store the stream (replace existing)

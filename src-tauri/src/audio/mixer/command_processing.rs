@@ -21,10 +21,20 @@ impl VirtualMixer {
 
     /// Process pending commands from the command queue
     pub async fn process_commands(&mut self) -> Result<()> {
-        let mut command_rx = self.command_rx.lock().await;
+        let commands = {
+            let mut command_rx = self.command_rx.lock().await;
+            let mut commands = Vec::new();
+            
+            // Collect all available commands without blocking
+            while let Ok(command) = command_rx.try_recv() {
+                commands.push(command);
+            }
+            
+            commands
+        };
         
-        // Process all available commands without blocking
-        while let Ok(command) = command_rx.try_recv() {
+        // Process all collected commands
+        for command in commands {
             if let Err(e) = self.handle_command(command).await {
                 error!("Failed to process mixer command: {}", e);
             }
@@ -39,7 +49,7 @@ impl VirtualMixer {
             MixerCommand::AddChannel(channel) => {
                 self.add_channel(channel).await?;
             }
-            MixerCommand::UpdateChannel { channel_id, channel } => {
+            MixerCommand::UpdateChannel(channel_id, channel) => {
                 self.update_channel(channel_id, channel).await?;
             }
             MixerCommand::RemoveChannel(channel_id) => {
@@ -48,13 +58,13 @@ impl VirtualMixer {
             MixerCommand::SetMasterVolume(volume) => {
                 self.set_master_volume(volume).await?;
             }
-            MixerCommand::SetChannelVolume { channel_id, volume } => {
+            MixerCommand::SetChannelVolume(channel_id, volume) => {
                 self.set_channel_volume(channel_id, volume).await?;
             }
-            MixerCommand::MuteChannel { channel_id, muted } => {
+            MixerCommand::MuteChannel(channel_id, muted) => {
                 self.mute_channel(channel_id, muted).await?;
             }
-            MixerCommand::SoloChannel { channel_id, solo } => {
+            MixerCommand::SoloChannel(channel_id, solo) => {
                 self.solo_channel(channel_id, solo).await?;
             }
             MixerCommand::UpdateConfig(config) => {
@@ -63,6 +73,41 @@ impl VirtualMixer {
             MixerCommand::Stop => {
                 info!("Received stop command");
                 self.stop().await?;
+            }
+            MixerCommand::SetMasterGain(gain) => {
+                self.set_master_volume(gain).await?;
+            }
+            MixerCommand::StartStream => {
+                // TODO: Implement start stream
+                info!("Start stream command received");
+            }
+            MixerCommand::StopStream => {
+                // TODO: Implement stop stream
+                info!("Stop stream command received");
+            }
+            MixerCommand::EnableChannel(channel_id, enabled) => {
+                // TODO: Implement enable/disable channel
+                info!("Enable channel {} = {}", channel_id, enabled);
+            }
+            MixerCommand::AddOutputDevice(_device) => {
+                // TODO: Implement add output device
+                info!("Add output device command received");
+            }
+            MixerCommand::RemoveOutputDevice(_device_id) => {
+                // TODO: Implement remove output device
+                info!("Remove output device command received");
+            }
+            MixerCommand::UpdateOutputDevice(_device_id, _device) => {
+                // TODO: Implement update output device
+                info!("Update output device command received");
+            }
+            MixerCommand::SetOutputDeviceGain(_device_id, _gain) => {
+                // TODO: Implement set output device gain
+                info!("Set output device gain command received");
+            }
+            MixerCommand::EnableOutputDevice(_device_id, _enabled) => {
+                // TODO: Implement enable/disable output device
+                info!("Enable output device command received");
             }
         }
         
@@ -153,7 +198,7 @@ impl VirtualMixer {
         }
         
         if let Ok(mut shared_config) = self.shared_config.lock() {
-            shared_config.master_volume = volume;
+            shared_config.master_gain = volume;
             info!("Set master volume to {:.2}", volume);
         }
         
@@ -171,7 +216,7 @@ impl VirtualMixer {
         
         if let Ok(mut shared_config) = self.shared_config.lock() {
             if let Some(channel) = shared_config.channels.iter_mut().find(|c| c.id == channel_id) {
-                channel.volume = volume;
+                channel.gain = volume;
                 info!("Set channel {} volume to {:.2}", channel_id, volume);
             } else {
                 return Err(anyhow::anyhow!("Channel {} not found for volume update", channel_id));
@@ -235,11 +280,6 @@ impl VirtualMixer {
         
         self.config = config;
         Ok(())
-    }
-
-    /// Get a receiver for audio output (for streaming integration)
-    pub fn get_audio_output_receiver(&self) -> tokio::sync::broadcast::Receiver<Vec<f32>> {
-        self.audio_output_broadcast_tx.subscribe()
     }
 
     /// Create a new audio receiver for streaming

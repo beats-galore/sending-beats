@@ -280,6 +280,11 @@ impl AudioOutputStream {
         })
     }
     
+    /// Get device ID
+    pub fn get_device_id(&self) -> &str {
+        &self.device_id
+    }
+
     pub fn send_samples(&self, samples: &[f32]) {
         if let Ok(mut buffer) = self.input_buffer.try_lock() {
             buffer.extend_from_slice(samples);

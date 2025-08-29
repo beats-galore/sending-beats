@@ -66,13 +66,13 @@ pub fn validate_config(config: &MixerConfig) -> Result<()> {
     }
     
     // Channel count validation
-    if config.channels < 1 || config.channels > 32 {
-        return Err(anyhow::anyhow!("Invalid channel count: {} (must be 1-32 channels)", config.channels));
+    if config.channels.len() > 32 {
+        return Err(anyhow::anyhow!("Invalid channel count: {} (must be 0-32 channels)", config.channels.len()));
     }
     
     // Logical validation - ensure buffer size is reasonable for sample rate
     let min_buffer_for_rate = (config.sample_rate / 1000).max(16); // At least 1ms of audio
-    if config.buffer_size < min_buffer_for_rate as usize {
+    if config.buffer_size < min_buffer_for_rate {
         return Err(anyhow::anyhow!(
             "Buffer size {} too small for sample rate {} (minimum: {})", 
             config.buffer_size, config.sample_rate, min_buffer_for_rate

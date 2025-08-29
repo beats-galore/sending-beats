@@ -158,7 +158,7 @@ impl Default for MixerConfig {
 }
 
 /// Audio metrics for monitoring
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct AudioMetrics {
     pub cpu_usage: f32,
     pub buffer_underruns: u64,
@@ -166,6 +166,24 @@ pub struct AudioMetrics {
     pub latency_ms: f32,
     pub sample_rate: u32,
     pub active_channels: u32,
+    pub samples_processed: u64,
+    #[serde(skip)]
+    pub last_process_time: std::time::Instant,
+}
+
+impl Default for AudioMetrics {
+    fn default() -> Self {
+        Self {
+            cpu_usage: 0.0,
+            buffer_underruns: 0,
+            buffer_overruns: 0,
+            latency_ms: 0.0,
+            sample_rate: 48000,
+            active_channels: 0,
+            samples_processed: 0,
+            last_process_time: std::time::Instant::now(),
+        }
+    }
 }
 
 /// Commands for controlling the mixer
@@ -175,11 +193,15 @@ pub enum MixerCommand {
     RemoveChannel(u32),
     UpdateChannel(u32, AudioChannel),
     SetMasterGain(f32),
+    SetMasterVolume(f32), // Alias for SetMasterGain
+    SetChannelVolume(u32, f32), // channel_id, volume
     StartStream,
     StopStream,
+    Stop, // General stop command
     EnableChannel(u32, bool),
     SoloChannel(u32, bool),
     MuteChannel(u32, bool),
+    UpdateConfig(MixerConfig), // Update mixer configuration
     // Multiple output device commands
     AddOutputDevice(OutputDevice),
     RemoveOutputDevice(String), // device_id

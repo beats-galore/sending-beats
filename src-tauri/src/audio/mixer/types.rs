@@ -105,7 +105,7 @@ impl VirtualMixer {
         Ok(Self {
             config: config.clone(),
             is_running: Arc::new(AtomicBool::new(false)),
-            mix_buffer: Arc::new(Mutex::new(vec![0.0; buffer_size * 2])), // Stereo
+            mix_buffer: Arc::new(Mutex::new(vec![0.0; buffer_size as usize * 2])), // Stereo
             sample_rate_converter: None,
             audio_analyzer: AudioAnalyzer::new(sample_rate),
             command_tx,
@@ -130,6 +130,99 @@ impl VirtualMixer {
             coreaudio_stream: Arc::new(Mutex::new(None)),
         })
     }
+
+    /// Get health status for all devices
+    pub async fn get_all_device_health_statuses(&self) -> std::collections::HashMap<String, crate::audio::devices::DeviceHealth> {
+        self.audio_device_manager.get_all_device_health().await
+    }
+
+    /// Add input stream safely with health checking
+    pub async fn add_input_stream_safe(&self, device_id: &str) -> anyhow::Result<()> {
+        use tracing::{info, warn};
+        info!("Adding input stream for device with health checking: {}", device_id);
+        
+        // Check device health before attempting to use it
+        if self.audio_device_manager.should_avoid_device(device_id).await {
+            let health = self.audio_device_manager.get_device_health(device_id).await;
+            if let Some(h) = health {
+                return Err(anyhow::anyhow!(
+                    "Avoiding device {} due to {} consecutive errors. Last error: {:?}", 
+                    device_id, h.consecutive_errors, h.status
+                ));
+            }
+        }
+        
+        // Check if device is still available
+        match self.audio_device_manager.check_device_health(device_id).await {
+            Ok(crate::audio::devices::DeviceStatus::Connected) => {
+                // Device is healthy, proceed with normal stream addition
+                println!("✅ Device {} is healthy, proceeding with stream creation", device_id);
+                Ok(())
+            }
+            Ok(status) => {
+                Err(anyhow::anyhow!("Device {} is not connected: {:?}", device_id, status))
+            }
+            Err(e) => {
+                Err(anyhow::anyhow!("Failed to check device {} health: {}", device_id, e))
+            }
+        }
+    }
+
+    /// Get device health status
+    pub async fn get_device_health_status(&self, device_id: &str) -> Option<crate::audio::devices::DeviceHealth> {
+        self.audio_device_manager.get_device_health(device_id).await
+    }
+
+    /// Get audio output receiver for broadcasting
+    pub fn get_audio_output_receiver(&self) -> tokio::sync::broadcast::Receiver<Vec<f32>> {
+        self.audio_output_broadcast_tx.subscribe()
+    }
+
+    /// Get a reference to a channel by ID
+    pub fn get_channel(&self, channel_id: u32) -> Option<&crate::audio::types::AudioChannel> {
+        self.config.channels.iter().find(|c| c.id == channel_id)
+    }
+
+    /// Get a mutable reference to a channel by ID
+    pub fn get_channel_mut(&mut self, channel_id: u32) -> Option<&mut crate::audio::types::AudioChannel> {
+        self.config.channels.iter_mut().find(|c| c.id == channel_id)
+    }
+
+    /// Add output device
+    pub async fn add_output_device(&self, output_device: crate::audio::types::OutputDevice) -> anyhow::Result<()> {
+        use tracing::info;
+        info!("Adding output device: {}", output_device.device_id);
+        // TODO: Implement actual output device addition
+        Ok(())
+    }
+
+    /// Remove output device
+    pub async fn remove_output_device(&self, device_id: &str) -> anyhow::Result<()> {
+        use tracing::info;
+        info!("Removing output device: {}", device_id);
+        // TODO: Implement actual output device removal
+        Ok(())
+    }
+
+    /// Get output device configuration
+    pub async fn get_output_device(&self, device_id: &str) -> Option<crate::audio::types::OutputDevice> {
+        // TODO: Implement actual output device retrieval
+        None
+    }
+
+    /// Update output device configuration
+    pub async fn update_output_device(&self, device_id: &str, device: crate::audio::types::OutputDevice) -> anyhow::Result<()> {
+        use tracing::info;
+        info!("Updating output device {}: {:?}", device_id, device);
+        // TODO: Implement actual output device update
+        Ok(())
+    }
+
+    /// Get all output devices
+    pub async fn get_output_devices(&self) -> Vec<crate::audio::types::OutputDevice> {
+        // TODO: Implement actual output device list retrieval
+        vec![]
+    }
 }
 
 /// Configuration utilities for mixer setup
@@ -141,7 +234,12 @@ impl MixerConfigUtils {
         MixerConfig {
             sample_rate: 48000,  // Professional standard
             buffer_size: 512,    // Balance of latency and stability
-            channels: 2,         // Stereo
+            channels: vec![],    // Empty channels list
+            master_gain: 1.0,
+            master_output_device_id: None,
+            monitor_output_device_id: None,
+            output_devices: vec![],
+            enable_loopback: true,
         }
     }
     
@@ -150,7 +248,12 @@ impl MixerConfigUtils {
         MixerConfig {
             sample_rate: 48000,
             buffer_size: 128,    // Lower latency
-            channels: 2,
+            channels: vec![],    // Empty channels list
+            master_gain: 1.0,
+            master_output_device_id: None,
+            monitor_output_device_id: None,
+            output_devices: vec![],
+            enable_loopback: true,
         }
     }
     
@@ -159,7 +262,12 @@ impl MixerConfigUtils {
         MixerConfig {
             sample_rate: 44100,  // CD quality
             buffer_size: 1024,   // Higher stability
-            channels: 2,
+            channels: vec![],    // Empty channels list
+            master_gain: 1.0,
+            master_output_device_id: None,
+            monitor_output_device_id: None,
+            output_devices: vec![],
+            enable_loopback: true,
         }
     }
 }
