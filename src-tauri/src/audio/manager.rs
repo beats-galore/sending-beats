@@ -242,7 +242,7 @@ impl ApplicationAudioManager {
         info!("📡 SYNC: Registering virtual input stream: {} ({})", channel_name, virtual_device_id);
         
         // Create the AudioInputStream immediately and register it
-        let audio_input_stream = Arc::new(crate::audio::mixer::transformer::AudioInputStream {
+        let audio_input_stream = Arc::new(crate::audio::mixer::stream_management::AudioInputStream {
             device_id: virtual_device_id.clone(),
             device_name: channel_name.clone(),
             sample_rate: 48000,
@@ -265,7 +265,7 @@ impl ApplicationAudioManager {
     async fn add_to_global_mixer_sync(
         &self,
         device_id: String,
-        audio_input_stream: Arc<crate::audio::mixer::transformer::AudioInputStream>,
+        audio_input_stream: Arc<crate::audio::mixer::stream_management::AudioInputStream>,
     ) -> Result<()> {
         info!("🔗 SYNC: Adding virtual stream {} to global mixer registry", device_id);
         
@@ -387,7 +387,7 @@ impl ApplicationAudioManager {
     }
     
     /// Get virtual input streams for mixer integration
-    pub fn get_virtual_input_streams(&self) -> HashMap<String, Arc<crate::audio::mixer::transformer::AudioInputStream>> {
+    pub fn get_virtual_input_streams(&self) -> HashMap<String, Arc<crate::audio::mixer::stream_management::AudioInputStream>> {
         let registry = get_virtual_input_registry();
         if let Ok(reg) = registry.lock() {
             reg.clone()

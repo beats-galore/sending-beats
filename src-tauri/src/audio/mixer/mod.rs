@@ -38,8 +38,10 @@ pub use stream_management::StreamInfo;
 // Re-export mixer core types
 pub use mixer_core::{ClockInfo, MixerStatus, HealthCheckResult};
 
-// Re-export transformer types for easier access (preserved)
+// Re-export stream management types for easier access
+pub use stream_management::{AudioInputStream, AudioOutputStream};
+
+// Re-export remaining transformer types 
 pub use transformer::{
-    AudioInputStream, AudioOutputStream, VirtualMixerHandle, StreamCommand,
-    StreamManager, get_stream_manager,
+    VirtualMixerHandle, StreamCommand, StreamManager, get_stream_manager,
 };

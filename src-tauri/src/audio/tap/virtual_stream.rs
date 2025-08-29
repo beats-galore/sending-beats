@@ -281,9 +281,9 @@ impl ApplicationAudioInputBridge {
 }
 
 /// Registry for virtual input streams to ensure mixer can find registered streams  
-pub fn get_virtual_input_registry() -> &'static StdMutex<std::collections::HashMap<String, Arc<crate::audio::mixer::transformer::AudioInputStream>>> {
+pub fn get_virtual_input_registry() -> &'static StdMutex<std::collections::HashMap<String, Arc<crate::audio::mixer::stream_management::AudioInputStream>>> {
     use std::sync::LazyLock;
-    static VIRTUAL_INPUT_REGISTRY: LazyLock<StdMutex<std::collections::HashMap<String, Arc<crate::audio::mixer::transformer::AudioInputStream>>>> = 
+    static VIRTUAL_INPUT_REGISTRY: LazyLock<StdMutex<std::collections::HashMap<String, Arc<crate::audio::mixer::stream_management::AudioInputStream>>>> = 
         LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
     &VIRTUAL_INPUT_REGISTRY
 }

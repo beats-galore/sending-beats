@@ -4,299 +4,16 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::audio::effects::{AudioEffectsChain, EQBand};
 use crate::audio::types::{AudioChannel, MixerConfig, AudioDeviceHandle, OutputDevice};
-use crate::audio::devices::AudioDeviceManager;
 
-#[cfg(target_os = "macos")]
-use crate::audio::devices::coreaudio_stream::CoreAudioOutputStream;
-
-/// Optimized I16 to F32 conversion
-#[inline]
-fn convert_i16_to_f32_optimized(i16_samples: &[i16]) -> Vec<f32> {
-    i16_samples.iter()
-        .map(|&sample| {
-            if sample >= 0 {
-                sample as f32 / 32767.0  // Positive: divide by 32767
-            } else {
-                sample as f32 / 32768.0  // Negative: divide by 32768 
-            }
-        })
-        .collect()
-}
-
-/// Optimized U16 to F32 conversion
-#[inline]
-fn convert_u16_to_f32_optimized(u16_samples: &[u16]) -> Vec<f32> {
-    u16_samples.iter()
-        .map(|&sample| (sample as f32 - 32768.0) / 32767.5)  // Better symmetry
-        .collect()
-}
-
-/// Centralized buffer overflow management
-fn manage_buffer_overflow_optimized(
-    buffer: &mut Vec<f32>, 
-    target_sample_rate: u32, 
-    device_id: &str, 
-    callback_count: u64
-) {
-    let max_buffer_size = target_sample_rate as usize; // 1 second max buffer
-    let overflow_threshold = max_buffer_size + (max_buffer_size / 4); // 1.25 seconds
-    
-    if buffer.len() > overflow_threshold {
-        let target_size = max_buffer_size * 7 / 8; // Keep 87.5% of max buffer
-        
-        if buffer.len() > target_size {
-            let crossfade_samples = 64; // Small crossfade to prevent clicks/pops
-            let start_index = buffer.len() - target_size;
-            
-            // Apply crossfading only if we have enough samples
-            if start_index >= crossfade_samples {
-                for i in 0..crossfade_samples {
-                    let fade_out = 1.0 - (i as f32 / crossfade_samples as f32);
-                    let fade_in = i as f32 / crossfade_samples as f32;
-                    
-                    let old_sample = buffer[start_index - crossfade_samples + i];
-                    let new_sample = buffer[start_index + i];
-                    buffer[start_index + i] = old_sample * fade_out + new_sample * fade_in;
-                }
-            }
-            
-            // Remove the old portion
-            let new_buffer = buffer.split_off(start_index);
-            *buffer = new_buffer;
-            
-            if callback_count % 100 == 0 {
-                println!("🔧 BUFFER OPTIMIZATION [{}]: Kept latest {} samples, buffer now {} samples (max: {})", 
-                    device_id, target_size, buffer.len(), max_buffer_size);
-            }
-        }
-    }
-}
+use super::stream_management::{AudioInputStream, AudioOutputStream};
 
 
-// Audio stream management structures
-#[derive(Debug)]
-pub struct AudioInputStream {
-    pub device_id: String,
-    pub device_name: String,
-    pub sample_rate: u32,
-    pub channels: u16,
-    pub audio_buffer: Arc<Mutex<Vec<f32>>>,
-    pub effects_chain: Arc<Mutex<AudioEffectsChain>>,
-    pub adaptive_chunk_size: usize, // Adaptive buffer chunk size based on hardware
-    // Stream is managed separately via StreamManager to avoid Send/Sync issues
-}
 
-impl AudioInputStream {
-    pub fn new(device_id: String, device_name: String, sample_rate: u32) -> Result<Self> {
-        let audio_buffer = Arc::new(Mutex::new(Vec::new()));
-        let effects_chain = Arc::new(Mutex::new(AudioEffectsChain::new(sample_rate)));
-        
-        // Calculate optimal chunk size based on sample rate for low latency (5-10ms target)
-        let optimal_chunk_size = (sample_rate as f32 * 0.005) as usize; // 5ms default
-        
-        Ok(AudioInputStream {
-            device_id,
-            device_name,
-            sample_rate,
-            channels: 1, // Start with mono
-            audio_buffer,
-            effects_chain,
-            adaptive_chunk_size: optimal_chunk_size.max(64).min(1024), // Clamp between 64-1024 samples
-        })
-    }
-    
-    /// Set adaptive chunk size based on hardware buffer configuration
-    pub fn set_adaptive_chunk_size(&mut self, hardware_buffer_size: usize) {
-        // Use hardware buffer size if reasonable, otherwise calculate optimal size
-        let adaptive_size = if hardware_buffer_size > 32 && hardware_buffer_size <= 2048 {
-            hardware_buffer_size
-        } else {
-            // Fallback to time-based calculation (5ms)
-            (self.sample_rate as f32 * 0.005) as usize
-        };
-        
-        self.adaptive_chunk_size = adaptive_size;
-        println!("🔧 ADAPTIVE BUFFER: Set chunk size to {} samples for device {}", 
-                 self.adaptive_chunk_size, self.device_id);
-    }
-    
-    pub fn get_samples(&self) -> Vec<f32> {
-        if let Ok(mut buffer) = self.audio_buffer.try_lock() {
-            // **BUFFER UNDERRUN FIX**: Process available samples instead of waiting for full chunks
-            let chunk_size = self.adaptive_chunk_size;
-            
-            if buffer.is_empty() {
-                return Vec::new();  // No samples available at all
-            }
-            
-            // **REAL FIX**: Process ALL available samples to prevent buffer buildup
-            let samples: Vec<f32> = buffer.drain(..).collect();
-            let sample_count = samples.len();
-            
-            // Debug: Log when we're actually reading samples
-            use std::sync::{LazyLock, Mutex as StdMutex};
-            static GET_SAMPLES_COUNT: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> = 
-                LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
-            
-            if let Ok(mut count_map) = GET_SAMPLES_COUNT.lock() {
-                let count = count_map.entry(self.device_id.clone()).or_insert(0);
-                *count += 1;
-                
-                if sample_count > 0 {
-                    if *count % 100 == 0 || (*count < 10) {
-                        let peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                        let rms = (samples.iter().map(|&s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
-                        println!("📖 GET_SAMPLES [{}]: Retrieved {} samples (call #{}), peak: {:.4}, rms: {:.4}", 
-                            self.device_id, sample_count, count, peak, rms);
-                    }
-                } else if *count % 500 == 0 {
-                    println!("📪 GET_SAMPLES [{}]: Empty buffer (call #{})", self.device_id, count);
-                }
-            }
-            
-            samples
-        } else {
-            Vec::new()
-        }
-    }
 
-    /// Apply effects to input samples and update channel settings
-    pub fn process_with_effects(&self, channel: &AudioChannel) -> Vec<f32> {
-        if let Ok(mut buffer) = self.audio_buffer.try_lock() {
-            // **BUFFER UNDERRUN FIX**: Process available samples instead of waiting for full chunks
-            let chunk_size = self.adaptive_chunk_size;
-            
-            if buffer.is_empty() {
-                return Vec::new();  // No samples available at all
-            }
-            
-            // **REAL FIX**: Process ALL available samples to prevent buffer buildup  
-            let mut samples: Vec<f32> = buffer.drain(..).collect();
-            let original_sample_count = samples.len();
-            
-            // Debug: Log processing activity
-            use std::sync::{LazyLock, Mutex as StdMutex};
-            static PROCESS_COUNT: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> = 
-                LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
-            
-            if let Ok(mut count_map) = PROCESS_COUNT.lock() {
-                let count = count_map.entry(self.device_id.clone()).or_insert(0);
-                *count += 1;
-                
-                if original_sample_count > 0 {
-                    let original_peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                    
-                    if *count % 100 == 0 || (*count < 10) {
-                        crate::audio_debug!("⚙️  PROCESS_WITH_EFFECTS [{}]: Processing {} samples (call #{}), peak: {:.4}, channel: {}", 
-                            self.device_id, original_sample_count, count, original_peak, channel.name);
-                        crate::audio_debug!("   Settings: gain: {:.2}, muted: {}, effects: {}", 
-                            channel.gain, channel.muted, channel.effects_enabled);
-                    }
-                }
-            }
 
-            // Apply effects if enabled
-            if channel.effects_enabled && !samples.is_empty() {
-                if let Ok(mut effects) = self.effects_chain.try_lock() {
-                    // Update effects parameters based on channel settings
-                    effects.set_eq_gain(EQBand::Low, channel.eq_low_gain);
-                    effects.set_eq_gain(EQBand::Mid, channel.eq_mid_gain);
-                    effects.set_eq_gain(EQBand::High, channel.eq_high_gain);
-                    
-                    if channel.comp_enabled {
-                        effects.set_compressor_params(
-                            channel.comp_threshold,
-                            channel.comp_ratio,
-                            channel.comp_attack,
-                            channel.comp_release,
-                        );
-                    }
-                    
-                    if channel.limiter_enabled {
-                        effects.set_limiter_threshold(channel.limiter_threshold);
-                    }
 
-                    // Process samples through effects chain
-                    effects.process(&mut samples);
-                }
-            }
-            
-            // **CRITICAL FIX**: Apply channel-specific gain and mute (this was missing!)
-            if !channel.muted && channel.gain > 0.0 {
-                for sample in samples.iter_mut() {
-                    *sample *= channel.gain;
-                }
-                
-                // Debug: Log final processed levels
-                if let Ok(count_map) = PROCESS_COUNT.lock() {
-                    let count = count_map.get(&self.device_id).unwrap_or(&0);
-                    if original_sample_count > 0 && (*count % 100 == 0 || *count < 10) {
-                        let final_peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                        let final_rms = (samples.iter().map(|&s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
-                        crate::audio_debug!("✅ PROCESSED [{}]: Final {} samples, peak: {:.4}, rms: {:.4}", 
-                            self.device_id, samples.len(), final_peak, final_rms);
-                    }
-                }
-            } else {
-                samples.fill(0.0);
-                if let Ok(count_map) = PROCESS_COUNT.lock() {
-                    let count = count_map.get(&self.device_id).unwrap_or(&0);
-                    if original_sample_count > 0 && (*count % 200 == 0 || *count < 5) {
-                        println!("🔇 MUTED/ZERO_GAIN [{}]: {} samples set to silence (muted: {}, gain: {:.2})", 
-                            self.device_id, samples.len(), channel.muted, channel.gain);
-                    }
-                }
-            }
 
-            samples
-        } else {
-            Vec::new()
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct AudioOutputStream {
-    pub device_id: String,
-    pub device_name: String,
-    pub sample_rate: u32,
-    pub channels: u16,
-    pub input_buffer: Arc<Mutex<Vec<f32>>>,
-    // Stream is handled separately to avoid Send/Sync issues
-}
-
-impl AudioOutputStream {
-    pub fn new(device_id: String, device_name: String, sample_rate: u32) -> Result<Self> {
-        let input_buffer = Arc::new(Mutex::new(Vec::new()));
-        
-        Ok(AudioOutputStream {
-            device_id,
-            device_name,
-            sample_rate,
-            channels: 2, // Stereo output
-            input_buffer,
-        })
-    }
-    
-    /// Get device ID
-    pub fn get_device_id(&self) -> &str {
-        &self.device_id
-    }
-
-    pub fn send_samples(&self, samples: &[f32]) {
-        if let Ok(mut buffer) = self.input_buffer.try_lock() {
-            buffer.extend_from_slice(samples);
-            // Limit buffer size to prevent memory issues
-            let max_samples = self.sample_rate as usize * 2; // 2 seconds max
-            let buffer_len = buffer.len();
-            if buffer_len > max_samples {
-                buffer.drain(0..(buffer_len - max_samples));
-            }
-        }
-    }
-}
 
 // Stream management handles the actual cpal streams in a separate synchronous context
 pub struct StreamManager {
@@ -487,7 +204,7 @@ impl StreamManager {
                         callback_count += 1;
                         
                         // **CRITICAL FIX**: Proper I16 to F32 conversion to prevent distortion
-                        let f32_samples = convert_i16_to_f32_optimized(data);
+                        let f32_samples = crate::audio::mixer::audio_processing::AudioFormatConverter::convert_i16_to_f32_optimized(data);
                         
                         let peak_level = f32_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
                         let rms_level = (f32_samples.iter().map(|&s| s * s).sum::<f32>() / f32_samples.len() as f32).sqrt();
@@ -509,7 +226,7 @@ impl StreamManager {
                             }
                             
                             // **CLEANED UP**: Use centralized buffer management
-                            manage_buffer_overflow_optimized(&mut buffer, target_sample_rate, &debug_device_id_i16, callback_count);
+                            crate::audio::mixer::audio_processing::AudioFormatConverter::manage_buffer_overflow_optimized(&mut buffer, target_sample_rate, &debug_device_id_i16, callback_count);
                         }
                     },
                     {
@@ -532,7 +249,7 @@ impl StreamManager {
                     &native_config,
                     move |data: &[u16], _: &cpal::InputCallbackInfo| {
                         // **CRITICAL FIX**: Proper U16 to F32 conversion to prevent distortion  
-                        let f32_samples = convert_u16_to_f32_optimized(data);
+                        let f32_samples = crate::audio::mixer::audio_processing::AudioFormatConverter::convert_u16_to_f32_optimized(data);
                             
                         // Keep stereo data as-is to prevent pitch shifting - don't convert to mono
                         let audio_samples = f32_samples;
@@ -541,7 +258,7 @@ impl StreamManager {
                             buffer.extend_from_slice(&audio_samples);
                             
                             // **CLEANED UP**: Use centralized buffer management
-                            manage_buffer_overflow_optimized(&mut buffer, target_sample_rate, "U16_device", 0);
+                            crate::audio::mixer::audio_processing::AudioFormatConverter::manage_buffer_overflow_optimized(&mut buffer, target_sample_rate, "U16_device", 0);
                         }
                     },
                     |err| eprintln!("Audio input error: {}", err),

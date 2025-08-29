@@ -12,7 +12,7 @@ use tokio::sync::{mpsc, Mutex};
 use super::super::devices::AudioDeviceManager;
 use super::super::effects::AudioAnalyzer;
 use super::super::types::{AudioMetrics, MixerCommand, MixerConfig};
-use super::transformer::{AudioInputStream, AudioOutputStream};
+use super::stream_management::{AudioInputStream, AudioOutputStream};
 use super::timing_synchronization::{AudioClock, TimingMetrics};
 
 /// Thread-safe Virtual Mixer with comprehensive audio processing capabilities

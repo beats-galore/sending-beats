@@ -13,6 +13,74 @@ use tracing::{info, warn};
 use super::super::types::AudioMetrics;
 use super::types::VirtualMixer;
 
+/// Audio format conversion and buffer management utilities
+pub struct AudioFormatConverter;
+
+impl AudioFormatConverter {
+    /// Optimized I16 to F32 conversion
+    #[inline]
+    pub fn convert_i16_to_f32_optimized(i16_samples: &[i16]) -> Vec<f32> {
+        i16_samples.iter()
+            .map(|&sample| {
+                if sample >= 0 {
+                    sample as f32 / 32767.0  // Positive: divide by 32767
+                } else {
+                    sample as f32 / 32768.0  // Negative: divide by 32768 
+                }
+            })
+            .collect()
+    }
+
+    /// Optimized U16 to F32 conversion
+    #[inline]
+    pub fn convert_u16_to_f32_optimized(u16_samples: &[u16]) -> Vec<f32> {
+        u16_samples.iter()
+            .map(|&sample| (sample as f32 - 32768.0) / 32767.5)  // Better symmetry
+            .collect()
+    }
+
+    /// Centralized buffer overflow management
+    pub fn manage_buffer_overflow_optimized(
+        buffer: &mut Vec<f32>, 
+        target_sample_rate: u32, 
+        device_id: &str, 
+        callback_count: u64
+    ) {
+        let max_buffer_size = target_sample_rate as usize; // 1 second max buffer
+        let overflow_threshold = max_buffer_size + (max_buffer_size / 4); // 1.25 seconds
+        
+        if buffer.len() > overflow_threshold {
+            let target_size = max_buffer_size * 7 / 8; // Keep 87.5% of max buffer
+            
+            if buffer.len() > target_size {
+                let crossfade_samples = 64; // Small crossfade to prevent clicks/pops
+                let start_index = buffer.len() - target_size;
+                
+                // Apply crossfading only if we have enough samples
+                if start_index >= crossfade_samples {
+                    for i in 0..crossfade_samples {
+                        let fade_out = 1.0 - (i as f32 / crossfade_samples as f32);
+                        let fade_in = i as f32 / crossfade_samples as f32;
+                        
+                        let old_sample = buffer[start_index - crossfade_samples + i];
+                        let new_sample = buffer[start_index + i];
+                        buffer[start_index + i] = old_sample * fade_out + new_sample * fade_in;
+                    }
+                }
+                
+                // Remove the old portion
+                let new_buffer = buffer.split_off(start_index);
+                *buffer = new_buffer;
+                
+                if callback_count % 100 == 0 {
+                    println!("🔧 BUFFER OPTIMIZATION [{}]: Kept latest {} samples, buffer now {} samples (max: {})", 
+                        device_id, target_size, buffer.len(), max_buffer_size);
+                }
+            }
+        }
+    }
+}
+
 impl VirtualMixer {
 
     /// Get current audio metrics for monitoring
