@@ -47,6 +47,7 @@ sysinfo = "0.30"           # System process enumeration for application audio ca
 # Recording and file management
 dirs = "5.0"               # Platform-specific directory paths
 flac-bound = "0.3"         # FLAC encoding for high-quality recording
+regex = "1.10"             # Regular expressions for filename template processing
 
 # Audio file decoding for media player
 symphonia = { version = "0.5", features = ["aac", "mp3", "isomp4", "ogg", "flac", "wav"] }

@@ -27,6 +27,7 @@ dependencies = [
  "objc2-foundation 0.3.1",
  "proptest",
  "pulse",
+ "regex",
  "reqwest 0.11.27",
  "rtrb",
  "rubato",

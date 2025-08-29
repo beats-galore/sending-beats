@@ -76,7 +76,7 @@ pub async fn get_recording_status(
     if status.is_recording {
         println!("🔍 get_recording_status API called - is_recording: {}, session: {:?}", 
             status.is_recording, 
-            status.current_session.as_ref().map(|s| format!("{}s, {}B", s.duration_seconds, s.file_size_bytes))
+            status.session.as_ref().map(|s| format!("{}s, {}B", s.duration_seconds, s.file_size_bytes))
         );
     }
     Ok(status)
