@@ -7,12 +7,13 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use super::super::devices::DeviceHealth;
 use super::types::VirtualMixer;
-use super::stream_management::{AudioInputStream, AudioOutputStream};
+use super::stream_management::{AudioInputStream, AudioOutputStream, StreamInfo};
 use crate::audio::types::{AudioChannel, MixerConfig};
 
 // Helper structure for processing thread

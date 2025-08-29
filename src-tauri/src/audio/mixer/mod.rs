@@ -18,6 +18,7 @@ pub mod timing_synchronization;
 pub mod audio_processing;
 pub mod command_processing;
 pub mod stream_management;
+pub mod stream_operations;
 pub mod mixer_core;
 
 // Existing transformer module (preserved)
