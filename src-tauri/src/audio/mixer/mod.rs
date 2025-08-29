@@ -36,12 +36,13 @@ pub use timing_synchronization::{AudioClock, TimingSync, TimingMetrics};
 pub use stream_management::StreamInfo;
 
 // Re-export mixer core types
-pub use mixer_core::{ClockInfo, MixerStatus, HealthCheckResult};
+pub use mixer_core::{ClockInfo, MixerStatus, HealthCheckResult, VirtualMixerHandle};
 
 // Re-export stream management types for easier access
 pub use stream_management::{AudioInputStream, AudioOutputStream};
 
-// Re-export remaining transformer types 
-pub use transformer::{
-    VirtualMixerHandle, StreamCommand, StreamManager, get_stream_manager,
-};
+// Re-export stream manager functions
+pub use stream_management::get_stream_manager;
+
+// Re-export stream management types
+pub use stream_management::{StreamCommand, StreamManager};

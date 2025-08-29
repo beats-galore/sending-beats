@@ -6,10 +6,71 @@
 
 use anyhow::Result;
 use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use super::super::devices::DeviceHealth;
 use super::types::VirtualMixer;
+use super::stream_management::{AudioInputStream, AudioOutputStream};
+use crate::audio::types::{AudioChannel, MixerConfig};
+
+// Helper structure for processing thread
+#[derive(Debug)]
+pub struct VirtualMixerHandle {
+    pub input_streams: Arc<Mutex<HashMap<String, Arc<AudioInputStream>>>>,
+    pub output_stream: Arc<Mutex<Option<Arc<AudioOutputStream>>>>, // Legacy single output
+    pub output_streams: Arc<Mutex<HashMap<String, Arc<AudioOutputStream>>>>, // New multiple outputs
+    #[cfg(target_os = "macos")]
+    pub coreaudio_stream: Arc<Mutex<Option<crate::audio::devices::coreaudio_stream::CoreAudioOutputStream>>>,
+    pub channel_levels: Arc<Mutex<std::collections::HashMap<u32, (f32, f32, f32, f32)>>>,
+    pub config: Arc<std::sync::Mutex<MixerConfig>>,
+}
+
+impl VirtualMixerHandle {
+    /// Get samples from all active input streams with effects processing
+    pub async fn collect_input_samples_with_effects(&self, channels: &[AudioChannel]) -> HashMap<String, Vec<f32>> {
+        let mut samples = HashMap::new();
+        let streams = self.input_streams.lock().await;
+        
+        for (device_id, stream) in streams.iter() {
+            // Find the channel configuration for this stream
+            if let Some(channel) = channels.iter().find(|ch| {
+                ch.input_device_id.as_ref() == Some(device_id)
+            }) {
+                let stream_samples = stream.process_with_effects(channel);
+                if !stream_samples.is_empty() {
+                    samples.insert(device_id.clone(), stream_samples);
+                }
+            } else {
+                // No channel config found, use raw samples
+                let stream_samples = stream.get_samples();
+                if !stream_samples.is_empty() {
+                    samples.insert(device_id.clone(), stream_samples);
+                }
+            }
+        }
+        
+        samples
+    }
+
+    /// Send mixed audio to all output streams
+    pub async fn send_to_output(&self, audio_data: &[f32]) {
+        // Send to primary output stream
+        if let Ok(output_guard) = self.output_stream.try_lock() {
+            if let Some(ref output_stream) = *output_guard {
+                output_stream.send_samples(audio_data);
+            }
+        }
+        
+        // Send to all multiple output streams
+        if let Ok(outputs_guard) = self.output_streams.try_lock() {
+            for (_device_id, output_stream) in outputs_guard.iter() {
+                output_stream.send_samples(audio_data);
+            }
+        }
+    }
+}
 
 impl VirtualMixer {
     /// Check if the mixer is currently running
