@@ -587,6 +587,132 @@ impl StreamManager {
             false
         }
     }
+
+    /// Add an output stream for playing audio (restored from original implementation)
+    pub fn add_output_stream(
+        &mut self,
+        device_id: String,
+        device: cpal::Device,
+        config: cpal::StreamConfig,
+        audio_buffer: Arc<Mutex<Vec<f32>>>,
+    ) -> Result<()> {
+        use cpal::traits::StreamTrait;
+
+        println!("🔊 Creating output stream for device: {}", device_id);
+
+        // Get device configuration for validation
+        let device_config = match device.default_output_config() {
+            Ok(config) => {
+                println!("✅ Output device config for {}: {}Hz, {} channels, format: {:?}", 
+                    device_id, config.sample_rate().0, config.channels(), config.sample_format());
+                config
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to get output device config for {}: {}", device_id, e);
+                return Err(anyhow::anyhow!("Failed to get output device config: {}", e));
+            }
+        };
+
+        println!("🔧 Building output stream with format: {:?}", device_config.sample_format());
+
+        // Create the output stream with audio callback
+        let stream_result = match device_config.sample_format() {
+            cpal::SampleFormat::F32 => {
+                println!("Creating F32 output stream for device: {}", device_id);
+                let device_id_for_error1 = device_id.clone();
+                device.build_output_stream(
+                    &config,
+                    {
+                        let audio_buffer = audio_buffer.clone();
+                        let device_id = device_id.clone();
+                        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                            // Fill output buffer with audio from our mixer
+                            if let Ok(mut buffer) = audio_buffer.try_lock() {
+                                let available_samples = buffer.len().min(data.len());
+                                if available_samples > 0 {
+                                    // Copy samples from buffer to output
+                                    data[..available_samples].copy_from_slice(&buffer[..available_samples]);
+                                    // Remove used samples from buffer
+                                    buffer.drain(..available_samples);
+                                    // Fill remaining with silence if needed
+                                    if available_samples < data.len() {
+                                        data[available_samples..].fill(0.0);
+                                    }
+                                } else {
+                                    // No audio available, output silence
+                                    data.fill(0.0);
+                                }
+                            } else {
+                                // Can't lock buffer, output silence
+                                data.fill(0.0);
+                            }
+                        }
+                    },
+                    move |err| eprintln!("Output stream error for {}: {}", device_id_for_error1, err),
+                    None
+                )
+            },
+            _ => {
+                println!("Creating default format output stream for device: {}", device_id);
+                let device_id_for_error2 = device_id.clone();
+                // For non-F32 formats, try to create with the device's native format
+                device.build_output_stream(
+                    &cpal::StreamConfig {
+                        channels: config.channels,
+                        sample_rate: config.sample_rate,
+                        buffer_size: config.buffer_size,
+                    },
+                    {
+                        let audio_buffer = audio_buffer.clone();
+                        let device_id = device_id.clone();
+                        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                            if let Ok(mut buffer) = audio_buffer.try_lock() {
+                                let available_samples = buffer.len().min(data.len());
+                                if available_samples > 0 {
+                                    data[..available_samples].copy_from_slice(&buffer[..available_samples]);
+                                    buffer.drain(..available_samples);
+                                    if available_samples < data.len() {
+                                        data[available_samples..].fill(0.0);
+                                    }
+                                } else {
+                                    data.fill(0.0);
+                                }
+                            } else {
+                                data.fill(0.0);
+                            }
+                        }
+                    },
+                    move |err| eprintln!("Output stream error for {}: {}", device_id_for_error2, err),
+                    None
+                )
+            }
+        };
+
+        let stream = match stream_result {
+            Ok(stream) => stream,
+            Err(e) => {
+                eprintln!("❌ Failed to build output stream for {}: {}", device_id, e);
+                return Err(anyhow::anyhow!("Failed to build output stream: {}", e));
+            }
+        };
+
+        // Start the stream
+        match stream.play() {
+            Ok(()) => {
+                println!("✅ Output stream started successfully for: {}", device_id);
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to start output stream for {}: {}", device_id, e);
+                return Err(anyhow::anyhow!("Failed to start output stream: {}", e));
+            }
+        }
+
+        // Store the stream to keep it alive
+        self.streams.insert(device_id.clone(), stream);
+        println!("✅ Output stream created and stored for device: {}", device_id);
+
+        Ok(())
+    }
 }
 
 // Stream management commands for cross-thread communication
@@ -597,6 +723,13 @@ pub enum StreamCommand {
         config: cpal::StreamConfig,
         audio_buffer: Arc<Mutex<Vec<f32>>>,
         target_sample_rate: u32,
+        response_tx: std::sync::mpsc::Sender<Result<()>>,
+    },
+    AddOutputStream {
+        device_id: String,
+        device: cpal::Device,
+        config: cpal::StreamConfig,
+        audio_buffer: Arc<Mutex<Vec<f32>>>,
         response_tx: std::sync::mpsc::Sender<Result<()>>,
     },
     RemoveStream {
@@ -627,6 +760,16 @@ fn init_stream_manager() -> std::sync::mpsc::Sender<StreamCommand> {
                     response_tx,
                 } => {
                     let result = manager.add_input_stream(device_id, device, config, audio_buffer, target_sample_rate);
+                    let _ = response_tx.send(result);
+                }
+                StreamCommand::AddOutputStream {
+                    device_id,
+                    device,
+                    config,
+                    audio_buffer,
+                    response_tx,
+                } => {
+                    let result = manager.add_output_stream(device_id, device, config, audio_buffer);
                     let _ = response_tx.send(result);
                 }
                 StreamCommand::RemoveStream { device_id, response_tx } => {

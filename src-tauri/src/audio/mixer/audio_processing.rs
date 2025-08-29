@@ -14,40 +14,6 @@ use super::super::types::AudioMetrics;
 use super::types::VirtualMixer;
 
 impl VirtualMixer {
-    /// Calculate optimal buffer size based on hardware capabilities and performance requirements  
-    pub async fn calculate_optimal_buffer_size(
-        &self, 
-        device: &Device, 
-        config: &cpal::SupportedStreamConfig,
-        fallback_size: usize
-    ) -> Result<BufferSize> {
-        // Try to get the device's preferred buffer size
-        match device.default_input_config() {
-            Ok(_device_config) => {
-                // Calculate optimal buffer size based on sample rate and latency requirements
-                let sample_rate = config.sample_rate().0;
-                let channels = config.channels();
-                
-                // Target latency: 5-10ms for professional audio (balance between latency and stability)
-                let target_latency_ms = if sample_rate >= 48000 { 5.0 } else { 10.0 };
-                let target_buffer_size = ((sample_rate as f32 * target_latency_ms / 1000.0) as usize)
-                    .max(64)   // Minimum 64 samples for stability
-                    .min(2048); // Maximum 2048 samples to prevent excessive latency
-                
-                // Round to next power of 2 for optimal hardware performance  
-                let optimal_size = target_buffer_size.next_power_of_two().min(1024);
-                
-                info!("🔧 DYNAMIC BUFFER: Calculated optimal buffer size {} for device (SR: {}, CH: {}, Target: {}ms)", 
-                      optimal_size, sample_rate, channels, target_latency_ms);
-                
-                Ok(BufferSize::Fixed(optimal_size as u32))
-            }
-            Err(e) => {
-                warn!("Failed to get device config for buffer optimization: {}, using fallback", e);
-                Ok(BufferSize::Fixed(fallback_size as u32))
-            }
-        }
-    }
 
     /// Get current audio metrics for monitoring
     pub async fn get_metrics(&self) -> AudioMetrics {
