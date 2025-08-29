@@ -10,6 +10,7 @@ import {
   useMixerRunningState,
   useVUMeterData,
 } from '../../hooks';
+import { RecordingControlsCard, RecordingConfigCard, RecordingHistoryCard } from '../dj';
 import { ErrorBoundary, FullScreenLoader } from '../layout';
 
 import { ChannelGrid } from './ChannelGrid';
@@ -17,11 +18,6 @@ import { MasterSection } from './MasterSection';
 import { MixerControls } from './MixerControls';
 
 // Import recording components
-import {
-  RecordingControlsCard,
-  RecordingConfigCard,
-  RecordingHistoryCard,
-} from '../dj';
 
 const useStyles = createStyles((theme) => ({
   container: {
@@ -142,7 +138,7 @@ const VirtualMixer = memo(() => {
             <Title order={3} c="red.4">
               Audio Recording
             </Title>
-            
+
             <Grid>
               {/* Recording Controls */}
               <Grid.Col span={{ base: 12, md: 6 }}>
