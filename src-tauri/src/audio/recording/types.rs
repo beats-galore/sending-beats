@@ -202,6 +202,7 @@ pub struct RecordingMetadata {
     pub artwork: Option<AlbumArtwork>,
     
     // Custom fields
+    #[serde(default)]
     pub custom_tags: std::collections::HashMap<String, String>,
 }
 
