@@ -435,6 +435,7 @@ pub struct RecordingSession {
     pub is_paused: bool,
     pub is_recovering: bool,               // True if recovering from crash
     pub metadata: RecordingMetadata,       // Session-specific metadata that can be updated during recording
+    pub current_levels: [f32; 2],         // [Left, Right] RMS levels for UI display
 }
 
 impl RecordingSession {
@@ -459,6 +460,7 @@ impl RecordingSession {
             is_paused: false,
             is_recovering: false,
             metadata: session_metadata,
+            current_levels: [0.0, 0.0], // Initialize with silent levels
         }
     }
     
@@ -479,6 +481,7 @@ impl RecordingSession {
             is_paused: false,
             is_recovering: true,
             metadata: session_metadata,
+            current_levels: [0.0, 0.0], // Initialize with silent levels
         }
     }
     
@@ -524,6 +527,11 @@ impl RecordingSession {
         updated_metadata.duration_seconds = self.metadata.duration_seconds;
         
         self.metadata = updated_metadata;
+    }
+    
+    /// Update current audio levels for UI display
+    pub fn update_levels(&mut self, left_level: f32, right_level: f32) {
+        self.current_levels = [left_level, right_level];
     }
     
     /// Get elapsed time since recording started

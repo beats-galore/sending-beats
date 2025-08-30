@@ -189,6 +189,7 @@ export type RecordingSession = {
   is_paused: boolean;
   is_recovering: boolean;
   metadata: RecordingMetadata;
+  current_levels: [number, number]; // [Left, Right] RMS levels for UI display
 };
 
 export type RecordingStatus = {
