@@ -266,6 +266,7 @@ impl RecordingWriter {
     pub fn get_encoder_metadata(&self) -> super::encoders::EncoderMetadata {
         self.encoder.get_metadata()
     }
+    
 }
 
 impl Drop for RecordingWriter {
@@ -558,6 +559,7 @@ impl RecordingWriterManager {
             Err(_) => Ok(Vec::new())
         }
     }
+
 
     /// Update metadata for a specific recording session
     pub async fn update_session_metadata(&self, session_id: &str, metadata: RecordingMetadata) -> Result<()> {

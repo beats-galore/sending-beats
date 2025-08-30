@@ -126,25 +126,40 @@ impl RecordingService {
             configs.insert(config.id.clone(), config.clone());
         }
         
-        // Send start command
-        if let Some(sender) = &self.command_sender {
-            sender.send(RecordingCommand::Start(config))
-                .map_err(|_| anyhow::anyhow!("Failed to send start command"))?;
+        // Start recording directly and get session ID
+        let session_id = self.writer_manager.start_recording(config).await?;
+        
+        // Also update active session tracking
+        {
+            let mut active_id = self.active_session_id.lock().await;
+            *active_id = Some(session_id.clone());
         }
         
-        // Return session ID (would need to be properly tracked)
-        Ok("pending".to_string()) // Placeholder - real implementation would track session creation
+        info!("Recording service started session: {}", session_id);
+        Ok(session_id)
     }
     
     /// Stop the current recording
     pub async fn stop_recording(&self) -> Result<Option<RecordingHistoryEntry>> {
-        if let Some(sender) = &self.command_sender {
-            sender.send(RecordingCommand::Stop)
-                .map_err(|_| anyhow::anyhow!("Failed to send stop command"))?;
-        }
+        let session_id = {
+            let mut active_id = self.active_session_id.lock().await;
+            active_id.take()
+        };
         
-        // TODO: Return actual history entry when recording stops
-        Ok(None)
+        if let Some(session_id) = session_id {
+            match self.writer_manager.stop_recording(&session_id).await {
+                Ok(history_entry) => {
+                    info!("Recording service stopped session: {}", session_id);
+                    Ok(Some(history_entry))
+                }
+                Err(e) => {
+                    error!("Failed to stop recording session {}: {}", session_id, e);
+                    Err(e)
+                }
+            }
+        } else {
+            Ok(None) // No active recording
+        }
     }
     
     /// Process audio samples for recording
@@ -168,12 +183,11 @@ impl RecordingService {
     
     /// Get current recording status
     pub async fn get_status(&self) -> RecordingStatus {
-        // Return a placeholder status for now
-        let mut status = RecordingStatus::default();
-        if let Ok(writer_status) = self.writer_manager.get_status() {
-            status = writer_status;
+        // Use async version to get complete status with session info
+        match self.writer_manager.get_status_async().await {
+            Ok(status) => status,
+            Err(_) => RecordingStatus::default(),
         }
-        status
     }
     
     /// Get recording history

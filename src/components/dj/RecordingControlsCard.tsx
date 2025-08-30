@@ -143,7 +143,7 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(({ disable
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const isRecording = status?.is_recording ?? false;
-  const currentSession = status?.current_session;
+  const currentSession = status?.session;
   const availableSpace = status?.available_space_gb ?? 0;
 
   // Load default config on first render (only non-text fields)
