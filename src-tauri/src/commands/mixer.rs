@@ -213,7 +213,7 @@ pub fn get_streaming_mixer_config() -> MixerConfig {
 pub async fn check_audio_capture_permissions(
     app_audio_state: State<'_, ApplicationAudioState>,
 ) -> Result<bool, String> {
-    let has_permission = app_audio_state.manager.check_audio_capture_permissions().await;
+    let has_permission = app_audio_state.manager.has_permissions().await;
     Ok(has_permission)
 }
 
@@ -367,7 +367,7 @@ pub async fn request_audio_capture_permissions(
 ) -> Result<String, String> {
     println!("🔐 request_audio_capture_permissions: Starting permission request...");
     
-    let has_permission = app_audio_state.manager.check_audio_capture_permissions().await;
+    let has_permission = app_audio_state.manager.has_permissions().await;
     
     if has_permission {
         println!("✅ Permissions already granted");

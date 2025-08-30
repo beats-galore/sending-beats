@@ -1,19 +1,12 @@
-pub mod streaming;
 pub mod audio;
-pub mod icecast_source;
-pub mod streaming_service;
-pub mod recording_service;
-pub mod application_audio;
+pub mod db;
 
 #[cfg(target_os = "macos")]
-pub mod coreaudio_taps;
+pub mod permissions;
 
-#[cfg(target_os = "macos")]
-pub mod tcc_permissions;
-
-use streaming::{StreamManager};
-use recording_service::{RecordingService};
-use application_audio::{ApplicationAudioManager};
+use audio::broadcasting::{StreamManager};
+use audio::recording::{RecordingService};
+use audio::{ApplicationAudioManager};
 
 // Import command modules
 pub mod commands;
@@ -28,7 +21,7 @@ pub use audio::{
     stop_device_monitoring as stop_monitoring_impl, FilePlayerService
 };
 // Re-export application audio types
-pub use application_audio::{ProcessInfo, TapStats, ApplicationAudioError};
+pub use audio::tap::{ProcessInfo, TapStats, ApplicationAudioError};
 use std::sync::{Arc, Mutex};
 use tauri::State;
 use tokio::sync::Mutex as AsyncMutex;
