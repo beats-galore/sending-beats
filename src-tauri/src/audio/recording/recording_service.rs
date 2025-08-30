@@ -9,10 +9,10 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{info, error};
+use tracing::{info, error, warn};
 
 use super::types::{
-    RecordingConfig, RecordingStatus, 
+    RecordingConfig, RecordingStatus, RecordingMetadata,
     RecordingHistoryEntry, RecordingCommand, RecordingPresets
 };
 use super::recording_writer::RecordingWriterManager;
@@ -40,10 +40,13 @@ impl RecordingService {
         }
     }
     
-    /// Initialize the recording service with command processing
-    pub fn initialize(&mut self) -> Result<()> {
+    /// Initialize the recording service with command processing and crash recovery
+    pub async fn initialize(&mut self) -> Result<Vec<String>> {
         let (tx, mut rx) = mpsc::unbounded_channel::<RecordingCommand>();
         self.command_sender = Some(tx);
+        
+        // Initialize crash recovery
+        let recovered_files = self.writer_manager.initialize().await?;
         
         let writer_manager = Arc::clone(&self.writer_manager);
         let active_session_id = Arc::clone(&self.active_session_id);
@@ -91,15 +94,25 @@ impl RecordingService {
                         info!("Resume command received (not yet implemented)");
                     }
                     RecordingCommand::UpdateMetadata(metadata) => {
-                        info!("Metadata update received: {:?}", metadata);
-                        // Implementation would need to be added to writer manager
+                        info!("Metadata update received with {} fields", metadata.get_display_fields().len());
+                        
+                        // Update metadata for active recording session
+                        let active_id = active_session_id.lock().await;
+                        if let Some(ref session_id) = *active_id {
+                            match writer_manager.update_session_metadata(session_id, metadata).await {
+                                Ok(()) => info!("Session metadata updated successfully"),
+                                Err(e) => error!("Failed to update session metadata: {}", e),
+                            }
+                        } else {
+                            warn!("No active recording session to update metadata");
+                        }
                     }
                 }
             }
         });
         
-        info!("Recording service initialized");
-        Ok(())
+        info!("Recording service initialized, recovered {} temp files", recovered_files.len());
+        Ok(recovered_files)
     }
     
     /// Start a new recording with the given configuration and audio receiver
@@ -166,6 +179,16 @@ impl RecordingService {
     /// Get recording history
     pub async fn get_history(&self) -> Vec<RecordingHistoryEntry> {
         self.writer_manager.get_history().unwrap_or_default()
+    }
+
+    /// Update metadata for the current recording session
+    pub async fn update_session_metadata(&self, metadata: RecordingMetadata) -> Result<()> {
+        if let Some(sender) = &self.command_sender {
+            sender.send(RecordingCommand::UpdateMetadata(metadata))?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Recording service not initialized"))
+        }
     }
     
     /// Save a recording configuration

@@ -1,6 +1,7 @@
 use tauri::State;
 use crate::{AudioState, RecordingState};
-use crate::audio::recording::{RecordingConfig, RecordingStatus, RecordingHistoryEntry};
+use crate::audio::recording::{RecordingConfig, RecordingStatus, RecordingHistoryEntry, RecordingMetadata};
+use crate::audio::recording::types::{RecordingPresets, MetadataPresets};
 
 // ================================================================================================
 // RECORDING SERVICE COMMANDS
@@ -166,5 +167,43 @@ pub async fn select_recording_directory(app: tauri::AppHandle) -> Result<Option<
         
         // Small delay to avoid busy waiting
         tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+// ================================================================================================
+// METADATA AND PRESET COMMANDS
+// ================================================================================================
+
+#[tauri::command]
+pub async fn get_metadata_presets() -> Result<Vec<(String, RecordingMetadata)>, String> {
+    Ok(MetadataPresets::get_all_presets().into_iter()
+        .map(|(name, metadata)| (name.to_string(), metadata))
+        .collect())
+}
+
+#[tauri::command]
+pub async fn get_recording_presets() -> Result<Vec<RecordingConfig>, String> {
+    Ok(RecordingPresets::get_all_presets().into_iter()
+        .map(|(_, config)| config)
+        .collect())
+}
+
+#[tauri::command]
+pub async fn update_recording_metadata(
+    recording_state: State<'_, RecordingState>,
+    metadata: RecordingMetadata,
+) -> Result<(), String> {
+    println!("📝 Updating session metadata with {} fields", 
+        metadata.get_display_fields().len());
+    
+    match recording_state.service.update_session_metadata(metadata).await {
+        Ok(()) => {
+            println!("✅ Session metadata updated successfully");
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("❌ Failed to update session metadata: {}", e);
+            Err(format!("Failed to update metadata: {}", e))
+        }
     }
 }

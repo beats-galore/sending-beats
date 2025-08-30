@@ -4,6 +4,7 @@
 // system, including format definitions, configuration, session tracking,
 // and command structures.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::SystemTime;
 use uuid::Uuid;
@@ -73,15 +74,135 @@ impl RecordingFormat {
     }
 }
 
-/// Audio metadata for recordings
+/// Album artwork data for embedded images
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AlbumArtwork {
+    pub mime_type: String,       // e.g., "image/jpeg", "image/png"
+    pub description: String,     // Description of the artwork
+    pub image_data: Vec<u8>,     // Raw image bytes
+    pub picture_type: ArtworkType,
+}
+
+/// Type of artwork/picture
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum ArtworkType {
+    Other,
+    FileIcon,           // 32x32 pixels 'file icon' (PNG only)
+    OtherFileIcon,
+    CoverFront,         // Front cover
+    CoverBack,          // Back cover  
+    LeafletPage,
+    Media,              // e.g. label side of CD
+    LeadArtist,         // Lead artist/performer/soloist
+    Artist,             // Artist/performer
+    Conductor,
+    Band,               // Band/Orchestra
+    Composer,
+    Lyricist,
+    RecordingLocation,
+    DuringRecording,
+    DuringPerformance,
+    MovieScreenCapture,
+    BrightColourFish,   // A bright coloured fish
+    Illustration,
+    BandArtistLogotype,
+    PublisherStudioLogotype,
+}
+
+impl Default for ArtworkType {
+    fn default() -> Self {
+        ArtworkType::CoverFront
+    }
+}
+
+impl AlbumArtwork {
+    /// Create new artwork from image data
+    pub fn new(mime_type: String, image_data: Vec<u8>, description: String) -> Self {
+        Self {
+            mime_type,
+            description,
+            image_data,
+            picture_type: ArtworkType::CoverFront,
+        }
+    }
+    
+    /// Get the file extension for the MIME type
+    pub fn get_file_extension(&self) -> &str {
+        match self.mime_type.as_str() {
+            "image/jpeg" | "image/jpg" => "jpg",
+            "image/png" => "png",
+            "image/gif" => "gif",
+            "image/bmp" => "bmp",
+            "image/webp" => "webp",
+            _ => "jpg", // default fallback
+        }
+    }
+    
+    /// Validate that the image data matches the MIME type
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if self.image_data.is_empty() {
+            return Err(anyhow::anyhow!("Artwork image data is empty"));
+        }
+        
+        // Basic validation - check magic bytes for common formats
+        match self.mime_type.as_str() {
+            "image/jpeg" | "image/jpg" => {
+                if self.image_data.len() < 3 || 
+                   self.image_data[0] != 0xFF || 
+                   self.image_data[1] != 0xD8 || 
+                   self.image_data[2] != 0xFF {
+                    return Err(anyhow::anyhow!("Invalid JPEG image data"));
+                }
+            },
+            "image/png" => {
+                if self.image_data.len() < 8 || 
+                   &self.image_data[0..8] != &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A] {
+                    return Err(anyhow::anyhow!("Invalid PNG image data"));
+                }
+            },
+            _ => {
+                // For other formats, just check that data exists
+            }
+        }
+        
+        Ok(())
+    }
+}
+
+/// Comprehensive audio metadata for recordings
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct RecordingMetadata {
+    // Core fields
     pub title: Option<String>,
     pub artist: Option<String>,
     pub album: Option<String>,
     pub genre: Option<String>,
     pub comment: Option<String>,
     pub year: Option<u16>,
+    
+    // Extended fields
+    pub album_artist: Option<String>,
+    pub composer: Option<String>,
+    pub track_number: Option<u16>,
+    pub total_tracks: Option<u16>,
+    pub disc_number: Option<u16>,
+    pub total_discs: Option<u16>,
+    pub copyright: Option<String>,
+    pub bpm: Option<u16>,
+    pub isrc: Option<String>, // International Standard Recording Code
+    
+    // Technical fields (auto-populated)
+    pub encoder: Option<String>,
+    pub encoding_date: Option<SystemTime>,
+    pub sample_rate: Option<u32>,
+    pub bitrate: Option<u32>,
+    pub duration_seconds: Option<f64>,
+    
+    // Artwork
+    pub artwork: Option<AlbumArtwork>,
+    
+    // Custom fields
+    pub custom_tags: std::collections::HashMap<String, String>,
 }
 
 impl RecordingMetadata {
@@ -93,10 +214,128 @@ impl RecordingMetadata {
         }
     }
     
-    /// Check if metadata has any content
+    /// Check if metadata has any content (user-provided fields only)
     pub fn is_empty(&self) -> bool {
         self.title.is_none() && self.artist.is_none() && self.album.is_none() 
             && self.genre.is_none() && self.comment.is_none() && self.year.is_none()
+            && self.album_artist.is_none() && self.composer.is_none() 
+            && self.track_number.is_none() && self.copyright.is_none()
+            && self.bpm.is_none() && self.isrc.is_none() && self.artwork.is_none()
+            && self.custom_tags.is_empty()
+    }
+    
+    /// Set technical metadata (auto-populated during encoding)
+    pub fn set_technical_metadata(&mut self, config: &RecordingConfig, encoder_name: &str) {
+        self.sample_rate = Some(config.sample_rate);
+        self.encoder = Some(format!("Sendin Beats v1.0 ({})", encoder_name));
+        self.encoding_date = Some(SystemTime::now());
+        
+        // Set bitrate if available from format
+        if let Some(mp3_settings) = &config.format.mp3 {
+            self.bitrate = Some(mp3_settings.bitrate);
+        }
+    }
+    
+    /// Update duration when recording completes
+    pub fn set_duration(&mut self, duration_seconds: f64) {
+        self.duration_seconds = Some(duration_seconds);
+    }
+    
+    /// Add custom tag
+    pub fn add_custom_tag(&mut self, key: String, value: String) {
+        self.custom_tags.insert(key, value);
+    }
+    
+    /// Remove custom tag
+    pub fn remove_custom_tag(&mut self, key: &str) -> Option<String> {
+        self.custom_tags.remove(key)
+    }
+    
+    /// Get all non-empty user fields as key-value pairs for display
+    pub fn get_display_fields(&self) -> Vec<(String, String)> {
+        let mut fields = Vec::new();
+        
+        if let Some(ref title) = self.title {
+            fields.push(("Title".to_string(), title.clone()));
+        }
+        if let Some(ref artist) = self.artist {
+            fields.push(("Artist".to_string(), artist.clone()));
+        }
+        if let Some(ref album) = self.album {
+            fields.push(("Album".to_string(), album.clone()));
+        }
+        if let Some(ref album_artist) = self.album_artist {
+            fields.push(("Album Artist".to_string(), album_artist.clone()));
+        }
+        if let Some(ref composer) = self.composer {
+            fields.push(("Composer".to_string(), composer.clone()));
+        }
+        if let Some(ref genre) = self.genre {
+            fields.push(("Genre".to_string(), genre.clone()));
+        }
+        if let Some(year) = self.year {
+            fields.push(("Year".to_string(), year.to_string()));
+        }
+        if let Some(track_num) = self.track_number {
+            let track_display = if let Some(total) = self.total_tracks {
+                format!("{}/{}", track_num, total)
+            } else {
+                track_num.to_string()
+            };
+            fields.push(("Track".to_string(), track_display));
+        }
+        if let Some(bpm) = self.bpm {
+            fields.push(("BPM".to_string(), bpm.to_string()));
+        }
+        if let Some(ref copyright) = self.copyright {
+            fields.push(("Copyright".to_string(), copyright.clone()));
+        }
+        if let Some(ref comment) = self.comment {
+            fields.push(("Comment".to_string(), comment.clone()));
+        }
+        
+        // Add custom tags
+        for (key, value) in &self.custom_tags {
+            fields.push((key.clone(), value.clone()));
+        }
+        
+        fields
+    }
+    
+    /// Validate metadata fields
+    pub fn validate(&self) -> anyhow::Result<()> {
+        // Validate year range
+        if let Some(year) = self.year {
+            if year < 1900 || year > 2100 {
+                return Err(anyhow::anyhow!("Year must be between 1900 and 2100"));
+            }
+        }
+        
+        // Validate BPM range
+        if let Some(bpm) = self.bpm {
+            if bpm == 0 || bpm > 999 {
+                return Err(anyhow::anyhow!("BPM must be between 1 and 999"));
+            }
+        }
+        
+        // Validate track numbers
+        if let Some(track_num) = self.track_number {
+            if track_num == 0 {
+                return Err(anyhow::anyhow!("Track number must be greater than 0"));
+            }
+            if let Some(total) = self.total_tracks {
+                if track_num > total {
+                    return Err(anyhow::anyhow!("Track number cannot exceed total tracks"));
+                }
+            }
+        }
+        
+        // Validate artwork if present
+        if let Some(ref artwork) = self.artwork {
+            artwork.validate()?;
+        }
+        
+        Ok(())
     }
 }
 
@@ -182,30 +421,108 @@ impl RecordingConfig {
     }
 }
 
-/// Current recording session information
+/// Current recording session information with temporary file support
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RecordingSession {
     pub id: String,
     pub config: RecordingConfig,
     pub start_time: SystemTime,
-    pub current_file_path: PathBuf,
+    pub current_file_path: PathBuf,        // Final destination path
+    pub temp_file_path: Option<PathBuf>,   // Temporary recording file (.tmp)
     pub duration_seconds: f64,
     pub file_size_bytes: u64,
     pub is_paused: bool,
+    pub is_recovering: bool,               // True if recovering from crash
+    pub metadata: RecordingMetadata,       // Session-specific metadata that can be updated during recording
 }
 
 impl RecordingSession {
-    /// Create a new recording session
+    /// Create a new recording session with temporary file support
     pub fn new(config: RecordingConfig, file_path: PathBuf) -> Self {
+        // Create temporary file path by adding .tmp extension
+        let temp_file_path = file_path.with_extension(
+            format!("{}.tmp", file_path.extension().and_then(|ext| ext.to_str()).unwrap_or(""))
+        );
+        
+        let mut session_metadata = config.metadata.clone();
+        session_metadata.set_technical_metadata(&config, "WAV"); // Default to WAV, will be updated by encoder
+        
         Self {
             id: Uuid::new_v4().to_string(),
             config,
             start_time: SystemTime::now(),
             current_file_path: file_path,
+            temp_file_path: Some(temp_file_path),
             duration_seconds: 0.0,
             file_size_bytes: 0,
             is_paused: false,
+            is_recovering: false,
+            metadata: session_metadata,
         }
+    }
+    
+    /// Create a recovery session from an existing temporary file
+    pub fn recover_from_temp_file(config: RecordingConfig, final_path: PathBuf, temp_path: PathBuf, existing_duration: f64, existing_size: u64) -> Self {
+        let mut session_metadata = config.metadata.clone();
+        session_metadata.set_technical_metadata(&config, "WAV");
+        session_metadata.set_duration(existing_duration);
+        
+        Self {
+            id: Uuid::new_v4().to_string(),
+            config,
+            start_time: SystemTime::now(), // Recovery time, not original start time
+            current_file_path: final_path,
+            temp_file_path: Some(temp_path),
+            duration_seconds: existing_duration,
+            file_size_bytes: existing_size,
+            is_paused: false,
+            is_recovering: true,
+            metadata: session_metadata,
+        }
+    }
+    
+    /// Get the file path to write to (temporary if available, otherwise final)
+    pub fn get_write_path(&self) -> &PathBuf {
+        self.temp_file_path.as_ref().unwrap_or(&self.current_file_path)
+    }
+    
+    /// Finalize recording by moving temp file to final destination
+    pub fn finalize_recording(&mut self) -> anyhow::Result<()> {
+        if let Some(temp_path) = &self.temp_file_path {
+            if temp_path.exists() {
+                // Move temporary file to final destination
+                std::fs::rename(temp_path, &self.current_file_path)?;
+                tracing::info!("Moved temp file {} to final destination {}", 
+                             temp_path.display(), self.current_file_path.display());
+            }
+            self.temp_file_path = None; // Clear temp path after successful move
+        }
+        Ok(())
+    }
+    
+    /// Clean up temporary file if recording is cancelled
+    pub fn cleanup_temp_file(&mut self) -> anyhow::Result<()> {
+        if let Some(temp_path) = &self.temp_file_path {
+            if temp_path.exists() {
+                std::fs::remove_file(temp_path)?;
+                tracing::info!("Removed temporary file: {}", temp_path.display());
+            }
+            self.temp_file_path = None;
+        }
+        Ok(())
+    }
+    
+    /// Update session metadata during recording
+    pub fn update_metadata(&mut self, metadata: RecordingMetadata) {
+        // Preserve technical metadata and update user fields
+        let mut updated_metadata = metadata;
+        updated_metadata.sample_rate = self.metadata.sample_rate;
+        updated_metadata.encoder = self.metadata.encoder.clone();
+        updated_metadata.encoding_date = self.metadata.encoding_date;
+        updated_metadata.bitrate = self.metadata.bitrate;
+        updated_metadata.duration_seconds = self.metadata.duration_seconds;
+        
+        self.metadata = updated_metadata;
     }
     
     /// Get elapsed time since recording started
@@ -397,5 +714,173 @@ impl RecordingPresets {
             bit_depth: 16,
             ..Default::default()
         }
+    }
+    
+    /// Get all available recording presets with metadata templates
+    pub fn get_all_presets() -> Vec<(&'static str, RecordingConfig)> {
+        vec![
+            ("High Quality Stereo", Self::high_quality_stereo()),
+            ("MP3 Standard", Self::mp3_standard()),
+            ("FLAC Lossless", Self::flac_lossless()),
+            ("Podcast", Self::podcast()),
+            ("DJ Mix", Self::dj_mix()),
+            ("Voice Recording", Self::voice_recording()),
+            ("Live Performance", Self::live_performance()),
+        ]
+    }
+    
+    /// DJ mix recording with comprehensive metadata
+    pub fn dj_mix() -> RecordingConfig {
+        let mut metadata = RecordingMetadata::default();
+        metadata.genre = Some("Electronic".to_string());
+        metadata.album_artist = Some("Various Artists".to_string());
+        metadata.comment = Some("DJ Mix recorded with Sendin Beats".to_string());
+        metadata.add_custom_tag("mix_type".to_string(), "live_mix".to_string());
+        metadata.add_custom_tag("equipment".to_string(), "virtual_mixer".to_string());
+        
+        RecordingConfig {
+            name: "DJ Mix".to_string(),
+            format: RecordingFormat {
+                mp3: Some(Mp3Settings { bitrate: 320 }),
+                wav: None,
+                flac: None,
+            },
+            filename_template: "DJ_Mix_{timestamp}_{title}".to_string(),
+            metadata,
+            sample_rate: 48000,
+            channels: 2,
+            bit_depth: 24,
+            ..Default::default()
+        }
+    }
+    
+    /// Voice recording with appropriate settings
+    pub fn voice_recording() -> RecordingConfig {
+        let mut metadata = RecordingMetadata::default();
+        metadata.genre = Some("Spoken Word".to_string());
+        metadata.comment = Some("Voice recording".to_string());
+        
+        RecordingConfig {
+            name: "Voice Recording".to_string(),
+            format: RecordingFormat {
+                mp3: Some(Mp3Settings { bitrate: 128 }),
+                wav: None,
+                flac: None,
+            },
+            filename_template: "Voice_{timestamp}_{title}".to_string(),
+            metadata,
+            sample_rate: 44100,
+            channels: 1, // Mono for voice
+            bit_depth: 16,
+            auto_stop_on_silence: true,
+            silence_threshold_db: -40.0,
+            silence_duration_sec: 2.0,
+            ..Default::default()
+        }
+    }
+    
+    /// Live performance recording with extended metadata
+    pub fn live_performance() -> RecordingConfig {
+        let mut metadata = RecordingMetadata::default();
+        metadata.album = Some("Live Performance".to_string());
+        metadata.comment = Some("Live performance recording".to_string());
+        metadata.add_custom_tag("recording_type".to_string(), "live".to_string());
+        metadata.add_custom_tag("venue".to_string(), "".to_string()); // User can fill in
+        
+        RecordingConfig {
+            name: "Live Performance".to_string(),
+            format: RecordingFormat {
+                wav: Some(WavSettings {}),
+                mp3: None,
+                flac: None,
+            },
+            filename_template: "Live_{timestamp}_{artist}_{title}".to_string(),
+            metadata,
+            sample_rate: 48000,
+            channels: 2,
+            bit_depth: 24,
+            max_duration_minutes: Some(180), // 3 hours max
+            ..Default::default()
+        }
+    }
+}
+
+/// Metadata templates for quick setup
+pub struct MetadataPresets;
+
+impl MetadataPresets {
+    /// Get all available metadata presets
+    pub fn get_all_presets() -> Vec<(&'static str, RecordingMetadata)> {
+        vec![
+            ("DJ Set", Self::dj_set()),
+            ("Podcast Episode", Self::podcast_episode()),
+            ("Music Track", Self::music_track()),
+            ("Voice Memo", Self::voice_memo()),
+            ("Live Mix", Self::live_mix()),
+            ("Demo Recording", Self::demo_recording()),
+        ]
+    }
+    
+    /// DJ set metadata template
+    pub fn dj_set() -> RecordingMetadata {
+        let mut metadata = RecordingMetadata::default();
+        metadata.genre = Some("Electronic".to_string());
+        metadata.album_artist = Some("Various Artists".to_string());
+        metadata.album = Some("DJ Set".to_string());
+        metadata.comment = Some("DJ set recorded live".to_string());
+        metadata.add_custom_tag("set_type".to_string(), "live_set".to_string());
+        metadata.add_custom_tag("genre_primary".to_string(), "electronic".to_string());
+        metadata
+    }
+    
+    /// Podcast episode metadata template
+    pub fn podcast_episode() -> RecordingMetadata {
+        let mut metadata = RecordingMetadata::default();
+        metadata.genre = Some("Podcast".to_string());
+        metadata.album = Some("Podcast Series".to_string());
+        metadata.comment = Some("Podcast episode".to_string());
+        metadata.add_custom_tag("episode_type".to_string(), "full_episode".to_string());
+        metadata.add_custom_tag("show_notes".to_string(), "".to_string());
+        metadata
+    }
+    
+    /// Music track metadata template  
+    pub fn music_track() -> RecordingMetadata {
+        let mut metadata = RecordingMetadata::default();
+        metadata.track_number = Some(1);
+        metadata.add_custom_tag("recording_studio".to_string(), "Home Studio".to_string());
+        metadata.add_custom_tag("producer".to_string(), "".to_string());
+        metadata
+    }
+    
+    /// Voice memo metadata template
+    pub fn voice_memo() -> RecordingMetadata {
+        let mut metadata = RecordingMetadata::default();
+        metadata.genre = Some("Voice Memo".to_string());
+        metadata.comment = Some("Quick voice note".to_string());
+        metadata.add_custom_tag("memo_type".to_string(), "personal".to_string());
+        metadata
+    }
+    
+    /// Live mix metadata template
+    pub fn live_mix() -> RecordingMetadata {
+        let mut metadata = RecordingMetadata::default();
+        metadata.genre = Some("Electronic".to_string());
+        metadata.album = Some("Live Mix Series".to_string());
+        metadata.album_artist = Some("Various Artists".to_string());
+        metadata.comment = Some("Live DJ mix with real-time effects".to_string());
+        metadata.add_custom_tag("mix_style".to_string(), "continuous".to_string());
+        metadata.add_custom_tag("bpm_range".to_string(), "120-140".to_string());
+        metadata
+    }
+    
+    /// Demo recording metadata template
+    pub fn demo_recording() -> RecordingMetadata {
+        let mut metadata = RecordingMetadata::default();
+        metadata.album = Some("Demo".to_string());
+        metadata.comment = Some("Demo recording for reference".to_string());
+        metadata.add_custom_tag("demo_version".to_string(), "1.0".to_string());
+        metadata.add_custom_tag("recording_quality".to_string(), "demo".to_string());
+        metadata
     }
 }

@@ -6,13 +6,14 @@
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::fs::File;
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tracing::{info, warn, debug};
 
-use super::types::{RecordingConfig, RecordingSession, RecordingStatus, RecordingHistoryEntry};
+use super::types::{RecordingConfig, RecordingSession, RecordingStatus, RecordingHistoryEntry, RecordingMetadata, RecordingFormat};
 use super::encoders::{AudioEncoder, EncoderFactory};
 use super::filename_generation::{FilenameGenerator, PathManager};
 use super::silence_detection::{SilenceDetector, AudioQualityAnalyzer};
@@ -73,21 +74,28 @@ impl RecordingWriter {
         })
     }
     
-    /// Start recording - opens file and initializes encoder
+    /// Start recording - opens file and initializes encoder with temporary file support
     pub async fn start(&mut self) -> Result<()> {
         if self.is_writing {
             return Err(anyhow::anyhow!("Recording already started"));
         }
         
+        // Get write path and update start time
+        let write_path = self.session.get_write_path().clone();
+        self.session.start_time = SystemTime::now();
+        
         // Create file and buffered writer
-        let file = File::create(&self.session.current_file_path).await
-            .with_context(|| format!("Failed to create recording file: {}", self.session.current_file_path.display()))?;
+        let file = File::create(&write_path).await
+            .with_context(|| format!("Failed to create recording file: {}", write_path.display()))?;
         
         self.file_writer = Some(BufWriter::new(file));
         self.is_writing = true;
-        self.session.start_time = SystemTime::now();
         
-        info!("Started recording to: {}", self.session.current_file_path.display());
+        // Update session metadata with encoder info
+        let encoder_name = self.encoder.get_metadata().encoder_name.unwrap_or("WAV".to_string());
+        self.session.metadata.set_technical_metadata(&self.session.config, &encoder_name);
+        
+        info!("Started recording to temporary file: {}", write_path.display());
         Ok(())
     }
     
@@ -169,11 +177,14 @@ impl RecordingWriter {
         Ok(())
     }
     
-    /// Stop recording and finalize file
+    /// Stop recording and finalize file with temporary file handling
     pub async fn stop(&mut self) -> Result<RecordingHistoryEntry> {
         if !self.is_writing {
             return Err(anyhow::anyhow!("Recording not started"));
         }
+        
+        // Update final metadata
+        self.session.metadata.set_duration(self.session.duration_seconds);
         
         // Finalize encoder and write any remaining data
         let final_data = self.encoder.finalize()
@@ -191,7 +202,7 @@ impl RecordingWriter {
             }
         }
         
-        // Close file writer
+        // Close file writer before moving temp file
         if let Some(mut writer) = self.file_writer.take() {
             writer.flush().await
                 .with_context(|| "Failed to flush writer on close")?;
@@ -199,6 +210,10 @@ impl RecordingWriter {
         
         self.is_writing = false;
         let end_time = SystemTime::now();
+        
+        // Move temporary file to final destination (atomic operation)
+        self.session.finalize_recording()
+            .with_context(|| "Failed to finalize recording file")?;
         
         // Create history entry
         let history_entry = RecordingHistoryEntry::from_session(&self.session, end_time);
@@ -256,7 +271,10 @@ impl RecordingWriter {
 impl Drop for RecordingWriter {
     fn drop(&mut self) {
         if self.is_writing {
-            warn!("RecordingWriter dropped while still recording - file may be incomplete");
+            warn!("RecordingWriter dropped while still recording - cleaning up temporary file");
+            if let Err(e) = self.session.cleanup_temp_file() {
+                warn!("Failed to cleanup temporary file on drop: {}", e);
+            }
         }
     }
 }
@@ -274,6 +292,115 @@ impl RecordingWriterManager {
             writers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             history: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         }
+    }
+    
+    /// Initialize and scan for recoverable temporary files
+    pub async fn initialize(&self) -> Result<Vec<String>> {
+        let mut recovered_files = Vec::new();
+        
+        // Get common recording directories to scan
+        let mut scan_dirs = Vec::new();
+        
+        // Add default audio directory
+        if let Some(audio_dir) = dirs::audio_dir() {
+            scan_dirs.push(audio_dir);
+        }
+        
+        // Add current directory as fallback
+        scan_dirs.push(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        
+        for dir in scan_dirs {
+            if let Ok(recovered) = self.scan_directory_for_temp_files(&dir).await {
+                recovered_files.extend(recovered);
+            }
+        }
+        
+        info!("Recording writer manager initialized, recovered {} temp files", recovered_files.len());
+        Ok(recovered_files)
+    }
+    
+    /// Scan a directory for recoverable temporary files
+    async fn scan_directory_for_temp_files(&self, dir: &PathBuf) -> Result<Vec<String>> {
+        use tokio::fs;
+        
+        let mut recovered = Vec::new();
+        
+        if !dir.exists() {
+            return Ok(recovered);
+        }
+        
+        let mut entries = fs::read_dir(dir).await?;
+        
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            
+            // Look for .tmp files
+            if let Some(extension) = path.extension() {
+                if extension == "tmp" {
+                    // Check if it's one of our audio temp files
+                    if let Some(stem) = path.file_stem() {
+                        let stem_str = stem.to_string_lossy();
+                        if stem_str.ends_with(".wav") || stem_str.ends_with(".mp3") || stem_str.ends_with(".flac") {
+                            // Try to recover this file
+                            match self.attempt_recovery(&path).await {
+                                Ok(final_path) => {
+                                    info!("Recovered temporary file: {} -> {}", path.display(), final_path);
+                                    recovered.push(final_path);
+                                }
+                                Err(e) => {
+                                    warn!("Failed to recover temp file {}: {}", path.display(), e);
+                                    // Clean up failed recovery attempt
+                                    let _ = fs::remove_file(&path).await;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        Ok(recovered)
+    }
+    
+    /// Attempt to recover a temporary file
+    async fn attempt_recovery(&self, temp_path: &PathBuf) -> Result<String> {
+        use tokio::fs;
+        
+        // Get the final path by removing .tmp extension
+        let final_path = if let Some(stem) = temp_path.file_stem() {
+            temp_path.with_file_name(stem)
+        } else {
+            return Err(anyhow::anyhow!("Invalid temp file name"));
+        };
+        
+        // Make sure the final path doesn't already exist
+        let unique_final_path = super::filename_generation::PathManager::make_unique_filename(&final_path);
+        
+        // Move the temp file to the final location
+        fs::rename(temp_path, &unique_final_path).await?;
+        
+        // Add to history as a recovered recording
+        let metadata = RecordingMetadata::default();
+        let file_size = fs::metadata(&unique_final_path).await?.len();
+        
+        let history_entry = RecordingHistoryEntry {
+            id: uuid::Uuid::new_v4().to_string(),
+            config_name: "Recovered Recording".to_string(),
+            file_path: unique_final_path.clone(),
+            start_time: SystemTime::now(), // Unknown original start time
+            end_time: SystemTime::now(),
+            duration_seconds: 0.0, // Unknown duration
+            file_size_bytes: file_size,
+            format: RecordingFormat::default(), // Assume WAV
+            metadata,
+        };
+        
+        {
+            let mut history = self.history.lock().await;
+            history.push(history_entry);
+        }
+        
+        Ok(unique_final_path.to_string_lossy().to_string())
     }
     
     /// Start a new recording
@@ -429,6 +556,19 @@ impl RecordingWriterManager {
         match self.history.try_lock() {
             Ok(history) => Ok(history.clone()),
             Err(_) => Ok(Vec::new())
+        }
+    }
+
+    /// Update metadata for a specific recording session
+    pub async fn update_session_metadata(&self, session_id: &str, metadata: RecordingMetadata) -> Result<()> {
+        let writers = self.writers.lock().await;
+        if let Some(writer_arc) = writers.get(session_id) {
+            let mut writer = writer_arc.lock().await;
+            writer.session.update_metadata(metadata);
+            info!("Updated metadata for session {}", session_id);
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Recording session {} not found", session_id))
         }
     }
 }

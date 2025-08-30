@@ -35,6 +35,7 @@ pub struct EncoderMetadata {
     pub bit_depth: u16,
     pub samples_encoded: u64,
     pub bytes_written: u64,
+    pub encoder_name: Option<String>,
 }
 
 impl Default for EncoderMetadata {
@@ -45,6 +46,7 @@ impl Default for EncoderMetadata {
             bit_depth: 0,
             samples_encoded: 0,
             bytes_written: 0,
+            encoder_name: None,
         }
     }
 }
@@ -141,6 +143,7 @@ impl AudioEncoder for WavEncoder {
             bit_depth: config.bit_depth,
             samples_encoded: 0,
             bytes_written: 0,
+            encoder_name: Some("WAV PCM".to_string()),
         };
         self.header_written = false;
         
@@ -245,6 +248,7 @@ impl AudioEncoder for Mp3Encoder {
             bit_depth: config.bit_depth,
             samples_encoded: 0,
             bytes_written: 0,
+            encoder_name: Some(format!("MP3 LAME {}kbps", mp3_settings.bitrate)),
         };
         
         self.configure_encoder(config, mp3_settings)?;
@@ -311,6 +315,7 @@ impl AudioEncoder for FlacEncoder {
             bit_depth: config.bit_depth,
             samples_encoded: 0,
             bytes_written: 0,
+            encoder_name: Some(format!("FLAC Level {}", flac_settings.compression_level)),
         };
         self.compression_level = flac_settings.compression_level;
         
