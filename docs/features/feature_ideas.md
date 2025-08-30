@@ -1,17 +1,3 @@
-For our next feature, I'd like to add the ability to record the audio output of
-the mixer to an mp3 or flac file. This should record from the output directly,
-and not through the DJ Client.
-
-This should include
-
-- [] ability to start/stop recording without affecting the mixer output
-- [] file configuration, with name, format, location, and ability to set file
-  metadata (title, artist, album, genre)
-
-If there are any other features that you think are important, or fundamentally
-necessary to include on the recording feature, add to the list that i've
-provided
-
 For next steps:
 
 I want to rethink the DJ client / mixer integration. Right now these are in
