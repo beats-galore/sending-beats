@@ -1,6 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState, useCallback } from 'react';
-import type { RecordingConfig, RecordingStatus, RecordingHistoryEntry, RecordingMetadata, MetadataPreset } from '../types/audio.types';
+import type { RecordingConfig, RecordingStatus, RecordingHistoryEntry, RecordingMetadata, MetadataPreset, RecordingFormat } from '../types/audio.types';
+
+// Re-export types for convenience
+export type { RecordingConfig, RecordingStatus, RecordingHistoryEntry, RecordingMetadata, MetadataPreset, RecordingFormat };
 
 export type RecordingActions = {
   startRecording: (config: RecordingConfig) => Promise<string>;

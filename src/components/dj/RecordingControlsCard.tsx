@@ -126,7 +126,7 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(({ disable
   // Quick recording config state
   const [quickConfig, setQuickConfig] = useState<Partial<RecordingConfig>>({
     name: 'Quick Recording',
-    format: { mp3: { bitrate: 192 } },
+    format: { mp3: { bitrate: 192 } }, // MP3 encoder now properly implemented
     filename_template: '',
     metadata: {
       title: '',

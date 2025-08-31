@@ -133,7 +133,7 @@ export const RecordingHistoryCard = memo<RecordingHistoryCardProps>(
     }, []);
     
     const sortedHistory = [...history].sort((a, b) => 
-      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      new Date(b.start_time).getTime() - new Date(a.start_time).getTime()
     );
     
     return (
@@ -177,7 +177,7 @@ export const RecordingHistoryCard = memo<RecordingHistoryCardProps>(
                             <Stack gap={2} style={{ flex: 1 }}>
                               <Group gap="xs" align="center">
                                 <Text size="sm" fw={500} lineClamp={1}>
-                                  {entry.config.metadata.title || fileName}
+                                  {entry.metadata.title || fileName}
                                 </Text>
                                 <Badge 
                                   size="xs" 
@@ -188,15 +188,15 @@ export const RecordingHistoryCard = memo<RecordingHistoryCardProps>(
                                 </Badge>
                               </Group>
                               
-                              {entry.config.metadata.artist && (
+                              {entry.metadata.artist && (
                                 <Text size="xs" c="dimmed">
-                                  by {entry.config.metadata.artist}
+                                  by {entry.metadata.artist}
                                 </Text>
                               )}
                               
                               <Group gap="md">
                                 <Text size="xs" c="dimmed">
-                                  {formatDate(entry.created_at)}
+                                  {formatDate(entry.start_time)}
                                 </Text>
                                 <Text size="xs" c="dimmed">
                                   {formatDuration(entry.duration_seconds)}
@@ -267,27 +267,27 @@ export const RecordingHistoryCard = memo<RecordingHistoryCardProps>(
             <Stack gap="md">
               <Group>
                 <Text fw={500}>Title:</Text>
-                <Text>{selectedEntry.config.metadata.title || 'Untitled'}</Text>
+                <Text>{selectedEntry.metadata.title || 'Untitled'}</Text>
               </Group>
               
-              {selectedEntry.config.metadata.artist && (
+              {selectedEntry.metadata.artist && (
                 <Group>
                   <Text fw={500}>Artist:</Text>
-                  <Text>{selectedEntry.config.metadata.artist}</Text>
+                  <Text>{selectedEntry.metadata.artist}</Text>
                 </Group>
               )}
               
-              {selectedEntry.config.metadata.album && (
+              {selectedEntry.metadata.album && (
                 <Group>
                   <Text fw={500}>Album:</Text>
-                  <Text>{selectedEntry.config.metadata.album}</Text>
+                  <Text>{selectedEntry.metadata.album}</Text>
                 </Group>
               )}
               
-              {selectedEntry.config.metadata.genre && (
+              {selectedEntry.metadata.genre && (
                 <Group>
                   <Text fw={500}>Genre:</Text>
-                  <Text>{selectedEntry.config.metadata.genre}</Text>
+                  <Text>{selectedEntry.metadata.genre}</Text>
                 </Group>
               )}
               
@@ -308,17 +308,17 @@ export const RecordingHistoryCard = memo<RecordingHistoryCardProps>(
               
               <Group>
                 <Text fw={500}>Sample Rate:</Text>
-                <Text>{selectedEntry.config.sample_rate} Hz</Text>
+                <Text>{selectedEntry.metadata.sample_rate || 'Unknown'} Hz</Text>
               </Group>
               
               <Group>
                 <Text fw={500}>Channels:</Text>
-                <Text>{selectedEntry.config.channels}</Text>
+                <Text>2</Text>
               </Group>
               
               <Group>
                 <Text fw={500}>Recorded:</Text>
-                <Text>{formatDate(selectedEntry.created_at)}</Text>
+                <Text>{formatDate(selectedEntry.start_time)}</Text>
               </Group>
               
               <Stack gap="xs">
@@ -328,11 +328,11 @@ export const RecordingHistoryCard = memo<RecordingHistoryCardProps>(
                 </Text>
               </Stack>
               
-              {selectedEntry.config.metadata.comment && (
+              {selectedEntry.metadata.comment && (
                 <Stack gap="xs">
                   <Text fw={500}>Comment:</Text>
                   <Text size="sm" c="dimmed">
-                    {selectedEntry.config.metadata.comment}
+                    {selectedEntry.metadata.comment}
                   </Text>
                 </Stack>
               )}
