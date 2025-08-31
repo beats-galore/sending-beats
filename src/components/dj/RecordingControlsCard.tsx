@@ -406,91 +406,50 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(({ disable
           </Group>
         )}
 
-        {/* Quick Configuration */}
-        {!isRecording && (
-          <div className={classes.configSection}>
-            <Stack gap="sm">
-              <Group justify="space-between" align="center">
-                <Text size="sm" fw={500} c="gray.3">
-                  Quick Settings
+        {/* Configuration - Show settings and metadata forms */}
+        <div className={classes.configSection}>
+          <Stack gap="sm">
+            <Group justify="space-between" align="center">
+              <Text size="sm" fw={500} c="gray.3">
+                {isRecording ? 'Recording Settings' : 'Quick Settings'}
+              </Text>
+              <Button
+                variant="subtle"
+                size="xs"
+                leftSection={<IconSettings size={14} />}
+                onClick={() => setShowAdvanced(!showAdvanced)}
+              >
+                {showAdvanced ? 'Simple' : 'Advanced'}
+              </Button>
+            </Group>
+
+            {/* Metadata Form - Show when Advanced is enabled */}
+            {showAdvanced && (
+              <div style={{ 
+                backgroundColor: '#25262B', 
+                padding: '16px', 
+                borderRadius: '8px', 
+                border: '1px solid #373A40',
+                marginTop: '8px'
+              }}>
+                <Text size="sm" fw={500} c="#C1C2C5" mb="md">
+                  Recording Metadata
                 </Text>
-                <Button
-                  variant="subtle"
-                  size="xs"
-                  leftSection={<IconSettings size={14} />}
-                  onClick={() => setShowAdvanced(!showAdvanced)}
-                >
-                  {showAdvanced ? 'Simple' : 'Advanced'}
-                </Button>
-              </Group>
-
-              {/* Quick Recording Fields - Show minimal for quick start */}
-              <Group grow>
-                <TextInput
-                  label="Title"
-                  placeholder="Enter recording title"
-                  value={quickConfig.metadata?.title || ''}
-                  onChange={(e) =>
+                <MetadataForm
+                  metadata={quickConfig.metadata || {}}
+                  onChange={(metadata) =>
                     setQuickConfig((prev) => ({
                       ...prev,
-                      metadata: {
-                        ...prev.metadata,
-                        title: e.target.value,
-                      },
+                      metadata,
                     }))
                   }
-                  size="sm"
-                  styles={{
-                    label: { color: '#C1C2C5' },
-                    input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' },
-                  }}
+                  showPresetButtons={false}
                 />
-                <TextInput
-                  label="Artist"
-                  placeholder="Enter artist name"
-                  value={quickConfig.metadata?.artist || ''}
-                  onChange={(e) =>
-                    setQuickConfig((prev) => ({
-                      ...prev,
-                      metadata: {
-                        ...prev.metadata,
-                        artist: e.target.value,
-                      },
-                    }))
-                  }
-                  size="sm"
-                  styles={{
-                    label: { color: '#C1C2C5' },
-                    input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' },
-                  }}
-                />
-              </Group>
-              
-              {/* Full Metadata Form in Advanced Mode */}
-              {showAdvanced && (
-                <div style={{ 
-                  backgroundColor: '#25262B', 
-                  padding: '16px', 
-                  borderRadius: '8px', 
-                  border: '1px solid #373A40',
-                  marginTop: '8px'
-                }}>
-                  <Text size="sm" fw={500} c="#C1C2C5" mb="md">
-                    Complete Metadata
-                  </Text>
-                  <MetadataForm
-                    metadata={quickConfig.metadata || {}}
-                    onChange={(metadata) =>
-                      setQuickConfig((prev) => ({
-                        ...prev,
-                        metadata,
-                      }))
-                    }
-                    showPresetButtons={false}
-                  />
-                </div>
-              )}
+              </div>
+            )}
 
+            {/* Output Directory - Only show when not recording */}
+            {!isRecording && (
               <Stack gap="xs">
                 <Text size="sm" fw={500} c="#C1C2C5">
                   Output Directory
@@ -509,7 +468,10 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(({ disable
                   </Button>
                 </Group>
               </Stack>
-
+            )}
+            
+            {/* Format and Filename - Only show when not recording */}
+            {!isRecording && (
               <Group grow>
                 <Select
                   label="Format"
@@ -539,8 +501,10 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(({ disable
                   }}
                 />
               </Group>
+            )}
 
-              {showAdvanced && (
+            {/* Advanced Recording Settings - Available during recording */}
+            {showAdvanced && (
                 <Stack gap="sm">
                   <Switch
                     label="Auto-stop on silence"
@@ -609,7 +573,6 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(({ disable
               )}
             </Stack>
           </div>
-        )}
 
         {/* Storage Info */}
         <Group justify="space-between">

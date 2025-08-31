@@ -95,7 +95,7 @@ export const MetadataForm = memo<MetadataFormProps>(
         )}
 
         {/* Core Metadata Fields */}
-        <Title order={6}>Basic Information</Title>
+        <Title order={6} c="#C1C2C5">Basic Information</Title>
         <Grid>
           <Grid.Col span={6}>
             <TextInput
@@ -103,6 +103,11 @@ export const MetadataForm = memo<MetadataFormProps>(
               value={metadata.title || ''}
               onChange={(e) => updateField('title', e.target.value)}
               placeholder="Track/recording title"
+              size="sm"
+              styles={{
+                label: { color: '#C1C2C5' },
+                input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' },
+              }}
             />
           </Grid.Col>
           <Grid.Col span={6}>
@@ -111,6 +116,11 @@ export const MetadataForm = memo<MetadataFormProps>(
               value={metadata.artist || ''}
               onChange={(e) => updateField('artist', e.target.value)}
               placeholder="Primary artist"
+              size="sm"
+              styles={{
+                label: { color: '#C1C2C5' },
+                input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' },
+              }}
             />
           </Grid.Col>
           <Grid.Col span={6}>
@@ -119,6 +129,11 @@ export const MetadataForm = memo<MetadataFormProps>(
               value={metadata.album || ''}
               onChange={(e) => updateField('album', e.target.value)}
               placeholder="Album or collection name"
+              size="sm"
+              styles={{
+                label: { color: '#C1C2C5' },
+                input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' },
+              }}
             />
           </Grid.Col>
           <Grid.Col span={6}>
@@ -130,12 +145,17 @@ export const MetadataForm = memo<MetadataFormProps>(
               searchable
               clearable
               placeholder="Select or type genre"
+              size="sm"
+              styles={{
+                label: { color: '#C1C2C5' },
+                input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' },
+              }}
             />
           </Grid.Col>
         </Grid>
 
         {/* Extended Fields */}
-        <Title order={6} mt="md">Extended Information</Title>
+        <Title order={6} mt="md" c="#C1C2C5">Extended Information</Title>
         <Grid>
           <Grid.Col span={6}>
             <TextInput
@@ -143,6 +163,11 @@ export const MetadataForm = memo<MetadataFormProps>(
               value={metadata.album_artist || ''}
               onChange={(e) => updateField('album_artist', e.target.value)}
               placeholder="Various Artists, etc."
+              size="sm"
+              styles={{
+                label: { color: '#C1C2C5' },
+                input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' },
+              }}
             />
           </Grid.Col>
           <Grid.Col span={6}>
@@ -151,6 +176,11 @@ export const MetadataForm = memo<MetadataFormProps>(
               value={metadata.composer || ''}
               onChange={(e) => updateField('composer', e.target.value)}
               placeholder="Music composer"
+              size="sm"
+              styles={{
+                label: { color: '#C1C2C5' },
+                input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' },
+              }}
             />
           </Grid.Col>
           <Grid.Col span={3}>
@@ -161,6 +191,11 @@ export const MetadataForm = memo<MetadataFormProps>(
               min={1}
               max={999}
               placeholder="1"
+              size="sm"
+              styles={{
+                label: { color: '#C1C2C5' },
+                input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' },
+              }}
             />
           </Grid.Col>
           <Grid.Col span={3}>
@@ -171,6 +206,11 @@ export const MetadataForm = memo<MetadataFormProps>(
               min={1}
               max={999}
               placeholder="10"
+              size="sm"
+              styles={{
+                label: { color: '#C1C2C5' },
+                input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' },
+              }}
             />
           </Grid.Col>
           <Grid.Col span={3}>
@@ -181,6 +221,11 @@ export const MetadataForm = memo<MetadataFormProps>(
               min={1900}
               max={2100}
               placeholder="2024"
+              size="sm"
+              styles={{
+                label: { color: '#C1C2C5' },
+                input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' },
+              }}
             />
           </Grid.Col>
           <Grid.Col span={3}>
@@ -191,6 +236,11 @@ export const MetadataForm = memo<MetadataFormProps>(
               min={1}
               max={999}
               placeholder="128"
+              size="sm"
+              styles={{
+                label: { color: '#C1C2C5' },
+                input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' },
+              }}
             />
           </Grid.Col>
           <Grid.Col span={6}>
@@ -199,6 +249,11 @@ export const MetadataForm = memo<MetadataFormProps>(
               value={metadata.copyright || ''}
               onChange={(e) => updateField('copyright', e.target.value)}
               placeholder="© 2024 Artist Name"
+              size="sm"
+              styles={{
+                label: { color: '#C1C2C5' },
+                input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' },
+              }}
             />
           </Grid.Col>
           <Grid.Col span={6}>
@@ -207,6 +262,11 @@ export const MetadataForm = memo<MetadataFormProps>(
               value={metadata.isrc || ''}
               onChange={(e) => updateField('isrc', e.target.value)}
               placeholder="International Standard Recording Code"
+              size="sm"
+              styles={{
+                label: { color: '#C1C2C5' },
+                input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' },
+              }}
             />
           </Grid.Col>
         </Grid>
@@ -217,10 +277,15 @@ export const MetadataForm = memo<MetadataFormProps>(
           onChange={(e) => updateField('comment', e.target.value)}
           placeholder="Additional notes about this recording..."
           rows={3}
+          size="sm"
+          styles={{
+            label: { color: '#C1C2C5' },
+            input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' },
+          }}
         />
 
         {/* Custom Tags */}
-        <Title order={6} mt="md">Custom Tags</Title>
+        <Title order={6} mt="md" c="#C1C2C5">Custom Tags</Title>
         {metadata.custom_tags && Object.keys(metadata.custom_tags).length > 0 && (
           <Stack gap="xs">
             {Object.entries(metadata.custom_tags).map(([key, value]) => (
@@ -248,6 +313,11 @@ export const MetadataForm = memo<MetadataFormProps>(
             onChange={(e) => setCustomTagKey(e.target.value)}
             placeholder="e.g., mood, energy_level"
             style={{ flex: 1 }}
+            size="sm"
+            styles={{
+              label: { color: '#C1C2C5' },
+              input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' },
+            }}
           />
           <TextInput
             label="Tag Value"
@@ -255,6 +325,11 @@ export const MetadataForm = memo<MetadataFormProps>(
             onChange={(e) => setCustomTagValue(e.target.value)}
             placeholder="e.g., energetic, chill"
             style={{ flex: 1 }}
+            size="sm"
+            styles={{
+              label: { color: '#C1C2C5' },
+              input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' },
+            }}
           />
           <Button
             leftSection={<IconPlus size={16} />}
@@ -269,7 +344,7 @@ export const MetadataForm = memo<MetadataFormProps>(
         {(metadata.encoder || metadata.sample_rate || metadata.bitrate) && (
           <>
             <Divider />
-            <Title order={6}>Technical Information</Title>
+            <Title order={6} c="#C1C2C5">Technical Information</Title>
             <Grid>
               {metadata.encoder && (
                 <Grid.Col span={6}>
