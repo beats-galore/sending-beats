@@ -140,8 +140,18 @@ impl RecordingService {
         let processing_session_id = session_id.clone();
         tokio::spawn(async move {
             info!("🎵 Starting audio processing loop for session: {}", processing_session_id);
+            let mut sample_count = 0u64;
+            let mut batch_count = 0u64;
             
             while let Ok(samples) = audio_rx.recv().await {
+                batch_count += 1;
+                sample_count += samples.len() as u64;
+                
+                // Log first few batches to see if we're getting audio, then every 100 batches
+                if batch_count <= 5 || batch_count % 100 == 0 {
+                    info!("🎵 Processing batch #{}, samples received: {}, total samples: {}", batch_count, samples.len(), sample_count);
+                }
+                
                 // Process the audio samples for this recording session
                 match writer_manager.process_samples(&processing_session_id, &samples).await {
                     Ok(should_continue) => {
@@ -152,12 +162,14 @@ impl RecordingService {
                     }
                     Err(e) => {
                         error!("❌ Failed to process audio samples for session {}: {}", processing_session_id, e);
+                        error!("❌ Error occurred at batch #{}, total samples processed: {}", batch_count, sample_count);
                         break;
                     }
                 }
             }
             
-            info!("🔚 Audio processing loop ended for session: {}", processing_session_id);
+            info!("🔚 Audio processing loop ended for session: {} (processed {} batches, {} total samples)", 
+                  processing_session_id, batch_count, sample_count);
         });
         
         info!("Recording service started session: {}", session_id);

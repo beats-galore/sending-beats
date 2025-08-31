@@ -112,7 +112,14 @@ impl RecordingWriter {
         // Update session statistics
         self.samples_processed += samples.len() as u64;
         let sample_rate = self.session.config.sample_rate as f64;
+        let old_duration = self.session.duration_seconds;
         self.session.duration_seconds = self.samples_processed as f64 / sample_rate / self.session.config.channels as f64;
+        
+        // Debug log session updates every 1000 sample batches to track progress
+        if self.samples_processed % (sample_rate as u64 * self.session.config.channels as u64) == 0 {
+            info!("📊 Session {} stats: duration {:.1}s (was {:.1}s), samples {}, file_size {}B", 
+                  self.session.id, self.session.duration_seconds, old_duration, self.samples_processed, self.session.file_size_bytes);
+        }
         
         // Analyze audio quality
         let quality = self.quality_analyzer.analyze_samples(samples);
