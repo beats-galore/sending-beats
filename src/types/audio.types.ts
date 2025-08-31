@@ -195,7 +195,7 @@ export type RecordingSession = {
 export type RecordingStatus = {
   is_recording: boolean;
   is_paused: boolean;
-  session?: RecordingSession;
+  current_session?: RecordingSession;  // Fixed to match backend serialization
   active_writers_count: number;
   available_space_gb: number;
   total_recordings: number;
