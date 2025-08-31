@@ -1,5 +1,8 @@
 ## Template for New Refactors
 
+Format the filename with snake case,
+i.e.`<high>_<level>_<refactor>_<description>.md`
+
 ### Refactor Title
 
 **Status**: [PLANNED/IN_PROGRESS/COMPLETED]  

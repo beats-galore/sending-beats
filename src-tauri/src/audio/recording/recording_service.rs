@@ -116,7 +116,7 @@ impl RecordingService {
     }
     
     /// Start a new recording with the given configuration and audio receiver
-    pub async fn start_recording(&self, config: RecordingConfig, _audio_rx: tokio::sync::broadcast::Receiver<Vec<f32>>) -> Result<String> {
+    pub async fn start_recording(&self, config: RecordingConfig, mut audio_rx: tokio::sync::broadcast::Receiver<Vec<f32>>) -> Result<String> {
         // Validate configuration
         config.validate()?;
         
@@ -134,6 +134,31 @@ impl RecordingService {
             let mut active_id = self.active_session_id.lock().await;
             *active_id = Some(session_id.clone());
         }
+        
+        // Spawn audio processing task to continuously read samples and write to recording
+        let writer_manager = Arc::clone(&self.writer_manager);
+        let processing_session_id = session_id.clone();
+        tokio::spawn(async move {
+            info!("🎵 Starting audio processing loop for session: {}", processing_session_id);
+            
+            while let Ok(samples) = audio_rx.recv().await {
+                // Process the audio samples for this recording session
+                match writer_manager.process_samples(&processing_session_id, &samples).await {
+                    Ok(should_continue) => {
+                        if !should_continue {
+                            info!("🛑 Auto-stop triggered for session: {}", processing_session_id);
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        error!("❌ Failed to process audio samples for session {}: {}", processing_session_id, e);
+                        break;
+                    }
+                }
+            }
+            
+            info!("🔚 Audio processing loop ended for session: {}", processing_session_id);
+        });
         
         info!("Recording service started session: {}", session_id);
         Ok(session_id)

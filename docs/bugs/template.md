@@ -1,5 +1,10 @@
 ## Template for New Bugs
 
+### Filename
+
+Format the filename with snake case, i.e.
+`<high>_<level>_<bug>_<description>.md`
+
 ### Bug Title
 
 **Status**: [UNRESOLVED/IN_PROGRESS/RESOLVED]  
