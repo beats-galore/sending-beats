@@ -216,17 +216,17 @@ impl ApplicationAudioManager {
     
     /// Get statistics for all active taps
     pub async fn get_tap_stats(&self) -> Vec<TapStats> {
-        #[cfg(target_os = "macos")]
-        {
-            let taps = self.active_taps.read().await;
-            taps.values().map(|tap| tap.get_stats()).collect()
+        let taps = self.active_taps.read().await;
+        let mut stats = Vec::new();
+        
+        for tap in taps.values() {
+            stats.push(tap.get_stats().await);
         }
         
-        #[cfg(not(target_os = "macos"))]
-        {
-            Vec::new()
-        }
+        stats.sort_by_key(|s| s.pid);
+        stats
     }
+    
     
     /// Check if audio capture permissions are granted
     async fn check_audio_capture_permissions(&self) -> bool {
@@ -354,7 +354,7 @@ impl ApplicationAudioManager {
                     let taps = active_taps.read().await;
                     
                     for (pid, tap) in taps.iter() {
-                        let stats = tap.get_stats();
+                        let stats = tap.get_stats().await;
                         if !stats.process_alive || stats.error_count > 5 {
                             info!("🧹 Marking tap for cleanup: PID {} (alive: {}, errors: {})", 
                                   pid, stats.process_alive, stats.error_count);
@@ -456,7 +456,7 @@ impl ApplicationAudioManager {
             let taps = self.active_taps.read().await;
             
             for (pid, tap) in taps.iter() {
-                let stats = tap.get_stats();
+                let stats = tap.get_stats().await;
                 if !stats.process_alive || stats.error_count > 5 {
                     taps_to_remove.push(*pid);
                 }

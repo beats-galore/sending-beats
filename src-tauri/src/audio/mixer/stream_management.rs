@@ -66,7 +66,7 @@ impl AudioInputStream {
     pub fn get_samples(&self) -> Vec<f32> {
         if let Ok(mut buffer) = self.audio_buffer.try_lock() {
             // **BUFFER UNDERRUN FIX**: Process available samples instead of waiting for full chunks
-            let _chunk_size = self.adaptive_chunk_size;
+            let chunk_size = self.adaptive_chunk_size;
             
             if buffer.is_empty() {
                 return Vec::new();  // No samples available at all

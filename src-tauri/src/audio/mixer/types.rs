@@ -158,6 +158,7 @@ impl VirtualMixer {
                 // Device is healthy, proceed with normal stream addition
                 // This would call the existing stream management logic
                 println!("✅ Device {} is healthy, proceeding with stream creation", device_id);
+                Ok(())
             }
             Ok(DeviceStatus::Disconnected) => {
                 self.audio_device_manager.report_device_error(
@@ -227,10 +228,11 @@ impl VirtualMixer {
         };
         
 
+
         let output_stream = Arc::new(AudioOutputStream::new(
             output_device.device_id.clone(),
             device_info.name.clone(),
-            sample_rate,
+            self.config.sample_rate,
         )?);
         
         // Add to output streams collection
@@ -241,7 +243,7 @@ impl VirtualMixer {
         
         // Update config to include this output device
         {
-            let mut config_guard = self.config.lock().unwrap();
+            let mut config_guard = self.shared_config.lock().unwrap();
             config_guard.output_devices.push(output_device.clone());
         }
         
@@ -251,7 +253,7 @@ impl VirtualMixer {
 
 
     /// Remove an output device from the mixer
-    pub async fn remove_output_device(&self, device_id: &str) -> Result<()> {
+    pub async fn remove_output_device(&self, device_id: &str) -> anyhow::Result<()> {
         // Remove from output streams collection
         let removed = self.output_streams.lock().await.remove(device_id);
         
@@ -280,12 +282,20 @@ impl VirtualMixer {
     
 
     /// Update output device configuration
-    pub async fn update_output_device(&self, device_id: &str, device: crate::audio::types::OutputDevice) -> anyhow::Result<()> {
-        use tracing::info;
-        info!("Updating output device {}: {:?}", device_id, device);
-        // TODO: Implement actual output device update
-        Ok(())
+  /// Update output device configuration
+  pub async fn update_output_device(&self, device_id: &str, updated_device: super::types::OutputDevice) -> Result<()> {
+    // Update config
+    {
+        let mut config_guard = self.shared_config.lock().unwrap();
+        if let Some(device) = config_guard.output_devices.iter_mut().find(|d| d.device_id == device_id) {
+            *device = updated_device;
+            println!("✅ Updated output device: {}", device_id);
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Output device not found in config: {}", device_id))
+        }
     }
+}
 
     /// Get all output devices
     pub async fn get_output_devices(&self) -> Vec<OutputDevice> {

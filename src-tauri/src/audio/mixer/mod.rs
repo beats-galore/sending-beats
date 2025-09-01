@@ -37,7 +37,7 @@ pub use timing_synchronization::{AudioClock, TimingSync, TimingMetrics};
 pub use stream_management::StreamInfo;
 
 // Re-export mixer core types
-pub use mixer_core::{ClockInfo, MixerStatus, HealthCheckResult, VirtualMixerHandle};
+pub use mixer_core::{ClockInfo, HealthCheckResult, VirtualMixerHandle};
 
 // Re-export stream management types for easier access
 pub use stream_management::{AudioInputStream, AudioOutputStream};
