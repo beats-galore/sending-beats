@@ -283,7 +283,7 @@ impl VirtualMixer {
 
     /// Update output device configuration
   /// Update output device configuration
-  pub async fn update_output_device(&self, device_id: &str, updated_device: super::types::OutputDevice) -> Result<()> {
+  pub async fn update_output_device(&self, device_id: &str, updated_device: super::types::OutputDevice) -> anyhow::Result<()> {
     // Update config
     {
         let mut config_guard = self.shared_config.lock().unwrap();

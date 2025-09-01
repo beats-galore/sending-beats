@@ -761,7 +761,7 @@ impl ApplicationAudioTap {
                      channels: channels as u32,
                      bits_per_sample: 32,
                  };
-                 return 
+                 return Err(anyhow::anyhow!("Aggregate device creation failed, cannot setup tap bridge: {}", e)) 
              }
          }
      }
