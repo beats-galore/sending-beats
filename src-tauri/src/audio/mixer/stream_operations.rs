@@ -357,21 +357,26 @@ impl VirtualMixer {
             
         info!("Output device config: {:?}", config);
         
+        // **AUDIO QUALITY FIX**: Get hardware output sample rate to match input processing
+        let hardware_output_sample_rate = config.sample_rate().0;
+        info!("🔧 OUTPUT SAMPLE RATE FIX: Hardware {} Hz, using hardware rate to match input processing", 
+                 hardware_output_sample_rate);
+        
         // Create AudioOutputStream structure
         let output_stream = AudioOutputStream::new(
             device_id.to_string(),
             device_name.clone(),
-            self.config.sample_rate,
+            hardware_output_sample_rate, // Use hardware sample rate instead of mixer sample rate
         )?;
         
         // Get reference to the buffer for the output callback
         let output_buffer = output_stream.input_buffer.clone();
         let target_sample_rate = self.config.sample_rate;
         
-        // Create stream config for output
+        // Create stream config for output using hardware sample rate
         let stream_config = cpal::StreamConfig {
             channels: 2, // Force stereo output
-            sample_rate: cpal::SampleRate(target_sample_rate),
+            sample_rate: config.sample_rate(), // Use hardware sample rate, not mixer sample rate
             buffer_size: cpal::BufferSize::Default,
         };
         
@@ -424,6 +429,36 @@ impl VirtualMixer {
             active_devices.insert(device_id.to_string());
         }
         
+        // **CRITICAL FIX**: Add to config.output_devices (missing from modularization)
+        // Get device info first (before acquiring config lock to avoid Send trait issue)
+        let device_info = self.audio_device_manager.get_device(device_id).await;
+        let device_name = device_info
+            .as_ref()
+            .map(|info| info.name.clone())
+            .unwrap_or_else(|| device_id.to_string());
+        
+        // Then acquire config lock and update
+        {
+            let mut config_guard = self.shared_config.lock().unwrap();
+            
+            // Create OutputDevice entry
+            let output_device = crate::audio::types::OutputDevice {
+                device_id: device_id.to_string(),
+                device_name,
+                enabled: true,
+                gain: 1.0,
+                is_monitor: false,
+            };
+            
+            // Remove any existing entry for this device
+            config_guard.output_devices.retain(|d| d.device_id != device_id);
+            
+            // Add the new entry
+            config_guard.output_devices.push(output_device);
+            
+            info!("✅ ADDED TO CONFIG: Device '{}' added to config.output_devices", device_id);
+        }
+        
         info!("✅ OUTPUT STREAM: Successfully set output stream with CPAL integration for device: {}", device_id);
         Ok(())
     }
@@ -433,11 +468,15 @@ impl VirtualMixer {
     async fn create_coreaudio_output_stream(&self, device_id: &str, coreaudio_device: crate::audio::types::CoreAudioDevice) -> Result<()> {
         info!("Creating CoreAudio output stream for device: {} (ID: {})", coreaudio_device.name, coreaudio_device.device_id);
         
+        // **AUDIO QUALITY FIX**: Use hardware sample rate to match input processing
+        info!("🔧 COREAUDIO SAMPLE RATE FIX: Hardware {} Hz, using hardware rate to match input processing", 
+              coreaudio_device.sample_rate);
+        
         // Create the actual CoreAudio stream
         let mut coreaudio_stream = crate::audio::devices::coreaudio_stream::CoreAudioOutputStream::new(
             coreaudio_device.device_id,
             coreaudio_device.name.clone(),
-            self.config.sample_rate,
+            coreaudio_device.sample_rate, // Use hardware sample rate instead of mixer sample rate
             coreaudio_device.channels,
         )?;
         
@@ -460,7 +499,7 @@ impl VirtualMixer {
         let output_stream = AudioOutputStream::new(
             device_id.to_string(),
             coreaudio_device.name.clone(),
-            self.config.sample_rate,
+            coreaudio_device.sample_rate, // Use hardware sample rate instead of mixer sample rate
         )?;
         
         // Store our wrapper 
@@ -628,43 +667,28 @@ impl VirtualMixer {
                             }
                         }
                         
-                        // **AUDIO QUALITY FIX**: Smart gain management instead of aggressive division
-                        // Only normalize if we have multiple overlapping channels with significant signal
+                        // **AUDIO QUALITY RESTORATION**: Remove aggressive gain processing that was causing crunchiness
+                        // The working version didn't have this complex normalization/limiting
+                        
+                        // Simple mixing gain control: only reduce if multiple channels are active
                         if active_channels > 1 {
-                            // Check if we actually need normalization by checking peak levels
-                            let buffer_peak = reusable_output_buffer.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                            
-                            // Only normalize if we're approaching clipping (> 0.8) with multiple channels
-                            if buffer_peak > 0.8 {
-                                let normalization_factor = 0.8 / buffer_peak; // Normalize to 80% max to prevent clipping
-                                for sample in reusable_output_buffer.iter_mut() {
-                                    *sample *= normalization_factor;
-                                }
-                                println!("🔧 GAIN CONTROL: Normalized {} channels, peak {:.3} -> {:.3}", 
-                                    active_channels, buffer_peak, buffer_peak * normalization_factor);
+                            // Simple channel mixing gain to prevent clipping when multiple channels sum
+                            let mixing_gain = 1.0 / (active_channels as f32).sqrt(); // Gentle reduction based on channel count
+                            for sample in reusable_output_buffer.iter_mut() {
+                                *sample *= mixing_gain;
                             }
-                            // If not approaching clipping, leave levels untouched for better dynamics
                         }
-                        // Single channels: NO normalization - preserve full dynamics
                         
-                        // **AUDIO QUALITY FIX**: Professional master gain instead of aggressive reduction
-                        let master_gain = 0.9f32; // Professional level - preserve dynamics!
-                        
-                        // Only apply master gain reduction if signal is actually hot
-                        let pre_master_peak = reusable_output_buffer.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                        
-                        if pre_master_peak > 0.95 {
-                            // Signal is very hot, apply conservative gain
-                            let conservative_gain = 0.8f32;
-                            for sample in reusable_output_buffer.iter_mut() {
-                                *sample *= conservative_gain;
-                            }
-                            println!("🔧 MASTER LIMITER: Hot signal {:.3}, applied {:.2} gain", pre_master_peak, conservative_gain);
+                        // Apply clean master gain from configuration (not hardcoded)
+                        let config_master_gain = if let Ok(config_guard) = mixer_handle.config.try_lock() {
+                            config_guard.master_gain
                         } else {
-                            // Normal signal levels, apply professional master gain
-                            for sample in reusable_output_buffer.iter_mut() {
-                                *sample *= master_gain;
-                            }
+                            1.0 // Default to unity gain if can't read config
+                        };
+                        
+                        // Apply master gain without aggressive limiting
+                        for sample in reusable_output_buffer.iter_mut() {
+                            *sample *= config_master_gain;
                         }
                         
                         // Calculate master levels for VU meters
@@ -701,6 +725,20 @@ impl VirtualMixer {
                             if let Ok(mut levels_cache_guard) = channel_levels_cache.try_lock() {
                                 *levels_cache_guard = levels_guard.clone();
                             }
+                        }
+                    }
+                    
+                    // **CRITICAL FIX**: Set hardware buffer size on first callback to fix timing sync
+                    static HARDWARE_BUFFER_SIZE_SET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+                    if !HARDWARE_BUFFER_SIZE_SET.load(std::sync::atomic::Ordering::Relaxed) {
+                        if let Ok(mut audio_clock_guard) = audio_clock.try_lock() {
+                            let hardware_buffer_size = reusable_output_buffer.len() as u32;
+                            audio_clock_guard.set_hardware_buffer_size(hardware_buffer_size);
+                            HARDWARE_BUFFER_SIZE_SET.store(true, std::sync::atomic::Ordering::Relaxed);
+                            info!("🔧 HARDWARE BUFFER SIZE DETECTED: {} samples ({}ms at {}Hz)", 
+                                  hardware_buffer_size, 
+                                  (hardware_buffer_size as f64 / sample_rate as f64) * 1000.0,
+                                  sample_rate);
                         }
                     }
                     

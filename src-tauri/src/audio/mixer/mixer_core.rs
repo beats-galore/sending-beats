@@ -55,19 +55,50 @@ impl VirtualMixerHandle {
         samples
     }
 
-    /// Send mixed audio to all output streams
+    /// Send mixed audio to all output streams (FIXED: Restored working version logic)
     pub async fn send_to_output(&self, audio_data: &[f32]) {
-        // Send to primary output stream
+        // **CRITICAL FIX**: Restore working version's logic that uses config.output_devices
+        
+        // Send to legacy single output stream for backward compatibility
         if let Ok(output_guard) = self.output_stream.try_lock() {
             if let Some(ref output_stream) = *output_guard {
                 output_stream.send_samples(audio_data);
             }
         }
         
-        // Send to all multiple output streams
-        if let Ok(outputs_guard) = self.output_streams.try_lock() {
-            for (_device_id, output_stream) in outputs_guard.iter() {
-                output_stream.send_samples(audio_data);
+        // **RESTORED WORKING LOGIC**: Send to all configured output devices
+        let config_guard = match self.config.try_lock() {
+            Ok(guard) => guard,
+            Err(_) => return, // Skip if config is locked
+        };
+        
+        let output_devices = config_guard.output_devices.clone();
+        drop(config_guard); // Release config lock early
+        
+        if let Ok(output_streams) = self.output_streams.try_lock() {
+            for output_device in output_devices.iter() {
+                if output_device.enabled {
+                    if let Some(output_stream) = output_streams.get(&output_device.device_id) {
+                        // Apply individual output device gain (from working version)
+                        if output_device.gain != 1.0 {
+                            let mut gained_samples = audio_data.to_vec();
+                            for sample in gained_samples.iter_mut() {
+                                *sample *= output_device.gain;
+                            }
+                            output_stream.send_samples(&gained_samples);
+                        } else {
+                            output_stream.send_samples(audio_data);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Send to CoreAudio stream if available (from working version)
+        #[cfg(target_os = "macos")]
+        if let Ok(coreaudio_guard) = self.coreaudio_stream.try_lock() {
+            if let Some(ref coreaudio_stream) = *coreaudio_guard {
+                let _ = coreaudio_stream.send_audio(audio_data);
             }
         }
     }

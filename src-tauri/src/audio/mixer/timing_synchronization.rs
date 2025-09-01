@@ -20,8 +20,9 @@ pub struct AudioClock {
 }
 
 impl AudioClock {
-    /// Create a new audio clock with specified sample rate and buffer size
-    pub fn new(sample_rate: u32, buffer_size: u32) -> Self {
+    /// Create a new audio clock with specified sample rate and initial buffer size
+    /// Buffer size will be updated when actual hardware streams are created
+    pub fn new(sample_rate: u32, initial_buffer_size: u32) -> Self {
         let now = std::time::Instant::now();
         Self {
             sample_rate,
@@ -29,8 +30,19 @@ impl AudioClock {
             start_time: now,
             last_sync_time: now,
             drift_compensation: 0.0,
-            sync_interval_samples: buffer_size as u64, // Sync every buffer to match hardware callback timing
+            sync_interval_samples: initial_buffer_size as u64, // Will be updated with hardware buffer size
             log_counter: 0,
+        }
+    }
+    
+    /// Update the sync interval to match actual hardware buffer size
+    /// This is called when streams are created with known hardware buffer sizes
+    pub fn set_hardware_buffer_size(&mut self, hardware_buffer_size: u32) {
+        let old_interval = self.sync_interval_samples;
+        self.sync_interval_samples = hardware_buffer_size as u64;
+        if old_interval != self.sync_interval_samples {
+            info!("🔄 BUFFER SIZE UPDATE: AudioClock sync interval updated from {} to {} samples", 
+                  old_interval, self.sync_interval_samples);
         }
     }
     
