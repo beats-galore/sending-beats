@@ -82,7 +82,7 @@ impl VirtualMixerHandle {
         }
         
         // **NEW**: Collect samples from virtual application audio input streams
-        let virtual_streams = crate::application_audio::ApplicationAudioManager::get_virtual_input_streams();
+        let virtual_streams = crate::audio::ApplicationAudioManager::get_virtual_input_streams();
         for (device_id, virtual_stream) in virtual_streams.iter() {
             // Find the channel configuration for this virtual stream
             if let Some(channel) = channels.iter().find(|ch| {
@@ -298,12 +298,6 @@ impl VirtualMixer {
         timing_metrics.get_performance_summary()
     }
 
-    /// Check if audio processing timing is acceptable
-    pub async fn is_timing_performance_acceptable(&self) -> bool {
-        let timing_metrics = self.timing_metrics.lock().await;
-        timing_metrics.is_performance_acceptable()
-    }
-
     /// Get current audio clock information
     pub async fn get_clock_info(&self) -> ClockInfo {
         let audio_clock = self.audio_clock.lock().await;
@@ -328,24 +322,6 @@ impl VirtualMixer {
         }
         
         info!("🔄 METRICS RESET: All timing and performance metrics reset");
-    }
-
-    /// Get comprehensive mixer status for debugging
-    pub async fn get_status(&self) -> MixerStatus {
-        let config = self.get_config().await;
-        let stream_info = self.get_stream_info().await;
-        let clock_info = self.get_clock_info().await;
-        let timing_acceptable = self.is_timing_performance_acceptable().await;
-        let timing_summary = self.get_timing_summary().await;
-        
-        MixerStatus {
-            is_running: self.is_running(),
-            config,
-            stream_info,
-            clock_info,
-            timing_acceptable,
-            timing_summary,
-        }
     }
 
     /// Perform health check on all active devices
@@ -379,11 +355,7 @@ impl VirtualMixer {
             }
         }
         
-        // Check timing performance
-        if !self.is_timing_performance_acceptable().await {
-            issues.push("Timing performance is degraded".to_string());
-        }
-        
+   
         // Check if mixer is running when it should be
         let stream_info = self.get_stream_info().await;
         if stream_info.has_active_streams() && !self.is_running() {
@@ -423,16 +395,6 @@ pub struct ClockInfo {
     pub timing_drift_ms: f64,
 }
 
-/// Comprehensive mixer status information
-#[derive(Debug)]
-pub struct MixerStatus {
-    pub is_running: bool,
-    pub config: crate::audio::types::MixerConfig,
-    pub stream_info: super::stream_management::StreamInfo,
-    pub clock_info: ClockInfo,
-    pub timing_acceptable: bool,
-    pub timing_summary: String,
-}
 
 /// Health check result
 #[derive(Debug, Clone)]

@@ -562,22 +562,23 @@ impl VirtualMixer {
         let master_levels = self.master_levels.clone();
         let master_levels_cache = self.master_levels_cache.clone();
         
-        // Audio Clock Synchronization - Clone timing references
+        // **PRIORITY 5: Audio Clock Synchronization** - Clone timing references
         let audio_clock = self.audio_clock.clone();
         let timing_metrics = self.timing_metrics.clone();
         let sample_rate = self.config.sample_rate;
         let buffer_size = self.config.buffer_size;
-        let mixer_handle = super::mixer_core::VirtualMixerHandle {
+        let mixer_handle = VirtualMixerHandle {
             input_streams: self.input_streams.clone(),
             output_stream: self.output_stream.clone(),
-            output_streams: self.output_streams.clone(),
+            output_streams: self.output_streams.clone(), // Add multiple outputs support
             #[cfg(target_os = "macos")]
             coreaudio_stream: self.coreaudio_stream.clone(),
             channel_levels: self.channel_levels.clone(),
             config: self.shared_config.clone(),
         };
 
-        // Use dedicated high-priority thread for real-time audio processing
+        // **CRITICAL FIX**: Use dedicated high-priority thread for real-time audio processing
+        // tokio::spawn() can be preempted by scheduler causing audio dropouts and crunchiness
         std::thread::spawn(move || {
             // Set thread priority for real-time audio processing
             #[cfg(target_os = "macos")]
@@ -599,293 +600,265 @@ impl VirtualMixer {
             // Create async runtime for this thread only
             let rt = tokio::runtime::Runtime::new().expect("Failed to create audio runtime");
             rt.block_on(async move {
-                let mut frame_count = 0u64;
-                
-                // Pre-allocate stereo buffers to reduce allocations during real-time processing
-                let mut reusable_output_buffer = vec![0.0f32; (buffer_size * 2) as usize];
-                let mut reusable_left_samples: Vec<f32> = Vec::with_capacity(buffer_size as usize);
-                let mut reusable_right_samples: Vec<f32> = Vec::with_capacity(buffer_size as usize);
-                
-                println!("🎵 Audio processing thread started with real mixing, optimized buffers, and clock synchronization");
+            let mut frame_count = 0u64;
+            
+            // Pre-allocate stereo buffers to reduce allocations during real-time processing
+            let mut reusable_output_buffer = vec![0.0f32; (buffer_size * 2) as usize];
+            let mut reusable_left_samples = Vec::with_capacity(buffer_size as usize);
+            let mut reusable_right_samples = Vec::with_capacity(buffer_size as usize);
+            
+            println!("🎵 Audio processing thread started with real mixing, optimized buffers, and clock synchronization");
 
-                while is_running.load(Ordering::Relaxed) {
-                    let _process_start = std::time::Instant::now();
-                    
-                    // Audio Clock Synchronization - Track processing timing
-                    let _timing_start = std::time::Instant::now();
-                    
-                    // Get current channel configuration dynamically (fixes mute/solo/gain not working)
-                    let current_channels = {
-                        if let Ok(config_guard) = mixer_handle.config.try_lock() {
-                            config_guard.channels.clone()
-                        } else {
-                            // Fallback to empty vec if can't lock (shouldn't happen often)
-                            Vec::new()
-                        }
-                    };
-                    let input_samples = mixer_handle.collect_input_samples_with_effects(&current_channels).await;
-                    // Clear and reuse pre-allocated stereo buffers
-                    reusable_output_buffer.fill(0.0);
-                    reusable_left_samples.clear();
-                    reusable_right_samples.clear();
-                    // If no audio data is available from callbacks, add small delay to prevent excessive CPU usage
-                    if input_samples.is_empty() {
-                        std::thread::sleep(std::time::Duration::from_micros(100)); // 0.1ms sleep 
-                        continue;
-                    }
-                    
-
-                    
-                    // Calculate channel levels and mix audio
-                    let mut calculated_channel_levels = std::collections::HashMap::new();
-                    
-                    if !input_samples.is_empty() {
-                        let mut active_channels = 0;
-                        
-                        // Mix all input channels together and calculate levels
-                        for (device_id, samples) in input_samples.iter() {
-                            if !samples.is_empty() {
-                                active_channels += 1;
-                                
-                                // **STEREO FIX**: Calculate L/R peak and RMS levels separately for VU meters
-                                let (peak_left, rms_left, peak_right, rms_right) = if samples.len() >= 2 {
-                                    // Stereo audio: separate L/R channels (interleaved format)
-                                    let left_samples: Vec<f32> = samples.iter().step_by(2).copied().collect();
-                                    let right_samples: Vec<f32> = samples.iter().skip(1).step_by(2).copied().collect();
-                                    
-                                    let peak_left = left_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                                    let rms_left = if !left_samples.is_empty() {
-                                        (left_samples.iter().map(|&s| s * s).sum::<f32>() / left_samples.len() as f32).sqrt()
-                                    } else { 0.0 };
-                                    
-                                    let peak_right = right_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                                    let rms_right = if !right_samples.is_empty() {
-                                        (right_samples.iter().map(|&s| s * s).sum::<f32>() / right_samples.len() as f32).sqrt()
-                                    } else { 0.0 };
-                                    
-                                    (peak_left, rms_left, peak_right, rms_right)
-                                } else {
-                                    // Mono audio: duplicate to both L/R channels
-                                    let peak_mono = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                                    let rms_mono = if !samples.is_empty() {
-                                        (samples.iter().map(|&s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
-                                    } else { 0.0 };
-                                    
-                                    (peak_mono, rms_mono, peak_mono, rms_mono)
-                                };
-                                
-                                // Find which channel this device belongs to
-                                if let Some(channel) = current_channels.iter().find(|ch| {
-                                    ch.input_device_id.as_ref() == Some(device_id)
-                                }) {
-                                    // Store stereo levels by channel ID
-                                    calculated_channel_levels.insert(channel.id, (peak_left, rms_left, peak_right, rms_right));
-                                    
-                                    // Log levels occasionally
-                                    if frame_count % 100 == 0 && (peak_left > 0.001 || peak_right > 0.001) {
-                                        crate::audio_debug!("Channel {} ({}): {} samples, L(peak: {:.3}, rms: {:.3}) R(peak: {:.3}, rms: {:.3})", 
-                                            channel.id, device_id, samples.len(), peak_left, rms_left, peak_right, rms_right);
-                                    }
-                                }
-                                
-                                // **AUDIO QUALITY FIX**: Use input samples directly without unnecessary conversion
-                                // The input streams should already be providing stereo interleaved samples
-                                // Assume input is already in the correct stereo format from stream manager
-                                let stereo_samples = samples;
-                                
-                                // **CRITICAL FIX**: Safe buffer size matching to prevent crashes
-                                // Only mix up to the smaller buffer size to prevent overruns
-                                let mix_length = reusable_output_buffer.len().min(stereo_samples.len());
-                                
-                                // Add samples with bounds checking
-                                for i in 0..mix_length {
-                                    if i < reusable_output_buffer.len() && i < stereo_samples.len() {
-                                        reusable_output_buffer[i] += stereo_samples[i];
-                                    }
-                                }
-                                
-                            }
-                        }
-                        
-                        // **AUDIO QUALITY FIX**: Smart gain management instead of aggressive division
-                        // Only normalize if we have multiple overlapping channels with significant signal
-                        if active_channels > 1 {
-                            // Check if we actually need normalization by checking peak levels
-                            let buffer_peak = reusable_output_buffer.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                            
-                            // Only normalize if we're approaching clipping (> 0.8) with multiple channels
-                            if buffer_peak > 0.8 {
-                                let normalization_factor = 0.8 / buffer_peak; // Normalize to 80% max to prevent clipping
-                                for sample in reusable_output_buffer.iter_mut() {
-                                    *sample *= normalization_factor;
-                                }
-                                println!("🔧 GAIN CONTROL: Normalized {} channels, peak {:.3} -> {:.3}", 
-                                    active_channels, buffer_peak, buffer_peak * normalization_factor);
-                            }
-                            // If not approaching clipping, leave levels untouched for better dynamics
-                        }
-                        // Single channels: NO normalization - preserve full dynamics
-                        
-                        // Stereo audio is already mixed directly into reusable_output_buffer
-                        // No conversion needed - stereo data preserved throughout mixing process
-                        
-                        // **AUDIO QUALITY FIX**: Professional master gain instead of aggressive reduction
-                        let master_gain = 0.9f32; // Professional level (was 0.5 - too low!)
-                        
-                        // Only apply master gain reduction if signal is actually hot
-                        let pre_master_peak = reusable_output_buffer.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                        
-                        if pre_master_peak > 0.95 {
-                            // Signal is very hot, apply conservative gain
-                            let conservative_gain = 0.8f32;
-                            for sample in reusable_output_buffer.iter_mut() {
-                                *sample *= conservative_gain;
-                            }
-                            println!("🔧 MASTER LIMITER: Hot signal {:.3}, applied {:.2} gain", pre_master_peak, conservative_gain);
-                        } else {
-                            // Normal signal levels, apply professional master gain
-                            for sample in reusable_output_buffer.iter_mut() {
-                                *sample *= master_gain;
-                            }
-                        }
-                        
-                        // Calculate master output levels for L/R channels using reusable vectors
-                        reusable_left_samples.extend(reusable_output_buffer.iter().step_by(2).copied());
-                        reusable_right_samples.extend(reusable_output_buffer.iter().skip(1).step_by(2).copied());
-                        
-                        let left_peak = reusable_left_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                        let left_rms = if !reusable_left_samples.is_empty() {
-                            (reusable_left_samples.iter().map(|&s| s * s).sum::<f32>() / reusable_left_samples.len() as f32).sqrt()
-                        } else { 0.0 };
-                        
-                        let right_peak = reusable_right_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                        let right_rms = if !reusable_right_samples.is_empty() {
-                            (reusable_right_samples.iter().map(|&s| s * s).sum::<f32>() / reusable_right_samples.len() as f32).sqrt()
-                        } else { 0.0 };
-                        
-                        // Store real master levels
-                        let master_level_values = (left_peak, left_rms, right_peak, right_rms);
-                        if let Ok(mut levels_guard) = master_levels.try_lock() {
-                            *levels_guard = master_level_values;
-                        }
-                        
-                        // Also update cache for fallback (non-blocking)
-                        let has_signal = left_peak > 0.0 || left_rms > 0.0 || right_peak > 0.0 || right_rms > 0.0;
-                        if has_signal {
-                            if let Ok(mut cache_guard) = master_levels_cache.try_lock() {
-                                *cache_guard = master_level_values;
-                            }
-                        }
-                        
-                        // Log master levels occasionally
-                        if frame_count % 100 == 0 && (left_peak > 0.001 || right_peak > 0.001) {
-                            crate::audio_debug!("Master output: L(peak: {:.3}, rms: {:.3}) R(peak: {:.3}, rms: {:.3})", 
-                                left_peak, left_rms, right_peak, right_rms);
-                        }
-                    }
-                    
-                    // Store calculated channel levels for VU meters
-                    if !calculated_channel_levels.is_empty() {
-                        if frame_count % 100 == 0 {
-                            crate::audio_debug!("📊 STORING LEVELS: Attempting to store {} channel levels", calculated_channel_levels.len());
-                            for (channel_id, (peak_left, rms_left, peak_right, rms_right)) in calculated_channel_levels.iter() {
-                                crate::audio_debug!("   Level [Channel {}]: L(peak={:.4}, rms={:.4}) R(peak={:.4}, rms={:.4})", 
-                                    channel_id, peak_left, rms_left, peak_right, rms_right);
-                            }
-                        }
-                        
-                        match channel_levels.try_lock() {
-                            Ok(mut levels_guard) => {
-                                *levels_guard = calculated_channel_levels.clone();
-                                if frame_count % 100 == 0 {
-                                    crate::audio_debug!("✅ STORED LEVELS: Successfully stored {} channel levels in HashMap", calculated_channel_levels.len());
-                                }
-                            }
-                            Err(_) => {
-                                if frame_count % 100 == 0 {
-                                    println!("🚫 STORAGE FAILED: Could not lock channel_levels HashMap for storage");
-                                }
-                            }
-                        }
+            while is_running.load(Ordering::Relaxed) {
+                let process_start = std::time::Instant::now();
+                
+                // **PRIORITY 5: Audio Clock Synchronization** - Track processing timing
+                let timing_start = std::time::Instant::now();
+                
+                // **CALLBACK-DRIVEN PROCESSING**: Only process when audio data is available
+                // This replaces timer-based processing to eliminate timing drift
+                // Get current channel configuration dynamically (fixes mute/solo/gain not working)
+                let current_channels = {
+                    if let Ok(config_guard) = mixer_handle.config.try_lock() {
+                        config_guard.channels.clone()
                     } else {
-                        if frame_count % 500 == 0 {
-                            println!("⚠️  NO LEVELS TO STORE: calculated_channel_levels is empty");
+                        // Fallback to empty vec if can't lock (shouldn't happen often)
+                        Vec::new()
+                    }
+                };
+                let input_samples = mixer_handle.collect_input_samples_with_effects(&current_channels).await;
+                
+                // If no audio data is available from callbacks, add small delay to prevent excessive CPU usage
+                // **RT THREAD FIX**: Add delay to prevent overwhelming system with debug output
+                if input_samples.is_empty() {
+                    std::thread::sleep(std::time::Duration::from_micros(100)); // 0.1ms sleep 
+                    continue;
+                }
+                
+                // Clear and reuse pre-allocated stereo buffers
+                reusable_output_buffer.fill(0.0);
+                reusable_left_samples.clear();
+                reusable_right_samples.clear();
+                
+                // Calculate channel levels and mix audio
+                let mut calculated_channel_levels = std::collections::HashMap::new();
+                
+                if !input_samples.is_empty() {
+                    let mut active_channels = 0;
+                    
+                    // Mix all input channels together and calculate levels
+                    for (device_id, samples) in input_samples.iter() {
+                        if !samples.is_empty() {
+                            active_channels += 1;
+                            
+                            // **STEREO FIX**: Calculate L/R peak and RMS levels separately for VU meters
+                            let (peak_left, rms_left, peak_right, rms_right) = if samples.len() >= 2 {
+                                // Stereo audio: separate L/R channels (interleaved format)
+                                let left_samples: Vec<f32> = samples.iter().step_by(2).copied().collect();
+                                let right_samples: Vec<f32> = samples.iter().skip(1).step_by(2).copied().collect();
+                                
+                                let peak_left = left_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                                let rms_left = if !left_samples.is_empty() {
+                                    (left_samples.iter().map(|&s| s * s).sum::<f32>() / left_samples.len() as f32).sqrt()
+                                } else { 0.0 };
+                                
+                                let peak_right = right_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                                let rms_right = if !right_samples.is_empty() {
+                                    (right_samples.iter().map(|&s| s * s).sum::<f32>() / right_samples.len() as f32).sqrt()
+                                } else { 0.0 };
+                                
+                                (peak_left, rms_left, peak_right, rms_right)
+                            } else {
+                                // Mono audio: duplicate to both L/R channels
+                                let peak_mono = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                                let rms_mono = if !samples.is_empty() {
+                                    (samples.iter().map(|&s| s * s).sum::<f32>() / samples.len() as f32).sqrt()
+                                } else { 0.0 };
+                                
+                                (peak_mono, rms_mono, peak_mono, rms_mono)
+                            };
+                            
+                            // Find which channel this device belongs to
+                            if let Some(channel) = current_channels.iter().find(|ch| {
+                                ch.input_device_id.as_ref() == Some(device_id)
+                            }) {
+                                // Store stereo levels by channel ID
+                                calculated_channel_levels.insert(channel.id, (peak_left, rms_left, peak_right, rms_right));
+                                
+                                // Log levels occasionally
+                                if frame_count % 100 == 0 && (peak_left > 0.001 || peak_right > 0.001) {
+                                    crate::audio_debug!("Channel {} ({}): {} samples, L(peak: {:.3}, rms: {:.3}) R(peak: {:.3}, rms: {:.3})", 
+                                        channel.id, device_id, samples.len(), peak_left, rms_left, peak_right, rms_right);
+                                }
+                            }
+                            
+                            // **AUDIO QUALITY FIX**: Use input samples directly without unnecessary conversion
+                            // The input streams should already be providing stereo interleaved samples
+                            // Assume input is already in the correct stereo format from stream manager
+                            let stereo_samples = samples;
+                            
+                            // **CRITICAL FIX**: Safe buffer size matching to prevent crashes
+                            // Only mix up to the smaller buffer size to prevent overruns
+                            let mix_length = reusable_output_buffer.len().min(stereo_samples.len());
+                            
+                            // Add samples with bounds checking
+                            for i in 0..mix_length {
+                                if i < reusable_output_buffer.len() && i < stereo_samples.len() {
+                                    reusable_output_buffer[i] += stereo_samples[i];
+                                }
+                            }
+                            
                         }
+                    }
+                    
+                    // **AUDIO QUALITY FIX**: Smart gain management instead of aggressive division
+                    // Only normalize if we have multiple overlapping channels with significant signal
+                    if active_channels > 1 {
+                        // Check if we actually need normalization by checking peak levels
+                        let buffer_peak = reusable_output_buffer.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                        
+                        // Only normalize if we're approaching clipping (> 0.8) with multiple channels
+                        if buffer_peak > 0.8 {
+                            let normalization_factor = 0.8 / buffer_peak; // Normalize to 80% max to prevent clipping
+                            for sample in reusable_output_buffer.iter_mut() {
+                                *sample *= normalization_factor;
+                            }
+                            println!("🔧 GAIN CONTROL: Normalized {} channels, peak {:.3} -> {:.3}", 
+                                active_channels, buffer_peak, buffer_peak * normalization_factor);
+                        }
+                        // If not approaching clipping, leave levels untouched for better dynamics
+                    }
+                    // Single channels: NO normalization - preserve full dynamics
+                    
+                    // Stereo audio is already mixed directly into reusable_output_buffer
+                    // No conversion needed - stereo data preserved throughout mixing process
+                    
+                    // **AUDIO QUALITY FIX**: Professional master gain instead of aggressive reduction
+                    let master_gain = 0.9f32; // Professional level (was 0.5 - too low!)
+                    
+                    // Only apply master gain reduction if signal is actually hot
+                    let pre_master_peak = reusable_output_buffer.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                    
+                    if pre_master_peak > 0.95 {
+                        // Signal is very hot, apply conservative gain
+                        let conservative_gain = 0.8f32;
+                        for sample in reusable_output_buffer.iter_mut() {
+                            *sample *= conservative_gain;
+                        }
+                        println!("🔧 MASTER LIMITER: Hot signal {:.3}, applied {:.2} gain", pre_master_peak, conservative_gain);
+                    } else {
+                        // Normal signal levels, apply professional master gain
+                        for sample in reusable_output_buffer.iter_mut() {
+                            *sample *= master_gain;
+                        }
+                    }
+                    
+                    // Calculate master output levels for L/R channels using reusable vectors
+                    reusable_left_samples.extend(reusable_output_buffer.iter().step_by(2).copied());
+                    reusable_right_samples.extend(reusable_output_buffer.iter().skip(1).step_by(2).copied());
+                    
+                    let left_peak = reusable_left_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                    let left_rms = if !reusable_left_samples.is_empty() {
+                        (reusable_left_samples.iter().map(|&s| s * s).sum::<f32>() / reusable_left_samples.len() as f32).sqrt()
+                    } else { 0.0 };
+                    
+                    let right_peak = reusable_right_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                    let right_rms = if !reusable_right_samples.is_empty() {
+                        (reusable_right_samples.iter().map(|&s| s * s).sum::<f32>() / reusable_right_samples.len() as f32).sqrt()
+                    } else { 0.0 };
+                    
+                    // Store real master levels
+                    let master_level_values = (left_peak, left_rms, right_peak, right_rms);
+                    if let Ok(mut levels_guard) = master_levels.try_lock() {
+                        *levels_guard = master_level_values;
                     }
                     
                     // Also update cache for fallback (non-blocking)
-                    if !calculated_channel_levels.is_empty() {
-                        if let Ok(mut cache_guard) = channel_levels_cache.try_lock() {
-                            *cache_guard = calculated_channel_levels;
+                    let has_signal = left_peak > 0.0 || left_rms > 0.0 || right_peak > 0.0 || right_rms > 0.0;
+                    if has_signal {
+                        if let Ok(mut cache_guard) = master_levels_cache.try_lock() {
+                            *cache_guard = master_level_values;
                         }
                     }
                     
-                    // Update mix buffer
-                    if let Ok(mut buffer_guard) = mix_buffer.try_lock() {
-                        if buffer_guard.len() == reusable_output_buffer.len() {
-                            buffer_guard.copy_from_slice(&reusable_output_buffer);
+                    // Log master levels occasionally
+                    if frame_count % 100 == 0 && (left_peak > 0.001 || right_peak > 0.001) {
+                        crate::audio_debug!("Master output: L(peak: {:.3}, rms: {:.3}) R(peak: {:.3}, rms: {:.3})", 
+                            left_peak, left_rms, right_peak, right_rms);
+                    }
+                }
+                
+                // Store calculated channel levels for VU meters
+                if !calculated_channel_levels.is_empty() {
+                    if frame_count % 100 == 0 {
+                        crate::audio_debug!("📊 STORING LEVELS: Attempting to store {} channel levels", calculated_channel_levels.len());
+                        for (channel_id, (peak_left, rms_left, peak_right, rms_right)) in calculated_channel_levels.iter() {
+                            crate::audio_debug!("   Level [Channel {}]: L(peak={:.4}, rms={:.4}) R(peak={:.4}, rms={:.4})", 
+                                channel_id, peak_left, rms_left, peak_right, rms_right);
                         }
                     }
                     
-                    // Send to output stream
-                    mixer_handle.send_to_output(&reusable_output_buffer).await;
-    
-                    // Send processed audio to the rest of the application (non-blocking)
-                    let _ = audio_output_tx.try_send(reusable_output_buffer.clone());
-                    
-                    // **STREAMING INTEGRATION**: Also send to broadcast channel for streaming bridge
-                    match audio_output_broadcast_tx.send(reusable_output_buffer.clone()) {
-                        Ok(_) => {
-                            // Success - always log receiver count for debugging
-                            if frame_count % 480 == 0 { // Log every ~100ms at 48kHz
-                                println!("📡 Mixer broadcast: sent {} samples to {} receivers", 
-                                    reusable_output_buffer.len(), 
-                                    audio_output_broadcast_tx.receiver_count());
-                            }
-                        },
-                        Err(tokio::sync::broadcast::error::SendError(_)) => {
-                            // Channel overflow or no receivers - this is normal, just log occasionally
-                            if frame_count % 480 == 0 {
-                                println!("📡 Mixer broadcast: no active receivers (recording/streaming stopped)");
+                    match channel_levels.try_lock() {
+                        Ok(mut levels_guard) => {
+                            *levels_guard = calculated_channel_levels.clone();
+                            if frame_count % 100 == 0 {
+                                crate::audio_debug!("✅ STORED LEVELS: Successfully stored {} channel levels in HashMap", calculated_channel_levels.len());
                             }
                         }
-                    }
-                    // Update channel levels atomically
-                    if let Ok(mut levels) = channel_levels.try_lock() {
-                        *levels = calculated_channel_levels;
-                    }
-                    
-                    // Update cached channel levels for UI (less frequent updates)
-                    if frame_count % 10 == 0 {
-                        if let Ok(levels_guard) = channel_levels.try_lock() {
-                            if let Ok(mut levels_cache_guard) = channel_levels_cache.try_lock() {
-                                *levels_cache_guard = levels_guard.clone();
+                        Err(_) => {
+                            if frame_count % 100 == 0 {
+                                println!("🚫 STORAGE FAILED: Could not lock channel_levels HashMap for storage");
                             }
                         }
                     }
-                    
-                    // **CRITICAL FIX**: Set hardware buffer size on first callback to fix timing sync
-                    static HARDWARE_BUFFER_SIZE_SET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-                    if !HARDWARE_BUFFER_SIZE_SET.load(std::sync::atomic::Ordering::Relaxed) {
-                        if let Ok(mut audio_clock_guard) = audio_clock.try_lock() {
-                            let hardware_buffer_size = reusable_output_buffer.len() as u32;
-                            audio_clock_guard.set_hardware_buffer_size(hardware_buffer_size);
-                            HARDWARE_BUFFER_SIZE_SET.store(true, std::sync::atomic::Ordering::Relaxed);
-                            info!("🔧 HARDWARE BUFFER SIZE DETECTED: {} samples ({}ms at {}Hz)", 
-                                  hardware_buffer_size, 
-                                  (hardware_buffer_size as f64 / sample_rate as f64) * 1000.0,
-                                  sample_rate);
-                        }
+                } else {
+                    if frame_count % 500 == 0 {
+                        println!("⚠️  NO LEVELS TO STORE: calculated_channel_levels is empty");
                     }
-                    
-                    // Update timing and metrics
-                    if let Ok(mut audio_clock_guard) = audio_clock.try_lock() {
-                        audio_clock_guard.update(reusable_output_buffer.len());
+                }
+                
+                // Also update cache for fallback (non-blocking)
+                if !calculated_channel_levels.is_empty() {
+                    if let Ok(mut cache_guard) = channel_levels_cache.try_lock() {
+                        *cache_guard = calculated_channel_levels;
                     }
-                    
-                    frame_count += 1;
+                }
+                
+                // Update mix buffer
+                if let Ok(mut buffer_guard) = mix_buffer.try_lock() {
+                    if buffer_guard.len() == reusable_output_buffer.len() {
+                        buffer_guard.copy_from_slice(&reusable_output_buffer);
+                    }
+                }
+                
+                // Send to output stream
+                mixer_handle.send_to_output(&reusable_output_buffer).await;
 
-                       // **PRIORITY 5: Audio Clock Synchronization** - Update master clock and timing metrics
+                // Send processed audio to the rest of the application (non-blocking)
+                let _ = audio_output_tx.try_send(reusable_output_buffer.clone());
+                
+                // **STREAMING INTEGRATION**: Also send to broadcast channel for streaming bridge
+                match audio_output_broadcast_tx.send(reusable_output_buffer.clone()) {
+                    Ok(_) => {
+                        // Success - always log receiver count for debugging
+                        if frame_count % 480 == 0 { // Log every ~100ms at 48kHz
+                            println!("📡 Mixer broadcast: sent {} samples to {} receivers", 
+                                reusable_output_buffer.len(), 
+                                audio_output_broadcast_tx.receiver_count());
+                        }
+                    },
+                    Err(tokio::sync::broadcast::error::SendError(_)) => {
+                        // Channel overflow or no receivers - this is normal, just log occasionally
+                        if frame_count % 480 == 0 {
+                            println!("📡 Mixer broadcast: no active receivers (recording/streaming stopped)");
+                        }
+                    }
+                }
+                // Don't break on send failure - just continue processing
+
+                frame_count += 1;
+                
+                // **PRIORITY 5: Audio Clock Synchronization** - Update master clock and timing metrics
                 let samples_processed = buffer_size as usize;
                 let processing_time_us = timing_start.elapsed().as_micros() as f64;
                 
@@ -893,9 +866,9 @@ impl VirtualMixer {
                 if let Ok(mut clock_guard) = audio_clock.try_lock() {
                     if let Some(sync_info) = clock_guard.update(samples_processed) {
                         // Clock detected timing drift - log it
-                        if sync_info.needs_adjustment {
+                        if sync_info.is_drift_significant {
                             crate::audio_debug!("⚠️  TIMING DRIFT: {:.2}ms drift detected at {} samples", 
-                                sync_info.drift_microseconds / 1000.0, sync_info.samples_processed);
+                                sync_info.timing_variation / 1000.0, sync_info.samples_processed);
                             
                             // Record sync adjustment in metrics
                             if let Ok(mut metrics_guard) = timing_metrics.try_lock() {
@@ -918,7 +891,7 @@ impl VirtualMixer {
                 // **TIMING METRICS**: Report comprehensive timing every 10 seconds
                 if frame_count % ((sample_rate / buffer_size) as u64 * 10) == 0 {
                     if let Ok(metrics_guard) = timing_metrics.try_lock() {
-                        println!("📈 {}", metrics_guard.get_summary());
+                        println!("📈 {}", metrics_guard.get_performance_summary());
                     }
                     if let Ok(clock_guard) = audio_clock.try_lock() {
                         let sample_timestamp = clock_guard.get_sample_timestamp();
@@ -976,9 +949,10 @@ impl VirtualMixer {
             }
             
             println!("Audio processing thread stopped");
-            });
-        });
-        
+            }) // End of async block for runtime
+        }); // End of thread spawn
+
         Ok(())
     }
+
 }

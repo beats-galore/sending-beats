@@ -12,6 +12,7 @@ use tracing::{info, warn, error};
 use super::tap::types::{ProcessInfo, TapStats, ApplicationAudioError};
 use super::tap::process_discovery::ApplicationDiscovery;
 use super::tap::virtual_stream::get_virtual_input_registry;
+use super::mixer::stream_management::AudioInputStream;
 
 #[cfg(target_os = "macos")]
 use super::tap::core_audio_tap::ApplicationAudioTap;
@@ -390,7 +391,7 @@ impl ApplicationAudioManager {
     pub async fn get_virtual_input_stream(&self, device_id: &str) -> Option<Arc<AudioInputStream>> {
         info!("🔍 Looking up virtual input stream for device: {}", device_id);
         
-        let virtual_streams = crate::application_audio::ApplicationAudioManager::get_virtual_input_streams();
+        let virtual_streams = crate::audio::ApplicationAudioManager::get_virtual_input_streams();
         if let Some(stream) = virtual_streams.get(device_id) {
             info!("✅ Found virtual input stream for device: {}", device_id);
             Some(stream.clone())
@@ -398,6 +399,17 @@ impl ApplicationAudioManager {
             info!("❌ No virtual input stream found for device: {} (available: {:?})", 
                   device_id, virtual_streams.keys().collect::<Vec<_>>());
             None
+        }
+    }
+
+    /// Get all registered virtual input streams (for mixer integration)
+    pub fn get_virtual_input_streams() -> HashMap<String, Arc<crate::audio::mixer::stream_management::AudioInputStream>> {
+        // Use centralized registry function
+        let registry = get_virtual_input_registry();
+        if let Ok(reg) = registry.lock() {
+            reg.clone()
+        } else {
+            HashMap::new()
         }
     }
     

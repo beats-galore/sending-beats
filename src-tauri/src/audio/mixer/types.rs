@@ -9,9 +9,9 @@ use std::sync::atomic::{AtomicBool, AtomicPtr};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
-use super::super::devices::AudioDeviceManager;
+use super::super::devices::{AudioDeviceManager, DeviceStatus};
 use super::super::effects::AudioAnalyzer;
-use super::super::types::{AudioMetrics, MixerCommand, MixerConfig};
+use super::super::types::{AudioDeviceHandle, AudioMetrics, MixerCommand, MixerConfig, OutputDevice};
 use super::stream_management::{AudioInputStream, AudioOutputStream};
 use super::timing_synchronization::{AudioClock, TimingMetrics};
 
@@ -154,19 +154,19 @@ impl VirtualMixer {
         
         // Check if device is still available
         match self.audio_device_manager.check_device_health(device_id).await {
-            Ok(super::devices::DeviceStatus::Connected) => {
+            Ok(DeviceStatus::Connected) => {
                 // Device is healthy, proceed with normal stream addition
                 // This would call the existing stream management logic
                 println!("✅ Device {} is healthy, proceeding with stream creation", device_id);
             }
-            Ok(super::devices::DeviceStatus::Disconnected) => {
+            Ok(DeviceStatus::Disconnected) => {
                 self.audio_device_manager.report_device_error(
                     device_id, 
                     "Device disconnected".to_string()
                 ).await;
                 return Err(anyhow::anyhow!("Device {} is disconnected", device_id));
             }
-            Ok(super::devices::DeviceStatus::Error(err)) => {
+            Ok(DeviceStatus::Error(err)) => {
                 return Err(anyhow::anyhow!("Device {} has error: {}", device_id, err));
             }
             Err(e) => {
@@ -204,7 +204,7 @@ impl VirtualMixer {
         use cpal::traits::{DeviceTrait, HostTrait};
         
         
-        let device_manager = super::devices::AudioDeviceManager::new()?;
+        let device_manager = AudioDeviceManager::new()?;
         let devices = device_manager.enumerate_devices().await?;
         
         // Find the device
@@ -215,9 +215,9 @@ impl VirtualMixer {
         // **CRASH PREVENTION**: Use device manager's safe device finding instead of direct CPAL calls
         let device_handle = device_manager.find_audio_device(&output_device.device_id, false).await?;
         let device = match device_handle {
-            super::types::AudioDeviceHandle::Cpal(cpal_device) => cpal_device,
+            AudioDeviceHandle::Cpal(cpal_device) => cpal_device,
             #[cfg(target_os = "macos")]
-            super::types::AudioDeviceHandle::CoreAudio(_) => {
+            AudioDeviceHandle::CoreAudio(_) => {
                 return Err(anyhow::anyhow!("CoreAudio device handles not supported in add_output_device - use CPAL fallback"));
             }
             #[cfg(not(target_os = "macos"))]
@@ -226,12 +226,7 @@ impl VirtualMixer {
             }
         };
         
-        // Create output stream
-        let sample_rate = {
-            let config_guard = self.config.lock().unwrap();
-            config_guard.sample_rate
-        };
-        
+
         let output_stream = Arc::new(AudioOutputStream::new(
             output_device.device_id.clone(),
             device_info.name.clone(),
@@ -275,7 +270,7 @@ impl VirtualMixer {
     }
 
     /// Get a specific output device configuration
-    pub async fn get_output_device(&self, device_id: &str) -> Option<super::types::OutputDevice> {
+    pub async fn get_output_device(&self, device_id: &str) -> Option<OutputDevice> {
         let config_guard = self.shared_config.lock().unwrap();
         config_guard.output_devices
             .iter()
@@ -293,7 +288,7 @@ impl VirtualMixer {
     }
 
     /// Get all output devices
-    pub async fn get_output_devices(&self) -> Vec<super::types::OutputDevice> {
+    pub async fn get_output_devices(&self) -> Vec<OutputDevice> {
         let config_guard = self.shared_config.lock().unwrap();
         config_guard.output_devices.clone()
     }

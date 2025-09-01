@@ -144,45 +144,7 @@ impl VirtualMixer {
         Ok(())
     }
 
-    /// Process audio buffer and calculate levels (simplified version for modular structure)
-    pub async fn process_audio_buffer(&self, buffer: &mut [f32]) -> Result<()> {
-        let buffer_len = buffer.len();
-        if buffer_len == 0 {
-            return Ok(());
-        }
-        
-        // Calculate stereo peak and RMS levels
-        let (peak_left, peak_right, rms_left, rms_right) = if buffer_len >= 2 {
-            AudioLevelCalculator::calculate_stereo_levels(buffer)
-        } else {
-            // Mono fallback
-            let mono_peak = AudioLevelCalculator::calculate_peak_level(buffer);
-            let mono_rms = AudioLevelCalculator::calculate_rms_level(buffer);
-            (mono_peak, mono_peak, mono_rms, mono_rms)
-        };
-        
-        // Update master levels
-        self.update_master_levels(peak_left, rms_left, peak_right, rms_right).await?;
-        
-        // Update audio clock
-        {
-            let mut clock = self.audio_clock.lock().await;
-            if let Some(timing_sync) = clock.update(buffer_len / 2) { // Assuming stereo
-                // Update timing metrics
-                let mut timing_metrics = self.timing_metrics.lock().await;
-                timing_metrics.update(&timing_sync);
-            }
-        }
-        
-        // Update metrics
-        {
-            let mut metrics = self.metrics.lock().await;
-            metrics.samples_processed += buffer_len as u64;
-            metrics.last_process_time = std::time::Instant::now();
-        }
-        
-        Ok(())
-    }
+   
 }
 
 /// Audio level calculation utilities
