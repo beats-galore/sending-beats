@@ -62,39 +62,33 @@ impl AudioClock {
             let expected_interval_us = (self.sync_interval_samples as f64 * 1_000_000.0) / self.sample_rate as f64;
             
             // Only report drift if callback intervals are inconsistent with expected buffer timing
-            // Allow 10% variation for hardware jitter - this is normal and expected
-            let variation_threshold = expected_interval_us * 0.10;
-            let timing_variation = (callback_interval_us - expected_interval_us).abs();
+            // This detects real hardware timing issues, not software processing timing
+            let interval_variation = callback_interval_us - expected_interval_us;
             
-            let sync_info = TimingSync {
+            // Only consider significant variations in hardware callback timing as real drift
+            let is_hardware_drift = interval_variation.abs() > expected_interval_us * 0.1; // 10% variation threshold
+            
+            // Reset drift compensation since we're now hardware-synchronized
+            self.drift_compensation = if is_hardware_drift { interval_variation } else { 0.0 };
+            
+            let sync = TimingSync {
                 samples_processed: self.samples_processed,
-                callback_interval_us,
-                expected_interval_us,
-                timing_variation,
-                is_drift_significant: timing_variation > variation_threshold,
+                drift_microseconds: interval_variation,
+                needs_adjustment: is_hardware_drift,
+                sync_time: now,
             };
             
-            // Only log significant variations (>10% from expected) - but reduce frequency dramatically
-            if sync_info.is_drift_significant {
-                self.log_counter += 1;
-                // Log only every 1000th occurrence to reduce spam
-                if self.log_counter % 1000 == 0 {
-                    warn!(
-                        "⏰ TIMING VARIATION (#{} occurrences): Callback interval {:.1}μs vs expected {:.1}μs (variation: {:.1}μs, {:.1}%)",
-                        self.log_counter,
-                        callback_interval_us,
-                        expected_interval_us,
-                        timing_variation,
-                        (timing_variation / expected_interval_us) * 100.0
-                    );
-                }
+            // Only log actual hardware timing issues, not software processing timing
+            if is_hardware_drift {
+                crate::audio_debug!("⏰ HARDWARE TIMING: Callback interval variation: {:.2}ms (expected: {:.2}ms, actual: {:.2}ms)", 
+                    interval_variation / 1000.0, expected_interval_us / 1000.0, callback_interval_us / 1000.0);
             }
             
             self.last_sync_time = now;
-            return Some(sync_info);
+            Some(sync)
+        } else {
+            None
         }
-        
-        None
     }
     
     /// Get current playback position in samples
@@ -110,6 +104,11 @@ impl AudioClock {
     /// Get elapsed real time since clock start
     pub fn get_elapsed_time(&self) -> std::time::Duration {
         std::time::Instant::now().duration_since(self.start_time)
+    }
+
+    /// Get the current drift compensation
+    pub fn get_drift_compensation(&self) -> f64 {
+        self.drift_compensation
     }
     
     /// Calculate timing drift between audio time and real time

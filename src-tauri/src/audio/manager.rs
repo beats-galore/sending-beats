@@ -386,13 +386,18 @@ impl ApplicationAudioManager {
         };
     }
     
-    /// Get virtual input streams for mixer integration
-    pub fn get_virtual_input_streams(&self) -> HashMap<String, Arc<crate::audio::mixer::stream_management::AudioInputStream>> {
-        let registry = get_virtual_input_registry();
-        if let Ok(reg) = registry.lock() {
-            reg.clone()
+    /// Get a virtual input stream from the ApplicationAudioManager registry
+    pub async fn get_virtual_input_stream(&self, device_id: &str) -> Option<Arc<AudioInputStream>> {
+        info!("🔍 Looking up virtual input stream for device: {}", device_id);
+        
+        let virtual_streams = crate::application_audio::ApplicationAudioManager::get_virtual_input_streams();
+        if let Some(stream) = virtual_streams.get(device_id) {
+            info!("✅ Found virtual input stream for device: {}", device_id);
+            Some(stream.clone())
         } else {
-            HashMap::new()
+            info!("❌ No virtual input stream found for device: {} (available: {:?})", 
+                  device_id, virtual_streams.keys().collect::<Vec<_>>());
+            None
         }
     }
     
