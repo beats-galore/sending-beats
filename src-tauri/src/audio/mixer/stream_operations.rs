@@ -628,9 +628,24 @@ impl VirtualMixer {
                 };
                 let input_samples = mixer_handle.collect_input_samples_with_effects(&current_channels).await;
                 
+                // **BUFFER DEBUG**: Log buffer collection patterns
+                if frame_count % 100 == 0  {
+                    let total_samples: usize = input_samples.values().map(|v| v.len()).sum();
+                    println!("🔊 BUFFER COLLECTION Frame {}: {} devices, {} total samples, channels_configured={}", 
+                        frame_count, input_samples.len(), total_samples, current_channels.len());
+                    
+                    for (device_id, samples) in input_samples.iter() {
+                        println!("  Device {}: {} samples", device_id, samples.len());
+                    }
+                }
+                
                 // If no audio data is available from callbacks, add small delay to prevent excessive CPU usage
                 // **RT THREAD FIX**: Add delay to prevent overwhelming system with debug output
                 if input_samples.is_empty() {
+                    if frame_count % 500 == 0 {  // Log every 5 seconds when no input
+                        println!("⚠️  NO INPUT SAMPLES: Frame {} - no audio data available from {} configured channels", 
+                            frame_count, current_channels.len());
+                    }
                     std::thread::sleep(std::time::Duration::from_micros(100)); // 0.1ms sleep 
                     continue;
                 }
@@ -858,17 +873,37 @@ impl VirtualMixer {
 
                 frame_count += 1;
                 
-                // **PRIORITY 5: Audio Clock Synchronization** - Update master clock and timing metrics
+                // **TIMING DEBUG**: Comprehensive logging to understand synchronization issues
                 let samples_processed = buffer_size as usize;
                 let processing_time_us = timing_start.elapsed().as_micros() as f64;
+                let actual_input_samples = input_samples.len();
+                let total_input_sample_count: usize = input_samples.values().map(|v| v.len()).sum();
+                let output_buffer_size = reusable_output_buffer.len();
+                
+                // Log timing details every 100 frames (about once per second at typical rates)
+                if frame_count % 100 == 0 {
+                    println!("🕐 TIMING DEBUG Frame {}: samples_processed={}, actual_inputs={}, total_input_samples={}, output_buffer={}, processing_time={:.1}μs", 
+                        frame_count, samples_processed, actual_input_samples, total_input_sample_count, output_buffer_size, processing_time_us);
+                }
                 
                 // Update audio clock with processed samples
                 if let Ok(mut clock_guard) = audio_clock.try_lock() {
+                    // Log clock state before update
+                    if frame_count % 100 == 0 {
+                        println!("🕐 CLOCK STATE: samples_processed_before={}, sample_rate={}, sync_interval={}", 
+                            clock_guard.get_samples_processed(), clock_guard.get_sample_rate(), buffer_size);
+                    }
+                    
                     if let Some(sync_info) = clock_guard.update(samples_processed) {
+                        // Always log timing sync events for debugging
+                        println!("🕐 TIMING SYNC: callback_interval={:.2}ms, expected={:.2}ms, variation={:.2}ms, drift_significant={}", 
+                            sync_info.callback_interval_us / 1000.0, sync_info.expected_interval_us / 1000.0, 
+                            sync_info.timing_variation / 1000.0, sync_info.is_drift_significant);
+                        
                         // Clock detected timing drift - log it
                         if sync_info.is_drift_significant {
-                            crate::audio_debug!("⚠️  TIMING DRIFT: {:.2}ms drift detected at {} samples", 
-                                sync_info.timing_variation / 1000.0, sync_info.samples_processed);
+                            println!("⚠️  SIGNIFICANT TIMING DRIFT: {:.2}ms variation at {} samples ({}% of expected)", 
+                                sync_info.timing_variation / 1000.0, sync_info.samples_processed, sync_info.get_variation_percentage());
                             
                             // Record sync adjustment in metrics
                             if let Ok(mut metrics_guard) = timing_metrics.try_lock() {

@@ -34,16 +34,31 @@ impl VirtualMixerHandle {
         let mut samples = HashMap::new();
         let streams = self.input_streams.lock().await;
         
-        // Debug: Log collection attempt
+        // **DEBUG**: Log input stream status
         use std::sync::{LazyLock, Mutex as StdMutex};
-        static COLLECTION_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
+        static DEBUG_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
         
-        let collection_count = if let Ok(mut count) = COLLECTION_COUNT.lock() {
+        let debug_count = if let Ok(mut count) = DEBUG_COUNT.lock() {
             *count += 1;
             *count
         } else {
             0
         };
+        
+        // Log detailed status every 100 calls
+        if debug_count % 100 == 0 {
+            println!("🔍 INPUT STREAM STATUS Debug #{}: {} active streams, {} configured channels", 
+                debug_count, streams.len(), channels.len());
+            
+            for (device_id, _stream) in streams.iter() {
+                println!("  Active stream: {}", device_id);
+            }
+            
+            for channel in channels.iter() {
+                println!("  Configured channel '{}': input_device={:?}, muted={}", 
+                    channel.name, channel.input_device_id, channel.muted);
+            }
+        }
         
         let num_streams = streams.len();
         let num_channels = channels.len();
@@ -59,7 +74,7 @@ impl VirtualMixerHandle {
                     let peak = stream_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
                     let rms = (stream_samples.iter().map(|&s| s * s).sum::<f32>() / stream_samples.len() as f32).sqrt();
                     
-                    if collection_count % 200 == 0 || (peak > 0.01 && collection_count % 50 == 0) {
+                    if debug_count % 200 == 0 || (peak > 0.01 && debug_count % 50 == 0) {
                         crate::audio_debug!("🎯 COLLECT WITH EFFECTS [{}]: {} samples collected, peak: {:.4}, rms: {:.4}, channel: {}", 
                             device_id, stream_samples.len(), peak, rms, channel.name);
                     }
@@ -72,7 +87,7 @@ impl VirtualMixerHandle {
                     let peak = stream_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
                     let rms = (stream_samples.iter().map(|&s| s * s).sum::<f32>() / stream_samples.len() as f32).sqrt();
                     
-                    if collection_count % 200 == 0 || (peak > 0.01 && collection_count % 50 == 0) {
+                    if debug_count % 200 == 0 || (peak > 0.01 && debug_count % 50 == 0) {
                         println!("🎯 COLLECT RAW [{}]: {} samples collected, peak: {:.4}, rms: {:.4} (no channel config)", 
                             device_id, stream_samples.len(), peak, rms);
                     }
@@ -93,7 +108,7 @@ impl VirtualMixerHandle {
                     let peak = stream_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
                     let rms = (stream_samples.iter().map(|&s| s * s).sum::<f32>() / stream_samples.len() as f32).sqrt();
                     
-                    if collection_count % 200 == 0 || (peak > 0.01 && collection_count % 50 == 0) {
+                    if debug_count % 200 == 0 || (peak > 0.01 && debug_count % 50 == 0) {
                         crate::audio_debug!("🎯 COLLECT VIRTUAL APP [{}]: {} samples collected, peak: {:.4}, rms: {:.4}, channel: {}", 
                             device_id, stream_samples.len(), peak, rms, channel.name);
                     }
@@ -106,7 +121,7 @@ impl VirtualMixerHandle {
                     let peak = stream_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
                     let rms = (stream_samples.iter().map(|&s| s * s).sum::<f32>() / stream_samples.len() as f32).sqrt();
                     
-                    if collection_count % 200 == 0 || (peak > 0.01 && collection_count % 50 == 0) {
+                    if debug_count % 200 == 0 || (peak > 0.01 && debug_count % 50 == 0) {
                         crate::audio_debug!("🎯 COLLECT VIRTUAL APP RAW [{}]: {} samples collected, peak: {:.4}, rms: {:.4} (no channel config)", 
                             device_id, stream_samples.len(), peak, rms);
                     }
@@ -127,7 +142,7 @@ impl VirtualMixerHandle {
             // Audio is being processed (we see logs) but sample collection is failing
             // Check if real levels are already available, otherwise generate representative levels
             
-            if collection_count % 200 == 0 {
+            if debug_count % 200 == 0 {
                 crate::audio_debug!("🔧 DEBUG: Bridge condition met - samples empty but {} streams active, checking {} channels", 
                     streams_len, num_channels);
             }
@@ -138,7 +153,7 @@ impl VirtualMixerHandle {
                     let existing_levels_count = channel_levels_guard.len();
                     let has_real_levels = existing_levels_count > 0;
                     
-                    if collection_count % 200 == 0 {
+                    if debug_count % 200 == 0 {
                         crate::audio_debug!("🔍 BRIDGE: Found {} existing channel levels in HashMap", existing_levels_count);
                         for (channel_id, (peak_left, rms_left, peak_right, rms_right)) in channel_levels_guard.iter() {
                             crate::audio_debug!("   Real Level [Channel {}]: L(peak={:.4}, rms={:.4}) R(peak={:.4}, rms={:.4})", 
@@ -148,7 +163,7 @@ impl VirtualMixerHandle {
                     
                     // If we have real levels, we don't need to generate mock ones
                     if has_real_levels {
-                        if collection_count % 200 == 0 {
+                        if debug_count % 200 == 0 {
                             crate::audio_debug!("✅ BRIDGE: Using real levels from audio processing thread");
                         }
                     } else {
@@ -166,7 +181,7 @@ impl VirtualMixerHandle {
                                         // Use stereo format: (peak_left, rms_left, peak_right, rms_right)
                                         channel_levels_guard.insert(channel.id, (mock_peak, mock_rms, mock_peak, mock_rms));
                                         
-                                        if collection_count % 200 == 0 {
+                                        if debug_count % 200 == 0 {
                                             println!("🔗 BRIDGE [Channel {}]: Generated mock VU levels (peak: {:.4}, rms: {:.4}) - Real processing happening elsewhere", 
                                                 channel.id, mock_peak, mock_rms);
                                         }
@@ -174,7 +189,7 @@ impl VirtualMixerHandle {
                                 }
                             }
                             Err(_) => {
-                                if collection_count % 200 == 0 {
+                                if debug_count % 200 == 0 {
                                     println!("🚫 BRIDGE: Failed to lock channel_levels for mock level generation");
                                 }
                             }
@@ -182,18 +197,18 @@ impl VirtualMixerHandle {
                     }
                 }
                 Err(_) => {
-                    if collection_count % 200 == 0 {
+                    if debug_count % 200 == 0 {
                         println!("🚫 BRIDGE: Failed to lock channel_levels for reading existing levels");
                     }
                 }
             }
-        } else if collection_count % 2000 == 0 {  // Reduce from every 200 to every 2000 calls
+        } else if debug_count % 2000 == 0 {  // Reduce from every 200 to every 2000 calls
             crate::audio_debug!("🔧 DEBUG: Bridge condition NOT met - samples.len()={}, num_streams={}", 
                 samples.len(), num_streams);
         }
         
         // Debug: Log collection summary
-        if collection_count % 1000 == 0 {
+        if debug_count % 1000 == 0 {
             crate::audio_debug!("📈 COLLECTION SUMMARY: {} streams available, {} channels configured, {} samples collected", 
                 streams_len, num_channels, samples.len());
             
