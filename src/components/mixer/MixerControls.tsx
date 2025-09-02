@@ -5,23 +5,11 @@ import { invoke } from '@tauri-apps/api/core';
 import { memo, useState, useEffect } from 'react';
 
 import { useMixerControls } from '../../hooks';
+import { DebugLogModal } from '../DebugLogModal';
 
 export const MixerControls = memo(() => {
   const { isReady, onAddChannel } = useMixerControls();
-  const [debugEnabled, setDebugEnabled] = useState(false);
-
-  useEffect(() => {
-    // Load initial debug state
-    invoke('get_audio_debug_enabled').then((enabled) => {
-      setDebugEnabled(enabled as boolean);
-    });
-  }, []);
-
-  const toggleDebug = async () => {
-    const newState = !debugEnabled;
-    await invoke('set_audio_debug_enabled', { enabled: newState });
-    setDebugEnabled(newState);
-  };
+  const [showDebugModal, setShowDebugModal] = useState(false);
 
   return (
     <Group>
@@ -35,14 +23,15 @@ export const MixerControls = memo(() => {
       </Button>
 
       <Button
-        leftSection={debugEnabled ? <IconBug size={16} /> : <IconBugOff size={16} />}
-        onClick={toggleDebug}
-        variant={debugEnabled ? 'filled' : 'outline'}
-        color={debugEnabled ? 'yellow' : 'gray'}
+        leftSection={<IconBug size={16} />}
+        onClick={() => setShowDebugModal(true)}
+        variant="filled"
+        color="yellow"
         size="sm"
       >
-        Debug {debugEnabled ? 'ON' : 'OFF'}
+        Set debug config
       </Button>
+      <DebugLogModal opened={showDebugModal} onClose={() => setShowDebugModal(false)} />
     </Group>
   );
 });

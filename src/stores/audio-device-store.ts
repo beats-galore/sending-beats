@@ -66,8 +66,8 @@ export const useAudioDeviceStore = create<AudioDeviceStore>()(
         // Update devices and compute derived values with change detection
         const inputDevices = deviceService.getInputDevices(devices);
         const outputDevices = deviceService.getOutputDevices(devices);
-        const defaultInputDevice = deviceService.getDefaultInputDevice(devices) || null;
-        const defaultOutputDevice = deviceService.getDefaultOutputDevice(devices) || null;
+        const defaultInputDevice = deviceService.getDefaultInputDevice(devices) ?? null;
+        const defaultOutputDevice = deviceService.getDefaultOutputDevice(devices) ?? null;
 
         set((state) => {
           const updates: Partial<AudioDeviceStore> = {};

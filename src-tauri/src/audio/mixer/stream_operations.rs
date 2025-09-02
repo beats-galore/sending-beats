@@ -590,9 +590,9 @@ impl VirtualMixer {
                     param.sched_priority = 80; // High priority for real-time audio
                     
                     if pthread_setschedparam(pthread_self(), SCHED_RR, &param) == 0 {
-                        println!("✅ Audio thread priority set to real-time (priority: 80)");
+                        crate::audio_debug!("✅ Audio thread priority set to real-time (priority: 80)");
                     } else {
-                        println!("⚠️ Failed to set audio thread priority - may cause audio dropouts");
+                        crate::audio_debug!("⚠️ Failed to set audio thread priority - may cause audio dropouts");
                     }
                 }
             }
@@ -607,7 +607,7 @@ impl VirtualMixer {
             let mut reusable_left_samples = Vec::with_capacity(buffer_size as usize);
             let mut reusable_right_samples = Vec::with_capacity(buffer_size as usize);
             
-            println!("🎵 Audio processing thread started with real mixing, optimized buffers, and clock synchronization");
+            crate::audio_debug!("🎵 Audio processing thread started with real mixing, optimized buffers, and clock synchronization");
 
             while is_running.load(Ordering::Relaxed) {
                 frame_count += 1;
@@ -633,11 +633,11 @@ impl VirtualMixer {
                 // **BUFFER DEBUG**: Log buffer collection patterns
                 if should_log_debug {
                     let total_samples: usize = input_samples.values().map(|v| v.len()).sum();
-                    println!("🔊 BUFFER COLLECTION Frame {}: {} devices, {} total samples, channels_configured={}", 
+                    crate::audio_debug!("🔊 BUFFER COLLECTION Frame {}: {} devices, {} total samples, channels_configured={}", 
                         frame_count, input_samples.len(), total_samples, current_channels.len());
                     
                     for (device_id, samples) in input_samples.iter() {
-                        println!("  Device {}: {} samples", device_id, samples.len());
+                        crate::audio_debug!("  Device {}: {} samples", device_id, samples.len());
                     }
                 }
                 
@@ -645,7 +645,7 @@ impl VirtualMixer {
                 // **RT THREAD FIX**: Add delay to prevent overwhelming system with debug output
                 if input_samples.is_empty() {
                     if should_log_debug {  // Log every 5 seconds when no input
-                        println!("⚠️  NO INPUT SAMPLES: Frame {} - no audio data available from {} configured channels", 
+                        crate::audio_debug!("⚠️  NO INPUT SAMPLES: Frame {} - no audio data available from {} configured channels", 
                             frame_count, current_channels.len());
                     }
                     std::thread::sleep(std::time::Duration::from_micros(100)); // 0.1ms sleep 
@@ -740,7 +740,7 @@ impl VirtualMixer {
                             for sample in reusable_output_buffer.iter_mut() {
                                 *sample *= normalization_factor;
                             }
-                            println!("🔧 GAIN CONTROL: Normalized {} channels, peak {:.3} -> {:.3}", 
+                            crate::audio_debug!("🔧 GAIN CONTROL: Normalized {} channels, peak {:.3} -> {:.3}", 
                                 active_channels, buffer_peak, buffer_peak * normalization_factor);
                         }
                         // If not approaching clipping, leave levels untouched for better dynamics
@@ -762,7 +762,7 @@ impl VirtualMixer {
                         for sample in reusable_output_buffer.iter_mut() {
                             *sample *= conservative_gain;
                         }
-                        println!("🔧 MASTER LIMITER: Hot signal {:.3}, applied {:.2} gain", pre_master_peak, conservative_gain);
+                        crate::audio_debug!("🔧 MASTER LIMITER: Hot signal {:.3}, applied {:.2} gain", pre_master_peak, conservative_gain);
                     } else {
                         // Normal signal levels, apply professional master gain
                         for sample in reusable_output_buffer.iter_mut() {
@@ -824,13 +824,13 @@ impl VirtualMixer {
                         }
                         Err(_) => {
                             if should_log_debug {
-                                println!("🚫 STORAGE FAILED: Could not lock channel_levels HashMap for storage");
+                                crate::audio_debug!("🚫 STORAGE FAILED: Could not lock channel_levels HashMap for storage");
                             }
                         }
                     }
                 } else {
                     if should_log_debug {
-                        println!("⚠️  NO LEVELS TO STORE: calculated_channel_levels is empty");
+                        crate::audio_debug!("⚠️  NO LEVELS TO STORE: calculated_channel_levels is empty");
                     }
                 }
                 
@@ -858,14 +858,14 @@ impl VirtualMixer {
                 match audio_output_broadcast_tx.send(reusable_output_buffer.clone()) {
                     Ok(_) => {
                         if should_log_debug { // Log every ~100ms at 48kHz
-                            println!("📡 Mixer broadcast: sent {} samples to {} receivers", 
+                            crate::audio_debug!("📡 Mixer broadcast: sent {} samples to {} receivers", 
                                 reusable_output_buffer.len(), 
                                 audio_output_broadcast_tx.receiver_count());
                         }
                     },
                     Err(tokio::sync::broadcast::error::SendError(_)) => {
                         if should_log_debug {
-                            println!("📡 Mixer broadcast: no active receivers (recording/streaming stopped)");
+                            crate::audio_debug!("📡 Mixer broadcast: no active receivers (recording/streaming stopped)");
                         }
                     }
                 }
@@ -886,7 +886,7 @@ impl VirtualMixer {
                 
                 // Log timing details every 1000 frames (about once per second at typical rates)
                 if should_log_debug {
-                    println!("🕐 TIMING DEBUG Frame {}: samples_processed={}, actual_inputs={}, total_input_samples={}, output_buffer={}, processing_time={:.1}μs", 
+                    crate::audio_debug!("🕐 TIMING DEBUG Frame {}: samples_processed={}, actual_inputs={}, total_input_samples={}, output_buffer={}, processing_time={:.1}μs", 
                         frame_count, samples_processed, actual_input_samples, total_input_sample_count, output_buffer_size, processing_time_us);
                 }
                 
@@ -898,28 +898,28 @@ impl VirtualMixer {
                             let hardware_buffer_size = 512u32; // BlackHole's actual buffer size
                             let current_sync_interval = clock_guard.get_sync_interval();
                             if current_sync_interval != hardware_buffer_size as u64 {
-                                println!("🔄 UPDATING AUDIOCLOCK: sync_interval {} -> {} (BlackHole hardware buffer)", 
+                                crate::audio_debug!("🔄 UPDATING AUDIOCLOCK: sync_interval {} -> {} (BlackHole hardware buffer)", 
                                     current_sync_interval, hardware_buffer_size);
                                 clock_guard.set_hardware_buffer_size(hardware_buffer_size);
                             }
                             
                             // Log clock state before update
                             if should_log_debug {
-                                println!("🕐 CLOCK STATE: samples_processed_before={}, sample_rate={}, sync_interval={}", 
+                                crate::audio_debug!("🕐 CLOCK STATE: samples_processed_before={}, sample_rate={}, sync_interval={}", 
                                     clock_guard.get_samples_processed(), clock_guard.get_sample_rate(), samples_processed);
                             }
                             
                             // Update with hardware buffer size (512) instead of accumulated samples (1024)
                             if let Some(sync_info) = clock_guard.update(hardware_buffer_size as usize) {
                                 if should_log_debug {
-                                    println!("🕐 TIMING SYNC: callback_interval={:.2}ms, expected={:.2}ms, variation={:.2}ms, drift_significant={}", 
+                                    crate::audio_debug!("🕐 TIMING SYNC: callback_interval={:.2}ms, expected={:.2}ms, variation={:.2}ms, drift_significant={}", 
                                         sync_info.callback_interval_us / 1000.0, sync_info.expected_interval_us / 1000.0, 
                                         sync_info.timing_variation / 1000.0, sync_info.is_drift_significant);
                                 }
                                 
                                 // Clock detected timing drift - log it
                                 if sync_info.is_drift_significant && should_log_debug {
-                                    println!("⚠️  SIGNIFICANT TIMING DRIFT: {:.2}ms variation at {} samples ({}% of expected)", 
+                                    crate::audio_debug!("⚠️  SIGNIFICANT TIMING DRIFT: {:.2}ms variation at {} samples ({}% of expected)", 
                                         sync_info.timing_variation / 1000.0, sync_info.samples_processed, sync_info.get_variation_percentage());
                                     
                                     // Record sync adjustment in metrics
@@ -944,12 +944,12 @@ impl VirtualMixer {
                 // **TIMING METRICS**: Report comprehensive timing every 10 seconds
                 if frame_count % ((sample_rate / buffer_size) as u64 * 10) == 0 {
                     if let Ok(metrics_guard) = timing_metrics.try_lock() {
-                        println!("📈 {}", metrics_guard.get_performance_summary());
+                        crate::audio_debug!("📈 {}", metrics_guard.get_performance_summary());
                     }
                     if let Ok(clock_guard) = audio_clock.try_lock() {
                         let sample_timestamp = clock_guard.get_sample_timestamp();
                         let drift = clock_guard.get_drift_compensation();
-                        println!("⏰ Audio Clock: {} samples processed, {:.2}ms drift", 
+                        crate::audio_debug!("⏰ Audio Clock: {} samples processed, {:.2}ms drift", 
                             sample_timestamp, drift / 1000.0);
                     }
                 }
@@ -965,7 +965,7 @@ impl VirtualMixer {
                     }
                     
                     if input_samples.len() > 0 {
-                        println!("Audio processing: CPU {:.1}%, {} active streams", cpu_usage, input_samples.len());
+                        crate::audio_debug!("Audio processing: CPU {:.1}%, {} active streams", cpu_usage, input_samples.len());
                     }
                 }
 
@@ -977,7 +977,7 @@ impl VirtualMixer {
                 
                 // Debug timing changes every 5 seconds
                 if frame_count % ((sample_rate / buffer_size) as u64 * 5) == 0 {
-                    println!("🕐 CALLBACK-DRIVEN: Processing triggered by audio data availability, no timer drift (was sleeping {:.2}ms)", 
+                    crate::audio_debug!("🕐 CALLBACK-DRIVEN: Processing triggered by audio data availability, no timer drift (was sleeping {:.2}ms)", 
                         hardware_buffer_duration_ms);
                 }
                 
@@ -992,7 +992,7 @@ impl VirtualMixer {
                 } else if elapsed.as_millis() > 50 {
                     // Processing took too long (> 50ms), log the overrun
                     if should_log_debug {
-                        println!("⚠️  PROCESSING OVERRUN: {}ms processing time (audio callback driven)", elapsed.as_millis());
+                        crate::audio_debug!("⚠️  PROCESSING OVERRUN: {}ms processing time (audio callback driven)", elapsed.as_millis());
                     }
                     tokio::task::yield_now().await;
                 }
@@ -1001,7 +1001,7 @@ impl VirtualMixer {
                 // The loop will naturally pace itself based on when audio callbacks provide data
             }
             
-            println!("Audio processing thread stopped");
+            crate::audio_debug!("Audio processing thread stopped");
             }) // End of async block for runtime
         }); // End of thread spawn
 

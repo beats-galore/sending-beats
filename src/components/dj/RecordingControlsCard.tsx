@@ -31,9 +31,14 @@ import { invoke } from '@tauri-apps/api/core';
 import { memo, useState, useCallback, useEffect } from 'react';
 
 import { useRecording } from '../../hooks/use-recording';
+
 import { MetadataForm } from './MetadataForm';
 
-import type { RecordingConfig, RecordingFormat, RecordingMetadata } from '../../hooks/use-recording';
+import type {
+  RecordingConfig,
+  RecordingFormat,
+  RecordingMetadata,
+} from '../../hooks/use-recording';
 
 type RecordingControlsCardProps = {
   disabled?: boolean;
@@ -152,7 +157,7 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(({ disable
   const [finalFilePath, setFinalFilePath] = useState<string>('');
 
   const isRecording = status?.is_recording ?? false;
-  const currentSession = status?.current_session;  // Fixed to match backend field name
+  const currentSession = status?.current_session; // Fixed to match backend field name
   const availableSpace = status?.available_space_gb ?? 0;
 
   // Load default config on first render (only non-text fields)
@@ -164,7 +169,7 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(({ disable
           ...defaultConfig,
           name: 'Quick Recording',
           // Keep user's text inputs and format selection, only load technical defaults
-          format: prev.format || defaultConfig.format,
+          format: prev.format ?? defaultConfig.format,
           filename_template: prev.filename_template ?? '',
           output_directory: prev.output_directory ?? defaultConfig.output_directory ?? '',
           metadata: {
@@ -178,27 +183,27 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(({ disable
     };
 
     void loadDefaultConfig();
-  }, []);
+  }, [actions]);
 
   const handleStartRecording = useCallback(async () => {
     try {
       // Create full config from quick config
       const fullConfig: RecordingConfig = {
         id: crypto.randomUUID(),
-        name: quickConfig.name || 'Quick Recording',
-        format: quickConfig.format || { mp3: { bitrate: 192 } },
-        output_directory: quickConfig.output_directory || '',
-        filename_template: quickConfig.filename_template || '{timestamp}_{title}',
-        metadata: quickConfig.metadata || {},
-        auto_stop_on_silence: quickConfig.auto_stop_on_silence || false,
-        silence_threshold_db: quickConfig.silence_threshold_db || -60.0,
-        silence_duration_sec: quickConfig.silence_duration_sec || 5.0,
+        name: quickConfig.name ?? 'Quick Recording',
+        format: quickConfig.format ?? { mp3: { bitrate: 192 } },
+        output_directory: quickConfig.output_directory ?? '',
+        filename_template: quickConfig.filename_template ?? '{timestamp}_{title}',
+        metadata: quickConfig.metadata ?? {},
+        auto_stop_on_silence: quickConfig.auto_stop_on_silence ?? false,
+        silence_threshold_db: quickConfig.silence_threshold_db ?? -60.0,
+        silence_duration_sec: quickConfig.silence_duration_sec ?? 5.0,
         max_duration_minutes: quickConfig.max_duration_minutes,
         max_file_size_mb: quickConfig.max_file_size_mb,
         split_on_interval_minutes: quickConfig.split_on_interval_minutes,
-        sample_rate: quickConfig.sample_rate || 48000,
-        channels: quickConfig.channels || 2,
-        bit_depth: quickConfig.bit_depth || 16, // Use 16-bit for QuickTime/iTunes compatibility
+        sample_rate: quickConfig.sample_rate ?? 48000,
+        channels: quickConfig.channels ?? 2,
+        bit_depth: quickConfig.bit_depth ?? 16, // Use 16-bit for QuickTime/iTunes compatibility
       };
 
       console.log('Starting recording with config:', fullConfig);
@@ -288,223 +293,225 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(({ disable
     }
   }, []);
 
-  if (isLoading && !status) {
-    return (
-      <Card className={classes.recordingCard} padding="lg" withBorder>
-        <Text c="dimmed">Loading recording service...</Text>
-      </Card>
-    );
-  }
-
   return (
     <>
-    <Card className={classes.recordingCard} padding="lg" withBorder>
-      <Stack gap="md">
-        <Group justify="space-between" align="center">
-          <Group gap="xs">
-            <IconFileMusic size={20} color="#fa5252" />
-            <Title order={4} c="red.4">
-              Audio Recording
-            </Title>
-          </Group>
-
-          <Group className={classes.statusDisplay}>
-            <Badge
-              color={isRecording ? 'red' : 'gray'}
-              variant={isRecording ? 'filled' : 'light'}
-              size="md"
-            >
-              {isRecording ? '● REC' : 'Ready'}
-            </Badge>
-            {availableSpace < 1.0 && (
-              <Tooltip label="Low disk space" position="top" withArrow>
-                <IconAlertCircle size={16} color="#fa5252" />
-              </Tooltip>
-            )}
-          </Group>
-        </Group>
-
-        {error && (
-          <Alert icon={<IconAlertCircle size={16} />} title="Error" color="red" variant="light">
-            {error}
-          </Alert>
-        )}
-
-        {/* Recording Status Display */}
-        {isRecording && currentSession && (
-          <Stack gap="xs">
-            <Group justify="space-between">
-              <Text size="sm" c="dimmed">
-                Recording: {currentSession.config.metadata.title || 'Untitled'}
-              </Text>
-              <Text size="sm" c="red.4" fw={600}>
-                {formatDuration(currentSession.duration_seconds)}
-              </Text>
+      <Card className={classes.recordingCard} padding="lg" withBorder>
+        <Stack gap="md">
+          <Group justify="space-between" align="center">
+            <Group gap="xs">
+              <IconFileMusic size={20} color="#fa5252" />
+              <Title order={4} c="red.4">
+                Audio Recording
+              </Title>
             </Group>
 
-            <Progress
-              value={((currentSession.duration_seconds % 60) / 60) * 100}
-              color="red"
-              size="sm"
-              className={classes.progressBar}
-            />
-
-            <Group justify="space-between">
-              <Text size="xs" c="dimmed">
-                Size: {formatFileSize(currentSession.file_size_bytes)}
-              </Text>
-              <Text size="xs" c="dimmed">
-                Levels: L:{(currentSession.current_levels[0] * 100).toFixed(0)}% R:
-                {(currentSession.current_levels[1] * 100).toFixed(0)}%
-              </Text>
-            </Group>
-          </Stack>
-        )}
-
-        {/* Recording Controls */}
-        {!isRecording ? (
-          <Group grow>
-            <Button
-              onClick={handleStartRecording}
-              leftSection={<IconCircleFilled size={20} />}
-              disabled={disabled}
-              color="red"
-              size="lg"
-              className={classes.recordingButton}
-            >
-              Start Recording
-            </Button>
-          </Group>
-        ) : (
-          <Group grow>
-            <Button
-              onClick={handlePauseRecording}
-              leftSection={<IconPlayerPause size={20} />}
-              color="yellow"
-              variant="light"
-              size="md"
-            >
-              Pause
-            </Button>
-            <Button
-              onClick={handleCancelRecording}
-              leftSection={<IconX size={20} />}
-              color="gray"
-              variant="outline"
-              size="md"
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleSaveRecording}
-              leftSection={<IconDeviceFloppy size={20} />}
-              color="green"
-              size="md"
-            >
-              Save
-            </Button>
-          </Group>
-        )}
-
-        {/* Configuration - Show settings and metadata forms */}
-        <div className={classes.configSection}>
-          <Stack gap="sm">
-            <Group justify="space-between" align="center">
-              <Text size="sm" fw={500} c="gray.3">
-                {isRecording ? 'Recording Settings' : 'Quick Settings'}
-              </Text>
-              <Button
-                variant="subtle"
-                size="xs"
-                leftSection={<IconSettings size={14} />}
-                onClick={() => setShowAdvanced(!showAdvanced)}
+            <Group className={classes.statusDisplay}>
+              <Badge
+                color={isRecording ? 'red' : 'gray'}
+                variant={isRecording ? 'filled' : 'light'}
+                size="md"
               >
-                {showAdvanced ? 'Simple' : 'Advanced'}
+                {isRecording ? '● REC' : 'Ready'}
+              </Badge>
+              {availableSpace < 1.0 && (
+                <Tooltip label="Low disk space" position="top" withArrow>
+                  <IconAlertCircle size={16} color="#fa5252" />
+                </Tooltip>
+              )}
+            </Group>
+          </Group>
+
+          {error && (
+            <Alert icon={<IconAlertCircle size={16} />} title="Error" color="red" variant="light">
+              {error}
+            </Alert>
+          )}
+
+          {/* Recording Status Display */}
+          {isRecording && currentSession && (
+            <Stack gap="xs">
+              <Group justify="space-between">
+                <Text size="sm" c="dimmed">
+                  Recording: {currentSession.config.metadata.title || 'Untitled'}
+                </Text>
+                <Text size="sm" c="red.4" fw={600}>
+                  {formatDuration(currentSession.duration_seconds)}
+                </Text>
+              </Group>
+
+              <Progress
+                value={((currentSession.duration_seconds % 60) / 60) * 100}
+                color="red"
+                size="sm"
+                className={classes.progressBar}
+              />
+
+              <Group justify="space-between">
+                <Text size="xs" c="dimmed">
+                  Size: {formatFileSize(currentSession.file_size_bytes)}
+                </Text>
+                <Text size="xs" c="dimmed">
+                  Levels: L:{(currentSession.current_levels[0] * 100).toFixed(0)}% R:
+                  {(currentSession.current_levels[1] * 100).toFixed(0)}%
+                </Text>
+              </Group>
+            </Stack>
+          )}
+
+          {/* Recording Controls */}
+          {!isRecording ? (
+            <Group grow>
+              <Button
+                onClick={handleStartRecording}
+                leftSection={<IconCircleFilled size={20} />}
+                disabled={disabled}
+                color="red"
+                size="lg"
+                className={classes.recordingButton}
+              >
+                Start Recording
               </Button>
             </Group>
+          ) : (
+            <Group grow>
+              <Button
+                onClick={handlePauseRecording}
+                leftSection={<IconPlayerPause size={20} />}
+                color="yellow"
+                variant="light"
+                size="md"
+              >
+                Pause
+              </Button>
+              <Button
+                onClick={handleCancelRecording}
+                leftSection={<IconX size={20} />}
+                color="gray"
+                variant="outline"
+                size="md"
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSaveRecording}
+                leftSection={<IconDeviceFloppy size={20} />}
+                color="green"
+                size="md"
+              >
+                Save
+              </Button>
+            </Group>
+          )}
 
-            {/* Metadata Form - Show when Advanced is enabled */}
-            {showAdvanced && (
-              <div style={{ 
-                backgroundColor: '#25262B', 
-                padding: '16px', 
-                borderRadius: '8px', 
-                border: '1px solid #373A40',
-                marginTop: '8px'
-              }}>
-                <Text size="sm" fw={500} c="#C1C2C5" mb="md">
-                  Recording Metadata
+          {/* Configuration - Show settings and metadata forms */}
+          <div className={classes.configSection}>
+            <Stack gap="sm">
+              <Group justify="space-between" align="center">
+                <Text size="sm" fw={500} c="gray.3">
+                  {isRecording ? 'Recording Settings' : 'Quick Settings'}
                 </Text>
-                <MetadataForm
-                  metadata={quickConfig.metadata || {}}
-                  onChange={(metadata) =>
-                    setQuickConfig((prev) => ({
-                      ...prev,
-                      metadata,
-                    }))
-                  }
-                  showPresetButtons={false}
-                />
-              </div>
-            )}
-
-            {/* Output Directory - Only show when not recording */}
-            {!isRecording && (
-              <Stack gap="xs">
-                <Text size="sm" fw={500} c="#C1C2C5">
-                  Output Directory
-                </Text>
-                <Group gap="sm">
-                  <Text size="sm" c="#909296" style={{ flex: 1, minWidth: 0 }}>
-                    {quickConfig.output_directory || 'Default (~/Music)'}
-                  </Text>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    leftSection={<IconFolder size={16} />}
-                    onClick={handleDirectorySelect}
-                  >
-                    Browse
-                  </Button>
-                </Group>
-              </Stack>
-            )}
-            
-            {/* Format and Filename - Only show when not recording */}
-            {!isRecording && (
-              <Group grow>
-                <Select
-                  label="Format"
-                  value={formatToValue(quickConfig.format || { mp3: { bitrate: 192 } })}
-                  onChange={handleFormatChange}
-                  data={getRecordingFormatOptions()}
-                  size="sm"
-                  styles={{
-                    label: { color: '#C1C2C5' },
-                    input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' },
-                  }}
-                />
-                <TextInput
-                  label="Filename"
-                  placeholder="Enter filename (without extension)"
-                  value={quickConfig.filename_template || ''}
-                  onChange={(e) =>
-                    setQuickConfig((prev) => ({
-                      ...prev,
-                      filename_template: e.target.value,
-                    }))
-                  }
-                  size="sm"
-                  styles={{
-                    label: { color: '#C1C2C5' },
-                    input: { backgroundColor: '#2C2E33', borderColor: '#373A40', color: '#C1C2C5' },
-                  }}
-                />
+                <Button
+                  variant="subtle"
+                  size="xs"
+                  leftSection={<IconSettings size={14} />}
+                  onClick={() => setShowAdvanced(!showAdvanced)}
+                >
+                  {showAdvanced ? 'Simple' : 'Advanced'}
+                </Button>
               </Group>
-            )}
 
-            {/* Advanced Recording Settings - Available during recording */}
-            {showAdvanced && (
+              {/* Metadata Form - Show when Advanced is enabled */}
+              {showAdvanced && (
+                <div
+                  style={{
+                    backgroundColor: '#25262B',
+                    padding: '16px',
+                    borderRadius: '8px',
+                    border: '1px solid #373A40',
+                    marginTop: '8px',
+                  }}
+                >
+                  <Text size="sm" fw={500} c="#C1C2C5" mb="md">
+                    Recording Metadata
+                  </Text>
+                  <MetadataForm
+                    metadata={quickConfig.metadata || {}}
+                    onChange={(metadata) =>
+                      setQuickConfig((prev) => ({
+                        ...prev,
+                        metadata,
+                      }))
+                    }
+                    showPresetButtons={false}
+                  />
+                </div>
+              )}
+
+              {/* Output Directory - Only show when not recording */}
+              {!isRecording && (
+                <Stack gap="xs">
+                  <Text size="sm" fw={500} c="#C1C2C5">
+                    Output Directory
+                  </Text>
+                  <Group gap="sm">
+                    <Text size="sm" c="#909296" style={{ flex: 1, minWidth: 0 }}>
+                      {quickConfig.output_directory || 'Default (~/Music)'}
+                    </Text>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      leftSection={<IconFolder size={16} />}
+                      onClick={handleDirectorySelect}
+                    >
+                      Browse
+                    </Button>
+                  </Group>
+                </Stack>
+              )}
+
+              {/* Format and Filename - Only show when not recording */}
+              {!isRecording && (
+                <Group grow>
+                  <Select
+                    label="Format"
+                    value={formatToValue(quickConfig.format || { mp3: { bitrate: 192 } })}
+                    onChange={handleFormatChange}
+                    data={getRecordingFormatOptions()}
+                    size="sm"
+                    styles={{
+                      label: { color: '#C1C2C5' },
+                      input: {
+                        backgroundColor: '#2C2E33',
+                        borderColor: '#373A40',
+                        color: '#C1C2C5',
+                      },
+                    }}
+                  />
+                  <TextInput
+                    label="Filename"
+                    placeholder="Enter filename (without extension)"
+                    value={quickConfig.filename_template || ''}
+                    onChange={(e) =>
+                      setQuickConfig((prev) => ({
+                        ...prev,
+                        filename_template: e.target.value,
+                      }))
+                    }
+                    size="sm"
+                    styles={{
+                      label: { color: '#C1C2C5' },
+                      input: {
+                        backgroundColor: '#2C2E33',
+                        borderColor: '#373A40',
+                        color: '#C1C2C5',
+                      },
+                    }}
+                  />
+                </Group>
+              )}
+
+              {/* Advanced Recording Settings - Available during recording */}
+              {showAdvanced && (
                 <Stack gap="sm">
                   <Switch
                     label="Auto-stop on silence"
@@ -574,119 +581,111 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(({ disable
             </Stack>
           </div>
 
-        {/* Storage Info */}
-        <Group justify="space-between">
-          <Text size="xs" c="dimmed">
-            Available: {availableSpace.toFixed(1)} GB
-          </Text>
-          <Text size="xs" c="dimmed">
-            Total Recordings: {status?.total_recordings || 0}
-          </Text>
-        </Group>
-      </Stack>
-    </Card>
-
-    {/* Cancel Confirmation Modal */}
-    <Modal
-      opened={showCancelModal}
-      onClose={() => setShowCancelModal(false)}
-      title={<Text fw={600} c="red">Cancel Recording</Text>}
-      centered
-      size="sm"
-    >
-      <Stack gap="md">
-        <Text>
-          Are you sure you want to cancel this recording? 
-        </Text>
-        <Text c="red" size="sm">
-          This cannot be reversed and all recorded audio will be lost.
-        </Text>
-        <Group justify="flex-end" gap="sm">
-          <Button 
-            variant="subtle" 
-            onClick={() => setShowCancelModal(false)}
-          >
-            Keep Recording
-          </Button>
-          <Button 
-            color="red" 
-            onClick={handleConfirmCancel}
-            leftSection={<IconX size={16} />}
-          >
-            Cancel Recording
-          </Button>
-        </Group>
-      </Stack>
-    </Modal>
-
-    {/* Save Recording Modal with Full Metadata Form */}
-    <Modal
-      opened={showSaveModal}
-      onClose={() => setShowSaveModal(false)}
-      title={<Text fw={600} c="green">Save Recording</Text>}
-      size="xl"
-      centered
-    >
-      <Stack gap="md">
-        <Text>
-          Complete the metadata and file information before saving your recording.
-        </Text>
-        
-        <Divider />
-
-        {/* File Path Section */}
-        <Stack gap="xs">
-          <Text size="sm" fw={500}>Output Location</Text>
-          <Group gap="sm">
-            <TextInput
-              label="File Path"
-              value={finalFilePath}
-              onChange={(e) => setFinalFilePath(e.target.value)}
-              placeholder="Choose where to save your recording"
-              style={{ flex: 1 }}
-              rightSection={
-                <Button size="xs" variant="subtle">
-                  Browse
-                </Button>
-              }
-            />
+          {/* Storage Info */}
+          <Group justify="space-between">
+            <Text size="xs" c="dimmed">
+              Available: {availableSpace.toFixed(1)} GB
+            </Text>
+            <Text size="xs" c="dimmed">
+              Total Recordings: {status?.total_recordings || 0}
+            </Text>
           </Group>
         </Stack>
+      </Card>
 
-        <Divider />
+      {/* Cancel Confirmation Modal */}
+      <Modal
+        opened={showCancelModal}
+        onClose={() => setShowCancelModal(false)}
+        title={
+          <Text fw={600} c="red">
+            Cancel Recording
+          </Text>
+        }
+        centered
+        size="sm"
+      >
+        <Stack gap="md">
+          <Text>Are you sure you want to cancel this recording?</Text>
+          <Text c="red" size="sm">
+            This cannot be reversed and all recorded audio will be lost.
+          </Text>
+          <Group justify="flex-end" gap="sm">
+            <Button variant="subtle" onClick={() => setShowCancelModal(false)}>
+              Keep Recording
+            </Button>
+            <Button color="red" onClick={handleConfirmCancel} leftSection={<IconX size={16} />}>
+              Cancel Recording
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
 
-        {/* Complete Metadata Form */}
-        {finalMetadata && (
-          <MetadataForm
-            metadata={finalMetadata}
-            onChange={setFinalMetadata}
-            showPresetButtons={true}
-          />
-        )}
-
-        <Group justify="flex-end" gap="sm" mt="md">
-          <Button 
-            variant="subtle" 
-            onClick={() => setShowSaveModal(false)}
-          >
-            Cancel
-          </Button>
-          <Button 
-            color="green"
-            onClick={() => {
-              // TODO: Implement final save with metadata and file path
-              console.log('Saving with metadata:', finalMetadata);
-              console.log('Saving to path:', finalFilePath);
-              setShowSaveModal(false);
-            }}
-            leftSection={<IconDeviceFloppy size={16} />}
-          >
+      {/* Save Recording Modal with Full Metadata Form */}
+      <Modal
+        opened={showSaveModal}
+        onClose={() => setShowSaveModal(false)}
+        title={
+          <Text fw={600} c="green">
             Save Recording
-          </Button>
-        </Group>
-      </Stack>
-    </Modal>
-  </>
+          </Text>
+        }
+        size="xl"
+        centered
+      >
+        <Stack gap="md">
+          <Text>Complete the metadata and file information before saving your recording.</Text>
+
+          <Divider />
+
+          {/* File Path Section */}
+          <Stack gap="xs">
+            <Text size="sm" fw={500}>
+              Output Location
+            </Text>
+            <Group gap="sm">
+              <TextInput
+                label="File Path"
+                value={finalFilePath}
+                onChange={(e) => setFinalFilePath(e.target.value)}
+                placeholder="Choose where to save your recording"
+                style={{ flex: 1 }}
+                rightSection={
+                  <Button size="xs" variant="subtle">
+                    Browse
+                  </Button>
+                }
+              />
+            </Group>
+          </Stack>
+
+          <Divider />
+
+          {/* Complete Metadata Form */}
+          {finalMetadata && (
+            <MetadataForm metadata={finalMetadata} onChange={setFinalMetadata} showPresetButtons />
+          )}
+
+          <Group justify="flex-end" gap="sm" mt="md">
+            <Button variant="subtle" onClick={() => setShowSaveModal(false)}>
+              Cancel
+            </Button>
+            <Button
+              color="green"
+              onClick={() => {
+                // TODO: Implement final save with metadata and file path
+                console.log('Saving with metadata:', finalMetadata);
+                console.log('Saving to path:', finalFilePath);
+                setShowSaveModal(false);
+              }}
+              leftSection={<IconDeviceFloppy size={16} />}
+            >
+              Save Recording
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+    </>
   );
 });
 
