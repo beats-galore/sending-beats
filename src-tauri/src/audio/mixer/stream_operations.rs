@@ -747,37 +747,14 @@ impl VirtualMixer {
             // **CRITICAL FIX**: Detect actual hardware sample rate from active streams
             // This fixes sample rate mismatch issues that cause timing drift and audio artifacts
             let actual_hardware_sample_rate = {
-                // Get the actual hardware sample rate from active input streams
                 let mixer_self = &mixer_handle;
                 let input_streams = mixer_self.input_streams.lock().await;
                 if let Some((_device_id, stream)) = input_streams.iter().next() {
-                    info!("🔧 SAMPLE RATE FIX: Using actual hardware input rate {} Hz (was using mixer config {} Hz)", 
-                        stream.sample_rate, mixer_configured_sample_rate);
                     stream.sample_rate
                 } else {
-                    // Fallback to output stream rate
-                    let output_stream_guard = mixer_self.output_stream.lock().await;
-                    if let Some(stream) = output_stream_guard.as_ref() {
-                        info!("🔧 SAMPLE RATE FIX: Using actual hardware output rate {} Hz (was using mixer config {} Hz)", 
-                            stream.sample_rate, mixer_configured_sample_rate);
-                        stream.sample_rate
-                    } else {
-                        warn!("🔧 SAMPLE RATE FIX: No active streams found, falling back to mixer config {} Hz", mixer_configured_sample_rate);
-                        mixer_configured_sample_rate
-                    }
+                    mixer_configured_sample_rate
                 }
             };
-            
-            // Update AudioClock with the actual hardware sample rate
-            if let Ok(mut clock_guard) = audio_clock.try_lock() {
-                if clock_guard.get_sample_rate() != actual_hardware_sample_rate {
-                    info!("🔧 AUDIOCLOCK SAMPLE RATE FIX: Updating from {} Hz to {} Hz (actual hardware rate)", 
-                        clock_guard.get_sample_rate(), actual_hardware_sample_rate);
-                    clock_guard.set_sample_rate(actual_hardware_sample_rate);
-                }
-            }
-            
-            // Use the actual hardware sample rate for all timing calculations
             let sample_rate = actual_hardware_sample_rate;
 
             // Pre-allocate stereo buffers to reduce allocations during real-time processing
@@ -826,9 +803,7 @@ impl VirtualMixer {
                         crate::audio_debug!("⚠️  NO INPUT SAMPLES: Frame {} - no audio data available from {} configured channels",
                             frame_count, current_channels.len());
                     }
-                    // **CRITICAL FIX**: Sync with hardware callback timing instead of arbitrary 0.1ms
-                    // BlackHole delivers 1024 samples every ~21ms, so sleep ~5ms to check frequently but not wastefully
-                    std::thread::sleep(std::time::Duration::from_millis(5)); // 5ms sleep for better synchronization
+                    std::thread::sleep(std::time::Duration::from_micros(100)); // 0.1ms sleep
                     continue;
                 }
 
