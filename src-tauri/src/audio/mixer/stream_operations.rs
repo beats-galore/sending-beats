@@ -660,6 +660,33 @@ impl VirtualMixer {
         Ok(())
     }
 
+    /// Get the actual hardware sample rate from active audio streams
+    /// This fixes sample rate mismatch issues by using real hardware rates instead of mixer config
+    async fn get_actual_hardware_sample_rate(&self) -> u32 {
+        // Check active input streams first - they reflect actual hardware capture rates
+        {
+            let input_streams = self.input_streams.lock().await;
+            if let Some((_device_id, stream)) = input_streams.iter().next() {
+                info!("🔧 SAMPLE RATE FIX: Using hardware input rate {} Hz from active stream", stream.sample_rate);
+                return stream.sample_rate;
+            }
+        }
+        
+        // Fallback to output stream rate if no input streams
+        {
+            let output_stream_guard = self.output_stream.lock().await;
+            if let Some(stream) = output_stream_guard.as_ref() {
+                info!("🔧 SAMPLE RATE FIX: Using hardware output rate {} Hz from active stream", stream.sample_rate);
+                return stream.sample_rate;
+            }
+        }
+        
+        // Last resort: use mixer configured rate (should rarely happen)
+        let mixer_rate = self.config.sample_rate;
+        warn!("🔧 SAMPLE RATE FIX: No active streams found, falling back to mixer config {} Hz", mixer_rate);
+        mixer_rate
+    }
+
     /// Start the audio processing thread (restored from original implementation)
     async fn start_processing_thread(&self) -> Result<()> {
         let is_running = self.is_running.clone();
@@ -675,7 +702,8 @@ impl VirtualMixer {
         // **PRIORITY 5: Audio Clock Synchronization** - Clone timing references
         let audio_clock = self.audio_clock.clone();
         let timing_metrics = self.timing_metrics.clone();
-        let sample_rate = self.config.sample_rate;
+        // **CRITICAL FIX**: Use actual hardware sample rate from active streams instead of mixer config
+        let mixer_configured_sample_rate = self.config.sample_rate;
         let buffer_size = self.config.buffer_size;
         let mixer_handle = VirtualMixerHandle {
             input_streams: self.input_streams.clone(),
@@ -715,13 +743,49 @@ impl VirtualMixer {
             let rt = tokio::runtime::Runtime::new().expect("Failed to create audio runtime");
             rt.block_on(async move {
             let mut frame_count = 0u64;
+            
+            // **CRITICAL FIX**: Detect actual hardware sample rate from active streams
+            // This fixes sample rate mismatch issues that cause timing drift and audio artifacts
+            let actual_hardware_sample_rate = {
+                // Get the actual hardware sample rate from active input streams
+                let mixer_self = &mixer_handle;
+                let input_streams = mixer_self.input_streams.lock().await;
+                if let Some((_device_id, stream)) = input_streams.iter().next() {
+                    info!("🔧 SAMPLE RATE FIX: Using actual hardware input rate {} Hz (was using mixer config {} Hz)", 
+                        stream.sample_rate, mixer_configured_sample_rate);
+                    stream.sample_rate
+                } else {
+                    // Fallback to output stream rate
+                    let output_stream_guard = mixer_self.output_stream.lock().await;
+                    if let Some(stream) = output_stream_guard.as_ref() {
+                        info!("🔧 SAMPLE RATE FIX: Using actual hardware output rate {} Hz (was using mixer config {} Hz)", 
+                            stream.sample_rate, mixer_configured_sample_rate);
+                        stream.sample_rate
+                    } else {
+                        warn!("🔧 SAMPLE RATE FIX: No active streams found, falling back to mixer config {} Hz", mixer_configured_sample_rate);
+                        mixer_configured_sample_rate
+                    }
+                }
+            };
+            
+            // Update AudioClock with the actual hardware sample rate
+            if let Ok(mut clock_guard) = audio_clock.try_lock() {
+                if clock_guard.get_sample_rate() != actual_hardware_sample_rate {
+                    info!("🔧 AUDIOCLOCK SAMPLE RATE FIX: Updating from {} Hz to {} Hz (actual hardware rate)", 
+                        clock_guard.get_sample_rate(), actual_hardware_sample_rate);
+                    clock_guard.set_sample_rate(actual_hardware_sample_rate);
+                }
+            }
+            
+            // Use the actual hardware sample rate for all timing calculations
+            let sample_rate = actual_hardware_sample_rate;
 
             // Pre-allocate stereo buffers to reduce allocations during real-time processing
             let mut reusable_output_buffer = vec![0.0f32; (buffer_size * 2) as usize];
             let mut reusable_left_samples = Vec::with_capacity(buffer_size as usize);
             let mut reusable_right_samples = Vec::with_capacity(buffer_size as usize);
 
-            crate::audio_debug!("🎵 Audio processing thread started with real mixing, optimized buffers, and clock synchronization");
+            crate::audio_debug!("🎵 Audio processing thread started with real mixing, optimized buffers, clock sync, and HARDWARE SAMPLE RATE: {} Hz", sample_rate);
 
             while is_running.load(Ordering::Relaxed) {
                 frame_count += 1;
@@ -1006,9 +1070,9 @@ impl VirtualMixer {
                 // Update audio clock with processed samples (only when samples were actually processed)
                 if samples_processed > 0 {
                         if let Ok(mut clock_guard) = audio_clock.try_lock() {
-                            // **CRITICAL FIX**: Use consistent hardware buffer size, not variable samples_processed
-                            // BlackHole delivers 512 samples per callback, not 1024
-                            let hardware_buffer_size = 512u32; // BlackHole's actual buffer size
+                            // **CRITICAL FIX**: Use consistent hardware buffer size, not variable samples_processed  
+                            // BlackHole actually delivers 512 samples per callback (confirmed from timing logs: 10.6ms per callback)
+                            let hardware_buffer_size = 512u32; // BlackHole's ACTUAL buffer size: 512 samples = 10.6ms at 48kHz
                             let current_sync_interval = clock_guard.get_sync_interval();
                             if current_sync_interval != hardware_buffer_size as u64 {
                                 crate::audio_debug!("🔄 UPDATING AUDIOCLOCK: sync_interval {} -> {} (BlackHole hardware buffer)",
