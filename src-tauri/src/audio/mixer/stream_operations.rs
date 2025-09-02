@@ -873,8 +873,14 @@ impl VirtualMixer {
 
                 frame_count += 1;
                 
-                // **TIMING DEBUG**: Comprehensive logging to understand synchronization issues
-                let samples_processed = buffer_size as usize;
+                // **TIMING FIX**: Use actual samples processed instead of theoretical buffer_size
+                let actual_samples_processed: usize = input_samples.values().map(|v| v.len()).sum();
+                let samples_processed = if actual_samples_processed > 0 { 
+                    actual_samples_processed 
+                } else { 
+                    0 // No samples processed when no input available
+                };
+                
                 let processing_time_us = timing_start.elapsed().as_micros() as f64;
                 let actual_input_samples = input_samples.len();
                 let total_input_sample_count: usize = input_samples.values().map(|v| v.len()).sum();
@@ -886,32 +892,34 @@ impl VirtualMixer {
                         frame_count, samples_processed, actual_input_samples, total_input_sample_count, output_buffer_size, processing_time_us);
                 }
                 
-                // Update audio clock with processed samples
-                if let Ok(mut clock_guard) = audio_clock.try_lock() {
-                    // Log clock state before update
-                    if frame_count % 100 == 0 {
-                        println!("🕐 CLOCK STATE: samples_processed_before={}, sample_rate={}, sync_interval={}", 
-                            clock_guard.get_samples_processed(), clock_guard.get_sample_rate(), buffer_size);
-                    }
-                    
-                    if let Some(sync_info) = clock_guard.update(samples_processed) {
-                        // Always log timing sync events for debugging
-                        println!("🕐 TIMING SYNC: callback_interval={:.2}ms, expected={:.2}ms, variation={:.2}ms, drift_significant={}", 
-                            sync_info.callback_interval_us / 1000.0, sync_info.expected_interval_us / 1000.0, 
-                            sync_info.timing_variation / 1000.0, sync_info.is_drift_significant);
-                        
-                        // Clock detected timing drift - log it
-                        if sync_info.is_drift_significant {
-                            println!("⚠️  SIGNIFICANT TIMING DRIFT: {:.2}ms variation at {} samples ({}% of expected)", 
-                                sync_info.timing_variation / 1000.0, sync_info.samples_processed, sync_info.get_variation_percentage());
+                // Update audio clock with processed samples (only when samples were actually processed)
+                if samples_processed > 0 {
+                        if let Ok(mut clock_guard) = audio_clock.try_lock() {
+                            // Log clock state before update
+                            if frame_count % 100 == 0 {
+                                println!("🕐 CLOCK STATE: samples_processed_before={}, sample_rate={}, sync_interval={}", 
+                                    clock_guard.get_samples_processed(), clock_guard.get_sample_rate(), samples_processed);
+                            }
                             
-                            // Record sync adjustment in metrics
-                            if let Ok(mut metrics_guard) = timing_metrics.try_lock() {
-                                metrics_guard.record_sync_adjustment();
+                            if let Some(sync_info) = clock_guard.update(samples_processed) {
+                                // Always log timing sync events for debugging
+                                println!("🕐 TIMING SYNC: callback_interval={:.2}ms, expected={:.2}ms, variation={:.2}ms, drift_significant={}", 
+                                    sync_info.callback_interval_us / 1000.0, sync_info.expected_interval_us / 1000.0, 
+                                    sync_info.timing_variation / 1000.0, sync_info.is_drift_significant);
+                                
+                                // Clock detected timing drift - log it
+                                if sync_info.is_drift_significant {
+                                    println!("⚠️  SIGNIFICANT TIMING DRIFT: {:.2}ms variation at {} samples ({}% of expected)", 
+                                        sync_info.timing_variation / 1000.0, sync_info.samples_processed, sync_info.get_variation_percentage());
+                                    
+                                    // Record sync adjustment in metrics
+                                    if let Ok(mut metrics_guard) = timing_metrics.try_lock() {
+                                        metrics_guard.record_sync_adjustment();
+                                    }
+                                }
                             }
                         }
                     }
-                }
                 
                 // Record processing time metrics
                 if let Ok(mut metrics_guard) = timing_metrics.try_lock() {
