@@ -1,6 +1,6 @@
-use tauri::State;
+use crate::audio::tap::{ApplicationAudioError, ProcessInfo, TapStats};
 use crate::ApplicationAudioState;
-use crate::audio::tap::{ProcessInfo, ApplicationAudioError, TapStats};
+use tauri::State;
 
 // ================================================================================================
 // APPLICATION AUDIO COMMANDS
@@ -11,14 +11,15 @@ pub async fn get_available_audio_applications(
     app_audio_state: State<'_, ApplicationAudioState>,
 ) -> Result<Vec<ProcessInfo>, String> {
     println!("🔍 Getting available audio applications...");
-    
+
     match app_audio_state.manager.get_available_applications().await {
         Ok(apps) => {
             println!("✅ Found {} available audio applications", apps.len());
             for app in &apps {
-                println!("  - {} (PID: {}) [{}]", 
-                    app.name, 
-                    app.pid, 
+                println!(
+                    "  - {} (PID: {}) [{}]",
+                    app.name,
+                    app.pid,
                     app.bundle_id.as_ref().unwrap_or(&"unknown".to_string())
                 );
             }
@@ -31,27 +32,35 @@ pub async fn get_available_audio_applications(
     }
 }
 
-#[tauri::command] 
+#[tauri::command]
 pub async fn get_known_audio_applications(
     app_audio_state: State<'_, ApplicationAudioState>,
 ) -> Result<Vec<ProcessInfo>, String> {
     println!("🎵 Getting known audio applications...");
-    
+
     match app_audio_state.manager.get_available_applications().await {
         Ok(all_apps) => {
-            println!("🔍 Processing {} total apps for known app filtering", all_apps.len());
-            
-            // Filter for apps with bundle IDs (known apps)  
-            let known_apps: Vec<ProcessInfo> = all_apps.into_iter()
+            println!(
+                "🔍 Processing {} total apps for known app filtering",
+                all_apps.len()
+            );
+
+            // Filter for apps with bundle IDs (known apps)
+            let known_apps: Vec<ProcessInfo> = all_apps
+                .into_iter()
                 .filter(|app| {
                     let has_bundle = app.bundle_id.is_some();
                     if has_bundle {
-                        println!("✅ Known app found: {} [{}]", app.name, app.bundle_id.as_ref().unwrap());
+                        println!(
+                            "✅ Known app found: {} [{}]",
+                            app.name,
+                            app.bundle_id.as_ref().unwrap()
+                        );
                     }
                     has_bundle
                 })
                 .collect();
-            
+
             println!("✅ Found {} known audio applications", known_apps.len());
             Ok(known_apps)
         }
@@ -68,7 +77,7 @@ pub async fn start_application_audio_capture(
     pid: u32,
 ) -> Result<String, String> {
     println!("🎤 Starting audio capture for PID: {}", pid);
-    
+
     // Check permissions first
     if !app_audio_state.manager.has_permissions().await {
         println!("⚠️ Requesting audio capture permissions...");
@@ -84,11 +93,18 @@ pub async fn start_application_audio_capture(
             }
         }
     }
-    
-    match app_audio_state.manager.create_mixer_input_for_app(pid).await {
+
+    match app_audio_state
+        .manager
+        .create_mixer_input_for_app(pid)
+        .await
+    {
         Ok(channel_name) => {
             println!("✅ Created mixer input for PID {}: {}", pid, channel_name);
-            Ok(format!("Successfully created mixer input for application: {}", channel_name))
+            Ok(format!(
+                "Successfully created mixer input for application: {}",
+                channel_name
+            ))
         }
         Err(e) => {
             eprintln!("❌ Failed to create mixer input for PID {}: {}", pid, e);
@@ -103,11 +119,14 @@ pub async fn stop_application_audio_capture(
     pid: u32,
 ) -> Result<String, String> {
     println!("🛑 Stopping audio capture for PID: {}", pid);
-    
+
     match app_audio_state.manager.stop_capturing_app(pid).await {
         Ok(()) => {
             println!("✅ Stopped audio capture for PID: {}", pid);
-            Ok(format!("Successfully stopped capturing audio from application (PID: {})", pid))
+            Ok(format!(
+                "Successfully stopped capturing audio from application (PID: {})",
+                pid
+            ))
         }
         Err(e) => {
             eprintln!("❌ Failed to stop audio capture for PID {}: {}", pid, e);
@@ -121,14 +140,14 @@ pub async fn get_active_audio_captures(
     app_audio_state: State<'_, ApplicationAudioState>,
 ) -> Result<Vec<ProcessInfo>, String> {
     println!("📊 Getting active audio captures...");
-    
+
     let active_captures = app_audio_state.manager.get_active_captures().await;
-    
+
     println!("✅ Found {} active audio captures", active_captures.len());
     for capture in &active_captures {
         println!("  - {} (PID: {})", capture.name, capture.pid);
     }
-    
+
     Ok(active_captures)
 }
 
@@ -137,7 +156,7 @@ pub async fn stop_all_audio_captures(
     app_audio_state: State<'_, ApplicationAudioState>,
 ) -> Result<String, String> {
     println!("🛑 Stopping all audio captures...");
-    
+
     match app_audio_state.manager.stop_all_captures().await {
         Ok(()) => {
             println!("✅ Stopped all audio captures");
@@ -150,24 +169,27 @@ pub async fn stop_all_audio_captures(
     }
 }
 
-
 #[tauri::command]
 pub async fn get_application_info(
     app_audio_state: State<'_, ApplicationAudioState>,
     pid: u32,
 ) -> Result<Option<ProcessInfo>, String> {
     println!("ℹ️ Getting application info for PID: {}", pid);
-    
+
     match app_audio_state.manager.get_available_applications().await {
         Ok(apps) => {
             let app_info = apps.into_iter().find(|app| app.pid == pid);
-            
+
             if let Some(ref info) = app_info {
-                println!("✅ Found application: {} ({})", info.name, info.bundle_id.as_ref().unwrap_or(&"unknown".to_string()));
+                println!(
+                    "✅ Found application: {} ({})",
+                    info.name,
+                    info.bundle_id.as_ref().unwrap_or(&"unknown".to_string())
+                );
             } else {
                 println!("⚠️ Application not found for PID: {}", pid);
             }
-            
+
             Ok(app_info)
         }
         Err(e) => {
@@ -182,7 +204,7 @@ pub async fn refresh_audio_applications(
     app_audio_state: State<'_, ApplicationAudioState>,
 ) -> Result<Vec<ProcessInfo>, String> {
     println!("🔄 Refreshing audio applications list...");
-    
+
     // This will force a new scan by calling get_available_applications
     get_available_audio_applications(app_audio_state).await
 }
@@ -193,8 +215,12 @@ pub async fn create_mixer_input_for_application(
     pid: u32,
 ) -> Result<String, String> {
     println!("🎛️ Creating mixer input for application (PID: {})", pid);
-    
-    match app_audio_state.manager.create_mixer_input_for_app(pid).await {
+
+    match app_audio_state
+        .manager
+        .create_mixer_input_for_app(pid)
+        .await
+    {
         Ok(channel_name) => {
             println!("✅ Created mixer input: {}", channel_name);
             Ok(channel_name)
@@ -215,12 +241,13 @@ pub async fn get_tap_statistics(
     app_audio_state: State<'_, ApplicationAudioState>,
 ) -> Result<Vec<TapStats>, String> {
     println!("📊 Getting tap statistics...");
-    
+
     let stats = app_audio_state.manager.get_tap_stats().await;
-    
+
     println!("✅ Retrieved statistics for {} active taps", stats.len());
     for stat in &stats {
-        println!("  - {} (PID: {}) - Age: {:?}, Errors: {}, Active: {}, Alive: {}",
+        println!(
+            "  - {} (PID: {}) - Age: {:?}, Errors: {}, Active: {}, Alive: {}",
             stat.process_name,
             stat.pid,
             stat.age,
@@ -229,7 +256,7 @@ pub async fn get_tap_statistics(
             stat.process_alive
         );
     }
-    
+
     Ok(stats)
 }
 
@@ -238,7 +265,7 @@ pub async fn cleanup_stale_taps(
     app_audio_state: State<'_, ApplicationAudioState>,
 ) -> Result<usize, String> {
     println!("🧹 Performing manual cleanup of stale taps...");
-    
+
     match app_audio_state.manager.cleanup_stale_taps().await {
         Ok(cleaned_count) => {
             println!("✅ Cleaned up {} stale taps", cleaned_count);
@@ -256,7 +283,7 @@ pub async fn shutdown_application_audio_manager(
     app_audio_state: State<'_, ApplicationAudioState>,
 ) -> Result<String, String> {
     println!("🛑 Shutting down Application Audio Manager...");
-    
+
     match app_audio_state.manager.shutdown().await {
         Ok(()) => {
             println!("✅ Application Audio Manager shutdown complete");
@@ -264,7 +291,10 @@ pub async fn shutdown_application_audio_manager(
         }
         Err(e) => {
             eprintln!("❌ Failed to shutdown Application Audio Manager: {}", e);
-            Err(format!("Failed to shutdown Application Audio Manager: {}", e))
+            Err(format!(
+                "Failed to shutdown Application Audio Manager: {}",
+                e
+            ))
         }
     }
 }

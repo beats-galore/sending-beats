@@ -1,4 +1,4 @@
-use super::{validate_float, safe_log10, safe_db_to_linear, MIN_DB, MIN_LOG_INPUT};
+use super::{safe_db_to_linear, safe_log10, validate_float, MIN_DB, MIN_LOG_INPUT};
 
 /// Dynamic range compressor
 #[derive(Debug)]
@@ -49,7 +49,7 @@ impl Compressor {
         for sample in samples.iter_mut() {
             let input_safe = validate_float(*sample);
             let input_level = input_safe.abs();
-            
+
             // **STABILITY**: Safe dB conversion with denormal protection
             let input_level_db = if input_level > MIN_LOG_INPUT {
                 (20.0 * safe_log10(input_level)).clamp(MIN_DB, 40.0)
@@ -70,13 +70,15 @@ impl Compressor {
                 self.release_coeff
             };
 
-            self.envelope = validate_float(target_envelope + (self.envelope - target_envelope) * coeff);
+            self.envelope =
+                validate_float(target_envelope + (self.envelope - target_envelope) * coeff);
 
             // **STABILITY**: Compression calculation with clamping
             if self.envelope > self.threshold {
                 let over_threshold = self.envelope - self.threshold;
                 let compressed = over_threshold / self.ratio.max(1.0); // Prevent divide by values < 1
-                self.gain_reduction = (over_threshold - compressed).clamp(0.0, 60.0); // Limit max reduction
+                self.gain_reduction = (over_threshold - compressed).clamp(0.0, 60.0);
+            // Limit max reduction
             } else {
                 self.gain_reduction = 0.0;
             }
@@ -86,7 +88,7 @@ impl Compressor {
             *sample = validate_float(input_safe * gain);
         }
     }
-    
+
     /// Reset compressor state to prevent instability
     pub fn reset(&mut self) {
         self.envelope = MIN_DB;

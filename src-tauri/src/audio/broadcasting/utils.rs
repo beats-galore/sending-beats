@@ -2,20 +2,21 @@ use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 
-use crate::audio::VirtualMixer;
-use super::manager::StreamingService;
 use super::config::StreamingServiceConfig;
-use super::types::StreamingServiceStatus;
 use super::icecast_source::AudioCodec;
+use super::manager::StreamingService;
+use super::types::StreamingServiceStatus;
+use crate::audio::VirtualMixer;
 
 /// Global streaming service instance
 static STREAMING_SERVICE: OnceCell<Arc<StreamingService>> = OnceCell::const_new();
 
 /// Get or create the global streaming service
 pub async fn get_streaming_service() -> Arc<StreamingService> {
-    STREAMING_SERVICE.get_or_init(|| async {
-        Arc::new(StreamingService::new())
-    }).await.clone()
+    STREAMING_SERVICE
+        .get_or_init(|| async { Arc::new(StreamingService::new()) })
+        .await
+        .clone()
 }
 
 /// Initialize streaming with configuration
@@ -73,7 +74,10 @@ pub async fn get_current_stream_bitrate() -> u32 {
 }
 
 /// Create bitrate preset configuration
-pub fn create_stream_bitrate_preset(bitrate: u32, codec: AudioCodec) -> Result<StreamingServiceConfig> {
+pub fn create_stream_bitrate_preset(
+    bitrate: u32,
+    codec: AudioCodec,
+) -> Result<StreamingServiceConfig> {
     StreamingService::create_bitrate_preset(bitrate, codec)
 }
 

@@ -6,14 +6,14 @@
 //
 // ## Module Structure:
 // - `types`: Common types and error definitions
-// - `process_discovery`: Application detection and process management  
+// - `process_discovery`: Application detection and process management
 // - `core_audio_tap`: Low-level Core Audio tap implementation (macOS only)
 // - `virtual_stream`: Audio stream abstraction and mixer integration
 // - `manager`: High-level orchestration and public API
 
 // Core module declarations
-pub mod types;
 pub mod process_discovery;
+pub mod types;
 pub mod virtual_stream;
 
 // Platform-specific modules
@@ -25,18 +25,15 @@ pub mod core_audio_tap;
 pub mod core_audio_bindings;
 
 // Re-export commonly used types
-pub use types::{
-    ProcessInfo, TapStats, AudioFormatInfo, ApplicationAudioError,
-};
+pub use types::{ApplicationAudioError, AudioFormatInfo, ProcessInfo, TapStats};
 
 // Re-export process discovery
 pub use process_discovery::ApplicationDiscovery;
 
 // Re-export virtual stream components
 pub use virtual_stream::{
-    VirtualAudioInputStream, ApplicationAudioInputBridge, get_virtual_input_registry,
+    get_virtual_input_registry, ApplicationAudioInputBridge, VirtualAudioInputStream,
 };
-
 
 // Platform-specific re-exports
 #[cfg(target_os = "macos")]

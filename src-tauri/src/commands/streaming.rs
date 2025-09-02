@@ -1,7 +1,7 @@
-use tauri::State;
-use crate::audio::broadcasting::{StreamConfig, StreamManager};
 use crate::audio::broadcasting::streaming::{StreamMetadata, StreamStatus};
+use crate::audio::broadcasting::{StreamConfig, StreamManager};
 use std::sync::Mutex;
+use tauri::State;
 
 // State management for streaming
 pub struct StreamState(pub Mutex<Option<StreamManager>>);
@@ -12,17 +12,14 @@ pub async fn connect_to_stream(
     config: StreamConfig,
 ) -> Result<StreamStatus, String> {
     let mut stream_manager = StreamManager::new(config);
-    
-    stream_manager
-        .connect()
-        .await
-        .map_err(|e| e.to_string())?;
+
+    stream_manager.connect().await.map_err(|e| e.to_string())?;
 
     let status = stream_manager.get_status().await;
-    
+
     // Store the stream manager in state
     *state.0.lock().unwrap() = Some(stream_manager);
-    
+
     Ok(status)
 }
 
@@ -30,7 +27,7 @@ pub async fn connect_to_stream(
 pub async fn disconnect_from_stream(state: State<'_, StreamState>) -> Result<(), String> {
     // Take ownership of the stream manager to avoid holding the lock across await
     let stream_manager_opt = state.0.lock().unwrap().take();
-    
+
     if let Some(mut stream_manager) = stream_manager_opt {
         stream_manager
             .disconnect()
@@ -47,13 +44,13 @@ pub async fn start_streaming(
 ) -> Result<(), String> {
     // Clone the stream manager to avoid holding the lock across await
     let stream_manager_opt = state.0.lock().unwrap().clone();
-    
+
     if let Some(mut stream_manager) = stream_manager_opt {
         stream_manager
             .start_stream(audio_data)
             .await
             .map_err(|e| e.to_string())?;
-        
+
         // Update the state with the modified stream manager
         *state.0.lock().unwrap() = Some(stream_manager);
     } else {
@@ -66,13 +63,13 @@ pub async fn start_streaming(
 pub async fn stop_streaming(state: State<'_, StreamState>) -> Result<(), String> {
     // Clone the stream manager to avoid holding the lock across await
     let stream_manager_opt = state.0.lock().unwrap().clone();
-    
+
     if let Some(mut stream_manager) = stream_manager_opt {
         stream_manager
             .stop_stream()
             .await
             .map_err(|e| e.to_string())?;
-        
+
         // Update the state with the modified stream manager
         *state.0.lock().unwrap() = Some(stream_manager);
     }
@@ -86,7 +83,7 @@ pub async fn update_metadata(
 ) -> Result<(), String> {
     // Clone the stream manager to avoid holding the lock across await
     let stream_manager_opt = state.0.lock().unwrap().clone();
-    
+
     if let Some(stream_manager) = stream_manager_opt {
         stream_manager
             .update_metadata(metadata)
@@ -102,7 +99,7 @@ pub async fn update_metadata(
 pub async fn get_stream_status(state: State<'_, StreamState>) -> Result<StreamStatus, String> {
     // Clone the stream manager reference to avoid holding the lock across await
     let stream_manager_opt = state.0.lock().unwrap().clone();
-    
+
     if let Some(stream_manager) = stream_manager_opt {
         Ok(stream_manager.get_status().await)
     } else {
@@ -122,7 +119,7 @@ pub async fn get_stream_status(state: State<'_, StreamState>) -> Result<StreamSt
 pub async fn get_listener_stats(state: State<'_, StreamState>) -> Result<(u32, u32), String> {
     // Clone the stream manager reference to avoid holding the lock across await
     let stream_manager_opt = state.0.lock().unwrap().clone();
-    
+
     if let Some(stream_manager) = stream_manager_opt {
         stream_manager
             .get_listener_stats()

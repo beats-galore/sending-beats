@@ -1,5 +1,5 @@
-use tauri::State;
 use crate::AudioState;
+use tauri::State;
 
 // Audio effects management commands
 #[tauri::command]
@@ -18,7 +18,7 @@ pub async fn update_channel_eq(
         } else {
             return Err(format!("Channel {} not found", channel_id));
         };
-        
+
         // Update EQ settings
         if let Some(gain) = eq_low_gain {
             updated_channel.eq_low_gain = gain.clamp(-12.0, 12.0);
@@ -29,15 +29,23 @@ pub async fn update_channel_eq(
         if let Some(gain) = eq_high_gain {
             updated_channel.eq_high_gain = gain.clamp(-12.0, 12.0);
         }
-        
+
         // **CRITICAL FIX**: Auto-enable effects when EQ is modified (this was missing!)
         updated_channel.effects_enabled = true;
-        
+
         // Update the channel in the mixer to trigger real-time changes
-        mixer.update_channel(channel_id, updated_channel.clone()).await.map_err(|e| e.to_string())?;
-        println!("🎛️ Updated EQ for channel {}: low={:.1}, mid={:.1}, high={:.1}", 
-            channel_id, updated_channel.eq_low_gain, updated_channel.eq_mid_gain, updated_channel.eq_high_gain);
-        
+        mixer
+            .update_channel(channel_id, updated_channel.clone())
+            .await
+            .map_err(|e| e.to_string())?;
+        println!(
+            "🎛️ Updated EQ for channel {}: low={:.1}, mid={:.1}, high={:.1}",
+            channel_id,
+            updated_channel.eq_low_gain,
+            updated_channel.eq_mid_gain,
+            updated_channel.eq_high_gain
+        );
+
         Ok(())
     } else {
         Err("No mixer created".to_string())
@@ -62,7 +70,7 @@ pub async fn update_channel_compressor(
         } else {
             return Err(format!("Channel {} not found", channel_id));
         };
-        
+
         // Update compressor settings
         if let Some(thresh) = threshold {
             updated_channel.comp_threshold = thresh.clamp(-40.0, 0.0);
@@ -79,15 +87,18 @@ pub async fn update_channel_compressor(
         if let Some(en) = enabled {
             updated_channel.comp_enabled = en;
         }
-        
+
         // **CRITICAL FIX**: Auto-enable effects when compressor is modified
         updated_channel.effects_enabled = true;
-        
+
         // Update the channel in the mixer to trigger real-time changes
-        mixer.update_channel(channel_id, updated_channel.clone()).await.map_err(|e| e.to_string())?;
+        mixer
+            .update_channel(channel_id, updated_channel.clone())
+            .await
+            .map_err(|e| e.to_string())?;
         println!("🎛️ Updated compressor for channel {}: threshold={:.1}dB, ratio={:.1}:1, attack={:.1}ms, release={:.0}ms, enabled={}", 
             channel_id, updated_channel.comp_threshold, updated_channel.comp_ratio, updated_channel.comp_attack, updated_channel.comp_release, updated_channel.comp_enabled);
-        
+
         Ok(())
     } else {
         Err("No mixer created".to_string())
@@ -109,7 +120,7 @@ pub async fn update_channel_limiter(
         } else {
             return Err(format!("Channel {} not found", channel_id));
         };
-        
+
         // Update limiter settings
         if let Some(thresh) = threshold_db {
             updated_channel.limiter_threshold = thresh.clamp(-12.0, 0.0);
@@ -117,15 +128,20 @@ pub async fn update_channel_limiter(
         if let Some(en) = enabled {
             updated_channel.limiter_enabled = en;
         }
-        
-        // **CRITICAL FIX**: Auto-enable effects when limiter is modified  
+
+        // **CRITICAL FIX**: Auto-enable effects when limiter is modified
         updated_channel.effects_enabled = true;
-        
+
         // Update the channel in the mixer to trigger real-time changes
-        mixer.update_channel(channel_id, updated_channel.clone()).await.map_err(|e| e.to_string())?;
-        println!("🎛️ Updated limiter for channel {}: threshold={:.1}dB, enabled={}", 
-            channel_id, updated_channel.limiter_threshold, updated_channel.limiter_enabled);
-        
+        mixer
+            .update_channel(channel_id, updated_channel.clone())
+            .await
+            .map_err(|e| e.to_string())?;
+        println!(
+            "🎛️ Updated limiter for channel {}: threshold={:.1}dB, enabled={}",
+            channel_id, updated_channel.limiter_threshold, updated_channel.limiter_enabled
+        );
+
         Ok(())
     } else {
         Err("No mixer created".to_string())
@@ -147,7 +163,7 @@ pub async fn add_channel_effect(
         } else {
             return Err(format!("Channel {} not found", channel_id));
         };
-        
+
         match effect_type.as_str() {
             "eq" => {
                 // Reset EQ to flat response (effectively "adding" it)
@@ -173,12 +189,15 @@ pub async fn add_channel_effect(
             }
             _ => return Err(format!("Unknown effect type: {}", effect_type)),
         }
-        
+
         // **CRITICAL FIX**: Auto-enable effects when any effect is added
         updated_channel.effects_enabled = true;
-        
+
         // Update the channel in the mixer to trigger real-time changes
-        mixer.update_channel(channel_id, updated_channel.clone()).await.map_err(|e| e.to_string())?;
+        mixer
+            .update_channel(channel_id, updated_channel.clone())
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(())
     } else {
         Err("No mixer created".to_string())
@@ -199,7 +218,7 @@ pub async fn remove_channel_effect(
         } else {
             return Err(format!("Channel {} not found", channel_id));
         };
-        
+
         match effect_type.as_str() {
             "eq" => {
                 // Reset EQ to flat response (effectively "removing" it)
@@ -220,9 +239,12 @@ pub async fn remove_channel_effect(
             }
             _ => return Err(format!("Unknown effect type: {}", effect_type)),
         }
-        
+
         // Update the channel in the mixer to trigger real-time changes
-        mixer.update_channel(channel_id, updated_channel.clone()).await.map_err(|e| e.to_string())?;
+        mixer
+            .update_channel(channel_id, updated_channel.clone())
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(())
     } else {
         Err("No mixer created".to_string())
@@ -238,9 +260,12 @@ pub async fn get_channel_effects(
     if let Some(ref mixer) = *mixer_guard {
         if let Some(channel) = mixer.get_channel(channel_id) {
             let mut effects = Vec::new();
-            
+
             // Check which effects are active
-            if channel.eq_low_gain != 0.0 || channel.eq_mid_gain != 0.0 || channel.eq_high_gain != 0.0 {
+            if channel.eq_low_gain != 0.0
+                || channel.eq_mid_gain != 0.0
+                || channel.eq_high_gain != 0.0
+            {
                 effects.push("eq".to_string());
             }
             if channel.comp_enabled {
@@ -249,7 +274,7 @@ pub async fn get_channel_effects(
             if channel.limiter_enabled {
                 effects.push("limiter".to_string());
             }
-            
+
             Ok(effects)
         } else {
             Err(format!("Channel {} not found", channel_id))

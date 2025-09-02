@@ -1,4 +1,4 @@
-use super::{validate_float, safe_log10, safe_db_to_linear, MIN_DB, MIN_LOG_INPUT};
+use super::{safe_db_to_linear, safe_log10, validate_float, MIN_DB, MIN_LOG_INPUT};
 
 /// Brick-wall limiter
 #[derive(Debug)]
@@ -14,7 +14,7 @@ pub struct Limiter {
 impl Limiter {
     pub fn new(sample_rate: u32) -> Self {
         let lookahead_samples = (sample_rate as f32 * 0.002) as usize; // **BASS POPPING FIX**: 2ms lookahead - reduces transient artifacts
-        
+
         let mut limiter = Self {
             sample_rate,
             threshold: -0.1, // dB
@@ -39,13 +39,14 @@ impl Limiter {
     pub fn process(&mut self, samples: &mut [f32]) {
         for sample in samples.iter_mut() {
             let input_safe = validate_float(*sample);
-            
+
             // **STABILITY**: Store validated input in delay line
             self.delay_line[self.delay_index] = input_safe;
-            
+
             // Get delayed sample for output
-            let delayed_sample = validate_float(self.delay_line[(self.delay_index + 1) % self.delay_line.len()]);
-            
+            let delayed_sample =
+                validate_float(self.delay_line[(self.delay_index + 1) % self.delay_line.len()]);
+
             // **STABILITY**: Calculate input level in dB with protection
             let input_level = input_safe.abs();
             let input_level_db = if input_level > MIN_LOG_INPUT {
@@ -56,9 +57,11 @@ impl Limiter {
 
             // Peak detection with lookahead and validation
             let target_envelope = input_level_db.max(self.envelope);
-            
+
             // **STABILITY**: Smooth envelope with denormal protection
-            self.envelope = validate_float(target_envelope + (self.envelope - target_envelope) * self.release_coeff);
+            self.envelope = validate_float(
+                target_envelope + (self.envelope - target_envelope) * self.release_coeff,
+            );
 
             // **STABILITY**: Calculate gain reduction with clamping
             let gain_reduction = if self.envelope > self.threshold {
@@ -75,7 +78,7 @@ impl Limiter {
             self.delay_index = (self.delay_index + 1) % self.delay_line.len();
         }
     }
-    
+
     /// Reset limiter state to prevent instability
     pub fn reset(&mut self) {
         self.envelope = MIN_DB;

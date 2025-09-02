@@ -6,7 +6,7 @@
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
-use tracing::{info, debug};
+use tracing::{debug, info};
 
 use super::types::RecordingConfig;
 
@@ -15,12 +15,12 @@ pub struct SilenceDetector {
     threshold_db: f32,
     duration_threshold: Duration,
     sample_rate: u32,
-    
+
     // State tracking
     recent_levels: VecDeque<f32>,
     silence_start: Option<Instant>,
     is_in_silence: bool,
-    
+
     // Analysis window
     window_size_samples: usize,
     samples_since_update: usize,
@@ -31,7 +31,7 @@ impl SilenceDetector {
     pub fn new(threshold_db: f32, duration_sec: f32, sample_rate: u32) -> Self {
         let duration_threshold = Duration::from_secs_f32(duration_sec);
         let window_size_samples = (sample_rate as f32 * 0.1) as usize; // 100ms analysis window
-        
+
         Self {
             threshold_db,
             duration_threshold,
@@ -43,7 +43,7 @@ impl SilenceDetector {
             samples_since_update: 0,
         }
     }
-    
+
     /// Create silence detector from recording config
     pub fn from_config(config: &RecordingConfig) -> Option<Self> {
         if config.auto_stop_on_silence {
@@ -56,53 +56,59 @@ impl SilenceDetector {
             None
         }
     }
-    
+
     /// Process audio samples and update silence detection state
     pub fn process_samples(&mut self, samples: &[f32]) -> SilenceAnalysis {
         if samples.is_empty() {
             return self.get_current_analysis();
         }
-        
+
         // Calculate RMS level for the samples
         let rms_level = self.calculate_rms_level(samples);
         let db_level = self.linear_to_db(rms_level);
-        
+
         // Update analysis window
         self.samples_since_update += samples.len();
-        
+
         // Only update state at regular intervals to avoid excessive processing
         if self.samples_since_update >= self.window_size_samples {
             self.update_silence_state(db_level);
             self.samples_since_update = 0;
         }
-        
+
         // Store recent level for analysis
         self.recent_levels.push_back(db_level);
         if self.recent_levels.len() > 100 {
             self.recent_levels.pop_front();
         }
-        
+
         self.get_current_analysis()
     }
-    
+
     /// Update silence detection state based on current level
     fn update_silence_state(&mut self, db_level: f32) {
         let now = Instant::now();
         let is_silent = db_level < self.threshold_db;
-        
+
         if is_silent && !self.is_in_silence {
             // Started silence period
             self.silence_start = Some(now);
             self.is_in_silence = true;
-            debug!("Silence detected: {:.1} dB < {:.1} dB threshold", db_level, self.threshold_db);
+            debug!(
+                "Silence detected: {:.1} dB < {:.1} dB threshold",
+                db_level, self.threshold_db
+            );
         } else if !is_silent && self.is_in_silence {
             // Ended silence period
             self.silence_start = None;
             self.is_in_silence = false;
-            debug!("Audio resumed: {:.1} dB >= {:.1} dB threshold", db_level, self.threshold_db);
+            debug!(
+                "Audio resumed: {:.1} dB >= {:.1} dB threshold",
+                db_level, self.threshold_db
+            );
         }
     }
-    
+
     /// Get current silence analysis
     fn get_current_analysis(&self) -> SilenceAnalysis {
         let should_stop = if let Some(silence_start) = self.silence_start {
@@ -110,19 +116,23 @@ impl SilenceDetector {
         } else {
             false
         };
-        
-        let silence_duration = self.silence_start
+
+        let silence_duration = self
+            .silence_start
             .map(|start| start.elapsed())
             .unwrap_or(Duration::ZERO);
-        
+
         let current_level_db = self.recent_levels.back().copied().unwrap_or(-100.0);
-        let peak_level_db = self.recent_levels.iter().fold(-100.0f32, |acc, &level| acc.max(level));
+        let peak_level_db = self
+            .recent_levels
+            .iter()
+            .fold(-100.0f32, |acc, &level| acc.max(level));
         let average_level_db = if !self.recent_levels.is_empty() {
             self.recent_levels.iter().sum::<f32>() / self.recent_levels.len() as f32
         } else {
             -100.0
         };
-        
+
         SilenceAnalysis {
             is_silent: self.is_in_silence,
             should_auto_stop: should_stop,
@@ -133,17 +143,17 @@ impl SilenceDetector {
             threshold_db: self.threshold_db,
         }
     }
-    
+
     /// Calculate RMS (Root Mean Square) level of audio samples
     fn calculate_rms_level(&self, samples: &[f32]) -> f32 {
         if samples.is_empty() {
             return 0.0;
         }
-        
+
         let sum_squares: f32 = samples.iter().map(|&sample| sample * sample).sum();
         (sum_squares / samples.len() as f32).sqrt()
     }
-    
+
     /// Convert linear audio level to decibels
     fn linear_to_db(&self, linear: f32) -> f32 {
         if linear <= 0.0 {
@@ -152,16 +162,18 @@ impl SilenceDetector {
             20.0 * linear.log10()
         }
     }
-    
+
     /// Update threshold settings
     pub fn update_threshold(&mut self, threshold_db: f32, duration_sec: f32) {
         self.threshold_db = threshold_db;
         self.duration_threshold = Duration::from_secs_f32(duration_sec);
-        
-        info!("Updated silence detection: {:.1} dB threshold, {:.1}s duration", 
-              threshold_db, duration_sec);
+
+        info!(
+            "Updated silence detection: {:.1} dB threshold, {:.1}s duration",
+            threshold_db, duration_sec
+        );
     }
-    
+
     /// Reset silence detection state
     pub fn reset(&mut self) {
         self.recent_levels.clear();
@@ -170,20 +182,22 @@ impl SilenceDetector {
         self.samples_since_update = 0;
         debug!("Silence detector reset");
     }
-    
+
     /// Get detection statistics
     pub fn get_statistics(&self) -> SilenceDetectorStats {
         let total_samples = self.recent_levels.len();
-        let silent_samples = self.recent_levels.iter()
+        let silent_samples = self
+            .recent_levels
+            .iter()
             .filter(|&&level| level < self.threshold_db)
             .count();
-        
+
         let silence_percentage = if total_samples > 0 {
             (silent_samples as f32 / total_samples as f32) * 100.0
         } else {
             0.0
         };
-        
+
         SilenceDetectorStats {
             threshold_db: self.threshold_db,
             duration_threshold_sec: self.duration_threshold.as_secs_f32(),
@@ -212,12 +226,12 @@ impl SilenceAnalysis {
     pub fn silence_duration_seconds(&self) -> f32 {
         self.silence_duration.as_secs_f32()
     }
-    
+
     /// Check if current level is above threshold
     pub fn is_above_threshold(&self) -> bool {
         self.current_level_db >= self.threshold_db
     }
-    
+
     /// Get signal-to-noise ratio estimate
     pub fn get_signal_to_noise_ratio(&self) -> f32 {
         if self.average_level_db > self.threshold_db {
@@ -259,57 +273,69 @@ impl AudioQualityAnalyzer {
             total_samples: 0,
         }
     }
-    
+
     /// Analyze audio samples for quality metrics
     pub fn analyze_samples(&mut self, samples: &[f32]) -> AudioQuality {
         if samples.is_empty() {
             return self.get_current_quality();
         }
-        
+
         // Calculate peak and RMS levels
         let peak = samples.iter().map(|&s| s.abs()).fold(0.0, f32::max);
         let rms = (samples.iter().map(|&s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
-        
+
         // Count clipping (samples at or above 0.99)
         let clips = samples.iter().filter(|&&s| s.abs() >= 0.99).count();
         self.clip_count += clips as u32;
-        
+
         // Store recent values
         self.recent_peaks.push_back(peak);
         self.recent_rms.push_back(rms);
-        
+
         if self.recent_peaks.len() > 100 {
             self.recent_peaks.pop_front();
         }
         if self.recent_rms.len() > 100 {
             self.recent_rms.pop_front();
         }
-        
+
         self.total_samples += samples.len() as u64;
-        
+
         self.get_current_quality()
     }
-    
+
     /// Get current audio quality assessment
     fn get_current_quality(&self) -> AudioQuality {
         let peak_level = self.recent_peaks.back().copied().unwrap_or(0.0);
         let rms_level = self.recent_rms.back().copied().unwrap_or(0.0);
-        
-        let peak_db = if peak_level > 0.0 { 20.0 * peak_level.log10() } else { -100.0 };
-        let rms_db = if rms_level > 0.0 { 20.0 * rms_level.log10() } else { -100.0 };
-        
+
+        let peak_db = if peak_level > 0.0 {
+            20.0 * peak_level.log10()
+        } else {
+            -100.0
+        };
+        let rms_db = if rms_level > 0.0 {
+            20.0 * rms_level.log10()
+        } else {
+            -100.0
+        };
+
         let dynamic_range = peak_db - rms_db;
-        let crest_factor = if rms_level > 0.0 { peak_level / rms_level } else { 1.0 };
-        
+        let crest_factor = if rms_level > 0.0 {
+            peak_level / rms_level
+        } else {
+            1.0
+        };
+
         let clip_rate = if self.total_samples > 0 {
             (self.clip_count as f64 / self.total_samples as f64) * 100.0
         } else {
             0.0
         };
-        
+
         // Assess overall quality
         let quality_score = self.calculate_quality_score(peak_db, dynamic_range, clip_rate);
-        
+
         AudioQuality {
             peak_level_db: peak_db,
             rms_level_db: rms_db,
@@ -320,34 +346,34 @@ impl AudioQualityAnalyzer {
             total_samples_analyzed: self.total_samples,
         }
     }
-    
+
     /// Calculate overall quality score (0-100)
     fn calculate_quality_score(&self, peak_db: f32, dynamic_range: f32, clip_rate: f64) -> f32 {
         let mut score = 100.0;
-        
+
         // Penalize clipping heavily
         if clip_rate > 0.1 {
             score -= (clip_rate * 50.0) as f32; // Major penalty for clipping
         }
-        
+
         // Penalize very low levels
         if peak_db < -40.0 {
             score -= (-40.0 - peak_db) * 2.0; // Penalty for low levels
         }
-        
+
         // Penalize very high levels (near clipping)
         if peak_db > -3.0 {
             score -= (peak_db + 3.0) * 10.0; // Penalty for levels too close to clipping
         }
-        
+
         // Penalize poor dynamic range
         if dynamic_range < 6.0 {
             score -= (6.0 - dynamic_range) * 5.0; // Penalty for compressed audio
         }
-        
+
         score.max(0.0).min(100.0)
     }
-    
+
     /// Reset analyzer state
     pub fn reset(&mut self) {
         self.recent_peaks.clear();
@@ -374,7 +400,7 @@ impl AudioQuality {
     pub fn is_acceptable(&self) -> bool {
         self.quality_score >= 70.0 && self.clip_rate_percent < 0.1
     }
-    
+
     /// Get quality assessment as text
     pub fn get_quality_text(&self) -> &'static str {
         if self.quality_score >= 90.0 {
@@ -402,7 +428,7 @@ mod tests {
     fn test_silence_detector_creation() {
         let detector = SilenceDetector::new(-60.0, 5.0, 48000);
         let stats = detector.get_statistics();
-        
+
         assert_eq!(stats.threshold_db, -60.0);
         assert_eq!(stats.duration_threshold_sec, 5.0);
         assert_eq!(stats.sample_rate, 48000);
@@ -412,11 +438,11 @@ mod tests {
     #[test]
     fn test_silence_detection() {
         let mut detector = SilenceDetector::new(-40.0, 1.0, 48000);
-        
+
         // Generate silent samples (very low level)
         let silent_samples = vec![0.001; 48000]; // 1 second of near-silence
         let analysis = detector.process_samples(&silent_samples);
-        
+
         assert!(analysis.is_silent);
         assert!(analysis.current_level_db < -40.0);
     }
@@ -424,7 +450,7 @@ mod tests {
     #[test]
     fn test_audio_quality_analyzer() {
         let mut analyzer = AudioQualityAnalyzer::new(48000);
-        
+
         // Generate a sine wave (good quality signal)
         let mut samples = Vec::with_capacity(4800); // 0.1 second
         for i in 0..4800 {
@@ -432,9 +458,9 @@ mod tests {
             let sample = 0.5 * (2.0 * PI * 1000.0 * t).sin(); // 1kHz sine at -6dB
             samples.push(sample);
         }
-        
+
         let quality = analyzer.analyze_samples(&samples);
-        
+
         assert!(quality.quality_score > 80.0); // Should be high quality
         assert!(quality.clip_rate_percent < 0.1); // No clipping
         assert!(quality.is_acceptable());
@@ -443,11 +469,11 @@ mod tests {
     #[test]
     fn test_clipping_detection() {
         let mut analyzer = AudioQualityAnalyzer::new(48000);
-        
+
         // Generate clipped samples
         let clipped_samples = vec![1.0; 1000]; // All samples at maximum
         let quality = analyzer.analyze_samples(&clipped_samples);
-        
+
         assert!(quality.clip_rate_percent > 90.0); // Heavy clipping
         assert!(quality.quality_score < 50.0); // Poor quality due to clipping
         assert!(!quality.is_acceptable());
@@ -456,7 +482,7 @@ mod tests {
     #[test]
     fn test_db_conversion() {
         let detector = SilenceDetector::new(-60.0, 1.0, 48000);
-        
+
         assert_eq!(detector.linear_to_db(1.0), 0.0); // Full scale = 0 dB
         assert_eq!(detector.linear_to_db(0.5), 20.0 * 0.5_f32.log10()); // -6 dB
         assert_eq!(detector.linear_to_db(0.0), -100.0); // Silence floor

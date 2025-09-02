@@ -1,18 +1,18 @@
 // Modular effects implementation
 pub mod analyzer;
-pub mod filter;
-pub mod equalizer;
 pub mod compressor;
-pub mod limiter;
 pub mod effects_chain;
+pub mod equalizer;
+pub mod filter;
+pub mod limiter;
 
 // Re-export all public types for backward compatibility
 pub use analyzer::{AudioAnalyzer, PeakDetector, RmsDetector, SpectrumAnalyzer};
-pub use filter::BiquadFilter;
-pub use equalizer::{ThreeBandEqualizer, EQBand};
 pub use compressor::Compressor;
-pub use limiter::Limiter;
 pub use effects_chain::AudioEffectsChain;
+pub use equalizer::{EQBand, ThreeBandEqualizer};
+pub use filter::BiquadFilter;
+pub use limiter::Limiter;
 
 /// Audio stability constants for denormal protection
 const DENORMAL_THRESHOLD: f32 = 1e-15;
@@ -28,7 +28,11 @@ fn flush_denormal(x: f32) -> f32 {
         0.0
     } else if abs_x > 100.0 {
         // Clamp extreme values that could cause instability
-        if x > 0.0 { 100.0 } else { -100.0 }
+        if x > 0.0 {
+            100.0
+        } else {
+            -100.0
+        }
     } else {
         x
     }

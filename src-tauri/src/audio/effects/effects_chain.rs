@@ -1,12 +1,12 @@
-use super::filter::BiquadFilter;
-use super::equalizer::{ThreeBandEqualizer, EQBand};
 use super::compressor::Compressor;
+use super::equalizer::{EQBand, ThreeBandEqualizer};
+use super::filter::BiquadFilter;
 use super::limiter::Limiter;
 
 /// Real-time audio effects chain
 #[derive(Debug)]
 pub struct AudioEffectsChain {
-    dc_blocker: BiquadFilter,  // **BASS POPPING FIX**: DC offset removal
+    dc_blocker: BiquadFilter, // **BASS POPPING FIX**: DC offset removal
     equalizer: ThreeBandEqualizer,
     compressor: Compressor,
     limiter: Limiter,
@@ -46,7 +46,13 @@ impl AudioEffectsChain {
         self.equalizer.set_gain(band, gain_db);
     }
 
-    pub fn set_compressor_params(&mut self, threshold: f32, ratio: f32, attack_ms: f32, release_ms: f32) {
+    pub fn set_compressor_params(
+        &mut self,
+        threshold: f32,
+        ratio: f32,
+        attack_ms: f32,
+        release_ms: f32,
+    ) {
         self.compressor.set_threshold(threshold);
         self.compressor.set_ratio(ratio);
         self.compressor.set_attack(attack_ms);
@@ -56,10 +62,10 @@ impl AudioEffectsChain {
     pub fn set_limiter_threshold(&mut self, threshold_db: f32) {
         self.limiter.set_threshold(threshold_db);
     }
-    
+
     /// Reset all effects to prevent accumulated instabilities
     pub fn reset(&mut self) {
-        self.dc_blocker.reset();  // **BASS POPPING FIX**: Reset DC blocker too
+        self.dc_blocker.reset(); // **BASS POPPING FIX**: Reset DC blocker too
         self.equalizer.reset();
         self.compressor.reset();
         self.limiter.reset();

@@ -4,6 +4,7 @@
     "editor.codeActionsOnSave": {
       "source.fixAll.eslint": "explicit"
     },
+    "files.trimTrailingWhitespace": true,
     "prettier.configPath": ".prettierrc",
     "typescript.tsdk": "node_modules/typescript/lib",
     "editor.defaultFormatter": "esbenp.prettier-vscode",
