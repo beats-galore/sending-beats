@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { useCallback, useEffect, useState } from 'react';
 
 import type { ProcessInfo, ApplicationAudioError } from '../types/applicationAudio.types';
 
-export interface ApplicationAudioState {
+export type ApplicationAudioState = {
   availableApps: ProcessInfo[];
   knownApps: ProcessInfo[];
   activeCaptures: ProcessInfo[];

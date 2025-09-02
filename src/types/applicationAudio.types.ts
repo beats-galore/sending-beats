@@ -1,6 +1,6 @@
 // TypeScript types for application audio capture functionality
 
-export interface ProcessInfo {
+export type ProcessInfo = {
   pid: number;
   name: string;
   bundle_id?: string;
@@ -9,7 +9,7 @@ export interface ProcessInfo {
   is_playing_audio: boolean;
 }
 
-export interface ApplicationAudioError {
+export type ApplicationAudioError = {
   type: 'PermissionDenied' | 'ApplicationNotFound' | 'CoreAudioError' | 'UnsupportedSystem' | 'TooManyCaptures' | 'TapNotInitialized' | 'SystemError';
   message: string;
   details?: {
@@ -19,7 +19,7 @@ export interface ApplicationAudioError {
   };
 }
 
-export interface ApplicationAudioSource {
+export type ApplicationAudioSource = {
   type: 'application';
   id: string; // Format: "app-{pid}"
   pid: number;
@@ -32,7 +32,7 @@ export interface ApplicationAudioSource {
   isCapturing: boolean;
 }
 
-export interface HardwareAudioSource {
+export type HardwareAudioSource = {
   type: 'hardware';
   id: string;
   name: string;
@@ -44,7 +44,7 @@ export interface HardwareAudioSource {
 
 export type AudioSource = ApplicationAudioSource | HardwareAudioSource;
 
-export interface AudioSourceGroup {
+export type AudioSourceGroup = {
   label: string;
   sources: AudioSource[];
 }
