@@ -115,7 +115,11 @@ impl CoreAudioIntegration {
             match self.get_coreaudio_device_info(device_id).await {
                 Ok(device_infos) => {
                     for device_info in device_infos {
-                        crate::device_debug!("Found CoreAudio device: {} ({})", device_info.name, device_info.id);
+                        crate::device_debug!(
+                            "Found CoreAudio device: {} ({})",
+                            device_info.name,
+                            device_info.id
+                        );
                         devices.push(device_info);
                     }
                 }

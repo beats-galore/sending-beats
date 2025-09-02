@@ -700,9 +700,13 @@ impl VirtualMixer {
                     param.sched_priority = 80; // High priority for real-time audio
 
                     if pthread_setschedparam(pthread_self(), SCHED_RR, &param) == 0 {
-                        crate::audio_debug!("✅ Audio thread priority set to real-time (priority: 80)");
+                        crate::audio_debug!(
+                            "✅ Audio thread priority set to real-time (priority: 80)"
+                        );
                     } else {
-                        crate::audio_debug!("⚠️ Failed to set audio thread priority - may cause audio dropouts");
+                        crate::audio_debug!(
+                            "⚠️ Failed to set audio thread priority - may cause audio dropouts"
+                        );
                     }
                 }
             }

@@ -2,7 +2,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DebugLoggingConfig {
     pub audio: bool,
@@ -23,8 +22,18 @@ pub static DEVICE_DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
 pub fn set_debug_levels(details: DebugLoggingConfig) {
     AUDIO_DEBUG_ENABLED.store(details.audio, Ordering::Relaxed);
     DEVICE_DEBUG_ENABLED.store(details.device, Ordering::Relaxed);
-    println!("🔧 Audio debug logging {}", if details.audio { "ENABLED" } else { "DISABLED" });
-    println!("🔧 Device debug logging {}", if details.device { "ENABLED" } else { "DISABLED" });
+    println!(
+        "🔧 Audio debug logging {}",
+        if details.audio { "ENABLED" } else { "DISABLED" }
+    );
+    println!(
+        "🔧 Device debug logging {}",
+        if details.device {
+            "ENABLED"
+        } else {
+            "DISABLED"
+        }
+    );
 }
 
 pub fn get_debug_levels() -> DebugLoggingConfig {

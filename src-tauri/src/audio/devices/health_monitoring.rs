@@ -34,7 +34,10 @@ impl DeviceHealthMonitor {
         let health = DeviceHealth::new_healthy(device_info.id.clone(), device_info.name.clone());
 
         health_guard.insert(device_info.id.clone(), health);
-        crate::device_debug!("Initialized health tracking for device: {}", device_info.name);
+        crate::device_debug!(
+            "Initialized health tracking for device: {}",
+            device_info.name
+        );
     }
 
     /// Check if a device is still available and update its health status

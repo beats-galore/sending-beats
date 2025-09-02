@@ -114,8 +114,11 @@ impl AudioDeviceManager {
         if let Some(device_info) = self.get_device(device_id).await {
             if device_info.host_api == "CoreAudio (Direct)" {
                 crate::device_debug!("Found CoreAudio device: {}", device_info.name);
-                return self.enumerator.get_coreaudio()
-                    .create_coreaudio_device_handle(&device_info, is_input).await;
+                return self
+                    .enumerator
+                    .get_coreaudio()
+                    .create_coreaudio_device_handle(&device_info, is_input)
+                    .await;
             }
         }
 
@@ -126,8 +129,11 @@ impl AudioDeviceManager {
         if let Some(device_info) = self.get_device(device_id).await {
             if device_info.host_api == "CoreAudio (Direct)" {
                 crate::device_debug!("Found CoreAudio device after refresh: {}", device_info.name);
-                return self.enumerator.get_coreaudio()
-                    .create_coreaudio_device_handle(&device_info, is_input).await;
+                return self
+                    .enumerator
+                    .get_coreaudio()
+                    .create_coreaudio_device_handle(&device_info, is_input)
+                    .await;
             }
         }
 

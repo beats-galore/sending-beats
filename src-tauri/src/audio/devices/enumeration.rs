@@ -72,7 +72,10 @@ impl DeviceEnumerator {
             crate::device_debug!("=== DIRECT COREAUDIO ENUMERATION ===");
             match self.coreaudio.enumerate_coreaudio_devices().await {
                 Ok(coreaudio_devices) => {
-                    crate::device_debug!("Found {} devices via direct CoreAudio access", coreaudio_devices.len());
+                    crate::device_debug!(
+                        "Found {} devices via direct CoreAudio access",
+                        coreaudio_devices.len()
+                    );
                     all_devices.extend(coreaudio_devices);
                 }
                 Err(e) => {
@@ -108,8 +111,12 @@ impl DeviceEnumerator {
         crate::device_debug!("\n=== FINAL DEVICE LIST ===");
         for (i, device) in all_devices.iter().enumerate() {
             crate::device_debug!("  {}: {} ({})", i, device.name, device.id);
-            crate::device_debug!("     Input: {}, Output: {}, Default: {}",
-                device.is_input, device.is_output, device.is_default);
+            crate::device_debug!(
+                "     Input: {}, Output: {}, Default: {}",
+                device.is_input,
+                device.is_output,
+                device.is_default
+            );
         }
 
         // Update cache with all devices (CoreAudio + cpal)
@@ -149,16 +156,23 @@ impl DeviceEnumerator {
                         match host.output_devices() {
                             Ok(devices) => {
                                 let devices_vec: Vec<_> = devices.collect();
-                                crate::device_debug!("  CPAL Output devices: {}", devices_vec.len());
+                                crate::device_debug!(
+                                    "  CPAL Output devices: {}",
+                                    devices_vec.len()
+                                );
                                 for (i, device) in devices_vec.iter().enumerate() {
-                                    let name = device.name().unwrap_or_else(|_| "Unknown".to_string());
+                                    let name =
+                                        device.name().unwrap_or_else(|_| "Unknown".to_string());
                                     crate::device_debug!("    {}: {} {:?}", i, name, device.name());
 
                                     // Try to get device configs to see why some might be filtered
                                     match device.supported_output_configs() {
                                         Ok(configs) => {
                                             let config_count = configs.count();
-                                            crate::device_debug!("      -> {} supported configs", config_count);
+                                            crate::device_debug!(
+                                                "      -> {} supported configs",
+                                                config_count
+                                            );
                                         }
                                         Err(e) => {
                                             crate::device_debug!("      -> Config error: {}", e);
@@ -202,8 +216,14 @@ impl DeviceEnumerator {
         let default_input = self.host.default_input_device();
         let default_output = self.host.default_output_device();
 
-        crate::device_debug!("Default input: {:?}", default_input.as_ref().and_then(|d| d.name().ok()));
-        crate::device_debug!("Default output: {:?}", default_output.as_ref().and_then(|d| d.name().ok()));
+        crate::device_debug!(
+            "Default input: {:?}",
+            default_input.as_ref().and_then(|d| d.name().ok())
+        );
+        crate::device_debug!(
+            "Default output: {:?}",
+            default_output.as_ref().and_then(|d| d.name().ok())
+        );
 
         let mut devices = Vec::new();
         let mut devices_map = HashMap::new();
@@ -244,8 +264,10 @@ impl DeviceEnumerator {
                         Ok(configs) => {
                             crate::device_debug!("  Supported configs:");
                             for (i, config) in configs.enumerate() {
-                                if i < 3 { // Limit output to prevent spam
-                                    crate::device_debug!("    - Sample rate: {}-{}, Channels: {}, Format: {:?}",
+                                if i < 3 {
+                                    // Limit output to prevent spam
+                                    crate::device_debug!(
+                                        "    - Sample rate: {}-{}, Channels: {}, Format: {:?}",
                                         config.min_sample_rate().0,
                                         config.max_sample_rate().0,
                                         config.channels(),
@@ -267,7 +289,11 @@ impl DeviceEnumerator {
 
                     match self.get_device_info(&device, false, true, is_default) {
                         Ok(device_info) => {
-                            crate::device_debug!("Successfully added output device: {} (ID: {})", device_info.name, device_info.id);
+                            crate::device_debug!(
+                                "Successfully added output device: {} (ID: {})",
+                                device_info.name,
+                                device_info.id
+                            );
                             devices.push(device_info.clone());
                             devices_map.insert(device_info.id.clone(), device_info);
                         }
@@ -324,7 +350,9 @@ impl DeviceEnumerator {
 
             if !devices_map.contains_key(default_id) {
                 crate::device_debug!("Adding system default output device: {}", default_name);
-                if let Ok(default_device_info) = self.get_device_info(default_out, false, true, true) {
+                if let Ok(default_device_info) =
+                    self.get_device_info(default_out, false, true, true)
+                {
                     let mut system_default = default_device_info;
                     system_default.id = default_id.to_string();
                     system_default.name = format!("{} (Default)", system_default.name);
@@ -342,7 +370,8 @@ impl DeviceEnumerator {
 
             if !devices_map.contains_key(default_id) {
                 crate::device_debug!("Adding system default input device: {}", default_name);
-                if let Ok(default_device_info) = self.get_device_info(default_in, true, false, true) {
+                if let Ok(default_device_info) = self.get_device_info(default_in, true, false, true)
+                {
                     let mut system_default = default_device_info;
                     system_default.id = default_id.to_string();
                     system_default.name = format!("{} (Default)", system_default.name);
@@ -370,10 +399,21 @@ impl DeviceEnumerator {
             return Err(anyhow::anyhow!("Device name too long: {}", name.len()));
         }
 
-        crate::device_debug!("Processing device: {} (input: {}, output: {})", name, is_input, is_output);
+        crate::device_debug!(
+            "Processing device: {} (input: {}, output: {})",
+            name,
+            is_input,
+            is_output
+        );
 
-        let id = format!("{}_{}", if is_input { "input" } else { "output" },
-                        name.replace(" ", "_").replace("(", "").replace(")", "").to_lowercase());
+        let id = format!(
+            "{}_{}",
+            if is_input { "input" } else { "output" },
+            name.replace(" ", "_")
+                .replace("(", "")
+                .replace(")", "")
+                .to_lowercase()
+        );
 
         // Get supported configurations
         let mut supported_sample_rates = Vec::new();
@@ -469,8 +509,13 @@ impl DeviceEnumerator {
     }
 
     /// Safely enumerate CPAL devices with crash prevention
-    pub async fn safe_enumerate_cpal_devices(&self, is_input: bool) -> Result<Vec<(Device, String)>> {
-        crate::device_debug!("🛡️  SAFE ENUMERATION: Starting crash-protected CPAL device enumeration");
+    pub async fn safe_enumerate_cpal_devices(
+        &self,
+        is_input: bool,
+    ) -> Result<Vec<(Device, String)>> {
+        crate::device_debug!(
+            "🛡️  SAFE ENUMERATION: Starting crash-protected CPAL device enumeration"
+        );
 
         // Use std::panic::catch_unwind to prevent CPAL crashes from killing the app
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -478,17 +523,25 @@ impl DeviceEnumerator {
                 crate::device_debug!("🔍 SAFE ENUMERATION: Getting input devices iterator");
                 let input_devices = self.host.input_devices()?;
 
-                crate::device_debug!("🔍 SAFE ENUMERATION: Starting device iteration with individual error handling");
+                crate::device_debug!(
+                    "🔍 SAFE ENUMERATION: Starting device iteration with individual error handling"
+                );
                 let mut devices = Vec::new();
                 let mut device_count = 0;
 
                 for device in input_devices {
-                    crate::device_debug!("🔍 SAFE ENUMERATION: Processing input device #{}", device_count);
+                    crate::device_debug!(
+                        "🔍 SAFE ENUMERATION: Processing input device #{}",
+                        device_count
+                    );
 
                     // Safely get device name with individual error handling
                     match device.name() {
                         Ok(name) => {
-                            crate::device_debug!("✅ SAFE ENUMERATION: Successfully got input device name: {}", name);
+                            crate::device_debug!(
+                                "✅ SAFE ENUMERATION: Successfully got input device name: {}",
+                                name
+                            );
                             devices.push((device, name));
                         }
                         Err(e) => {
@@ -501,12 +554,17 @@ impl DeviceEnumerator {
 
                     // Safety limit to prevent infinite loops or excessive processing
                     if device_count > 50 {
-                        crate::device_debug!("⚠️  SAFE ENUMERATION: Stopping after 50 input devices for safety");
+                        crate::device_debug!(
+                            "⚠️  SAFE ENUMERATION: Stopping after 50 input devices for safety"
+                        );
                         break;
                     }
                 }
 
-                crate::device_debug!("✅ SAFE ENUMERATION: Successfully processed {} input devices", devices.len());
+                crate::device_debug!(
+                    "✅ SAFE ENUMERATION: Successfully processed {} input devices",
+                    devices.len()
+                );
                 Ok(devices)
             } else {
                 crate::device_debug!("🔍 SAFE ENUMERATION: Getting output devices iterator");
@@ -517,12 +575,18 @@ impl DeviceEnumerator {
                 let mut device_count = 0;
 
                 for device in output_devices {
-                    crate::device_debug!("🔍 SAFE ENUMERATION: Processing output device #{}", device_count);
+                    crate::device_debug!(
+                        "🔍 SAFE ENUMERATION: Processing output device #{}",
+                        device_count
+                    );
 
                     // Safely get device name with individual error handling
                     match device.name() {
                         Ok(name) => {
-                            crate::device_debug!("✅ SAFE ENUMERATION: Successfully got output device name: {}", name);
+                            crate::device_debug!(
+                                "✅ SAFE ENUMERATION: Successfully got output device name: {}",
+                                name
+                            );
                             devices.push((device, name));
                         }
                         Err(e) => {
@@ -535,12 +599,17 @@ impl DeviceEnumerator {
 
                     // Safety limit to prevent infinite loops or excessive processing
                     if device_count > 50 {
-                        crate::device_debug!("⚠️  SAFE ENUMERATION: Stopping after 50 output devices for safety");
+                        crate::device_debug!(
+                            "⚠️  SAFE ENUMERATION: Stopping after 50 output devices for safety"
+                        );
                         break;
                     }
                 }
 
-                crate::device_debug!("✅ SAFE ENUMERATION: Successfully processed {} output devices", devices.len());
+                crate::device_debug!(
+                    "✅ SAFE ENUMERATION: Successfully processed {} output devices",
+                    devices.len()
+                );
                 Ok(devices)
             }
         }));
