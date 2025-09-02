@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
-import { useApplicationAudio } from './useApplicationAudio';
 import { invoke } from '@tauri-apps/api/core';
+import { useCallback, useEffect, useState } from 'react';
+
+import { useApplicationAudio } from './useApplicationAudio';
 
 export const useStartupPermissionCheck = () => {
   const [showPermissionModal, setShowPermissionModal] = useState(false);
@@ -11,14 +12,14 @@ export const useStartupPermissionCheck = () => {
   useEffect(() => {
     if (!hasCheckedOnStartup && applicationAudio.knownApps.length > 0) {
       setHasCheckedOnStartup(true);
-      
+
       // If there are known apps but no permissions, show the modal
-      if (!applicationAudio.permissionsGranted) {
-        console.log('🔐 Startup permission check: Known apps found but permissions not granted');
-        setShowPermissionModal(true);
-      } else {
-        console.log('✅ Startup permission check: Permissions already granted');
-      }
+      // if (!applicationAudio.permissionsGranted) {
+      //   console.log('🔐 Startup permission check: Known apps found but permissions not granted');
+      //   setShowPermissionModal(true);
+      // } else {
+      //   console.log('✅ Startup permission check: Permissions already granted');
+      // }
     }
   }, [hasCheckedOnStartup, applicationAudio.knownApps.length, applicationAudio.permissionsGranted]);
 
@@ -37,14 +38,14 @@ export const useStartupPermissionCheck = () => {
 
   const handleRequestPermissions = useCallback(async () => {
     const result = await applicationAudio.actions.requestPermissions();
-    
+
     if (result.granted) {
       setShowPermissionModal(false);
     } else {
       // If permissions still not granted, keep modal open
       console.log('Permissions still not granted after request');
     }
-    
+
     return result;
   }, [applicationAudio.actions]);
 

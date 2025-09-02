@@ -46,16 +46,16 @@ impl VirtualMixerHandle {
         };
         
         // Log detailed status every 100 calls
-        if debug_count % 100 == 0 {
-            println!("🔍 INPUT STREAM STATUS Debug #{}: {} active streams, {} configured channels", 
+        if debug_count % 1000 == 0 {
+            crate::audio_debug!("🔍 INPUT STREAM STATUS Debug #{}: {} active streams, {} configured channels", 
                 debug_count, streams.len(), channels.len());
             
             for (device_id, _stream) in streams.iter() {
-                println!("  Active stream: {}", device_id);
+                crate::audio_debug!("  Active stream: {}", device_id);
             }
             
             for channel in channels.iter() {
-                println!("  Configured channel '{}': input_device={:?}, muted={}", 
+                crate::audio_debug!("  Configured channel '{}': input_device={:?}, muted={}", 
                     channel.name, channel.input_device_id, channel.muted);
             }
         }

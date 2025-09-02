@@ -4,13 +4,12 @@ use crate::{AudioState, VULevelData, MasterLevelData, ChannelConfig, DeviceMonit
 // Debug control commands
 #[tauri::command]
 pub fn set_audio_debug_enabled(enabled: bool) {
-    crate::audio::AUDIO_DEBUG_ENABLED.store(enabled, std::sync::atomic::Ordering::Relaxed);
-    println!("🔧 Audio debug logging {}", if enabled { "ENABLED" } else { "DISABLED" });
+    crate::log::set_audio_debug(enabled);
 }
 
 #[tauri::command]
 pub fn get_audio_debug_enabled() -> bool {
-    crate::audio::AUDIO_DEBUG_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+    crate::log::is_audio_debug_enabled()
 }
 
 // SQLite-based VU meter commands for improved performance

@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod db;
+pub mod log;
 
 #[cfg(target_os = "macos")]
 pub mod permissions;
