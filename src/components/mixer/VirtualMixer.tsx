@@ -135,10 +135,6 @@ const VirtualMixer = memo(() => {
         {/* Recording Section */}
         {isReady && (
           <Stack gap="md">
-            <Title order={3} c="red.4">
-              Audio Recording
-            </Title>
-
             <Grid>
               {/* Recording Controls */}
               <Grid.Col span={{ base: 12, md: 6 }}>

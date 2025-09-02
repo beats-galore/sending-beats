@@ -2,7 +2,9 @@ import { Card, Stack, Group, Title, TextInput, Select, Switch, NumberInput, Text
 import { createStyles } from '@mantine/styles';
 import { IconSettings, IconFolder, IconMusic, IconDeviceFloppy, IconTrash, IconPlus } from '@tabler/icons-react';
 import { memo, useState, useCallback, useEffect } from 'react';
-import { useRecording, RecordingConfig, RecordingFormat, RecordingMetadata } from '../../hooks/use-recording';
+import { useRecording } from '../../hooks/use-recording';
+import type { RecordingConfig, RecordingFormat, RecordingMetadata, MetadataPreset } from '../../types/audio.types';
+import { MetadataForm } from './MetadataForm';
 
 type RecordingConfigCardProps = {
   disabled?: boolean;
@@ -97,6 +99,8 @@ export const RecordingConfigCard = memo<RecordingConfigCardProps>(
     const [editingConfig, setEditingConfig] = useState<RecordingConfig | null>(null);
     const [modalOpened, setModalOpened] = useState(false);
     const [selectedConfigId, setSelectedConfigId] = useState<string>('');
+    const [metadataPresets, setMetadataPresets] = useState<MetadataPreset[]>([]);
+    const [recordingPresets, setRecordingPresets] = useState<RecordingConfig[]>([]);
     
     // Initialize selected config
     useEffect(() => {
@@ -104,6 +108,23 @@ export const RecordingConfigCard = memo<RecordingConfigCardProps>(
         setSelectedConfigId(configs[0].id);
       }
     }, [configs, selectedConfigId]);
+
+    // Load presets on mount
+    useEffect(() => {
+      const loadPresets = async () => {
+        try {
+          const [metaPresets, recPresets] = await Promise.all([
+            actions.getMetadataPresets(),
+            actions.getRecordingPresets(),
+          ]);
+          setMetadataPresets(metaPresets);
+          setRecordingPresets(recPresets);
+        } catch (err) {
+          console.error('Failed to load presets:', err);
+        }
+      };
+      loadPresets();
+    }, [actions]);
     
     const selectedConfig = configs.find(c => c.id === selectedConfigId);
     
@@ -119,6 +140,15 @@ export const RecordingConfigCard = memo<RecordingConfigCardProps>(
         console.error('Failed to create default config:', err);
       }
     }, [actions]);
+
+    const handleCreateFromPreset = useCallback((preset: RecordingConfig) => {
+      setEditingConfig({
+        ...preset,
+        name: `${preset.name} (Copy)`,
+        id: crypto.randomUUID(), // Generate new ID
+      });
+      setModalOpened(true);
+    }, []);
     
     const handleEdit = useCallback((config: RecordingConfig) => {
       setEditingConfig({ ...config });
@@ -148,14 +178,6 @@ export const RecordingConfigCard = memo<RecordingConfigCardProps>(
       }
     }, [editingConfig]);
     
-    const updateMetadata = useCallback((updates: Partial<RecordingMetadata>) => {
-      if (editingConfig) {
-        setEditingConfig({
-          ...editingConfig,
-          metadata: { ...editingConfig.metadata, ...updates },
-        });
-      }
-    }, [editingConfig]);
     
     return (
       <>
@@ -169,15 +191,31 @@ export const RecordingConfigCard = memo<RecordingConfigCardProps>(
                 </Title>
               </Group>
               
-              <Button
-                leftSection={<IconPlus size={16} />}
-                onClick={handleCreateNew}
-                size="sm"
-                variant="light"
-                disabled={disabled}
-              >
-                New Preset
-              </Button>
+              <Group gap="xs">
+                <Button
+                  leftSection={<IconPlus size={16} />}
+                  onClick={handleCreateNew}
+                  size="sm"
+                  variant="light"
+                  disabled={disabled}
+                >
+                  New Preset
+                </Button>
+                
+                {/* Recording Preset Dropdown */}
+                {recordingPresets.length > 0 && (
+                  <Select
+                    placeholder="Or use template"
+                    size="sm"
+                    data={recordingPresets.map(p => ({ value: p.id, label: p.name }))}
+                    onChange={(value) => {
+                      const preset = recordingPresets.find(p => p.id === value);
+                      if (preset) handleCreateFromPreset(preset);
+                    }}
+                    style={{ minWidth: 150 }}
+                  />
+                )}
+              </Group>
             </Group>
             
             {/* Config List */}
@@ -323,44 +361,17 @@ export const RecordingConfigCard = memo<RecordingConfigCardProps>(
                 </Text>
               </Stack>
               
-              {/* Metadata */}
+              {/* Comprehensive Metadata Form */}
               <Stack gap="sm">
                 <Text fw={500} className={classes.sectionHeader}>
-                  Default Metadata
+                  Recording Metadata
                 </Text>
                 
-                <Group grow>
-                  <TextInput
-                    label="Title"
-                    value={editingConfig.metadata.title || ''}
-                    onChange={(e) => updateMetadata({ title: e.target.value || undefined })}
-                  />
-                  <TextInput
-                    label="Artist"
-                    value={editingConfig.metadata.artist || ''}
-                    onChange={(e) => updateMetadata({ artist: e.target.value || undefined })}
-                  />
-                </Group>
-                
-                <Group grow>
-                  <TextInput
-                    label="Album"
-                    value={editingConfig.metadata.album || ''}
-                    onChange={(e) => updateMetadata({ album: e.target.value || undefined })}
-                  />
-                  <TextInput
-                    label="Genre"
-                    value={editingConfig.metadata.genre || ''}
-                    onChange={(e) => updateMetadata({ genre: e.target.value || undefined })}
-                  />
-                </Group>
-                
-                <Textarea
-                  label="Comment"
-                  placeholder="Recording notes..."
-                  value={editingConfig.metadata.comment || ''}
-                  onChange={(e) => updateMetadata({ comment: e.target.value || undefined })}
-                  rows={2}
+                <MetadataForm
+                  metadata={editingConfig.metadata}
+                  onChange={(metadata) => updateEditingConfig({ metadata })}
+                  presets={metadataPresets}
+                  showPresetButtons={true}
                 />
               </Stack>
               

@@ -1,76 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState, useCallback } from 'react';
+import type { RecordingConfig, RecordingStatus, RecordingHistoryEntry, RecordingMetadata, MetadataPreset, RecordingFormat } from '../types/audio.types';
 
-export type RecordingFormat = {
-  mp3?: { bitrate: number };
-  flac?: { compression_level: number };
-  wav?: {};
-};
-
-export type RecordingMetadata = {
-  title?: string;
-  artist?: string;
-  album?: string;
-  genre?: string;
-  comment?: string;
-  year?: number;
-};
-
-export type RecordingConfig = {
-  id: string;
-  name: string;
-  format: RecordingFormat;
-  output_directory: string;
-  filename_template: string;
-  metadata: RecordingMetadata;
-  
-  // Advanced options
-  auto_stop_on_silence: boolean;
-  silence_threshold_db: number;
-  silence_duration_sec: number;
-  max_duration_minutes?: number;
-  max_file_size_mb?: number;
-  split_on_interval_minutes?: number;
-  
-  // Quality settings
-  sample_rate: number;
-  channels: number;
-  bit_depth: number;
-};
-
-export type RecordingSession = {
-  id: string;
-  config: RecordingConfig;
-  start_time: string; // SystemTime serialized as string
-  current_file_path: string;
-  duration_seconds: number;
-  file_size_bytes: number;
-  current_levels: [number, number]; // [left, right] RMS levels
-  is_paused: boolean;
-  
-  // Statistics
-  samples_written: number;
-  peak_levels: [number, number];
-  silence_detected_duration: number;
-};
-
-export type RecordingStatus = {
-  is_recording: boolean;
-  current_session?: RecordingSession;
-  available_space_gb: number;
-  total_recordings: number;
-  active_recordings: string[];
-};
-
-export type RecordingHistoryEntry = {
-  id: string;
-  file_path: string;
-  config: RecordingConfig;
-  start_time: string;
-  duration_seconds: number;
-  file_size_bytes: number;
-  created_at: string;
-};
+// Re-export types for convenience
+export type { RecordingConfig, RecordingStatus, RecordingHistoryEntry, RecordingMetadata, MetadataPreset, RecordingFormat };
 
 export type RecordingActions = {
   startRecording: (config: RecordingConfig) => Promise<string>;
@@ -80,6 +13,9 @@ export type RecordingActions = {
   getConfigs: () => Promise<RecordingConfig[]>;
   getHistory: () => Promise<RecordingHistoryEntry[]>;
   createDefaultConfig: () => Promise<RecordingConfig>;
+  getMetadataPresets: () => Promise<MetadataPreset[]>;
+  getRecordingPresets: () => Promise<RecordingConfig[]>;
+  updateSessionMetadata: (metadata: RecordingMetadata) => Promise<void>;
 };
 
 export const useRecording = (pollingInterval = 1000) => {
@@ -177,6 +113,34 @@ export const useRecording = (pollingInterval = 1000) => {
     return history;
   }, [fetchHistory, history]);
 
+  const getMetadataPresets = useCallback(async (): Promise<MetadataPreset[]> => {
+    try {
+      return await invoke<MetadataPreset[]>('get_metadata_presets');
+    } catch (err) {
+      console.error('Failed to get metadata presets:', err);
+      return [];
+    }
+  }, []);
+
+  const getRecordingPresets = useCallback(async (): Promise<RecordingConfig[]> => {
+    try {
+      return await invoke<RecordingConfig[]>('get_recording_presets');
+    } catch (err) {
+      console.error('Failed to get recording presets:', err);
+      return [];
+    }
+  }, []);
+
+  const updateSessionMetadata = useCallback(async (metadata: RecordingMetadata): Promise<void> => {
+    try {
+      await invoke<void>('update_recording_metadata', { metadata });
+      await fetchStatus(); // Refresh status to get updated metadata
+    } catch (err) {
+      console.error('Failed to update session metadata:', err);
+      throw err;
+    }
+  }, [fetchStatus]);
+
   useEffect(() => {
     // Initial fetch
     fetchStatus();
@@ -197,6 +161,9 @@ export const useRecording = (pollingInterval = 1000) => {
     getConfigs,
     getHistory,
     createDefaultConfig,
+    getMetadataPresets,
+    getRecordingPresets,
+    updateSessionMetadata,
   };
 
   return {

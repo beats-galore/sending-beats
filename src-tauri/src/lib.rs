@@ -284,7 +284,19 @@ pub fn run() {
             // Tap lifecycle management commands
             get_tap_statistics,
             cleanup_stale_taps,
-            shutdown_application_audio_manager
+            shutdown_application_audio_manager,
+            // Recording commands
+            start_recording,
+            stop_recording,
+            get_recording_status,
+            save_recording_config,
+            get_recording_configs,
+            get_recording_history,
+            create_default_recording_config,
+            select_recording_directory,
+            get_metadata_presets,
+            get_recording_presets,
+            update_recording_metadata
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

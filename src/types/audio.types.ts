@@ -84,3 +84,137 @@ export const AUDIO_CONSTANTS = {
   DEFAULT_BUFFER_SIZE: 512,
   VU_UPDATE_INTERVAL: 100, // ms
 } as const;
+
+// Recording types to match backend
+export type RecordingMetadata = {
+  // Core fields
+  title?: string;
+  artist?: string;
+  album?: string;
+  genre?: string;
+  comment?: string;
+  year?: number;
+  
+  // Extended fields
+  album_artist?: string;
+  composer?: string;
+  track_number?: number;
+  total_tracks?: number;
+  disc_number?: number;
+  total_discs?: number;
+  copyright?: string;
+  bpm?: number;
+  isrc?: string;
+  
+  // Technical fields (auto-populated)
+  encoder?: string;
+  encoding_date?: string;
+  sample_rate?: number;
+  bitrate?: number;
+  duration_seconds?: number;
+  
+  // Artwork
+  artwork?: AlbumArtwork;
+  
+  // Custom fields
+  custom_tags?: Record<string, string>;
+};
+
+export type AlbumArtwork = {
+  mime_type: string;
+  description: string;
+  image_data: number[]; // Vec<u8> from Rust
+  picture_type: ArtworkType;
+};
+
+export type ArtworkType = 
+  | "Other"
+  | "FileIcon"
+  | "OtherFileIcon"
+  | "CoverFront"
+  | "CoverBack"
+  | "LeafletPage"
+  | "Media"
+  | "LeadArtist"
+  | "Artist"
+  | "Conductor"
+  | "Band"
+  | "Composer"
+  | "Lyricist"
+  | "RecordingLocation"
+  | "DuringRecording"
+  | "DuringPerformance"
+  | "MovieScreenCapture"
+  | "BrightColourFish"
+  | "Illustration"
+  | "BandArtistLogotype"
+  | "PublisherStudioLogotype";
+
+export type RecordingFormat = {
+  mp3?: { bitrate: number };
+  flac?: { compression_level: number };
+  wav?: {};
+};
+
+export type RecordingConfig = {
+  id: string;
+  name: string;
+  format: RecordingFormat;
+  output_directory: string;
+  filename_template: string;
+  metadata: RecordingMetadata;
+  
+  // Advanced options
+  auto_stop_on_silence: boolean;
+  silence_threshold_db: number;
+  silence_duration_sec: number;
+  max_duration_minutes?: number;
+  max_file_size_mb?: number;
+  split_on_interval_minutes?: number;
+  
+  // Quality settings
+  sample_rate: number;
+  channels: number;
+  bit_depth: number;
+};
+
+export type RecordingSession = {
+  id: string;
+  config: RecordingConfig;
+  start_time: string;
+  current_file_path: string;
+  temp_file_path?: string;
+  duration_seconds: number;
+  file_size_bytes: number;
+  is_paused: boolean;
+  is_recovering: boolean;
+  metadata: RecordingMetadata;
+  current_levels: [number, number]; // [Left, Right] RMS levels for UI display
+};
+
+export type RecordingStatus = {
+  is_recording: boolean;
+  is_paused: boolean;
+  current_session?: RecordingSession;  // Fixed to match backend serialization
+  active_writers_count: number;
+  available_space_gb: number;
+  total_recordings: number;
+  active_recordings: string[];
+};
+
+export type RecordingHistoryEntry = {
+  id: string;
+  config_name: string;
+  file_path: string;
+  start_time: string;
+  end_time: string;
+  duration_seconds: number;
+  file_size_bytes: number;
+  format: RecordingFormat;
+  metadata: RecordingMetadata;
+};
+
+export type MetadataPreset = {
+  name: string;
+  metadata: RecordingMetadata;
+};

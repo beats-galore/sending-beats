@@ -9,10 +9,10 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{info, error};
+use tracing::{info, error, warn};
 
 use super::types::{
-    RecordingConfig, RecordingStatus, 
+    RecordingConfig, RecordingStatus, RecordingMetadata,
     RecordingHistoryEntry, RecordingCommand, RecordingPresets
 };
 use super::recording_writer::RecordingWriterManager;
@@ -40,10 +40,13 @@ impl RecordingService {
         }
     }
     
-    /// Initialize the recording service with command processing
-    pub fn initialize(&mut self) -> Result<()> {
+    /// Initialize the recording service with command processing and crash recovery
+    pub async fn initialize(&mut self) -> Result<Vec<String>> {
         let (tx, mut rx) = mpsc::unbounded_channel::<RecordingCommand>();
         self.command_sender = Some(tx);
+        
+        // Initialize crash recovery
+        let recovered_files = self.writer_manager.initialize().await?;
         
         let writer_manager = Arc::clone(&self.writer_manager);
         let active_session_id = Arc::clone(&self.active_session_id);
@@ -91,19 +94,29 @@ impl RecordingService {
                         info!("Resume command received (not yet implemented)");
                     }
                     RecordingCommand::UpdateMetadata(metadata) => {
-                        info!("Metadata update received: {:?}", metadata);
-                        // Implementation would need to be added to writer manager
+                        info!("Metadata update received with {} fields", metadata.get_display_fields().len());
+                        
+                        // Update metadata for active recording session
+                        let active_id = active_session_id.lock().await;
+                        if let Some(ref session_id) = *active_id {
+                            match writer_manager.update_session_metadata(session_id, metadata).await {
+                                Ok(()) => info!("Session metadata updated successfully"),
+                                Err(e) => error!("Failed to update session metadata: {}", e),
+                            }
+                        } else {
+                            warn!("No active recording session to update metadata");
+                        }
                     }
                 }
             }
         });
         
-        info!("Recording service initialized");
-        Ok(())
+        info!("Recording service initialized, recovered {} temp files", recovered_files.len());
+        Ok(recovered_files)
     }
     
     /// Start a new recording with the given configuration and audio receiver
-    pub async fn start_recording(&self, config: RecordingConfig, _audio_rx: tokio::sync::broadcast::Receiver<Vec<f32>>) -> Result<String> {
+    pub async fn start_recording(&self, config: RecordingConfig, mut audio_rx: tokio::sync::broadcast::Receiver<Vec<f32>>) -> Result<String> {
         // Validate configuration
         config.validate()?;
         
@@ -113,25 +126,77 @@ impl RecordingService {
             configs.insert(config.id.clone(), config.clone());
         }
         
-        // Send start command
-        if let Some(sender) = &self.command_sender {
-            sender.send(RecordingCommand::Start(config))
-                .map_err(|_| anyhow::anyhow!("Failed to send start command"))?;
+        // Start recording directly and get session ID
+        let session_id = self.writer_manager.start_recording(config).await?;
+        
+        // Also update active session tracking
+        {
+            let mut active_id = self.active_session_id.lock().await;
+            *active_id = Some(session_id.clone());
         }
         
-        // Return session ID (would need to be properly tracked)
-        Ok("pending".to_string()) // Placeholder - real implementation would track session creation
+        // Spawn audio processing task to continuously read samples and write to recording
+        let writer_manager = Arc::clone(&self.writer_manager);
+        let processing_session_id = session_id.clone();
+        tokio::spawn(async move {
+            info!("🎵 Starting audio processing loop for session: {}", processing_session_id);
+            let mut sample_count = 0u64;
+            let mut batch_count = 0u64;
+            
+            while let Ok(samples) = audio_rx.recv().await {
+                batch_count += 1;
+                sample_count += samples.len() as u64;
+                
+                // Log first few batches to see if we're getting audio, then every 100 batches
+                if batch_count <= 5 || batch_count % 100 == 0 {
+                    info!("🎵 Processing batch #{}, samples received: {}, total samples: {}", batch_count, samples.len(), sample_count);
+                }
+                
+                // Process the audio samples for this recording session
+                match writer_manager.process_samples(&processing_session_id, &samples).await {
+                    Ok(should_continue) => {
+                        if !should_continue {
+                            info!("🛑 Auto-stop triggered for session: {}", processing_session_id);
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        error!("❌ Failed to process audio samples for session {}: {}", processing_session_id, e);
+                        error!("❌ Error occurred at batch #{}, total samples processed: {}", batch_count, sample_count);
+                        break;
+                    }
+                }
+            }
+            
+            info!("🔚 Audio processing loop ended for session: {} (processed {} batches, {} total samples)", 
+                  processing_session_id, batch_count, sample_count);
+        });
+        
+        info!("Recording service started session: {}", session_id);
+        Ok(session_id)
     }
     
     /// Stop the current recording
     pub async fn stop_recording(&self) -> Result<Option<RecordingHistoryEntry>> {
-        if let Some(sender) = &self.command_sender {
-            sender.send(RecordingCommand::Stop)
-                .map_err(|_| anyhow::anyhow!("Failed to send stop command"))?;
-        }
+        let session_id = {
+            let mut active_id = self.active_session_id.lock().await;
+            active_id.take()
+        };
         
-        // TODO: Return actual history entry when recording stops
-        Ok(None)
+        if let Some(session_id) = session_id {
+            match self.writer_manager.stop_recording(&session_id).await {
+                Ok(history_entry) => {
+                    info!("Recording service stopped session: {}", session_id);
+                    Ok(Some(history_entry))
+                }
+                Err(e) => {
+                    error!("Failed to stop recording session {}: {}", session_id, e);
+                    Err(e)
+                }
+            }
+        } else {
+            Ok(None) // No active recording
+        }
     }
     
     /// Process audio samples for recording
@@ -155,17 +220,26 @@ impl RecordingService {
     
     /// Get current recording status
     pub async fn get_status(&self) -> RecordingStatus {
-        // Return a placeholder status for now
-        let mut status = RecordingStatus::default();
-        if let Ok(writer_status) = self.writer_manager.get_status() {
-            status = writer_status;
+        // Use async version to get complete status with session info
+        match self.writer_manager.get_status_async().await {
+            Ok(status) => status,
+            Err(_) => RecordingStatus::default(),
         }
-        status
     }
     
     /// Get recording history
     pub async fn get_history(&self) -> Vec<RecordingHistoryEntry> {
         self.writer_manager.get_history().unwrap_or_default()
+    }
+
+    /// Update metadata for the current recording session
+    pub async fn update_session_metadata(&self, metadata: RecordingMetadata) -> Result<()> {
+        if let Some(sender) = &self.command_sender {
+            sender.send(RecordingCommand::UpdateMetadata(metadata))?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Recording service not initialized"))
+        }
     }
     
     /// Save a recording configuration

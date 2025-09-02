@@ -16,6 +16,7 @@ pub struct AudioClock {
     last_sync_time: std::time::Instant,
     drift_compensation: f64, // Microseconds of drift compensation
     sync_interval_samples: u64, // Sync every N samples
+    log_counter: u64, // Counter for reduced logging frequency
 }
 
 impl AudioClock {
@@ -29,6 +30,7 @@ impl AudioClock {
             last_sync_time: now,
             drift_compensation: 0.0,
             sync_interval_samples: buffer_size as u64, // Sync every buffer to match hardware callback timing
+            log_counter: 0,
         }
     }
     
@@ -60,15 +62,20 @@ impl AudioClock {
                 is_drift_significant: timing_variation > variation_threshold,
             };
             
-            // Only log significant variations (>10% from expected)
+            // Only log significant variations (>10% from expected) - but reduce frequency dramatically
             if sync_info.is_drift_significant {
-                warn!(
-                    "⏰ TIMING VARIATION: Callback interval {:.1}μs vs expected {:.1}μs (variation: {:.1}μs, {:.1}%)",
-                    callback_interval_us,
-                    expected_interval_us,
-                    timing_variation,
-                    (timing_variation / expected_interval_us) * 100.0
-                );
+                self.log_counter += 1;
+                // Log only every 1000th occurrence to reduce spam
+                if self.log_counter % 1000 == 0 {
+                    warn!(
+                        "⏰ TIMING VARIATION (#{} occurrences): Callback interval {:.1}μs vs expected {:.1}μs (variation: {:.1}μs, {:.1}%)",
+                        self.log_counter,
+                        callback_interval_us,
+                        expected_interval_us,
+                        timing_variation,
+                        (timing_variation / expected_interval_us) * 100.0
+                    );
+                }
             }
             
             self.last_sync_time = now;
@@ -107,6 +114,7 @@ impl AudioClock {
         self.start_time = now;
         self.last_sync_time = now;
         self.drift_compensation = 0.0;
+        self.log_counter = 0;
         info!("🔄 CLOCK RESET: Audio clock reset to zero");
     }
     

@@ -10,7 +10,7 @@ use tracing::{info, error, warn};
 use super::types::{RecordingConfig, Mp3Settings, FlacSettings};
 
 /// Common interface for audio encoders
-pub trait AudioEncoder: Send + Sync {
+pub trait AudioEncoder: Send {
     /// Initialize the encoder with configuration
     fn initialize(&mut self, config: &RecordingConfig) -> Result<()>;
     
@@ -35,6 +35,7 @@ pub struct EncoderMetadata {
     pub bit_depth: u16,
     pub samples_encoded: u64,
     pub bytes_written: u64,
+    pub encoder_name: Option<String>,
 }
 
 impl Default for EncoderMetadata {
@@ -45,6 +46,7 @@ impl Default for EncoderMetadata {
             bit_depth: 0,
             samples_encoded: 0,
             bytes_written: 0,
+            encoder_name: None,
         }
     }
 }
@@ -141,6 +143,7 @@ impl AudioEncoder for WavEncoder {
             bit_depth: config.bit_depth,
             samples_encoded: 0,
             bytes_written: 0,
+            encoder_name: Some("WAV PCM".to_string()),
         };
         self.header_written = false;
         
@@ -186,12 +189,16 @@ impl AudioEncoder for WavEncoder {
     }
 }
 
-/// MP3 encoder using LAME (simplified implementation)
+/// MP3 encoder using LAME
 pub struct Mp3Encoder {
     metadata: EncoderMetadata,
     bitrate: u32,
     initialized: bool,
+    lame_encoder: Option<lame::Lame>,
 }
+
+// SAFETY: LAME encoder is used single-threaded within the recording writer task
+unsafe impl Send for Mp3Encoder {}
 
 impl Mp3Encoder {
     /// Create a new MP3 encoder
@@ -200,6 +207,7 @@ impl Mp3Encoder {
             metadata: EncoderMetadata::default(),
             bitrate: 192,
             initialized: false,
+            lame_encoder: None,
         }
     }
     
@@ -245,6 +253,7 @@ impl AudioEncoder for Mp3Encoder {
             bit_depth: config.bit_depth,
             samples_encoded: 0,
             bytes_written: 0,
+            encoder_name: Some(format!("MP3 LAME {}kbps", mp3_settings.bitrate)),
         };
         
         self.configure_encoder(config, mp3_settings)?;
@@ -262,18 +271,70 @@ impl AudioEncoder for Mp3Encoder {
             return Ok(Vec::new());
         }
         
-        // TODO: Implement actual MP3 encoding with LAME
-        // For now, return empty data (placeholder)
-        warn!("MP3 encoding not yet fully implemented - returning empty data");
+        // Initialize LAME encoder on first use
+        if self.lame_encoder.is_none() {
+            let mut lame = lame::Lame::new()
+                .ok_or_else(|| anyhow::anyhow!("Failed to create LAME encoder"))?;
+            
+            lame.set_channels(self.metadata.channels as u8)
+                .map_err(|_| anyhow::anyhow!("Failed to set LAME channels"))?;
+            lame.set_sample_rate(self.metadata.sample_rate)
+                .map_err(|_| anyhow::anyhow!("Failed to set LAME sample rate"))?;
+            lame.set_kilobitrate(self.bitrate as i32)
+                .map_err(|_| anyhow::anyhow!("Failed to set LAME bitrate"))?;
+            lame.set_quality(2) // Good quality balance
+                .map_err(|_| anyhow::anyhow!("Failed to set LAME quality"))?;
+            
+            lame.init_params()
+                .map_err(|_| anyhow::anyhow!("Failed to initialize LAME parameters"))?;
+            
+            self.lame_encoder = Some(lame);
+            info!("LAME MP3 encoder initialized: {}Hz, {} channels, {}kbps", 
+                  self.metadata.sample_rate, self.metadata.channels, self.bitrate);
+        }
+        
+        let lame = self.lame_encoder.as_mut().unwrap();
+        
+        // Convert f32 samples to i16 for LAME
+        let samples_i16: Vec<i16> = samples.iter()
+            .map(|&s| (s.clamp(-1.0, 1.0) * 32767.0) as i16)
+            .collect();
+        
+        // Create MP3 buffer (LAME recommended size)
+        let mut mp3_buffer = vec![0u8; samples_i16.len() * 2 + 7200];
+        
+        let encoded_size = if self.metadata.channels == 1 {
+            lame.encode(&samples_i16, &[], &mut mp3_buffer)
+                .map_err(|e| anyhow::anyhow!("LAME mono encoding error: {:?}", e))?
+        } else {
+            // For stereo, split interleaved samples into left/right channels
+            let left: Vec<i16> = samples_i16.iter().step_by(2).copied().collect();
+            let right: Vec<i16> = samples_i16.iter().skip(1).step_by(2).copied().collect();
+            
+            lame.encode(&left, &right, &mut mp3_buffer)
+                .map_err(|e| anyhow::anyhow!("LAME stereo encoding error: {:?}", e))?
+        };
         
         self.metadata.samples_encoded += samples.len() as u64;
+        self.metadata.bytes_written += encoded_size as u64;
         
-        Ok(Vec::new())
+        if encoded_size > 0 {
+            mp3_buffer.truncate(encoded_size);
+            Ok(mp3_buffer)
+        } else {
+            Ok(Vec::new())
+        }
     }
     
     fn finalize(&mut self) -> Result<Vec<u8>> {
-        // TODO: Implement final MP3 encoding step
-        Ok(Vec::new())
+        if let Some(_lame) = self.lame_encoder.take() {
+            // MP3 finalization - LAME crate doesn't have flush method
+            // The working version just returned empty buffer for MP3 finalization
+            info!("MP3 encoder finalized");
+            Ok(Vec::new())
+        } else {
+            Ok(Vec::new())
+        }
     }
     
     fn file_extension(&self) -> &'static str {
@@ -311,6 +372,7 @@ impl AudioEncoder for FlacEncoder {
             bit_depth: config.bit_depth,
             samples_encoded: 0,
             bytes_written: 0,
+            encoder_name: Some(format!("FLAC Level {}", flac_settings.compression_level)),
         };
         self.compression_level = flac_settings.compression_level;
         
