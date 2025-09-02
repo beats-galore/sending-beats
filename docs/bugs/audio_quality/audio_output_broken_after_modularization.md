@@ -1,9 +1,9 @@
 ## Audio Output Broken After Modularization Refactor
 
-**Status**: RESOLVED  
+**Status**: ACTIVELY DEBUGGING - AUDIO QUALITY ISSUES PERSIST  
 **Priority**: High  
 **Date Discovered**: 2025-08-30  
-**Date Resolved**: 2025-08-31  
+**Date Resolved**: IN PROGRESS  
 
 **Description**: Audio output functionality appears to be broken following a previous modularization refactor. Users are unable to hear audio output through the mixer system, indicating a critical audio pipeline break.
 
@@ -89,12 +89,16 @@ The modularization refactor likely broke one or more of:
    - Ensured configuration stays in sync with actual stream management
    - Fixed Send trait compilation error by moving async calls outside mutex scope
 
-**Verification**:
+**Progress Made**:
 - ✅ Application builds successfully without compilation errors
 - ✅ Audio system initializes and starts mixer successfully
 - ✅ Audio devices are properly enumerated (9 devices found via CoreAudio)
 - ✅ Mixer processing thread starts with real-time audio processing
 - ✅ All critical audio subsystems report successful initialization
+- ✅ Audio output routing restored (basic audio can be heard)
+- ✅ Real-time audio processing pipeline functional
+- ❌ **AUDIO QUALITY STILL POOR**: Audio output has quality issues (crunchiness, artifacts)
+- 🔧 **DEBUGGING IN PROGRESS**: Investigating timing drift, buffer management, and sample processing issues
 
 **Files Modified**:
 - `src-tauri/src/audio/mixer/mixer_core.rs` - Restored working output routing logic
@@ -103,3 +107,49 @@ The modularization refactor likely broke one or more of:
 **Git Commits Analyzed**:
 - Working version: `2cb1533ee6d3b0a1dc601ed930366c2e5e9634b0`
 - Broken version: `06b771672c24971b9e61350b588ba212a6486aa5`
+
+---
+
+## ONGOING DEBUGGING SESSION - AUDIO QUALITY ISSUES
+
+**Date**: 2025-09-02  
+**Status**: ACTIVELY DEBUGGING - QUALITY ISSUES PERSIST
+
+### Debug Session Progress
+
+**1. Buffer Draining Strategy Fixes** (`src-tauri/src/audio/mixer/stream_management.rs`):
+- ✅ **ATTEMPTED**: Replaced complete buffer draining with controlled chunking approach
+- ❓ **RESULT**: Partial improvement but quality still not acceptable
+
+**2. AudioClock Timing Synchronization** (`src-tauri/src/audio/mixer/timing_synchronization.rs`):  
+- ✅ **ATTEMPTED**: Fixed timing drift by using actual samples processed vs theoretical buffer_size
+- ✅ **ATTEMPTED**: Updated sync interval to match BlackHole hardware buffer size (512 samples)
+- ❓ **RESULT**: Dramatic improvement but still not reaching acceptable quality
+
+**3. Debug Logging System** (`src-tauri/src/log.rs`):
+- ✅ **COMPLETED**: Created top-level logging module with `audio_debug!` macro
+- ✅ **COMPLETED**: Fixed frame count logging increment issue
+- ✅ **COMPLETED**: Removed partial device matching system
+
+### Current Debug Focus
+
+**Remaining Issues**:
+- ❌ **Audio quality still not passable** despite timing improvements
+- 🔍 **Investigating**: Additional timing drift sources beyond AudioClock
+- 🔍 **Investigating**: Potential buffer management issues in audio processing chain
+- 🔍 **Investigating**: Sample processing artifacts causing crunchiness
+
+**Debug Logs Show**:
+- BlackHole delivers 512 samples every ~10.67ms
+- AudioClock expects different sample counts causing timing variations
+- Frame counting now working properly (no more repeated Frame 0 logs)
+- Buffer collection patterns visible but quality issues persist
+
+### Next Investigation Targets
+
+1. **Clock/Timing Analysis**: Further investigation of timing synchronization beyond current fixes
+2. **Buffer Processing**: Deep dive into sample processing chain for artifacts
+3. **Hardware Callback Timing**: Investigate hardware vs software timing mismatches
+4. **Audio Effects Pipeline**: Check if effects processing introduces quality degradation
+
+**Current Status**: Basic audio output restored but quality unacceptable for production use. Continuing systematic debugging approach.
