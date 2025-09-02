@@ -9,9 +9,9 @@ use std::sync::atomic::{AtomicBool, AtomicPtr};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
-use super::super::devices::AudioDeviceManager;
+use super::super::devices::{AudioDeviceManager, DeviceStatus};
 use super::super::effects::AudioAnalyzer;
-use super::super::types::{AudioMetrics, MixerCommand, MixerConfig};
+use super::super::types::{AudioDeviceHandle, AudioMetrics, MixerCommand, MixerConfig, OutputDevice};
 use super::stream_management::{AudioInputStream, AudioOutputStream};
 use super::timing_synchronization::{AudioClock, TimingMetrics};
 
@@ -154,16 +154,28 @@ impl VirtualMixer {
         
         // Check if device is still available
         match self.audio_device_manager.check_device_health(device_id).await {
-            Ok(crate::audio::devices::DeviceStatus::Connected) => {
+            Ok(DeviceStatus::Connected) => {
                 // Device is healthy, proceed with normal stream addition
+                // This would call the existing stream management logic
                 println!("✅ Device {} is healthy, proceeding with stream creation", device_id);
                 Ok(())
             }
-            Ok(status) => {
-                Err(anyhow::anyhow!("Device {} is not connected: {:?}", device_id, status))
+            Ok(DeviceStatus::Disconnected) => {
+                self.audio_device_manager.report_device_error(
+                    device_id, 
+                    "Device disconnected".to_string()
+                ).await;
+                return Err(anyhow::anyhow!("Device {} is disconnected", device_id));
+            }
+            Ok(DeviceStatus::Error(err)) => {
+                return Err(anyhow::anyhow!("Device {} has error: {}", device_id, err));
             }
             Err(e) => {
-                Err(anyhow::anyhow!("Failed to check device {} health: {}", device_id, e))
+                self.audio_device_manager.report_device_error(
+                    device_id, 
+                    format!("Health check failed: {}", e)
+                ).await;
+                return Err(anyhow::anyhow!("Failed to check device {} health: {}", device_id, e));
             }
         }
     }
@@ -190,39 +202,107 @@ impl VirtualMixer {
 
     /// Add output device
     pub async fn add_output_device(&self, output_device: crate::audio::types::OutputDevice) -> anyhow::Result<()> {
-        use tracing::info;
-        info!("Adding output device: {}", output_device.device_id);
-        // TODO: Implement actual output device addition
+        use cpal::traits::{DeviceTrait, HostTrait};
+        
+        
+        let device_manager = AudioDeviceManager::new()?;
+        let devices = device_manager.enumerate_devices().await?;
+        
+        // Find the device
+        let device_info = devices.iter()
+            .find(|d| d.id == output_device.device_id && d.is_output)
+            .ok_or_else(|| anyhow::anyhow!("Output device not found: {}", output_device.device_id))?;
+            
+        // **CRASH PREVENTION**: Use device manager's safe device finding instead of direct CPAL calls
+        let device_handle = device_manager.find_audio_device(&output_device.device_id, false).await?;
+        let device = match device_handle {
+            AudioDeviceHandle::Cpal(cpal_device) => cpal_device,
+            #[cfg(target_os = "macos")]
+            AudioDeviceHandle::CoreAudio(_) => {
+                return Err(anyhow::anyhow!("CoreAudio device handles not supported in add_output_device - use CPAL fallback"));
+            }
+            #[cfg(not(target_os = "macos"))]
+            _ => {
+                return Err(anyhow::anyhow!("Unknown device handle type"));
+            }
+        };
+        
+
+
+        let output_stream = Arc::new(AudioOutputStream::new(
+            output_device.device_id.clone(),
+            device_info.name.clone(),
+            self.config.sample_rate,
+        )?);
+        
+        // Add to output streams collection
+        self.output_streams.lock().await.insert(
+            output_device.device_id.clone(),
+            output_stream.clone(),
+        );
+        
+        // Update config to include this output device
+        {
+            let mut config_guard = self.shared_config.lock().unwrap();
+            config_guard.output_devices.push(output_device.clone());
+        }
+        
+        println!("✅ Added output device: {} ({})", output_device.device_name, output_device.device_id);
         Ok(())
     }
 
-    /// Remove output device
+
+    /// Remove an output device from the mixer
     pub async fn remove_output_device(&self, device_id: &str) -> anyhow::Result<()> {
-        use tracing::info;
-        info!("Removing output device: {}", device_id);
-        // TODO: Implement actual output device removal
-        Ok(())
+        // Remove from output streams collection
+        let removed = self.output_streams.lock().await.remove(device_id);
+        
+        if removed.is_some() {
+            // Update config to remove this output device
+            {
+                let mut config_guard = self.shared_config.lock().unwrap();
+                config_guard.output_devices.retain(|d| d.device_id != device_id);
+            }
+            
+            println!("✅ Removed output device: {}", device_id);
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Output device not found: {}", device_id))
+        }
     }
 
-    /// Get output device configuration
-    pub async fn get_output_device(&self, device_id: &str) -> Option<crate::audio::types::OutputDevice> {
-        // TODO: Implement actual output device retrieval
-        None
+    /// Get a specific output device configuration
+    pub async fn get_output_device(&self, device_id: &str) -> Option<OutputDevice> {
+        let config_guard = self.shared_config.lock().unwrap();
+        config_guard.output_devices
+            .iter()
+            .find(|d| d.device_id == device_id)
+            .cloned()
     }
+    
 
     /// Update output device configuration
-    pub async fn update_output_device(&self, device_id: &str, device: crate::audio::types::OutputDevice) -> anyhow::Result<()> {
-        use tracing::info;
-        info!("Updating output device {}: {:?}", device_id, device);
-        // TODO: Implement actual output device update
-        Ok(())
+  /// Update output device configuration
+  pub async fn update_output_device(&self, device_id: &str, updated_device: super::types::OutputDevice) -> anyhow::Result<()> {
+    // Update config
+    {
+        let mut config_guard = self.shared_config.lock().unwrap();
+        if let Some(device) = config_guard.output_devices.iter_mut().find(|d| d.device_id == device_id) {
+            *device = updated_device;
+            println!("✅ Updated output device: {}", device_id);
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Output device not found in config: {}", device_id))
+        }
     }
+}
 
     /// Get all output devices
-    pub async fn get_output_devices(&self) -> Vec<crate::audio::types::OutputDevice> {
-        // TODO: Implement actual output device list retrieval
-        vec![]
+    pub async fn get_output_devices(&self) -> Vec<OutputDevice> {
+        let config_guard = self.shared_config.lock().unwrap();
+        config_guard.output_devices.clone()
     }
+    
 }
 
 /// Configuration utilities for mixer setup

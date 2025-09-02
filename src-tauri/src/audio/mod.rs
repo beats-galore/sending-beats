@@ -74,14 +74,3 @@ pub use file_player::{
     FilePlayerManager, FilePlayerService, FilePlayerConfig, PlaybackAction,
 };
 
-// Global audio debug logging control
-pub static AUDIO_DEBUG_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-#[macro_export]
-macro_rules! audio_debug {
-    ($($arg:tt)*) => {
-        if $crate::audio::AUDIO_DEBUG_ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
-            println!($($arg)*);
-        }
-    };
-}

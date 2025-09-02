@@ -147,7 +147,7 @@ impl AudioDeviceManager {
         // Use CPAL-safe device enumeration that prevents crashes
         match self.enumerator.safe_enumerate_cpal_devices(is_input).await {
             Ok(devices) => {
-                info!("✅ SAFE ENUMERATION: Found {} {} devices", 
+                crate::audio_debug!("✅ SAFE ENUMERATION: Found {} {} devices", 
                     devices.len(), if is_input { "input" } else { "output" });
                 
                 // Search through the safely enumerated devices
@@ -156,18 +156,17 @@ impl AudioDeviceManager {
                         if is_input { "input" } else { "output" },
                         device_name.replace(" ", "_").replace("(", "").replace(")", "").to_lowercase());
                     
-                    info!("🔍 DEVICE CHECK [{}]: '{}' -> '{}'", index, device_name, generated_id);
+                    crate::audio_debug!("🔍 DEVICE CHECK [{}]: '{}' -> '{}'", index, device_name, generated_id);
                     
                     if generated_id == device_id {
-                        info!("✅ DEVICE MATCH: Found {} device: {}", 
+                        crate::audio_debug!("✅ DEVICE MATCH: Found {} device: {}", 
                             if is_input { "input" } else { "output" }, device_name);
                         return Ok(device);
                     }
                 }
                 
-                // If exact match fails, try partial name matching
-                info!("🔄 FALLBACK: Trying partial name matching for '{}'", device_id);
-                return self.find_device_by_partial_match(device_id, is_input).await;
+                // No exact device match found
+                return Err(anyhow::anyhow!("Device not found: {}", device_id));
             }
             Err(e) => {
                 error!("❌ ENUMERATION FAILED: CPAL device enumeration crashed: {}", e);
@@ -188,41 +187,6 @@ impl AudioDeviceManager {
         }
     }
 
-    /// Find device by partial name matching as fallback
-    async fn find_device_by_partial_match(&self, device_id: &str, is_input: bool) -> Result<Device> {
-        info!("🔄 PARTIAL MATCH: Attempting partial name matching for '{}'", device_id);
-        
-        let target_name_parts: Vec<&str> = device_id.split('_').skip(1).collect(); // Skip "input" or "output" prefix
-        
-        // Use safe enumeration for partial matching too
-        match self.enumerator.safe_enumerate_cpal_devices(is_input).await {
-            Ok(devices) => {
-                for (device, device_name) in devices {
-                    let name_lower = device_name.to_lowercase();
-                    
-                    // Check if device name contains any of the target name parts (must be at least 3 characters)
-                    let matches = target_name_parts.iter().any(|&part| {
-                        !part.is_empty() && part.len() >= 3 && name_lower.contains(part)
-                    });
-                    
-                    if matches {
-                        info!("✅ PARTIAL MATCH: Found {} device: '{}' matches '{}'", 
-                            if is_input { "input" } else { "output" }, device_name, device_id);
-                        return Ok(device);
-                    }
-                }
-                
-                // No partial match found, try system default
-                info!("🔄 FALLBACK: No partial match found, trying system default");
-                self.get_system_default_device(is_input).await
-            }
-            Err(e) => {
-                error!("❌ PARTIAL MATCH: Safe enumeration failed for partial matching: {}", e);
-                // Try system default as last resort
-                self.get_system_default_device(is_input).await
-            }
-        }
-    }
 
     /// Get system default device as absolute fallback
     async fn get_system_default_device(&self, is_input: bool) -> Result<Device> {

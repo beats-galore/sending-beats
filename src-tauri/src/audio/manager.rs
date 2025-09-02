@@ -12,6 +12,7 @@ use tracing::{info, warn, error};
 use super::tap::types::{ProcessInfo, TapStats, ApplicationAudioError};
 use super::tap::process_discovery::ApplicationDiscovery;
 use super::tap::virtual_stream::get_virtual_input_registry;
+use super::mixer::stream_management::AudioInputStream;
 
 #[cfg(target_os = "macos")]
 use super::tap::core_audio_tap::ApplicationAudioTap;
@@ -215,17 +216,17 @@ impl ApplicationAudioManager {
     
     /// Get statistics for all active taps
     pub async fn get_tap_stats(&self) -> Vec<TapStats> {
-        #[cfg(target_os = "macos")]
-        {
-            let taps = self.active_taps.read().await;
-            taps.values().map(|tap| tap.get_stats()).collect()
+        let taps = self.active_taps.read().await;
+        let mut stats = Vec::new();
+        
+        for tap in taps.values() {
+            stats.push(tap.get_stats().await);
         }
         
-        #[cfg(not(target_os = "macos"))]
-        {
-            Vec::new()
-        }
+        stats.sort_by_key(|s| s.pid);
+        stats
     }
+    
     
     /// Check if audio capture permissions are granted
     async fn check_audio_capture_permissions(&self) -> bool {
@@ -353,7 +354,7 @@ impl ApplicationAudioManager {
                     let taps = active_taps.read().await;
                     
                     for (pid, tap) in taps.iter() {
-                        let stats = tap.get_stats();
+                        let stats = tap.get_stats().await;
                         if !stats.process_alive || stats.error_count > 5 {
                             info!("🧹 Marking tap for cleanup: PID {} (alive: {}, errors: {})", 
                                   pid, stats.process_alive, stats.error_count);
@@ -386,8 +387,24 @@ impl ApplicationAudioManager {
         };
     }
     
-    /// Get virtual input streams for mixer integration
-    pub fn get_virtual_input_streams(&self) -> HashMap<String, Arc<crate::audio::mixer::stream_management::AudioInputStream>> {
+    /// Get a virtual input stream from the ApplicationAudioManager registry
+    pub async fn get_virtual_input_stream(&self, device_id: &str) -> Option<Arc<AudioInputStream>> {
+        info!("🔍 Looking up virtual input stream for device: {}", device_id);
+        
+        let virtual_streams = crate::audio::ApplicationAudioManager::get_virtual_input_streams();
+        if let Some(stream) = virtual_streams.get(device_id) {
+            info!("✅ Found virtual input stream for device: {}", device_id);
+            Some(stream.clone())
+        } else {
+            info!("❌ No virtual input stream found for device: {} (available: {:?})", 
+                  device_id, virtual_streams.keys().collect::<Vec<_>>());
+            None
+        }
+    }
+
+    /// Get all registered virtual input streams (for mixer integration)
+    pub fn get_virtual_input_streams() -> HashMap<String, Arc<crate::audio::mixer::stream_management::AudioInputStream>> {
+        // Use centralized registry function
         let registry = get_virtual_input_registry();
         if let Ok(reg) = registry.lock() {
             reg.clone()
@@ -439,7 +456,7 @@ impl ApplicationAudioManager {
             let taps = self.active_taps.read().await;
             
             for (pid, tap) in taps.iter() {
-                let stats = tap.get_stats();
+                let stats = tap.get_stats().await;
                 if !stats.process_alive || stats.error_count > 5 {
                     taps_to_remove.push(*pid);
                 }

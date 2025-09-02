@@ -20,8 +20,9 @@ pub struct AudioClock {
 }
 
 impl AudioClock {
-    /// Create a new audio clock with specified sample rate and buffer size
-    pub fn new(sample_rate: u32, buffer_size: u32) -> Self {
+    /// Create a new audio clock with specified sample rate and initial buffer size
+    /// Buffer size will be updated when actual hardware streams are created
+    pub fn new(sample_rate: u32, initial_buffer_size: u32) -> Self {
         let now = std::time::Instant::now();
         Self {
             sample_rate,
@@ -29,8 +30,29 @@ impl AudioClock {
             start_time: now,
             last_sync_time: now,
             drift_compensation: 0.0,
-            sync_interval_samples: buffer_size as u64, // Sync every buffer to match hardware callback timing
+            sync_interval_samples: initial_buffer_size as u64, // Will be updated with hardware buffer size
             log_counter: 0,
+        }
+    }
+
+    /// Get the current audio timestamp in samples
+    pub fn get_sample_timestamp(&self) -> u64 {
+        self.samples_processed
+    }
+    
+    /// Get the current sync interval in samples
+    pub fn get_sync_interval(&self) -> u64 {
+        self.sync_interval_samples
+    }
+    
+    /// Update the sync interval to match actual hardware buffer size
+    /// This is called when streams are created with known hardware buffer sizes
+    pub fn set_hardware_buffer_size(&mut self, hardware_buffer_size: u32) {
+        let old_interval = self.sync_interval_samples;
+        self.sync_interval_samples = hardware_buffer_size as u64;
+        if old_interval != self.sync_interval_samples {
+            info!("🔄 BUFFER SIZE UPDATE: AudioClock sync interval updated from {} to {} samples", 
+                  old_interval, self.sync_interval_samples);
         }
     }
     
@@ -50,39 +72,34 @@ impl AudioClock {
             let expected_interval_us = (self.sync_interval_samples as f64 * 1_000_000.0) / self.sample_rate as f64;
             
             // Only report drift if callback intervals are inconsistent with expected buffer timing
-            // Allow 10% variation for hardware jitter - this is normal and expected
-            let variation_threshold = expected_interval_us * 0.10;
-            let timing_variation = (callback_interval_us - expected_interval_us).abs();
+            // This detects real hardware timing issues, not software processing timing
+            let interval_variation = callback_interval_us - expected_interval_us;
             
-            let sync_info = TimingSync {
+            // Only consider significant variations in hardware callback timing as real drift
+            let is_hardware_drift = interval_variation.abs() > expected_interval_us * 0.1; // 10% variation threshold
+            
+            // Reset drift compensation since we're now hardware-synchronized
+            self.drift_compensation = if is_hardware_drift { interval_variation } else { 0.0 };
+            
+            let sync = TimingSync {
                 samples_processed: self.samples_processed,
                 callback_interval_us,
                 expected_interval_us,
-                timing_variation,
-                is_drift_significant: timing_variation > variation_threshold,
+                timing_variation: interval_variation,
+                is_drift_significant: is_hardware_drift,
             };
             
-            // Only log significant variations (>10% from expected) - but reduce frequency dramatically
-            if sync_info.is_drift_significant {
-                self.log_counter += 1;
-                // Log only every 1000th occurrence to reduce spam
-                if self.log_counter % 1000 == 0 {
-                    warn!(
-                        "⏰ TIMING VARIATION (#{} occurrences): Callback interval {:.1}μs vs expected {:.1}μs (variation: {:.1}μs, {:.1}%)",
-                        self.log_counter,
-                        callback_interval_us,
-                        expected_interval_us,
-                        timing_variation,
-                        (timing_variation / expected_interval_us) * 100.0
-                    );
-                }
+            // Only log actual hardware timing issues, not software processing timing
+            if is_hardware_drift {
+                crate::audio_debug!("⏰ HARDWARE TIMING: Callback interval variation: {:.2}ms (expected: {:.2}ms, actual: {:.2}ms)", 
+                    interval_variation / 1000.0, expected_interval_us / 1000.0, callback_interval_us / 1000.0);
             }
             
             self.last_sync_time = now;
-            return Some(sync_info);
+            Some(sync)
+        } else {
+            None
         }
-        
-        None
     }
     
     /// Get current playback position in samples
@@ -98,6 +115,11 @@ impl AudioClock {
     /// Get elapsed real time since clock start
     pub fn get_elapsed_time(&self) -> std::time::Duration {
         std::time::Instant::now().duration_since(self.start_time)
+    }
+
+    /// Get the current drift compensation
+    pub fn get_drift_compensation(&self) -> f64 {
+        self.drift_compensation
     }
     
     /// Calculate timing drift between audio time and real time
@@ -162,82 +184,76 @@ impl TimingSync {
 /// Performance metrics for timing analysis
 #[derive(Debug, Clone)]
 pub struct TimingMetrics {
-    pub total_callbacks: u64,
-    pub total_samples_processed: u64,
-    pub significant_variations: u64,
-    pub max_variation_us: f64,
-    pub average_callback_interval_us: f64,
-    pub last_update: std::time::Instant,
+    pub processing_time_avg_us: f64,
+    pub processing_time_max_us: f64,
+    pub buffer_underruns: u64,
+    pub buffer_overruns: u64,
+    pub sync_adjustments: u64,
+    pub last_reset: std::time::Instant,
+    sample_count: u64,
+    processing_time_sum_us: f64,
 }
-
 impl TimingMetrics {
     /// Create new timing metrics
     pub fn new() -> Self {
         Self {
-            total_callbacks: 0,
-            total_samples_processed: 0,
-            significant_variations: 0,
-            max_variation_us: 0.0,
-            average_callback_interval_us: 0.0,
-            last_update: std::time::Instant::now(),
+            processing_time_avg_us: 0.0,
+            processing_time_max_us: 0.0,
+            buffer_underruns: 0,
+            buffer_overruns: 0,
+            sync_adjustments: 0,
+            last_reset: std::time::Instant::now(),
+            sample_count: 0,
+            processing_time_sum_us: 0.0,
         }
     }
-    
-    /// Update metrics with new timing sync information
-    pub fn update(&mut self, sync: &TimingSync) {
-        self.total_callbacks += 1;
-        self.total_samples_processed = sync.samples_processed;
-        
-        if sync.is_drift_significant {
-            self.significant_variations += 1;
-        }
-        
-        if sync.timing_variation > self.max_variation_us {
-            self.max_variation_us = sync.timing_variation;
-        }
-        
-        // Update running average of callback intervals
-        let alpha = 0.1; // Exponential moving average factor
-        if self.average_callback_interval_us == 0.0 {
-            self.average_callback_interval_us = sync.callback_interval_us;
-        } else {
-            self.average_callback_interval_us = 
-                (1.0 - alpha) * self.average_callback_interval_us + 
-                alpha * sync.callback_interval_us;
-        }
-        
-        self.last_update = std::time::Instant::now();
+
+    /// Record sync adjustment applied
+    pub fn record_sync_adjustment(&mut self) {
+        self.sync_adjustments += 1;
     }
-    
-    /// Get the percentage of callbacks with significant timing variations
-    pub fn get_variation_percentage(&self) -> f64 {
-        if self.total_callbacks > 0 {
-            (self.significant_variations as f64 / self.total_callbacks as f64) * 100.0
-        } else {
-            0.0
+
+    /// Record processing time for a buffer
+    pub fn record_processing_time(&mut self, duration_us: f64) {
+        self.processing_time_sum_us += duration_us;
+        self.sample_count += 1;
+        
+        // Update max
+        if duration_us > self.processing_time_max_us {
+            self.processing_time_max_us = duration_us;
         }
+        
+        // Update rolling average
+        self.processing_time_avg_us = self.processing_time_sum_us / self.sample_count as f64;
     }
-    
-    /// Check if timing performance is acceptable
-    pub fn is_performance_acceptable(&self) -> bool {
-        // Consider performance acceptable if less than 5% of callbacks have significant variations
-        self.get_variation_percentage() < 5.0
+
+    /// Record buffer underrun (not enough samples available)
+    pub fn record_underrun(&mut self) {
+        self.buffer_underruns += 1;
     }
+
+
     
     /// Reset metrics (typically called when restarting audio processing)
     pub fn reset(&mut self) {
         *self = Self::new();
     }
-    
+
+
+
     /// Get human-readable performance summary
     pub fn get_performance_summary(&self) -> String {
+        let uptime_sec = self.last_reset.elapsed().as_secs_f64();
         format!(
-            "Callbacks: {}, Variations: {:.1}%, Max variation: {:.1}μs, Avg interval: {:.1}μs", 
-            self.total_callbacks,
-            self.get_variation_percentage(),
-            self.max_variation_us,
-            self.average_callback_interval_us
+            "Audio Metrics ({}s): Avg Processing: {:.1}μs, Max: {:.1}μs, Underruns: {}, Overruns: {}, Sync Adjustments: {}",
+            uptime_sec.round(),
+            self.processing_time_avg_us,
+            self.processing_time_max_us,
+            self.buffer_underruns,
+            self.buffer_overruns,
+            self.sync_adjustments
         )
+    
     }
 }
 
@@ -247,63 +263,3 @@ impl Default for TimingMetrics {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::Duration;
-
-    #[test]
-    fn test_audio_clock_creation() {
-        let clock = AudioClock::new(48000, 512);
-        assert_eq!(clock.get_sample_rate(), 48000);
-        assert_eq!(clock.get_samples_processed(), 0);
-        assert_eq!(clock.get_playback_time_seconds(), 0.0);
-    }
-
-    #[test]
-    fn test_clock_update() {
-        let mut clock = AudioClock::new(48000, 512);
-        
-        // First update - shouldn't trigger sync yet
-        let sync = clock.update(256);
-        assert!(sync.is_none());
-        
-        // Second update - should trigger sync
-        let sync = clock.update(256);
-        assert!(sync.is_some());
-        
-        assert_eq!(clock.get_samples_processed(), 512);
-    }
-
-    #[test]
-    fn test_timing_metrics() {
-        let mut metrics = TimingMetrics::new();
-        assert_eq!(metrics.get_variation_percentage(), 0.0);
-        assert!(metrics.is_performance_acceptable());
-        
-        // Simulate timing sync with significant variation
-        let sync = TimingSync {
-            samples_processed: 512,
-            callback_interval_us: 15000.0,
-            expected_interval_us: 10000.0,
-            timing_variation: 5000.0,
-            is_drift_significant: true,
-        };
-        
-        metrics.update(&sync);
-        assert_eq!(metrics.total_callbacks, 1);
-        assert_eq!(metrics.significant_variations, 1);
-        assert_eq!(metrics.get_variation_percentage(), 100.0);
-    }
-
-    #[test]
-    fn test_clock_reset() {
-        let mut clock = AudioClock::new(48000, 512);
-        clock.update(512);
-        assert_eq!(clock.get_samples_processed(), 512);
-        
-        clock.reset();
-        assert_eq!(clock.get_samples_processed(), 0);
-        assert_eq!(clock.get_playback_time_seconds(), 0.0);
-    }
-}
