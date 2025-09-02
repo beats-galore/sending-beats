@@ -1,13 +1,13 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool, Row};
+use sqlx::{sqlite::SqlitePoolOptions, Row, SqlitePool};
 use std::path::Path;
 use std::sync::Arc;
 
 /// VU meter level data for real-time buffering
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VULevelData {
-    pub timestamp: i64,          // Microseconds since Unix epoch
+    pub timestamp: i64, // Microseconds since Unix epoch
     pub channel_id: u32,
     pub peak_left: f32,
     pub rms_left: f32,
@@ -42,7 +42,7 @@ pub struct AudioDeviceConfig {
 /// Channel configuration with all mixer settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelConfig {
-    pub id: Option<u32>,         // None for new channels
+    pub id: Option<u32>, // None for new channels
     pub name: String,
     pub input_device_id: Option<String>,
     pub gain: f32,
@@ -50,19 +50,19 @@ pub struct ChannelConfig {
     pub muted: bool,
     pub solo: bool,
     pub effects_enabled: bool,
-    
+
     // EQ settings
     pub eq_low_gain: f32,
     pub eq_mid_gain: f32,
     pub eq_high_gain: f32,
-    
+
     // Compressor settings
     pub comp_enabled: bool,
     pub comp_threshold: f32,
     pub comp_ratio: f32,
     pub comp_attack: f32,
     pub comp_release: f32,
-    
+
     // Limiter settings
     pub limiter_enabled: bool,
     pub limiter_threshold: f32,
@@ -88,71 +88,77 @@ pub struct AudioDatabase {
 impl AudioDatabase {
     /// Initialize the database with automatic migrations
     pub async fn new(database_path: &Path) -> Result<Self> {
-        println!("🗄️  Initializing SQLite database at: {}", database_path.display());
-        
+        println!(
+            "🗄️  Initializing SQLite database at: {}",
+            database_path.display()
+        );
+
         // Ensure parent directory exists
         if let Some(parent) = database_path.parent() {
-            tokio::fs::create_dir_all(parent).await
+            tokio::fs::create_dir_all(parent)
+                .await
                 .context("Failed to create database directory")?;
         }
-        
+
         // Create connection pool with SQLite-specific options
-        let database_url = format!("sqlite:{}?mode=rwc", database_path.display()); 
+        let database_url = format!("sqlite:{}?mode=rwc", database_path.display());
         println!("🗄️  Database URL: {}", database_url);
-        
+
         let pool = SqlitePoolOptions::new()
             .max_connections(10)
             .connect(&database_url)
             .await
             .context("Failed to connect to SQLite database")?;
-        
-        println!("✅ SQLite connection pool created with {} max connections", 10);
-        
+
+        println!(
+            "✅ SQLite connection pool created with {} max connections",
+            10
+        );
+
         // Run migrations
         println!("🔄 Running database migrations...");
         sqlx::migrate!("./migrations")
             .run(&pool)
             .await
             .context("Failed to run database migrations")?;
-        
+
         println!("✅ Database migrations completed successfully");
-        
+
         // Get VU retention setting
-        let retention_seconds = Self::get_vu_retention_seconds(&pool).await
-            .unwrap_or(60); // Default to 60 seconds
-        
+        let retention_seconds = Self::get_vu_retention_seconds(&pool).await.unwrap_or(60); // Default to 60 seconds
+
         println!("📊 VU level retention set to {} seconds", retention_seconds);
-        
+
         Ok(Self {
             pool,
             retention_seconds,
         })
     }
-    
+
     /// Get VU level retention from settings
     async fn get_vu_retention_seconds(pool: &SqlitePool) -> Result<i64> {
         let row = sqlx::query("SELECT value FROM mixer_settings WHERE key = ?")
             .bind("vu_retention_seconds")
             .fetch_one(pool)
             .await?;
-        
+
         let value: String = row.get("value");
         value.parse::<i64>().context("Invalid retention setting")
     }
-    
+
     /// Insert VU level data (high-frequency, optimized for real-time)
     pub async fn insert_vu_levels(&self, levels: &[VULevelData]) -> Result<()> {
         if levels.is_empty() {
             return Ok(());
         }
-        
+
         let mut tx = self.pool.begin().await?;
-        
+
         for level in levels {
             sqlx::query(
                 "INSERT OR REPLACE INTO vu_levels 
                  (timestamp, channel_id, peak_left, rms_left, peak_right, rms_right, is_stereo)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)"
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(level.timestamp)
             .bind(level.channel_id as i64)
@@ -164,24 +170,24 @@ impl AudioDatabase {
             .execute(&mut *tx)
             .await?;
         }
-        
+
         tx.commit().await?;
         Ok(())
     }
-    
+
     /// Insert master level data
     pub async fn insert_master_levels(&self, levels: &[MasterLevelData]) -> Result<()> {
         if levels.is_empty() {
             return Ok(());
         }
-        
+
         let mut tx = self.pool.begin().await?;
-        
+
         for level in levels {
             sqlx::query(
                 "INSERT OR REPLACE INTO master_levels 
                  (timestamp, peak_left, rms_left, peak_right, rms_right)
-                 VALUES (?, ?, ?, ?, ?)"
+                 VALUES (?, ?, ?, ?, ?)",
             )
             .bind(level.timestamp)
             .bind(level.peak_left)
@@ -191,25 +197,29 @@ impl AudioDatabase {
             .execute(&mut *tx)
             .await?;
         }
-        
+
         tx.commit().await?;
         Ok(())
     }
-    
+
     /// Get recent VU levels for a channel
-    pub async fn get_recent_vu_levels(&self, channel_id: u32, limit: i64) -> Result<Vec<VULevelData>> {
+    pub async fn get_recent_vu_levels(
+        &self,
+        channel_id: u32,
+        limit: i64,
+    ) -> Result<Vec<VULevelData>> {
         let rows = sqlx::query(
             "SELECT timestamp, channel_id, peak_left, rms_left, peak_right, rms_right, is_stereo
              FROM vu_levels 
              WHERE channel_id = ?
              ORDER BY timestamp DESC 
-             LIMIT ?"
+             LIMIT ?",
         )
         .bind(channel_id as i64)
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;
-        
+
         let mut levels = Vec::new();
         for row in rows {
             let is_stereo: bool = row.get("is_stereo");
@@ -218,27 +228,35 @@ impl AudioDatabase {
                 channel_id: row.get::<i64, _>("channel_id") as u32,
                 peak_left: row.get("peak_left"),
                 rms_left: row.get("rms_left"),
-                peak_right: if is_stereo { Some(row.get("peak_right")) } else { None },
-                rms_right: if is_stereo { Some(row.get("rms_right")) } else { None },
+                peak_right: if is_stereo {
+                    Some(row.get("peak_right"))
+                } else {
+                    None
+                },
+                rms_right: if is_stereo {
+                    Some(row.get("rms_right"))
+                } else {
+                    None
+                },
                 is_stereo,
             });
         }
-        
+
         Ok(levels)
     }
-    
+
     /// Get recent master levels
     pub async fn get_recent_master_levels(&self, limit: i64) -> Result<Vec<MasterLevelData>> {
         let rows = sqlx::query(
             "SELECT timestamp, peak_left, rms_left, peak_right, rms_right
              FROM master_levels 
              ORDER BY timestamp DESC 
-             LIMIT ?"
+             LIMIT ?",
         )
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;
-        
+
         let mut levels = Vec::new();
         for row in rows {
             levels.push(MasterLevelData {
@@ -249,14 +267,14 @@ impl AudioDatabase {
                 rms_right: row.get("rms_right"),
             });
         }
-        
+
         Ok(levels)
     }
-    
+
     /// Save channel configuration
     pub async fn save_channel_config(&self, channel: &ChannelConfig) -> Result<u32> {
         let now = chrono::Utc::now().timestamp();
-        
+
         if let Some(id) = channel.id {
             // Update existing channel
             sqlx::query(
@@ -288,7 +306,7 @@ impl AudioDatabase {
             .bind(id as i64)
             .execute(&self.pool)
             .await?;
-            
+
             Ok(id)
         } else {
             // Insert new channel
@@ -297,7 +315,7 @@ impl AudioDatabase {
                  (name, input_device_id, gain, pan, muted, solo, effects_enabled,
                   eq_low_gain, eq_mid_gain, eq_high_gain, comp_enabled, comp_threshold,
                   comp_ratio, comp_attack, comp_release, limiter_enabled, limiter_threshold)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&channel.name)
             .bind(&channel.input_device_id)
@@ -318,15 +336,17 @@ impl AudioDatabase {
             .bind(channel.limiter_threshold)
             .execute(&self.pool)
             .await?;
-            
+
             Ok(result.last_insert_rowid() as u32)
         }
     }
-    
+
     /// Load all channel configurations
     pub async fn load_channel_configs(&self) -> Result<Vec<ChannelConfig>> {
-        let rows = sqlx::query("SELECT * FROM channels ORDER BY id").fetch_all(&self.pool).await?;
-        
+        let rows = sqlx::query("SELECT * FROM channels ORDER BY id")
+            .fetch_all(&self.pool)
+            .await?;
+
         let mut channels = Vec::new();
         for row in rows {
             channels.push(ChannelConfig {
@@ -350,16 +370,16 @@ impl AudioDatabase {
                 limiter_threshold: row.get("limiter_threshold"),
             });
         }
-        
+
         Ok(channels)
     }
-    
+
     /// Save audio device configuration
     pub async fn save_audio_device(&self, device: &AudioDeviceConfig) -> Result<()> {
         sqlx::query(
             "INSERT OR REPLACE INTO audio_devices 
              (id, name, device_type, sample_rate, channels, is_default, is_active, last_seen)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&device.id)
         .bind(&device.name)
@@ -371,35 +391,40 @@ impl AudioDatabase {
         .bind(device.last_seen)
         .execute(&self.pool)
         .await?;
-        
+
         Ok(())
     }
-    
+
     /// Cleanup old VU level data to prevent database growth
     pub async fn cleanup_old_vu_levels(&self) -> Result<u64> {
-        let cutoff_timestamp = chrono::Utc::now().timestamp_micros() - (self.retention_seconds * 1_000_000);
-        
+        let cutoff_timestamp =
+            chrono::Utc::now().timestamp_micros() - (self.retention_seconds * 1_000_000);
+
         let result = sqlx::query("DELETE FROM vu_levels WHERE timestamp < ?")
             .bind(cutoff_timestamp)
             .execute(&self.pool)
             .await?;
-        
+
         let deleted_count = result.rows_affected();
-        
+
         if deleted_count > 0 {
             // Also cleanup master levels
             let master_result = sqlx::query("DELETE FROM master_levels WHERE timestamp < ?")
                 .bind(cutoff_timestamp)
                 .execute(&self.pool)
                 .await?;
-            
-            println!("🧹 Cleaned up {} VU level records and {} master level records older than {}s", 
-                deleted_count, master_result.rows_affected(), self.retention_seconds);
+
+            println!(
+                "🧹 Cleaned up {} VU level records and {} master level records older than {}s",
+                deleted_count,
+                master_result.rows_affected(),
+                self.retention_seconds
+            );
         }
-        
+
         Ok(deleted_count)
     }
-    
+
     /// Get database connection pool for advanced queries
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
@@ -421,27 +446,27 @@ impl AudioEventBus {
             max_queue_size,
         }
     }
-    
+
     /// Push VU level data (real-time safe, lock-free)
     pub fn push_vu_levels(&self, level: VULevelData) {
         // Prevent queue from growing too large
         while self.vu_events.len() >= self.max_queue_size {
             self.vu_events.pop();
         }
-        
+
         self.vu_events.push(level);
     }
-    
+
     /// Push master level data (real-time safe, lock-free)
     pub fn push_master_levels(&self, level: MasterLevelData) {
         // Prevent queue from growing too large
         while self.master_events.len() >= self.max_queue_size {
             self.master_events.pop();
         }
-        
+
         self.master_events.push(level);
     }
-    
+
     /// Drain all VU level events
     pub fn drain_vu_events(&self) -> Vec<VULevelData> {
         let mut events = Vec::new();
@@ -450,7 +475,7 @@ impl AudioEventBus {
         }
         events
     }
-    
+
     /// Drain all master level events
     pub fn drain_master_events(&self) -> Vec<MasterLevelData> {
         let mut events = Vec::new();

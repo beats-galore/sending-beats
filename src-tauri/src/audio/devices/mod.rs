@@ -11,11 +11,11 @@
 // - coreaudio_stream: Platform-specific streaming (existing, macOS only)
 
 // Core modules for device management
-pub mod types;
-pub mod enumeration;
 pub mod coreaudio_integration;
-pub mod health_monitoring;
 pub mod device_manager;
+pub mod enumeration;
+pub mod health_monitoring;
+pub mod types;
 
 // Existing modules (preserved)
 pub mod monitor;
@@ -27,15 +27,15 @@ pub mod coreaudio_stream;
 pub use device_manager::AudioDeviceManager;
 
 // Re-export core types
-pub use types::{DeviceStatus, DeviceHealth};
+pub use types::{DeviceHealth, DeviceStatus};
 
 // Re-export health monitoring functionality
 pub use health_monitoring::{DeviceHealthMonitor, HealthStatistics};
 
 // Re-export existing monitor types (preserved for backward compatibility)
 pub use monitor::{
-    DeviceMonitor, DeviceMonitorConfig, DeviceMonitorStats,
-    initialize_device_monitoring, get_device_monitor, stop_device_monitoring, get_device_monitoring_stats,
+    get_device_monitor, get_device_monitoring_stats, initialize_device_monitoring,
+    stop_device_monitoring, DeviceMonitor, DeviceMonitorConfig, DeviceMonitorStats,
 };
 
 // Re-export existing CoreAudio stream (preserved for backward compatibility)

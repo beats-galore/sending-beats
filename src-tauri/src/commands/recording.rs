@@ -1,7 +1,9 @@
-use tauri::State;
+use crate::audio::recording::types::{MetadataPresets, RecordingPresets};
+use crate::audio::recording::{
+    RecordingConfig, RecordingHistoryEntry, RecordingMetadata, RecordingStatus,
+};
 use crate::{AudioState, RecordingState};
-use crate::audio::recording::{RecordingConfig, RecordingStatus, RecordingHistoryEntry, RecordingMetadata};
-use crate::audio::recording::types::{RecordingPresets, MetadataPresets};
+use tauri::State;
 
 // ================================================================================================
 // RECORDING SERVICE COMMANDS
@@ -14,24 +16,37 @@ pub async fn start_recording(
     config: RecordingConfig,
 ) -> Result<String, String> {
     println!("🎙️ Starting recording with config: {}", config.name);
-    
+
     // Get audio output receiver from mixer
     let mixer_guard = audio_state.mixer.lock().await;
     if let Some(ref mixer) = *mixer_guard {
         println!("🔄 Mixer found, getting audio output receiver...");
         let mut audio_rx = mixer.get_audio_output_receiver();
         println!("🔄 Created broadcast receiver successfully");
-        
+
         // Immediately test the receiver to see if it works
         match audio_rx.try_recv() {
-            Ok(samples) => println!("🎵 Receiver is working! Got {} samples immediately", samples.len()),
-            Err(tokio::sync::broadcast::error::TryRecvError::Empty) => println!("📭 Receiver connected but empty (good)"),
-            Err(tokio::sync::broadcast::error::TryRecvError::Closed) => println!("❌ Receiver is CLOSED immediately!"),
-            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => println!("⚠️ Receiver lagged immediately by {} messages", n),
+            Ok(samples) => println!(
+                "🎵 Receiver is working! Got {} samples immediately",
+                samples.len()
+            ),
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {
+                println!("📭 Receiver connected but empty (good)")
+            }
+            Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
+                println!("❌ Receiver is CLOSED immediately!")
+            }
+            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
+                println!("⚠️ Receiver lagged immediately by {} messages", n)
+            }
         }
-        
+
         println!("🔄 Starting recording service with audio receiver...");
-        match recording_state.service.start_recording(config, audio_rx).await {
+        match recording_state
+            .service
+            .start_recording(config, audio_rx)
+            .await
+        {
             Ok(session_id) => {
                 println!("✅ Recording started with session ID: {}", session_id);
                 Ok(session_id)
@@ -52,7 +67,7 @@ pub async fn stop_recording(
     recording_state: State<'_, RecordingState>,
 ) -> Result<Option<RecordingHistoryEntry>, String> {
     println!("🛑 Stopping recording...");
-    
+
     match recording_state.service.stop_recording().await {
         Ok(history_entry) => {
             if let Some(ref entry) = history_entry {
@@ -75,9 +90,13 @@ pub async fn get_recording_status(
 ) -> Result<RecordingStatus, String> {
     let status = recording_state.service.get_status().await;
     if status.is_recording {
-        println!("🔍 get_recording_status API called - is_recording: {}, session: {:?}", 
-            status.is_recording, 
-            status.session.as_ref().map(|s| format!("{}s, {}B", s.duration_seconds, s.file_size_bytes))
+        println!(
+            "🔍 get_recording_status API called - is_recording: {}, session: {:?}",
+            status.is_recording,
+            status
+                .session
+                .as_ref()
+                .map(|s| format!("{}s, {}B", s.duration_seconds, s.file_size_bytes))
         );
     }
     Ok(status)
@@ -89,7 +108,7 @@ pub async fn save_recording_config(
     config: RecordingConfig,
 ) -> Result<String, String> {
     println!("💾 Saving recording config: {}", config.name);
-    
+
     match recording_state.service.save_config(config.clone()).await {
         Ok(()) => {
             println!("✅ Recording config saved: {}", config.name);
@@ -123,16 +142,16 @@ pub async fn create_default_recording_config() -> Result<RecordingConfig, String
 
 #[tauri::command]
 pub async fn select_recording_directory(app: tauri::AppHandle) -> Result<Option<String>, String> {
-    use tauri_plugin_dialog::DialogExt;
     use std::sync::{Arc, Mutex};
+    use tauri_plugin_dialog::DialogExt;
     use tokio::time::Duration;
-    
+
     println!("🔍 select_recording_directory command called");
-    
+
     // Use a shared result to capture the callback result
     let result: Arc<Mutex<Option<Option<String>>>> = Arc::new(Mutex::new(None));
     let result_clone = result.clone();
-    
+
     // Show directory picker dialog with callback
     app.dialog().file().pick_folder(move |folder_path| {
         let path_result = if let Some(path) = folder_path {
@@ -143,28 +162,28 @@ pub async fn select_recording_directory(app: tauri::AppHandle) -> Result<Option<
             println!("📁 User cancelled directory selection");
             None
         };
-        
+
         // Store the result
         if let Ok(mut guard) = result_clone.lock() {
             *guard = Some(path_result);
         }
     });
-    
+
     // Wait for the dialog result with timeout
     let timeout_duration = Duration::from_secs(30); // 30 second timeout
     let start_time = std::time::Instant::now();
-    
+
     loop {
         if start_time.elapsed() > timeout_duration {
             return Err("Dialog timeout".to_string());
         }
-        
+
         if let Ok(guard) = result.lock() {
             if let Some(path_result) = guard.as_ref() {
                 return Ok(path_result.clone());
             }
         }
-        
+
         // Small delay to avoid busy waiting
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
@@ -176,14 +195,16 @@ pub async fn select_recording_directory(app: tauri::AppHandle) -> Result<Option<
 
 #[tauri::command]
 pub async fn get_metadata_presets() -> Result<Vec<(String, RecordingMetadata)>, String> {
-    Ok(MetadataPresets::get_all_presets().into_iter()
+    Ok(MetadataPresets::get_all_presets()
+        .into_iter()
         .map(|(name, metadata)| (name.to_string(), metadata))
         .collect())
 }
 
 #[tauri::command]
 pub async fn get_recording_presets() -> Result<Vec<RecordingConfig>, String> {
-    Ok(RecordingPresets::get_all_presets().into_iter()
+    Ok(RecordingPresets::get_all_presets()
+        .into_iter()
         .map(|(_, config)| config)
         .collect())
 }
@@ -193,10 +214,16 @@ pub async fn update_recording_metadata(
     recording_state: State<'_, RecordingState>,
     metadata: RecordingMetadata,
 ) -> Result<(), String> {
-    println!("📝 Updating session metadata with {} fields", 
-        metadata.get_display_fields().len());
-    
-    match recording_state.service.update_session_metadata(metadata).await {
+    println!(
+        "📝 Updating session metadata with {} fields",
+        metadata.get_display_fields().len()
+    );
+
+    match recording_state
+        .service
+        .update_session_metadata(metadata)
+        .await
+    {
         Ok(()) => {
             println!("✅ Session metadata updated successfully");
             Ok(())

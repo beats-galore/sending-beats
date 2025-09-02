@@ -18,16 +18,18 @@ impl AudioAnalyzer {
     pub fn process(&mut self, samples: &[f32]) -> (f32, f32) {
         let peak = self.peak_detector.process(samples);
         let rms = self.rms_detector.process(samples);
-        
+
         if let Some(ref mut analyzer) = self.spectrum_analyzer {
             analyzer.process(samples);
         }
-        
+
         (peak, rms)
     }
-    
+
     pub fn get_spectrum(&self) -> Option<&[f32]> {
-        self.spectrum_analyzer.as_ref().map(|analyzer| analyzer.get_spectrum())
+        self.spectrum_analyzer
+            .as_ref()
+            .map(|analyzer| analyzer.get_spectrum())
     }
 }
 
@@ -53,7 +55,7 @@ impl PeakDetector {
                 self.peak = abs_sample;
             }
         }
-        
+
         // Apply decay
         self.peak *= self.decay_factor;
         self.peak
@@ -85,15 +87,15 @@ impl RmsDetector {
             // Remove old sample from sum
             let old_sample = self.sample_buffer[self.write_index];
             self.sum_of_squares -= old_sample * old_sample;
-            
+
             // Add new sample
             self.sample_buffer[self.write_index] = sample;
             self.sum_of_squares += sample * sample;
-            
+
             // Advance write index
             self.write_index = (self.write_index + 1) % self.window_size;
         }
-        
+
         (self.sum_of_squares / self.window_size as f32).sqrt()
     }
 }
@@ -144,7 +146,8 @@ impl SpectrumAnalyzer {
         let samples_to_add = samples.len().min(self.fft_size);
         if samples_to_add >= self.fft_size {
             // If we have enough samples, just use the latest ones
-            self.input_buffer.copy_from_slice(&samples[samples.len() - self.fft_size..]);
+            self.input_buffer
+                .copy_from_slice(&samples[samples.len() - self.fft_size..]);
         } else {
             // Shift existing samples left
             self.input_buffer.rotate_left(samples_to_add);
@@ -155,7 +158,8 @@ impl SpectrumAnalyzer {
 
         // Apply window function to reduce spectral leakage
         for (i, &sample) in self.input_buffer.iter().enumerate() {
-            self.complex_buffer[i] = rustfft::num_complex::Complex::new(sample * self.window[i], 0.0);
+            self.complex_buffer[i] =
+                rustfft::num_complex::Complex::new(sample * self.window[i], 0.0);
         }
 
         // Perform FFT

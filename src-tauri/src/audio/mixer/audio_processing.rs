@@ -5,8 +5,8 @@
 // operations that occur in audio callback threads.
 
 use anyhow::Result;
-use cpal::{BufferSize, Device};
 use cpal::traits::DeviceTrait;
+use cpal::{BufferSize, Device};
 use std::collections::HashMap;
 use tracing::{info, warn};
 
@@ -20,12 +20,13 @@ impl AudioFormatConverter {
     /// Optimized I16 to F32 conversion
     #[inline]
     pub fn convert_i16_to_f32_optimized(i16_samples: &[i16]) -> Vec<f32> {
-        i16_samples.iter()
+        i16_samples
+            .iter()
             .map(|&sample| {
                 if sample >= 0 {
-                    sample as f32 / 32767.0  // Positive: divide by 32767
+                    sample as f32 / 32767.0 // Positive: divide by 32767
                 } else {
-                    sample as f32 / 32768.0  // Negative: divide by 32768 
+                    sample as f32 / 32768.0 // Negative: divide by 32768
                 }
             })
             .collect()
@@ -34,44 +35,45 @@ impl AudioFormatConverter {
     /// Optimized U16 to F32 conversion
     #[inline]
     pub fn convert_u16_to_f32_optimized(u16_samples: &[u16]) -> Vec<f32> {
-        u16_samples.iter()
-            .map(|&sample| (sample as f32 - 32768.0) / 32767.5)  // Better symmetry
+        u16_samples
+            .iter()
+            .map(|&sample| (sample as f32 - 32768.0) / 32767.5) // Better symmetry
             .collect()
     }
 
     /// Centralized buffer overflow management
     pub fn manage_buffer_overflow_optimized(
-        buffer: &mut Vec<f32>, 
-        target_sample_rate: u32, 
-        device_id: &str, 
-        callback_count: u64
+        buffer: &mut Vec<f32>,
+        target_sample_rate: u32,
+        device_id: &str,
+        callback_count: u64,
     ) {
         let max_buffer_size = target_sample_rate as usize; // 1 second max buffer
         let overflow_threshold = max_buffer_size + (max_buffer_size / 4); // 1.25 seconds
-        
+
         if buffer.len() > overflow_threshold {
             let target_size = max_buffer_size * 7 / 8; // Keep 87.5% of max buffer
-            
+
             if buffer.len() > target_size {
                 let crossfade_samples = 64; // Small crossfade to prevent clicks/pops
                 let start_index = buffer.len() - target_size;
-                
+
                 // Apply crossfading only if we have enough samples
                 if start_index >= crossfade_samples {
                     for i in 0..crossfade_samples {
                         let fade_out = 1.0 - (i as f32 / crossfade_samples as f32);
                         let fade_in = i as f32 / crossfade_samples as f32;
-                        
+
                         let old_sample = buffer[start_index - crossfade_samples + i];
                         let new_sample = buffer[start_index + i];
                         buffer[start_index + i] = old_sample * fade_out + new_sample * fade_in;
                     }
                 }
-                
+
                 // Remove the old portion
                 let new_buffer = buffer.split_off(start_index);
                 *buffer = new_buffer;
-                
+
                 if callback_count % 100 == 0 {
                     println!("🔧 BUFFER OPTIMIZATION [{}]: Kept latest {} samples, buffer now {} samples (max: {})", 
                         device_id, target_size, buffer.len(), max_buffer_size);
@@ -82,7 +84,6 @@ impl AudioFormatConverter {
 }
 
 impl VirtualMixer {
-
     /// Get current audio metrics for monitoring
     pub async fn get_metrics(&self) -> AudioMetrics {
         let metrics = self.metrics.lock().await;
@@ -97,23 +98,30 @@ impl VirtualMixer {
     }
 
     /// Update channel audio levels from real-time processing
-    pub async fn update_channel_levels(&self, channel_id: u32, peak_left: f32, rms_left: f32, peak_right: f32, rms_right: f32) -> Result<()> {
+    pub async fn update_channel_levels(
+        &self,
+        channel_id: u32,
+        peak_left: f32,
+        rms_left: f32,
+        peak_right: f32,
+        rms_right: f32,
+    ) -> Result<()> {
         // Validate audio levels
         super::validation::validate_audio_levels(peak_left, rms_left, peak_right, rms_right)?;
-        
+
         // Update real-time levels
         {
             let mut levels = self.channel_levels.lock().await;
             levels.insert(channel_id, (peak_left, rms_left, peak_right, rms_right));
         }
-        
+
         // Update cached levels for UI (less frequently to reduce lock contention)
         // This could be done on a timer rather than every update for better performance
         {
             let mut cache = self.channel_levels_cache.lock().await;
             cache.insert(channel_id, (peak_left, rms_left, peak_right, rms_right));
         }
-        
+
         Ok(())
     }
 
@@ -125,26 +133,30 @@ impl VirtualMixer {
     }
 
     /// Update master audio levels from real-time processing
-    pub async fn update_master_levels(&self, peak_left: f32, rms_left: f32, peak_right: f32, rms_right: f32) -> Result<()> {
+    pub async fn update_master_levels(
+        &self,
+        peak_left: f32,
+        rms_left: f32,
+        peak_right: f32,
+        rms_right: f32,
+    ) -> Result<()> {
         // Validate audio levels
         super::validation::validate_audio_levels(peak_left, rms_left, peak_right, rms_right)?;
-        
+
         // Update real-time levels
         {
             let mut levels = self.master_levels.lock().await;
             *levels = (peak_left, rms_left, peak_right, rms_right);
         }
-        
+
         // Update cached levels for UI
         {
             let mut cache = self.master_levels_cache.lock().await;
             *cache = (peak_left, rms_left, peak_right, rms_right);
         }
-        
+
         Ok(())
     }
-
-   
 }
 
 /// Audio level calculation utilities
@@ -153,61 +165,64 @@ pub struct AudioLevelCalculator;
 impl AudioLevelCalculator {
     /// Calculate peak level from audio buffer
     pub fn calculate_peak_level(buffer: &[f32]) -> f32 {
-        buffer.iter().map(|&sample| sample.abs()).fold(0.0, f32::max)
+        buffer
+            .iter()
+            .map(|&sample| sample.abs())
+            .fold(0.0, f32::max)
     }
-    
+
     /// Calculate RMS (root mean square) level from audio buffer
     pub fn calculate_rms_level(buffer: &[f32]) -> f32 {
         if buffer.is_empty() {
             return 0.0;
         }
-        
+
         let sum_squares: f32 = buffer.iter().map(|&sample| sample * sample).sum();
         (sum_squares / buffer.len() as f32).sqrt()
     }
-    
+
     /// Calculate stereo levels from interleaved stereo buffer
     pub fn calculate_stereo_levels(buffer: &[f32]) -> (f32, f32, f32, f32) {
         if buffer.len() < 2 {
             return (0.0, 0.0, 0.0, 0.0);
         }
-        
+
         let mut peak_left = 0.0f32;
         let mut peak_right = 0.0f32;
         let mut sum_squares_left = 0.0f32;
         let mut sum_squares_right = 0.0f32;
         let mut sample_count = 0;
-        
+
         // Process interleaved stereo samples
         for chunk in buffer.chunks_exact(2) {
             let left = chunk[0].abs();
             let right = chunk[1].abs();
-            
+
             peak_left = peak_left.max(left);
             peak_right = peak_right.max(right);
-            
+
             sum_squares_left += chunk[0] * chunk[0];
             sum_squares_right += chunk[1] * chunk[1];
-            
+
             sample_count += 1;
         }
-        
+
         // Calculate RMS levels
         let rms_left = if sample_count > 0 {
             (sum_squares_left / sample_count as f32).sqrt()
         } else {
             0.0
         };
-        
+
         let rms_right = if sample_count > 0 {
             (sum_squares_right / sample_count as f32).sqrt()
         } else {
             0.0
         };
-        
+
         (peak_left, peak_right, rms_left, rms_right)
     }
-    
+
     /// Convert linear level to decibels
     pub fn linear_to_db(linear: f32) -> f32 {
         if linear <= 0.0 {
@@ -216,7 +231,7 @@ impl AudioLevelCalculator {
             20.0 * linear.log10()
         }
     }
-    
+
     /// Convert decibels to linear level
     pub fn db_to_linear(db: f32) -> f32 {
         if db.is_finite() {
@@ -225,16 +240,16 @@ impl AudioLevelCalculator {
             0.0
         }
     }
-    
+
     /// Apply basic mixing to combine multiple audio channels
     pub fn mix_channels(channels: &[&[f32]], output: &mut [f32]) {
         // Clear output buffer
         output.fill(0.0);
-        
+
         if channels.is_empty() {
             return;
         }
-        
+
         // Mix all channels together
         for channel_buffer in channels {
             let len = output.len().min(channel_buffer.len());
@@ -242,9 +257,12 @@ impl AudioLevelCalculator {
                 output[i] += channel_buffer[i];
             }
         }
-        
+
         // Apply soft limiting to prevent clipping
-        let max_level = output.iter().map(|&sample| sample.abs()).fold(0.0, f32::max);
+        let max_level = output
+            .iter()
+            .map(|&sample| sample.abs())
+            .fold(0.0, f32::max);
         if max_level > 1.0 {
             let gain_reduction = 0.95 / max_level; // Leave small headroom
             for sample in output.iter_mut() {
@@ -276,9 +294,9 @@ mod tests {
     #[test]
     fn test_stereo_levels() {
         let buffer = [0.5, -0.3, -0.8, 0.6]; // Left: 0.5, -0.8; Right: -0.3, 0.6
-        let (peak_left, peak_right, rms_left, rms_right) = 
+        let (peak_left, peak_right, rms_left, rms_right) =
             AudioLevelCalculator::calculate_stereo_levels(&buffer);
-            
+
         assert!((peak_left - 0.8).abs() < f32::EPSILON);
         assert!((peak_right - 0.6).abs() < f32::EPSILON);
         assert!(rms_left > 0.0);
@@ -299,9 +317,9 @@ mod tests {
         let channel2 = [0.2, -0.1];
         let channels = [&channel1[..], &channel2[..]];
         let mut output = [0.0, 0.0];
-        
+
         AudioLevelCalculator::mix_channels(&channels, &mut output);
-        
+
         assert!((output[0] - 0.7).abs() < f32::EPSILON);
         assert!((output[1] - 0.2).abs() < f32::EPSILON);
     }

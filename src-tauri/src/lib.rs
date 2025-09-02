@@ -5,24 +5,24 @@ pub mod log;
 #[cfg(target_os = "macos")]
 pub mod permissions;
 
-use audio::broadcasting::{StreamManager};
-use audio::recording::{RecordingService};
-use audio::{ApplicationAudioManager};
+use audio::broadcasting::StreamManager;
+use audio::recording::RecordingService;
+use audio::ApplicationAudioManager;
 
 // Import command modules
 pub mod commands;
 
 // Re-export audio types for testing and external use
 pub use audio::{
-    AudioDeviceManager, VirtualMixer, MixerConfig, AudioDeviceInfo, AudioChannel, 
-    AudioMetrics, MixerCommand, AudioConfigFactory, EQBand, ThreeBandEqualizer, 
-    Compressor, Limiter, PeakDetector, RmsDetector, AudioDatabase, AudioEventBus,
-    VULevelData, MasterLevelData, ChannelConfig, OutputRouteConfig, DeviceMonitorStats,
-    initialize_device_monitoring, get_device_monitoring_stats as get_monitoring_stats_impl, 
-    stop_device_monitoring as stop_monitoring_impl, FilePlayerService
+    get_device_monitoring_stats as get_monitoring_stats_impl, initialize_device_monitoring,
+    stop_device_monitoring as stop_monitoring_impl, AudioChannel, AudioConfigFactory,
+    AudioDatabase, AudioDeviceInfo, AudioDeviceManager, AudioEventBus, AudioMetrics, ChannelConfig,
+    Compressor, DeviceMonitorStats, EQBand, FilePlayerService, Limiter, MasterLevelData,
+    MixerCommand, MixerConfig, OutputRouteConfig, PeakDetector, RmsDetector, ThreeBandEqualizer,
+    VULevelData, VirtualMixer,
 };
 // Re-export application audio types
-pub use audio::tap::{ProcessInfo, TapStats, ApplicationAudioError};
+pub use audio::tap::{ApplicationAudioError, ProcessInfo, TapStats};
 use std::sync::{Arc, Mutex};
 use tauri::State;
 use tokio::sync::Mutex as AsyncMutex;
@@ -30,15 +30,15 @@ use tracing_subscriber::prelude::*;
 // Removed unused import
 
 // Import all command modules
-use commands::streaming::*;
+use commands::application_audio::*;
 use commands::audio_devices::*;
-use commands::mixer::*;
 use commands::audio_effects::*;
-use commands::recording::*;
-use commands::icecast::*;
 use commands::debug::*;
 use commands::file_player::*;
-use commands::application_audio::*;
+use commands::icecast::*;
+use commands::mixer::*;
+use commands::recording::*;
+use commands::streaming::*;
 
 // File player state for managing multiple file players
 use commands::file_player::FilePlayerState;
@@ -61,7 +61,7 @@ struct ApplicationAudioState {
 // Initialize logging to output to both console and macOS Console.app
 fn init_logging() {
     use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-    
+
     // Create a formatting layer for console output
     let console_layer = tracing_subscriber::fmt::layer()
         .with_target(true)
@@ -70,7 +70,7 @@ fn init_logging() {
         .with_level(true)
         .with_thread_ids(false)
         .with_thread_names(false);
-    
+
     // On macOS, create a simple layer that forwards to os_log via println!
     // This is a simpler approach that will show up in Console.app
     #[cfg(target_os = "macos")]
@@ -80,13 +80,13 @@ fn init_logging() {
             .with(console_layer)
             .with(tracing_subscriber::filter::LevelFilter::INFO)
             .init();
-            
+
         // Also set up a simple forwarding to system logger
         // macOS will automatically capture stdout/stderr from GUI apps and show them in Console.app
         // under the app's bundle identifier
         println!("🚀 SendinBeats logging initialized - logs will appear in Console.app under 'com.sendinbeats.app'");
     }
-    
+
     #[cfg(not(target_os = "macos"))]
     {
         tracing_subscriber::registry()
@@ -94,7 +94,7 @@ fn init_logging() {
             .with(tracing_subscriber::filter::LevelFilter::INFO)
             .init();
     }
-    
+
     tracing::info!("🚀 SendinBeats logging system ready");
 }
 
@@ -104,14 +104,14 @@ fn init_logging() {
 pub fn run() {
     // Initialize logging system that sends logs to macOS Console.app
     init_logging();
-    
+
     // Enable console logging for debugging signed app
     #[cfg(debug_assertions)]
     println!("🐛 DEBUG: Console logging enabled for signed app");
-    
+
     // Initialize the Tokio runtime for database initialization
     let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
-    
+
     let audio_state = rt.block_on(async {
         // Initialize audio system
         let audio_device_manager = match AudioDeviceManager::new() {
@@ -121,7 +121,7 @@ pub fn run() {
                 std::process::exit(1);
             }
         };
-        
+
         // Initialize SQLite database in user's home directory for app bundle compatibility
         let database_path = dirs::home_dir()
             .map(|home| home.join(".sendin_beats").join("data"))
@@ -132,9 +132,9 @@ pub fn run() {
                     .join("data")
             })
             .join("sendin_beats.db");
-            
+
         tracing::info!("🗄️ Initializing database at: {}", database_path.display());
-        
+
         let database = match AudioDatabase::new(&database_path).await {
             Ok(db) => Arc::new(db),
             Err(e) => {
@@ -142,12 +142,12 @@ pub fn run() {
                 std::process::exit(1);
             }
         };
-        
+
         // Initialize event bus for lock-free audio data transfer
         let event_bus = Arc::new(AudioEventBus::new(1000)); // Buffer up to 1000 events
-        
+
         tracing::info!("✅ Audio system initialization complete");
-        
+
         AudioState {
             device_manager: audio_device_manager,
             mixer: Arc::new(AsyncMutex::new(None)),
@@ -160,12 +160,12 @@ pub fn run() {
     let recording_state = RecordingState {
         service: Arc::new(RecordingService::new()),
     };
-    
+
     // Initialize file player service
     let file_player_state = FilePlayerState {
         service: FilePlayerService::new(),
     };
-    
+
     // Initialize application audio manager
     let application_audio_state = ApplicationAudioState {
         manager: Arc::new(ApplicationAudioManager::new()),
