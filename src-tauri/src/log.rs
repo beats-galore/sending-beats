@@ -17,7 +17,7 @@ pub enum DebugLoggingCategory {
 
 /// Global flag to control audio debug logging
 pub static AUDIO_DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
-pub static DEVICE_DEBUG_ENABLED: AtomicBool = AtomicBool::new(true);
+pub static DEVICE_DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
 
 /// Set audio debug logging on/off
 pub fn set_debug_levels(details: DebugLoggingConfig) {
