@@ -40,6 +40,11 @@ impl AudioClock {
         self.samples_processed
     }
     
+    /// Get the current sync interval in samples
+    pub fn get_sync_interval(&self) -> u64 {
+        self.sync_interval_samples
+    }
+    
     /// Update the sync interval to match actual hardware buffer size
     /// This is called when streams are created with known hardware buffer sizes
     pub fn set_hardware_buffer_size(&mut self, hardware_buffer_size: u32) {

@@ -895,6 +895,15 @@ impl VirtualMixer {
                 // Update audio clock with processed samples (only when samples were actually processed)
                 if samples_processed > 0 {
                         if let Ok(mut clock_guard) = audio_clock.try_lock() {
+                            // **CRITICAL FIX**: Update AudioClock sync interval to match actual processing
+                            // This ensures expected timing calculations match real audio flow
+                            let current_sync_interval = clock_guard.get_sync_interval();
+                            if current_sync_interval != samples_processed as u64 {
+                                println!("🔄 UPDATING AUDIOCLOCK: sync_interval {} -> {} (matching actual samples)", 
+                                    current_sync_interval, samples_processed);
+                                clock_guard.set_hardware_buffer_size(samples_processed as u32);
+                            }
+                            
                             // Log clock state before update
                             if frame_count % 100 == 0 {
                                 println!("🕐 CLOCK STATE: samples_processed_before={}, sample_rate={}, sync_interval={}", 
