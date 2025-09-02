@@ -826,7 +826,9 @@ impl VirtualMixer {
                         crate::audio_debug!("⚠️  NO INPUT SAMPLES: Frame {} - no audio data available from {} configured channels",
                             frame_count, current_channels.len());
                     }
-                    std::thread::sleep(std::time::Duration::from_micros(100)); // 0.1ms sleep
+                    // **CRITICAL FIX**: Sync with hardware callback timing instead of arbitrary 0.1ms
+                    // BlackHole delivers 1024 samples every ~21ms, so sleep ~5ms to check frequently but not wastefully
+                    std::thread::sleep(std::time::Duration::from_millis(5)); // 5ms sleep for better synchronization
                     continue;
                 }
 
