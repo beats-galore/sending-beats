@@ -113,7 +113,7 @@ impl AudioDeviceManager {
         // First try to find the device in our cache
         if let Some(device_info) = self.get_device(device_id).await {
             if device_info.host_api == "CoreAudio (Direct)" {
-                info!("Found CoreAudio device: {}", device_info.name);
+                crate::device_debug!("Found CoreAudio device: {}", device_info.name);
                 return self
                     .enumerator
                     .get_coreaudio()
@@ -128,7 +128,7 @@ impl AudioDeviceManager {
 
         if let Some(device_info) = self.get_device(device_id).await {
             if device_info.host_api == "CoreAudio (Direct)" {
-                info!("Found CoreAudio device after refresh: {}", device_info.name);
+                crate::device_debug!("Found CoreAudio device after refresh: {}", device_info.name);
                 return self
                     .enumerator
                     .get_coreaudio()
@@ -223,7 +223,7 @@ impl AudioDeviceManager {
                 }
 
                 return Err(anyhow::anyhow!(
-                    "CPAL enumeration failure: Cannot access {} device '{}' due to system crash. Error: {}", 
+                    "CPAL enumeration failure: Cannot access {} device '{}' due to system crash. Error: {}",
                     if is_input { "input" } else { "output" }, device_id, e
                 ));
             }

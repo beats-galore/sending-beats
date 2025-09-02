@@ -2,7 +2,10 @@ import { Card, Stack, Group, Title, Text, Button, Badge, ScrollArea, ActionIcon,
 import { createStyles } from '@mantine/styles';
 import { IconHistory, IconPlayerPlay, IconFolder, IconTrash, IconDownload, IconMusic } from '@tabler/icons-react';
 import { memo, useState, useCallback } from 'react';
-import { useRecording, RecordingHistoryEntry } from '../../hooks/use-recording';
+
+import { useRecording } from '../../hooks/use-recording';
+
+import type { RecordingHistoryEntry } from '../../hooks/use-recording';
 
 type RecordingHistoryCardProps = {
   disabled?: boolean;
@@ -65,16 +68,16 @@ const formatFileSize = (bytes: number): string => {
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+  return `${parseFloat((bytes / k**i).toFixed(1))} ${sizes[i]}`;
 };
 
 const formatDate = (dateString: string): string => {
   try {
     const date = new Date(dateString);
-    return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { 
+    return `${date.toLocaleDateString()} ${date.toLocaleTimeString([], { 
       hour: '2-digit', 
       minute: '2-digit' 
-    });
+    })}`;
   } catch {
     return 'Unknown date';
   }

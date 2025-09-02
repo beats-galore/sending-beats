@@ -1,8 +1,8 @@
 import { AppShell, Group, Title, Badge, Burger, ActionIcon, Button } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { IconMenu2, IconMenuDeep, IconMicrophone } from '@tabler/icons-react';
-import { memo, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { memo, useCallback } from 'react';
 
 type ViewType = 'home' | 'dj' | 'admin' | 'listener' | 'mixer';
 

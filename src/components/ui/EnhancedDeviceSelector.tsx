@@ -5,9 +5,10 @@ import { IconRefresh, IconApps, IconDevices, IconAlertCircle } from '@tabler/ico
 import { memo, useCallback, useMemo, useEffect } from 'react';
 
 import { useApplicationAudio } from '../../hooks';
+import { createApplicationSource, createHardwareSource, groupAudioSources } from '../../types/applicationAudio.types';
+
 import type { AudioDeviceInfo } from '../../types';
 import type { AudioSource, AudioSourceGroup, ApplicationAudioSource, HardwareAudioSource } from '../../types/applicationAudio.types';
-import { createApplicationSource, createHardwareSource, groupAudioSources } from '../../types/applicationAudio.types';
 
 const useStyles = createStyles((theme) => ({
   selectFlex: {

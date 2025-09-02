@@ -34,7 +34,7 @@ impl DeviceHealthMonitor {
         let health = DeviceHealth::new_healthy(device_info.id.clone(), device_info.name.clone());
 
         health_guard.insert(device_info.id.clone(), health);
-        info!(
+        crate::device_debug!(
             "Initialized health tracking for device: {}",
             device_info.name
         );

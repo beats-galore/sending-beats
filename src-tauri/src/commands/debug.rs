@@ -3,13 +3,13 @@ use tauri::State;
 
 // Debug control commands
 #[tauri::command]
-pub fn set_audio_debug_enabled(enabled: bool) {
-    crate::log::set_audio_debug(enabled);
+pub fn set_debug_log_config(audio: bool, device: bool) {
+    crate::log::set_debug_levels(crate::log::DebugLoggingConfig { audio, device });
 }
 
 #[tauri::command]
-pub fn get_audio_debug_enabled() -> bool {
-    crate::log::is_audio_debug_enabled()
+pub fn get_debug_log_config() -> crate::log::DebugLoggingConfig {
+    crate::log::get_debug_levels()
 }
 
 // SQLite-based VU meter commands for improved performance

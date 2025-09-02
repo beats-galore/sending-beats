@@ -1,8 +1,9 @@
 // Custom hook for managing audio capture permissions
 import { useState, useEffect, useCallback } from 'react';
+
 import { mixerService } from '../services';
 
-export interface AudioPermissionState {
+export type AudioPermissionState = {
   hasPermission: boolean | null; // null = checking, true = granted, false = denied
   isLoading: boolean;
   error: string | null;

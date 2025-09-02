@@ -1,7 +1,7 @@
 import { Modal, Text, Button, Stack, Alert, Code, List } from '@mantine/core';
 import { IconAlertCircle, IconMicrophone } from '@tabler/icons-react';
 
-interface PermissionModalProps {
+type PermissionModalProps = {
   isOpen: boolean;
   onClose: () => void;
   onOpenSystemPreferences: () => void;

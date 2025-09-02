@@ -1,9 +1,24 @@
 import { invoke } from '@tauri-apps/api/core';
-import { useEffect, useState, useCallback } from 'react';
-import type { RecordingConfig, RecordingStatus, RecordingHistoryEntry, RecordingMetadata, MetadataPreset, RecordingFormat } from '../types/audio.types';
+import { useEffect, useState, useCallback, useMemo } from 'react';
+
+import type {
+  RecordingConfig,
+  RecordingStatus,
+  RecordingHistoryEntry,
+  RecordingMetadata,
+  MetadataPreset,
+  RecordingFormat,
+} from '../types/audio.types';
 
 // Re-export types for convenience
-export type { RecordingConfig, RecordingStatus, RecordingHistoryEntry, RecordingMetadata, MetadataPreset, RecordingFormat };
+export type {
+  RecordingConfig,
+  RecordingStatus,
+  RecordingHistoryEntry,
+  RecordingMetadata,
+  MetadataPreset,
+  RecordingFormat,
+};
 
 export type RecordingActions = {
   startRecording: (config: RecordingConfig) => Promise<string>;
@@ -22,10 +37,13 @@ export const useRecording = (pollingInterval = 1000) => {
   const [status, setStatus] = useState<RecordingStatus | null>(null);
   const [configs, setConfigs] = useState<RecordingConfig[]>([]);
   const [history, setHistory] = useState<RecordingHistoryEntry[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+
   const [error, setError] = useState<string | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
 
   const fetchStatus = useCallback(async () => {
+    console.log('called fetch status', isRecording);
+    if (!isRecording) return;
     try {
       const result = await invoke<RecordingStatus>('get_recording_status');
       setStatus(result);
@@ -33,10 +51,8 @@ export const useRecording = (pollingInterval = 1000) => {
     } catch (err) {
       console.error('Failed to fetch recording status:', err);
       setError(err as string);
-    } finally {
-      setIsLoading(false);
     }
-  }, []);
+  }, [isRecording]);
 
   const fetchConfigs = useCallback(async () => {
     try {
@@ -56,39 +72,47 @@ export const useRecording = (pollingInterval = 1000) => {
     }
   }, []);
 
-  const startRecording = useCallback(async (config: RecordingConfig): Promise<string> => {
-    try {
-      console.log('useRecording: Calling start_recording with config:', config);
-      const sessionId = await invoke<string>('start_recording', { config });
-      console.log('useRecording: Got session ID:', sessionId);
-      await fetchStatus(); // Refresh status immediately
-      return sessionId;
-    } catch (err) {
-      console.error('useRecording: Failed to start recording:', err);
-      throw err;
-    }
-  }, [fetchStatus]);
+  const startRecording = useCallback(
+    async (config: RecordingConfig): Promise<string> => {
+      try {
+        console.log('useRecording: Calling start_recording with config:', config);
+        const sessionId = await invoke<string>('start_recording', { config });
+        console.log('useRecording: Got session ID:', sessionId);
+        setIsRecording(true);
+        await fetchStatus(); // Refresh status immediately
+        return sessionId;
+      } catch (err) {
+        console.error('useRecording: Failed to start recording:', err);
+        throw err;
+      }
+    },
+    [fetchStatus]
+  );
 
   const stopRecording = useCallback(async (): Promise<RecordingHistoryEntry | null> => {
     try {
       const historyEntry = await invoke<RecordingHistoryEntry | null>('stop_recording');
       await Promise.all([fetchStatus(), fetchHistory()]); // Refresh both status and history
+      setIsRecording(false);
       return historyEntry;
     } catch (err) {
       console.error('Failed to stop recording:', err);
       throw err;
     }
-  }, [fetchStatus, fetchHistory]);
+  }, [fetchStatus, fetchHistory, setIsRecording]);
 
-  const saveConfig = useCallback(async (config: RecordingConfig) => {
-    try {
-      await invoke<string>('save_recording_config', { config });
-      await fetchConfigs(); // Refresh configs
-    } catch (err) {
-      console.error('Failed to save recording config:', err);
-      throw err;
-    }
-  }, [fetchConfigs]);
+  const saveConfig = useCallback(
+    async (config: RecordingConfig) => {
+      try {
+        await invoke<string>('save_recording_config', { config });
+        await fetchConfigs(); // Refresh configs
+      } catch (err) {
+        console.error('Failed to save recording config:', err);
+        throw err;
+      }
+    },
+    [fetchConfigs]
+  );
 
   const createDefaultConfig = useCallback(async (): Promise<RecordingConfig> => {
     try {
@@ -100,6 +124,8 @@ export const useRecording = (pollingInterval = 1000) => {
   }, []);
 
   const getStatus = useCallback(async () => {
+    console.log('called get status', isRecording);
+
     await fetchStatus();
   }, [fetchStatus]);
 
@@ -131,47 +157,67 @@ export const useRecording = (pollingInterval = 1000) => {
     }
   }, []);
 
-  const updateSessionMetadata = useCallback(async (metadata: RecordingMetadata): Promise<void> => {
-    try {
-      await invoke<void>('update_recording_metadata', { metadata });
-      await fetchStatus(); // Refresh status to get updated metadata
-    } catch (err) {
-      console.error('Failed to update session metadata:', err);
-      throw err;
-    }
-  }, [fetchStatus]);
+  const updateSessionMetadata = useCallback(
+    async (metadata: RecordingMetadata): Promise<void> => {
+      try {
+        await invoke<void>('update_recording_metadata', { metadata });
+        await fetchStatus(); // Refresh status to get updated metadata
+      } catch (err) {
+        console.error('Failed to update session metadata:', err);
+        throw err;
+      }
+    },
+    [fetchStatus]
+  );
 
   useEffect(() => {
     // Initial fetch
-    fetchStatus();
-    fetchConfigs();
-    fetchHistory();
+    void fetchStatus();
+    void fetchConfigs();
+    void fetchHistory();
 
     // Set up polling for status updates
-    const interval = setInterval(fetchStatus, pollingInterval);
+    const interval = setInterval(() => void fetchStatus(), pollingInterval);
 
     return () => clearInterval(interval);
   }, [fetchStatus, fetchConfigs, fetchHistory, pollingInterval]);
 
-  const actions: RecordingActions = {
-    startRecording,
-    stopRecording,
-    getStatus,
-    saveConfig,
-    getConfigs,
-    getHistory,
-    createDefaultConfig,
-    getMetadataPresets,
-    getRecordingPresets,
-    updateSessionMetadata,
-  };
+  const actions: RecordingActions = useMemo(
+    () => ({
+      startRecording,
+      stopRecording,
+      getStatus,
+      saveConfig,
+      getConfigs,
+      getHistory,
+      createDefaultConfig,
+      getMetadataPresets,
+      getRecordingPresets,
+      updateSessionMetadata,
+    }),
+    [
+      startRecording,
+      stopRecording,
+      getStatus,
+      saveConfig,
+      getConfigs,
+      getHistory,
+      createDefaultConfig,
+      getMetadataPresets,
+      getRecordingPresets,
+      updateSessionMetadata,
+    ]
+  );
 
-  return {
-    status,
-    configs,
-    history,
-    isLoading,
-    error,
-    actions,
-  };
+  return useMemo(
+    () => ({
+      status,
+      configs,
+      history,
+
+      error,
+      actions,
+    }),
+    [status, configs, history, error, actions]
+  );
 };

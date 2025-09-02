@@ -236,8 +236,8 @@ pub fn run() {
             save_channel_config,
             load_channel_configs,
             cleanup_old_levels,
-            set_audio_debug_enabled,
-            get_audio_debug_enabled,
+            set_debug_log_config,
+            get_debug_log_config,
             // Icecast commands
             initialize_icecast_streaming,
             start_icecast_streaming,

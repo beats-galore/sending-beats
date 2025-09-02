@@ -82,7 +82,7 @@ impl CoreAudioIntegration {
         }
 
         let device_count = data_size / mem::size_of::<AudioDeviceID>() as u32;
-        info!("CoreAudio reports {} total audio devices", device_count);
+        crate::device_debug!("CoreAudio reports {} total audio devices", device_count);
 
         if device_count == 0 {
             return Ok(devices);
@@ -115,9 +115,10 @@ impl CoreAudioIntegration {
             match self.get_coreaudio_device_info(device_id).await {
                 Ok(device_infos) => {
                     for device_info in device_infos {
-                        info!(
+                        crate::device_debug!(
                             "Found CoreAudio device: {} ({})",
-                            device_info.name, device_info.id
+                            device_info.name,
+                            device_info.id
                         );
                         devices.push(device_info);
                     }
