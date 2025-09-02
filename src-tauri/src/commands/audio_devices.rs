@@ -1,5 +1,5 @@
+use crate::{AudioDeviceInfo, AudioState};
 use tauri::State;
-use crate::{AudioState, AudioDeviceInfo};
 
 #[tauri::command]
 pub async fn enumerate_audio_devices(
@@ -88,29 +88,38 @@ pub async fn safe_switch_input_device(
     if new_device_id.len() > 256 {
         return Err("Device ID too long".to_string());
     }
-    
+
     let mixer_guard = audio_state.mixer.lock().await;
     if let Some(ref mixer) = *mixer_guard {
-        println!("🔄 Switching input device from {:?} to {}", old_device_id, new_device_id);
-        
+        println!(
+            "🔄 Switching input device from {:?} to {}",
+            old_device_id, new_device_id
+        );
+
         // Remove old device if specified
         if let Some(old_id) = old_device_id {
             if !old_id.trim().is_empty() {
                 println!("🗑️ Removing old input device: {}", old_id);
                 if let Err(e) = mixer.remove_input_stream(&old_id).await {
-                    eprintln!("Warning: Failed to remove old input device {}: {}", old_id, e);
+                    eprintln!(
+                        "Warning: Failed to remove old input device {}: {}",
+                        old_id, e
+                    );
                     // Continue anyway - don't fail the entire operation
                 }
                 // **CRASH FIX**: Add delay to allow cleanup
                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             }
         }
-        
+
         // **CRASH FIX**: Add new device with better error handling
         println!("➕ Adding new input device: {}", new_device_id);
         match mixer.add_input_stream(&new_device_id).await {
             Ok(()) => {
-                println!("✅ Successfully switched input device to: {}", new_device_id);
+                println!(
+                    "✅ Successfully switched input device to: {}",
+                    new_device_id
+                );
                 Ok(())
             }
             Err(e) => {
@@ -136,19 +145,25 @@ pub async fn safe_switch_output_device(
     if new_device_id.len() > 256 {
         return Err("Device ID too long".to_string());
     }
-    
+
     let mixer_guard = audio_state.mixer.lock().await;
     if let Some(ref mixer) = *mixer_guard {
         println!("🔊 Switching output device to: {}", new_device_id);
-        
+
         // **CRASH FIX**: Better error handling and logging
         match mixer.set_output_stream(&new_device_id).await {
             Ok(()) => {
-                println!("✅ Successfully switched output device to: {}", new_device_id);
+                println!(
+                    "✅ Successfully switched output device to: {}",
+                    new_device_id
+                );
                 Ok(())
             }
             Err(e) => {
-                eprintln!("❌ Failed to set output stream for {}: {}", new_device_id, e);
+                eprintln!(
+                    "❌ Failed to set output stream for {}: {}",
+                    new_device_id, e
+                );
                 Err(format!("Failed to set output device: {}", e))
             }
         }
@@ -171,7 +186,7 @@ pub async fn add_input_stream(
     if device_id.len() > 256 {
         return Err("Device ID too long".to_string());
     }
-    
+
     let mixer_guard = audio_state.mixer.lock().await;
     if let Some(ref mixer) = *mixer_guard {
         // **CRASH FIX**: Use basic add_input_stream for better compatibility
@@ -197,7 +212,10 @@ pub async fn remove_input_stream(
 ) -> Result<(), String> {
     let mixer_guard = audio_state.mixer.lock().await;
     if let Some(ref mixer) = *mixer_guard {
-        mixer.remove_input_stream(&device_id).await.map_err(|e| e.to_string())?;
+        mixer
+            .remove_input_stream(&device_id)
+            .await
+            .map_err(|e| e.to_string())?;
     } else {
         return Err("No mixer created".to_string());
     }
@@ -216,7 +234,7 @@ pub async fn set_output_stream(
     if device_id.len() > 256 {
         return Err("Device ID too long".to_string());
     }
-    
+
     let mixer_guard = audio_state.mixer.lock().await;
     if let Some(ref mixer) = *mixer_guard {
         match mixer.set_output_stream(&device_id).await {
@@ -236,11 +254,9 @@ pub async fn set_output_stream(
 
 // Device monitoring commands
 #[tauri::command]
-pub async fn start_device_monitoring(
-    audio_state: State<'_, AudioState>,
-) -> Result<String, String> {
+pub async fn start_device_monitoring(audio_state: State<'_, AudioState>) -> Result<String, String> {
     let mixer_guard = audio_state.mixer.lock().await;
-    
+
     if mixer_guard.is_some() {
         // For now, just return success. The actual device monitoring implementation
         // needs refactoring to work with the app's mixer storage pattern.
@@ -255,7 +271,7 @@ pub async fn start_device_monitoring(
 #[tauri::command]
 pub async fn stop_device_monitoring() -> Result<String, String> {
     use crate::stop_monitoring_impl;
-    
+
     match stop_monitoring_impl().await {
         Ok(()) => {
             println!("✅ Device monitoring stopped");
@@ -293,9 +309,12 @@ pub async fn add_output_device(
             enabled: true,
             is_monitor: is_monitor.unwrap_or(false),
         };
-        
+
         // Add the output device directly through the mixer
-        mixer.add_output_device(output_device).await.map_err(|e| e.to_string())?;
+        mixer
+            .add_output_device(output_device)
+            .await
+            .map_err(|e| e.to_string())?;
         println!("✅ Added output device via Tauri command: {}", device_id);
     } else {
         return Err("No mixer created".to_string());
@@ -310,7 +329,10 @@ pub async fn remove_output_device(
 ) -> Result<(), String> {
     let mixer_guard = audio_state.mixer.lock().await;
     if let Some(ref mixer) = *mixer_guard {
-        mixer.remove_output_device(&device_id).await.map_err(|e| e.to_string())?;
+        mixer
+            .remove_output_device(&device_id)
+            .await
+            .map_err(|e| e.to_string())?;
         println!("✅ Removed output device via Tauri command: {}", device_id);
     } else {
         return Err("No mixer created".to_string());
@@ -331,7 +353,7 @@ pub async fn update_output_device(
     if let Some(ref mixer) = *mixer_guard {
         // Get current device configuration
         let current_config = mixer.get_output_device(&device_id).await;
-        
+
         if let Some(mut updated_device) = current_config {
             // Update specified fields
             if let Some(name) = device_name {
@@ -346,8 +368,11 @@ pub async fn update_output_device(
             if let Some(m) = is_monitor {
                 updated_device.is_monitor = m;
             }
-            
-            mixer.update_output_device(&device_id, updated_device).await.map_err(|e| e.to_string())?;
+
+            mixer
+                .update_output_device(&device_id, updated_device)
+                .await
+                .map_err(|e| e.to_string())?;
             println!("✅ Updated output device via Tauri command: {}", device_id);
         } else {
             return Err(format!("Output device not found: {}", device_id));

@@ -1,4 +1,4 @@
-use super::{validate_float, flush_denormal};
+use super::{flush_denormal, validate_float};
 
 /// Biquad IIR filter for EQ
 #[derive(Debug)]
@@ -97,7 +97,7 @@ impl BiquadFilter {
             y2: 0.0,
         }
     }
-    
+
     /// **BASS POPPING FIX**: High-pass filter for DC blocking
     pub fn high_pass(sample_rate: u32, freq: f32, q: f32) -> Self {
         let w0 = 2.0 * std::f32::consts::PI * freq / sample_rate as f32;
@@ -127,7 +127,10 @@ impl BiquadFilter {
 
     pub fn process(&mut self, input: f32) -> f32 {
         let input_safe = validate_float(input);
-        let output = (input_safe + self.b1 * self.x1 + self.b2 * self.x2 - self.a1 * self.y1 - self.a2 * self.y2) / self.a0;
+        let output = (input_safe + self.b1 * self.x1 + self.b2 * self.x2
+            - self.a1 * self.y1
+            - self.a2 * self.y2)
+            / self.a0;
 
         // **STABILITY**: Update delay line with denormal protection
         self.x2 = flush_denormal(self.x1);
@@ -137,7 +140,7 @@ impl BiquadFilter {
 
         validate_float(output)
     }
-    
+
     /// Reset filter state to prevent instability
     pub fn reset(&mut self) {
         self.x1 = 0.0;
@@ -145,7 +148,7 @@ impl BiquadFilter {
         self.y1 = 0.0;
         self.y2 = 0.0;
     }
-    
+
     /// **BASS POPPING FIX**: Update low shelf coefficients without destroying delay line
     pub fn update_low_shelf_coeffs(&mut self, sample_rate: u32, freq: f32, q: f32, gain_db: f32) {
         let gain = 10.0_f32.powf(gain_db / 20.0);
@@ -167,7 +170,7 @@ impl BiquadFilter {
         self.b1 = b1 / a0;
         self.b2 = b2 / a0;
     }
-    
+
     /// **BASS POPPING FIX**: Update high shelf coefficients without destroying delay line
     pub fn update_high_shelf_coeffs(&mut self, sample_rate: u32, freq: f32, q: f32, gain_db: f32) {
         let gain = 10.0_f32.powf(gain_db / 20.0);
@@ -189,7 +192,7 @@ impl BiquadFilter {
         self.b1 = b1 / a0;
         self.b2 = b2 / a0;
     }
-    
+
     /// **BASS POPPING FIX**: Update peak coefficients without destroying delay line
     pub fn update_peak_coeffs(&mut self, sample_rate: u32, freq: f32, q: f32, gain_db: f32) {
         let gain = 10.0_f32.powf(gain_db / 20.0);

@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
+use lame::Lame;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
-use lame::Lame;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StreamConfig {
@@ -67,9 +67,10 @@ impl StreamManager {
 
     pub async fn connect(&mut self) -> Result<()> {
         let url = format!("{}/admin/stats", self.config.icecast_url);
-        
+
         // Test connection to Icecast server
-        let response = self.client
+        let response = self
+            .client
             .get(&url)
             .basic_auth(&self.config.username, Some(&self.config.password))
             .send()
@@ -83,8 +84,13 @@ impl StreamManager {
             Ok(())
         } else {
             let mut status = self.status.lock().unwrap();
-            status.error_message = Some(format!("Icecast server returned status: {}", response.status()));
-            Err(anyhow::anyhow!("Failed to authenticate with Icecast server"))
+            status.error_message = Some(format!(
+                "Icecast server returned status: {}",
+                response.status()
+            ));
+            Err(anyhow::anyhow!(
+                "Failed to authenticate with Icecast server"
+            ))
         }
     }
 
@@ -108,7 +114,7 @@ impl StreamManager {
         }
 
         let stream_url = format!("{}/{}", self.config.icecast_url, self.config.mount_point);
-        
+
         // Tokio channel for PCM data from async API/frontend
         let (tokio_pcm_tx, mut tokio_pcm_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(100);
         self.stream_sender = Some(tokio_pcm_tx);
@@ -220,14 +226,15 @@ impl StreamManager {
 
         let metadata_url = format!("{}/admin/metadata", self.config.icecast_url);
         let mount = self.config.mount_point.clone();
-        
+
         let metadata_body = format!(
             "mount={}&song={}",
             mount,
             urlencoding::encode(&format!("{} - {}", metadata.artist, metadata.title))
         );
 
-        let response = self.client
+        let response = self
+            .client
             .post(&metadata_url)
             .basic_auth(&self.config.username, Some(&self.config.password))
             .header("Content-Type", "application/x-www-form-urlencoded")
@@ -237,7 +244,10 @@ impl StreamManager {
             .context("Failed to update metadata")?;
 
         if !response.status().is_success() {
-            return Err(anyhow::anyhow!("Failed to update metadata: {}", response.status()));
+            return Err(anyhow::anyhow!(
+                "Failed to update metadata: {}",
+                response.status()
+            ));
         }
 
         Ok(())
@@ -249,8 +259,9 @@ impl StreamManager {
 
     pub async fn get_listener_stats(&self) -> Result<(u32, u32)> {
         let stats_url = format!("{}/admin/stats", self.config.icecast_url);
-        
-        let response = self.client
+
+        let response = self
+            .client
             .get(&stats_url)
             .basic_auth(&self.config.username, Some(&self.config.password))
             .send()
@@ -259,7 +270,7 @@ impl StreamManager {
 
         if response.status().is_success() {
             let stats_text = response.text().await?;
-            
+
             // Parse Icecast XML stats (simplified)
             let current_listeners = stats_text
                 .lines()
@@ -277,7 +288,10 @@ impl StreamManager {
 
             Ok((current_listeners, peak_listeners))
         } else {
-            Err(anyhow::anyhow!("Failed to get stats: {}", response.status()))
+            Err(anyhow::anyhow!(
+                "Failed to get stats: {}",
+                response.status()
+            ))
         }
     }
 }
@@ -292,15 +306,14 @@ pub struct AudioEncoder {
 
 impl AudioEncoder {
     pub fn new(bitrate: u32, sample_rate: u32, channels: u16) -> Self {
-        let lame = Lame::new()
-            .map(|mut l| {
-                l.set_channels(channels as u8).ok();
-                l.set_sample_rate(sample_rate).ok();
-                l.set_kilobitrate(bitrate as i32).ok();
-                l.set_quality(5).ok(); // Good quality
-                l.init_params().ok();
-                l
-            });
+        let lame = Lame::new().map(|mut l| {
+            l.set_channels(channels as u8).ok();
+            l.set_sample_rate(sample_rate).ok();
+            l.set_kilobitrate(bitrate as i32).ok();
+            l.set_quality(5).ok(); // Good quality
+            l.init_params().ok();
+            l
+        });
 
         Self {
             bitrate,
@@ -342,7 +355,7 @@ impl AudioEncoder {
 
         // Find the maximum amplitude
         let max_amplitude = samples.iter().map(|&s| s.abs()).max().unwrap_or(1) as f32;
-        
+
         // Normalize to 80% of maximum to prevent clipping
         let scale_factor = if max_amplitude > 0.0 {
             (i16::MAX as f32 * 0.8) / max_amplitude
@@ -368,4 +381,4 @@ impl AudioEncoder {
         // In a production implementation, you would flush the LAME encoder
         Ok(vec![])
     }
-} 
+}

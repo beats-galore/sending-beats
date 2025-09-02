@@ -3,7 +3,7 @@
 // This module provides comprehensive mixer functionality through
 // a modular architecture with clear separation of concerns:
 // - types: Core mixer types and VirtualMixer struct
-// - validation: Security validation and input sanitization  
+// - validation: Security validation and input sanitization
 // - timing_synchronization: Audio clock and timing management
 // - audio_processing: Real-time audio processing and level calculations
 // - command_processing: Command handling and communication channels
@@ -12,26 +12,26 @@
 // - transformer: Audio format transformation and stream processing (existing)
 
 // Core modules for mixer functionality
-pub mod types;
-pub mod validation;
-pub mod timing_synchronization;
 pub mod audio_processing;
 pub mod command_processing;
+pub mod mixer_core;
 pub mod stream_management;
 pub mod stream_operations;
-pub mod mixer_core;
+pub mod timing_synchronization;
+pub mod types;
+pub mod validation;
 
 // Existing transformer module (preserved)
 pub mod transformer;
 
 // Re-export main public API
-pub use types::{VirtualMixer, MixerConfigUtils};
+pub use types::{MixerConfigUtils, VirtualMixer};
 
 // Re-export validation utilities
-pub use validation::{validate_device_id, validate_config, SecurityUtils};
+pub use validation::{validate_config, validate_device_id, SecurityUtils};
 
 // Re-export timing synchronization types
-pub use timing_synchronization::{AudioClock, TimingSync, TimingMetrics};
+pub use timing_synchronization::{AudioClock, TimingMetrics, TimingSync};
 
 // Re-export stream management types
 pub use stream_management::StreamInfo;

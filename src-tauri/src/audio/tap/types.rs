@@ -51,22 +51,22 @@ pub struct CoreAudioTapCallbackContext {
 pub enum ApplicationAudioError {
     #[error("Permission denied - audio capture not authorized")]
     PermissionDenied,
-    
+
     #[error("Application not found (PID: {pid})")]
     ApplicationNotFound { pid: u32 },
-    
+
     #[error("Core Audio error: {status}")]
     CoreAudioError { status: i32 },
-    
+
     #[error("Unsupported macOS version - requires 14.4+")]
     UnsupportedSystem,
-    
+
     #[error("Too many active captures (max: {max})")]
     TooManyCaptures { max: usize },
-    
+
     #[error("Audio tap not initialized")]
     TapNotInitialized,
-    
+
     #[error("System error: {0}")]
     SystemError(#[from] anyhow::Error),
 }

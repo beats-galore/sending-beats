@@ -27,9 +27,9 @@ impl VirtualAudioInputStream {
         bridge_buffer: Arc<AsyncMutex<Vec<f32>>>,
     ) -> Self {
         let effects_chain = Arc::new(AsyncMutex::new(
-            crate::audio::effects::AudioEffectsChain::new(sample_rate)
+            crate::audio::effects::AudioEffectsChain::new(sample_rate),
         ));
-        
+
         Self {
             device_id,
             device_name,
@@ -39,14 +39,14 @@ impl VirtualAudioInputStream {
             effects_chain,
         }
     }
-    
+
     /// Get samples from the bridge buffer (compatible with AudioInputStream interface)
     pub async fn get_samples(&self) -> Vec<f32> {
         if let Ok(mut buffer) = self.bridge_buffer.try_lock() {
             if buffer.is_empty() {
                 return Vec::new();
             }
-            
+
             // Drain all available samples
             let samples: Vec<f32> = buffer.drain(..).collect();
             samples
@@ -54,17 +54,20 @@ impl VirtualAudioInputStream {
             Vec::new()
         }
     }
-    
+
     /// Process samples with effects (compatible with AudioInputStream interface)
-    pub async fn process_with_effects(&self, channel: &crate::audio::types::AudioChannel) -> Vec<f32> {
+    pub async fn process_with_effects(
+        &self,
+        channel: &crate::audio::types::AudioChannel,
+    ) -> Vec<f32> {
         if let Ok(mut buffer) = self.bridge_buffer.try_lock() {
             if buffer.is_empty() {
                 return Vec::new();
             }
-            
+
             // Drain all available samples
             let mut samples: Vec<f32> = buffer.drain(..).collect();
-            
+
             // Apply effects if enabled
             if channel.effects_enabled && !samples.is_empty() {
                 if let Ok(mut effects) = self.effects_chain.try_lock() {
@@ -72,7 +75,7 @@ impl VirtualAudioInputStream {
                     effects.set_eq_gain(crate::audio::effects::EQBand::Low, channel.eq_low_gain);
                     effects.set_eq_gain(crate::audio::effects::EQBand::Mid, channel.eq_mid_gain);
                     effects.set_eq_gain(crate::audio::effects::EQBand::High, channel.eq_high_gain);
-                    
+
                     if channel.comp_enabled {
                         effects.set_compressor_params(
                             channel.comp_threshold,
@@ -81,7 +84,7 @@ impl VirtualAudioInputStream {
                             channel.comp_release,
                         );
                     }
-                    
+
                     if channel.limiter_enabled {
                         effects.set_limiter_threshold(channel.limiter_threshold);
                     }
@@ -90,7 +93,7 @@ impl VirtualAudioInputStream {
                     effects.process(&mut samples);
                 }
             }
-            
+
             // Apply channel-specific gain and mute
             if !channel.muted && channel.gain > 0.0 {
                 for sample in samples.iter_mut() {
@@ -105,19 +108,19 @@ impl VirtualAudioInputStream {
             Vec::new()
         }
     }
-    
+
     pub fn device_id(&self) -> &str {
         &self.device_id
     }
-    
+
     pub fn device_name(&self) -> &str {
         &self.device_name
     }
-    
+
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
-    
+
     pub fn channels(&self) -> u16 {
         self.channels
     }
@@ -130,7 +133,7 @@ pub struct ApplicationAudioInputBridge {
     sample_rate: u32,
     channels: u16,
     audio_buffer: Arc<AsyncMutex<Vec<f32>>>, // Source buffer from tap bridge
-    sync_buffer: Arc<StdMutex<Vec<f32>>>,     // Sync buffer for mixer compatibility
+    sync_buffer: Arc<StdMutex<Vec<f32>>>,    // Sync buffer for mixer compatibility
     effects_chain: Arc<StdMutex<crate::audio::effects::AudioEffectsChain>>,
     adaptive_chunk_size: usize,
 }
@@ -144,12 +147,12 @@ impl ApplicationAudioInputBridge {
     ) -> Result<Self> {
         let sync_buffer = Arc::new(StdMutex::new(Vec::new()));
         let effects_chain = Arc::new(StdMutex::new(
-            crate::audio::effects::AudioEffectsChain::new(sample_rate)
+            crate::audio::effects::AudioEffectsChain::new(sample_rate),
         ));
-        
+
         // Calculate optimal chunk size (same as AudioInputStream)
         let optimal_chunk_size = (sample_rate as f32 * 0.005) as usize; // 5ms default
-        
+
         Ok(Self {
             device_id,
             device_name,
@@ -161,7 +164,7 @@ impl ApplicationAudioInputBridge {
             adaptive_chunk_size: optimal_chunk_size.max(64).min(1024),
         })
     }
-    
+
     /// Synchronously transfer samples from async buffer to sync buffer
     /// This should be called periodically to keep the sync buffer updated
     pub fn sync_transfer_samples(&self) {
@@ -170,10 +173,10 @@ impl ApplicationAudioInputBridge {
             if !async_buffer.is_empty() {
                 // Transfer samples from async buffer to sync buffer
                 let samples: Vec<f32> = async_buffer.drain(..).collect();
-                
+
                 if let Ok(mut sync_buffer) = self.sync_buffer.try_lock() {
                     sync_buffer.extend_from_slice(&samples);
-                    
+
                     // Prevent buffer overflow - same logic as regular input streams
                     let max_buffer_size = 48000; // 1 second at 48kHz
                     if sync_buffer.len() > max_buffer_size * 2 {
@@ -186,18 +189,18 @@ impl ApplicationAudioInputBridge {
             }
         }
     }
-    
+
     /// Get samples (compatible with AudioInputStream interface)
     pub fn get_samples(&self) -> Vec<f32> {
         // First, transfer any new samples from async buffer
         self.sync_transfer_samples();
-        
+
         // Then get samples from sync buffer (same as AudioInputStream)
         if let Ok(mut buffer) = self.sync_buffer.try_lock() {
             if buffer.is_empty() {
                 return Vec::new();
             }
-            
+
             // Process ALL available samples to prevent buffer buildup
             let samples: Vec<f32> = buffer.drain(..).collect();
             samples
@@ -205,20 +208,20 @@ impl ApplicationAudioInputBridge {
             Vec::new()
         }
     }
-    
+
     /// Process samples with effects (compatible with AudioInputStream interface)
     pub fn process_with_effects(&self, channel: &crate::audio::types::AudioChannel) -> Vec<f32> {
         // First, transfer any new samples from async buffer
         self.sync_transfer_samples();
-        
+
         if let Ok(mut buffer) = self.sync_buffer.try_lock() {
             if buffer.is_empty() {
                 return Vec::new();
             }
-            
+
             // Drain all available samples
             let mut samples: Vec<f32> = buffer.drain(..).collect();
-            
+
             // Apply effects if enabled
             if channel.effects_enabled && !samples.is_empty() {
                 if let Ok(mut effects) = self.effects_chain.try_lock() {
@@ -226,7 +229,7 @@ impl ApplicationAudioInputBridge {
                     effects.set_eq_gain(crate::audio::effects::EQBand::Low, channel.eq_low_gain);
                     effects.set_eq_gain(crate::audio::effects::EQBand::Mid, channel.eq_mid_gain);
                     effects.set_eq_gain(crate::audio::effects::EQBand::High, channel.eq_high_gain);
-                    
+
                     if channel.comp_enabled {
                         effects.set_compressor_params(
                             channel.comp_threshold,
@@ -235,7 +238,7 @@ impl ApplicationAudioInputBridge {
                             channel.comp_release,
                         );
                     }
-                    
+
                     if channel.limiter_enabled {
                         effects.set_limiter_threshold(channel.limiter_threshold);
                     }
@@ -244,7 +247,7 @@ impl ApplicationAudioInputBridge {
                     effects.process(&mut samples);
                 }
             }
-            
+
             // Apply channel-specific gain and mute
             if !channel.muted && channel.gain > 0.0 {
                 for sample in samples.iter_mut() {
@@ -259,7 +262,7 @@ impl ApplicationAudioInputBridge {
             Vec::new()
         }
     }
-    
+
     /// Set adaptive chunk size (compatible with AudioInputStream interface)
     pub fn set_adaptive_chunk_size(&mut self, hardware_buffer_size: usize) {
         let adaptive_size = if hardware_buffer_size > 32 && hardware_buffer_size <= 2048 {
@@ -267,23 +270,44 @@ impl ApplicationAudioInputBridge {
         } else {
             (self.sample_rate as f32 * 0.005) as usize
         };
-        
+
         self.adaptive_chunk_size = adaptive_size;
-        info!("🔧 ADAPTIVE BUFFER: Set chunk size to {} samples for app device {}", 
-              self.adaptive_chunk_size, self.device_id);
+        info!(
+            "🔧 ADAPTIVE BUFFER: Set chunk size to {} samples for app device {}",
+            self.adaptive_chunk_size, self.device_id
+        );
     }
-    
+
     // Getters (compatible with AudioInputStream interface)
-    pub fn device_id(&self) -> &str { &self.device_id }
-    pub fn device_name(&self) -> &str { &self.device_name }
-    pub fn sample_rate(&self) -> u32 { self.sample_rate }
-    pub fn channels(&self) -> u16 { self.channels }
+    pub fn device_id(&self) -> &str {
+        &self.device_id
+    }
+    pub fn device_name(&self) -> &str {
+        &self.device_name
+    }
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+    pub fn channels(&self) -> u16 {
+        self.channels
+    }
 }
 
 /// Registry for virtual input streams to ensure mixer can find registered streams  
-pub fn get_virtual_input_registry() -> &'static StdMutex<std::collections::HashMap<String, Arc<crate::audio::mixer::stream_management::AudioInputStream>>> {
+pub fn get_virtual_input_registry() -> &'static StdMutex<
+    std::collections::HashMap<
+        String,
+        Arc<crate::audio::mixer::stream_management::AudioInputStream>,
+    >,
+> {
     use std::sync::LazyLock;
-    static VIRTUAL_INPUT_REGISTRY: LazyLock<StdMutex<std::collections::HashMap<String, Arc<crate::audio::mixer::stream_management::AudioInputStream>>>> = 
-        LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
+    static VIRTUAL_INPUT_REGISTRY: LazyLock<
+        StdMutex<
+            std::collections::HashMap<
+                String,
+                Arc<crate::audio::mixer::stream_management::AudioInputStream>,
+            >,
+        >,
+    > = LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
     &VIRTUAL_INPUT_REGISTRY
 }

@@ -38,17 +38,20 @@ impl ThreeBandEqualizer {
         // **BASS POPPING FIX**: Update coefficients without destroying filter state
         match band {
             EQBand::Low => {
-                self.low_shelf.update_low_shelf_coeffs(self.sample_rate, 200.0, 0.7, gain_db);
+                self.low_shelf
+                    .update_low_shelf_coeffs(self.sample_rate, 200.0, 0.7, gain_db);
             }
             EQBand::Mid => {
-                self.mid_peak.update_peak_coeffs(self.sample_rate, 1000.0, 0.7, gain_db);
+                self.mid_peak
+                    .update_peak_coeffs(self.sample_rate, 1000.0, 0.7, gain_db);
             }
             EQBand::High => {
-                self.high_shelf.update_high_shelf_coeffs(self.sample_rate, 8000.0, 0.7, gain_db);
+                self.high_shelf
+                    .update_high_shelf_coeffs(self.sample_rate, 8000.0, 0.7, gain_db);
             }
         }
     }
-    
+
     /// Reset all EQ filter states to prevent instabilities
     pub fn reset(&mut self) {
         self.low_shelf.reset();

@@ -1,4 +1,4 @@
-use sendin_beats_lib::audio::{VirtualMixer, MixerConfig, AudioChannel};
+use sendin_beats_lib::audio::{AudioChannel, MixerConfig, VirtualMixer};
 use tokio_test;
 
 /// Test configuration validation functionality
@@ -19,7 +19,10 @@ mod config_validation_tests {
         };
 
         let result = VirtualMixer::new(config).await;
-        assert!(result.is_ok(), "Valid config should create mixer successfully");
+        assert!(
+            result.is_ok(),
+            "Valid config should create mixer successfully"
+        );
     }
 
     #[tokio::test]
@@ -35,8 +38,14 @@ mod config_validation_tests {
         };
 
         let result = VirtualMixer::new(config).await;
-        assert!(result.is_err(), "Sample rate too low should fail validation");
-        assert!(result.unwrap_err().to_string().contains("Invalid sample rate"));
+        assert!(
+            result.is_err(),
+            "Sample rate too low should fail validation"
+        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid sample rate"));
     }
 
     #[tokio::test]
@@ -52,8 +61,14 @@ mod config_validation_tests {
         };
 
         let result = VirtualMixer::new(config).await;
-        assert!(result.is_err(), "Sample rate too high should fail validation");
-        assert!(result.unwrap_err().to_string().contains("Invalid sample rate"));
+        assert!(
+            result.is_err(),
+            "Sample rate too high should fail validation"
+        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid sample rate"));
     }
 
     #[tokio::test]
@@ -69,8 +84,14 @@ mod config_validation_tests {
         };
 
         let result = VirtualMixer::new(config).await;
-        assert!(result.is_err(), "Buffer size too small should fail validation");
-        assert!(result.unwrap_err().to_string().contains("Invalid buffer size"));
+        assert!(
+            result.is_err(),
+            "Buffer size too small should fail validation"
+        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid buffer size"));
     }
 
     #[tokio::test]
@@ -86,8 +107,14 @@ mod config_validation_tests {
         };
 
         let result = VirtualMixer::new(config).await;
-        assert!(result.is_err(), "Buffer size too large should fail validation");
-        assert!(result.unwrap_err().to_string().contains("Invalid buffer size"));
+        assert!(
+            result.is_err(),
+            "Buffer size too large should fail validation"
+        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid buffer size"));
     }
 
     #[tokio::test]
@@ -103,8 +130,14 @@ mod config_validation_tests {
         };
 
         let result = VirtualMixer::new(config).await;
-        assert!(result.is_err(), "Negative master gain should fail validation");
-        assert!(result.unwrap_err().to_string().contains("Invalid master gain"));
+        assert!(
+            result.is_err(),
+            "Negative master gain should fail validation"
+        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid master gain"));
     }
 
     #[tokio::test]
@@ -120,8 +153,14 @@ mod config_validation_tests {
         };
 
         let result = VirtualMixer::new(config).await;
-        assert!(result.is_err(), "Master gain too high should fail validation");
-        assert!(result.unwrap_err().to_string().contains("Invalid master gain"));
+        assert!(
+            result.is_err(),
+            "Master gain too high should fail validation"
+        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid master gain"));
     }
 
     #[tokio::test]
@@ -147,7 +186,10 @@ mod config_validation_tests {
 
         let result = VirtualMixer::new(config).await;
         assert!(result.is_err(), "Too many channels should fail validation");
-        assert!(result.unwrap_err().to_string().contains("Too many channels"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Too many channels"));
     }
 
     #[tokio::test]
@@ -170,8 +212,14 @@ mod config_validation_tests {
         };
 
         let result = VirtualMixer::new(config).await;
-        assert!(result.is_err(), "Invalid channel gain should fail validation");
-        assert!(result.unwrap_err().to_string().contains("Invalid gain for channel"));
+        assert!(
+            result.is_err(),
+            "Invalid channel gain should fail validation"
+        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid gain for channel"));
     }
 
     #[tokio::test]
@@ -194,8 +242,14 @@ mod config_validation_tests {
         };
 
         let result = VirtualMixer::new(config).await;
-        assert!(result.is_err(), "Invalid channel pan should fail validation");
-        assert!(result.unwrap_err().to_string().contains("Invalid pan for channel"));
+        assert!(
+            result.is_err(),
+            "Invalid channel pan should fail validation"
+        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid pan for channel"));
     }
 
     #[tokio::test]
@@ -219,6 +273,9 @@ mod config_validation_tests {
 
         let result = VirtualMixer::new(config).await;
         assert!(result.is_err(), "Invalid EQ gain should fail validation");
-        assert!(result.unwrap_err().to_string().contains("Invalid EQ low gain"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid EQ low gain"));
     }
 }

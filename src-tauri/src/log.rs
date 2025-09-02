@@ -6,7 +6,10 @@ pub static AUDIO_DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
 /// Set audio debug logging on/off
 pub fn set_audio_debug(enabled: bool) {
     AUDIO_DEBUG_ENABLED.store(enabled, Ordering::Relaxed);
-    println!("🔧 Audio debug logging {}", if enabled { "ENABLED" } else { "DISABLED" });
+    println!(
+        "🔧 Audio debug logging {}",
+        if enabled { "ENABLED" } else { "DISABLED" }
+    );
 }
 
 /// Check if audio debug logging is enabled

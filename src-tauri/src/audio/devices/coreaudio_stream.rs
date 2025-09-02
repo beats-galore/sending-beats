@@ -1,38 +1,40 @@
 #[cfg(target_os = "macos")]
 use anyhow::Result;
-use tracing::warn;
-use std::sync::{Arc, Mutex, atomic::{AtomicPtr, Ordering}};
 use coreaudio_sys::{
-    AudioDeviceID, AudioUnit, AudioComponentDescription,
-    kAudioUnitType_Output, kAudioUnitSubType_HALOutput, kAudioUnitManufacturer_Apple,
-    kAudioOutputUnitProperty_CurrentDevice, kAudioUnitProperty_StreamFormat,
-    kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, kAudioUnitScope_Output,
-    kAudioUnitScope_Global, AudioStreamBasicDescription, kAudioFormatLinearPCM,
-    kAudioFormatFlagIsFloat, kAudioFormatFlagIsPacked, kAudioFormatFlagIsNonInterleaved,
-    AudioComponentFindNext, AudioComponentInstanceNew, AudioUnitInitialize,
-    AudioUnitSetProperty, AudioOutputUnitStart, AudioOutputUnitStop,
-    AudioUnitUninitialize, AudioComponentInstanceDispose,
-    AURenderCallbackStruct, kAudioUnitProperty_SetRenderCallback,
-    AudioUnitRenderActionFlags, AudioTimeStamp, AudioBufferList, OSStatus
+    kAudioFormatFlagIsFloat, kAudioFormatFlagIsNonInterleaved, kAudioFormatFlagIsPacked,
+    kAudioFormatLinearPCM, kAudioOutputUnitProperty_CurrentDevice,
+    kAudioOutputUnitProperty_EnableIO, kAudioUnitManufacturer_Apple,
+    kAudioUnitProperty_SetRenderCallback, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Global,
+    kAudioUnitScope_Input, kAudioUnitScope_Output, kAudioUnitSubType_HALOutput,
+    kAudioUnitType_Output, AURenderCallbackStruct, AudioBufferList, AudioComponentDescription,
+    AudioComponentFindNext, AudioComponentInstanceDispose, AudioComponentInstanceNew,
+    AudioDeviceID, AudioOutputUnitStart, AudioOutputUnitStop, AudioStreamBasicDescription,
+    AudioTimeStamp, AudioUnit, AudioUnitInitialize, AudioUnitRenderActionFlags,
+    AudioUnitSetProperty, AudioUnitUninitialize, OSStatus,
 };
-use std::ptr;
 use std::os::raw::c_void;
+use std::ptr;
+use std::sync::{
+    atomic::{AtomicPtr, Ordering},
+    Arc, Mutex,
+};
+use tracing::warn;
 
 /// # CoreAudio Thread Safety Documentation
-/// 
+///
 /// This module implements CoreAudio stream management with careful attention to memory safety
 /// and thread synchronization between audio callback threads and the main application.
-/// 
+///
 /// ## Memory Safety Strategy:
 /// - Uses `Arc<AtomicPtr<T>>` instead of raw pointers for callback context
 /// - Atomic operations ensure thread-safe pointer swapping during stream lifecycle
 /// - Proper cleanup in Drop-like patterns prevents memory leaks
-/// 
+///
 /// ## Thread Interaction:
 /// - Audio callbacks execute in real-time CoreAudio threads
 /// - Main thread manages stream lifecycle (start/stop/cleanup)
 /// - Atomic pointer operations coordinate between threads safely
-/// 
+///
 /// ## Locking Strategy:
 /// - Minimal use of mutexes in audio callback path for performance
 /// - Atomic pointer swapping for callback context management
@@ -63,7 +65,10 @@ impl std::fmt::Debug for CoreAudioOutputStream {
             .field("channels", &self.channels)
             .field("is_running", &self.is_running)
             .field("audio_unit", &self.audio_unit.is_some())
-            .field("callback_buffer", &(!self.callback_buffer.load(Ordering::Acquire).is_null()))
+            .field(
+                "callback_buffer",
+                &(!self.callback_buffer.load(Ordering::Acquire).is_null()),
+            )
             .finish()
     }
 }
@@ -101,7 +106,10 @@ impl CoreAudioOutputStream {
     }
 
     pub fn start(&mut self) -> Result<()> {
-        println!("Starting CoreAudio Audio Unit stream for device: {}", self.device_name);
+        println!(
+            "Starting CoreAudio Audio Unit stream for device: {}",
+            self.device_name
+        );
 
         // Step 1: Find the Audio Unit component
         let component_desc = AudioComponentDescription {
@@ -121,7 +129,10 @@ impl CoreAudioOutputStream {
         let mut audio_unit: AudioUnit = ptr::null_mut();
         let status = unsafe { AudioComponentInstanceNew(component, &mut audio_unit) };
         if status != 0 {
-            return Err(anyhow::anyhow!("Failed to create Audio Unit instance: {}", status));
+            return Err(anyhow::anyhow!(
+                "Failed to create Audio Unit instance: {}",
+                status
+            ));
         }
 
         // Step 3: Enable output on the Audio Unit
@@ -189,17 +200,17 @@ impl CoreAudioOutputStream {
         let input_buffer_clone = self.input_buffer.clone();
         let boxed_buffer = Box::new(input_buffer_clone);
         let buffer_ptr = Box::into_raw(boxed_buffer);
-        
+
         // Store the pointer atomically for thread-safe access and cleanup
         let old_ptr = self.callback_buffer.swap(buffer_ptr, Ordering::Release);
-        
+
         // Clean up any previous pointer
         if !old_ptr.is_null() {
             unsafe {
                 let _ = Box::from_raw(old_ptr);
             }
         }
-        
+
         let callback = AURenderCallbackStruct {
             inputProc: Some(render_callback),
             inputProcRefCon: buffer_ptr as *mut c_void,
@@ -224,7 +235,10 @@ impl CoreAudioOutputStream {
         let status = unsafe { AudioUnitInitialize(audio_unit) };
         if status != 0 {
             unsafe { AudioComponentInstanceDispose(audio_unit) };
-            return Err(anyhow::anyhow!("Failed to initialize Audio Unit: {}", status));
+            return Err(anyhow::anyhow!(
+                "Failed to initialize Audio Unit: {}",
+                status
+            ));
         }
 
         // Step 8: Start the Audio Unit
@@ -240,16 +254,25 @@ impl CoreAudioOutputStream {
         // Store the Audio Unit and mark as running
         self.audio_unit = Some(audio_unit);
         *self.is_running.lock().unwrap() = true;
-        
-        println!("✅ CoreAudio Audio Unit stream started for: {} (device {})", self.device_name, self.device_id);
-        println!("   Real audio streaming active with {} channels at {} Hz", self.channels, self.sample_rate);
-        
+
+        println!(
+            "✅ CoreAudio Audio Unit stream started for: {} (device {})",
+            self.device_name, self.device_id
+        );
+        println!(
+            "   Real audio streaming active with {} channels at {} Hz",
+            self.channels, self.sample_rate
+        );
+
         Ok(())
     }
 
     pub fn stop(&mut self) -> Result<()> {
-        println!("🔴 STOP: Starting graceful stop sequence for device: {}", self.device_name);
-        
+        println!(
+            "🔴 STOP: Starting graceful stop sequence for device: {}",
+            self.device_name
+        );
+
         // First, mark as not running to prevent callback from processing
         if let Ok(mut is_running) = self.is_running.lock() {
             *is_running = false;
@@ -257,13 +280,13 @@ impl CoreAudioOutputStream {
         } else {
             warn!("🔴 STOP: Could not lock is_running flag");
         }
-        
+
         // Give callbacks time to see the flag and exit
         std::thread::sleep(std::time::Duration::from_millis(50));
-        
+
         if let Some(audio_unit) = self.audio_unit.take() {
             println!("🔴 STOP: Found AudioUnit, attempting graceful shutdown...");
-            
+
             // **CRITICAL FIX**: Attempt proper CoreAudio cleanup with error handling
             unsafe {
                 // Try to stop the audio unit
@@ -272,14 +295,14 @@ impl CoreAudioOutputStream {
                 } else {
                     warn!("🔴 STOP: AudioOutputUnitStop failed, but continuing cleanup");
                 }
-                
+
                 // Try to uninitialize the audio unit
                 if AudioUnitUninitialize(audio_unit) == 0 {
                     println!("🔴 STOP: Successfully uninitialized AudioUnit");
                 } else {
                     warn!("🔴 STOP: AudioUnitUninitialize failed, but continuing cleanup");
                 }
-                
+
                 // Try to dispose of the audio unit
                 if AudioComponentInstanceDispose(audio_unit) == 0 {
                     println!("🔴 STOP: Successfully disposed AudioUnit");
@@ -290,18 +313,20 @@ impl CoreAudioOutputStream {
         } else {
             println!("🔴 STOP: No AudioUnit found (already cleaned up)");
         }
-        
+
         println!("🔴 STOP: AudioUnit disposal complete, cleaning up buffer...");
-        
+
         // Clean up the callback buffer pointer atomically (only after AudioUnit is disposed)
         println!("🔴 STOP: Waiting 50ms before buffer cleanup...");
         std::thread::sleep(std::time::Duration::from_millis(50));
         println!("🔴 STOP: Wait complete");
-        
+
         println!("🔴 STOP: Swapping callback buffer pointer...");
-        let buffer_ptr = self.callback_buffer.swap(ptr::null_mut(), Ordering::Release);
+        let buffer_ptr = self
+            .callback_buffer
+            .swap(ptr::null_mut(), Ordering::Release);
         println!("🔴 STOP: Buffer pointer swapped, checking if null...");
-        
+
         if !buffer_ptr.is_null() {
             println!("🔴 STOP: Buffer pointer not null, checking reference count...");
             // Additional safety check: verify the Arc is safe to drop
@@ -310,19 +335,22 @@ impl CoreAudioOutputStream {
                 let arc_ptr = buffer_ptr as *const Arc<Mutex<Vec<f32>>>;
                 let strong_count = Arc::strong_count(&*arc_ptr);
                 println!("🔴 STOP: Buffer reference count: {}", strong_count);
-                
+
                 if strong_count == 1 {
                     println!("🔴 STOP: Safe to deallocate buffer (only reference)");
                     let _ = Box::from_raw(buffer_ptr);
                     println!("🔴 STOP: Buffer deallocated successfully");
                 } else {
-                    println!("🔴 STOP: NOT deallocating buffer - {} references still exist", strong_count);
+                    println!(
+                        "🔴 STOP: NOT deallocating buffer - {} references still exist",
+                        strong_count
+                    );
                 }
             }
         } else {
             println!("🔴 STOP: Buffer pointer was null (already cleaned up)");
         }
-        
+
         println!("🔴 STOP: ✅ ALL CLEANUP COMPLETE for: {}", self.device_name);
         Ok(())
     }
@@ -330,7 +358,7 @@ impl CoreAudioOutputStream {
     pub fn send_audio(&self, audio_data: &[f32]) -> Result<()> {
         if let Ok(mut buffer) = self.input_buffer.try_lock() {
             buffer.extend_from_slice(audio_data);
-            
+
             // Prevent buffer from growing too large (keep max 1 second of audio)
             let max_buffer_size = self.sample_rate as usize * self.channels as usize;
             if buffer.len() > max_buffer_size {
@@ -361,55 +389,56 @@ extern "C" fn render_callback(
     if _in_ref_con.is_null() || io_data.is_null() || in_number_frames == 0 {
         return -1; // Invalid parameters
     }
-    
+
     // Catch any panic and return error instead of crashing
     let result = std::panic::catch_unwind(|| {
         // Safety: Convert the reference back to our boxed Arc
         let boxed_buffer_ptr = _in_ref_con as *mut Arc<Mutex<Vec<f32>>>;
-        
+
         // Double-check pointer validity
         if boxed_buffer_ptr.is_null() {
             return -1;
         }
-        
+
         // Get the audio buffer list with safety checks
         let buffer_list = unsafe { &mut *io_data };
         if buffer_list.mNumberBuffers == 0 {
             return -1; // No buffers to fill
         }
-        
+
         let frames_needed = in_number_frames as usize;
-        
+
         // IMMEDIATE SAFETY CHECK: Verify buffer pointer is not null or being disposed
         // This must be the FIRST thing we do to prevent crashes
-        let input_buffer = unsafe { 
+        let input_buffer = unsafe {
             // Check if pointer is valid before dereferencing
             if boxed_buffer_ptr.is_null() {
                 fill_buffers_with_silence(buffer_list, frames_needed);
                 return 0;
             }
-            &*boxed_buffer_ptr 
+            &*boxed_buffer_ptr
         };
-        
+
         // SAFETY CHECK: Verify the Arc is still valid (not disposed)
         // This prevents crashes when the AudioUnit is being disposed
         if Arc::strong_count(input_buffer) <= 1 {
             fill_buffers_with_silence(buffer_list, frames_needed);
             return 0; // Stream is being disposed, output silence safely
         }
-        
+
         // Try to get audio data, but always ensure we fill the output buffers
         if let Ok(mut buffer) = input_buffer.try_lock() {
             // INTERLEAVED AUDIO: Process single buffer with all channels
             if buffer_list.mNumberBuffers > 0 {
                 let audio_buffer = unsafe { &mut *buffer_list.mBuffers.as_mut_ptr() };
                 let output_data = audio_buffer.mData as *mut f32;
-                
+
                 // Validate output data pointer and size
                 if !output_data.is_null() && audio_buffer.mDataByteSize > 0 {
-                    let total_samples = (audio_buffer.mDataByteSize as usize) / std::mem::size_of::<f32>();
+                    let total_samples =
+                        (audio_buffer.mDataByteSize as usize) / std::mem::size_of::<f32>();
                     let samples_to_copy = total_samples.min(buffer.len());
-                    
+
                     if samples_to_copy > 0 && !buffer.is_empty() {
                         // Copy interleaved audio samples directly
                         unsafe {
@@ -419,7 +448,7 @@ extern "C" fn render_callback(
                                 samples_to_copy,
                             );
                         }
-                        
+
                         // Fill remaining with silence if needed
                         if samples_to_copy < total_samples {
                             unsafe {
@@ -430,7 +459,7 @@ extern "C" fn render_callback(
                                 );
                             }
                         }
-                        
+
                         // Drain the buffer by the number of samples we used
                         buffer.drain(..samples_to_copy);
                     } else {
@@ -449,10 +478,10 @@ extern "C" fn render_callback(
             // Couldn't get lock - output silence to all channels
             fill_buffers_with_silence(buffer_list, frames_needed);
         }
-        
+
         0 // Success
     });
-    
+
     // If panic occurred, return error code
     result.unwrap_or(-1)
 }
@@ -464,16 +493,12 @@ fn fill_buffers_with_silence(buffer_list: &mut AudioBufferList, _frames_needed: 
     if buffer_list.mNumberBuffers > 0 {
         let audio_buffer = unsafe { &mut *buffer_list.mBuffers.as_mut_ptr() };
         let output_data = audio_buffer.mData as *mut f32;
-        
+
         if !output_data.is_null() && audio_buffer.mDataByteSize > 0 {
             let total_samples = (audio_buffer.mDataByteSize as usize) / std::mem::size_of::<f32>();
-            
+
             unsafe {
-                std::ptr::write_bytes(
-                    output_data,
-                    0,
-                    total_samples * std::mem::size_of::<f32>(),
-                );
+                std::ptr::write_bytes(output_data, 0, total_samples * std::mem::size_of::<f32>());
             }
         }
     }
