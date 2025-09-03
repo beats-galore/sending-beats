@@ -71,7 +71,8 @@ impl AudioClock {
             // Instead, we only track callback consistency and hardware timing variations.
 
             let callback_interval_us = now.duration_since(self.last_sync_time).as_micros() as f64;
-            let expected_interval_us = (self.sync_interval_samples as f64 * 1_000_000.0) / self.sample_rate as f64;
+            let expected_interval_us =
+                (self.sync_interval_samples as f64 * 1_000_000.0) / self.sample_rate as f64;
 
             // Only report drift if callback intervals are inconsistent with expected buffer timing
             // This detects real hardware timing issues, not software processing timing
@@ -171,7 +172,6 @@ pub struct TimingSync {
     pub needs_adjustment: bool,
     pub sync_time: std::time::Instant,
 }
-
 
 /// Performance metrics for timing analysis
 #[derive(Debug, Clone)]

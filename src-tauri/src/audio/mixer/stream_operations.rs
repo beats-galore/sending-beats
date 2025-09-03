@@ -6,7 +6,7 @@
 
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, StreamTrait};
-use cpal::{StreamConfig, SampleRate, BufferSize};
+use cpal::{BufferSize, SampleRate, StreamConfig};
 use std::sync::{atomic::Ordering, Arc};
 use tracing::{error, info, warn};
 
@@ -25,7 +25,6 @@ impl VirtualMixer {
         }
 
         info!("🚀 MIXER START: Starting virtual mixer...");
-
 
         self.is_running.store(true, Ordering::Relaxed);
 
@@ -129,40 +128,44 @@ impl VirtualMixer {
         false
     }
 
- /// Calculate optimal buffer size based on hardware capabilities and performance requirements
- async fn calculate_optimal_buffer_size(
-    &self,
-    device: &cpal::Device,
-    config: &cpal::SupportedStreamConfig,
-    fallback_size: usize
-) -> Result<BufferSize> {
-    // Try to get the device's preferred buffer size
-    match device.default_input_config() {
-        Ok(device_config) => {
-            // Calculate optimal buffer size based on sample rate and latency requirements
-            let sample_rate = config.sample_rate().0;
-            let channels = config.channels();
+    /// Calculate optimal buffer size based on hardware capabilities and performance requirements
+    async fn calculate_optimal_buffer_size(
+        &self,
+        device: &cpal::Device,
+        config: &cpal::SupportedStreamConfig,
+        fallback_size: usize,
+    ) -> Result<BufferSize> {
+        // Try to get the device's preferred buffer size
+        match device.default_input_config() {
+            Ok(device_config) => {
+                // Calculate optimal buffer size based on sample rate and latency requirements
+                let sample_rate = config.sample_rate().0;
+                let channels = config.channels();
 
-            // Target latency: 5-10ms for professional audio (balance between latency and stability)
-            let target_latency_ms = if sample_rate >= 48000 { 5.0 } else { 10.0 };
-            let target_buffer_size = ((sample_rate as f32 * target_latency_ms / 1000.0) as usize)
-                .max(64)   // Minimum 64 samples for stability
-                .min(2048); // Maximum 2048 samples to prevent excessive latency
+                // Target latency: 5-10ms for professional audio (balance between latency and stability)
+                let target_latency_ms = if sample_rate >= 48000 { 5.0 } else { 10.0 };
+                let target_buffer_size = ((sample_rate as f32 * target_latency_ms / 1000.0)
+                    as usize)
+                    .max(64) // Minimum 64 samples for stability
+                    .min(2048); // Maximum 2048 samples to prevent excessive latency
 
-            // Round to next power of 2 for optimal hardware performance
-            let optimal_size = target_buffer_size.next_power_of_two().min(1024);
+                // Round to next power of 2 for optimal hardware performance
+                let optimal_size = target_buffer_size.next_power_of_two().min(1024);
 
-            info!("🔧 DYNAMIC BUFFER: Calculated optimal buffer size {} for device (SR: {}, CH: {}, Target: {}ms)",
+                info!("🔧 DYNAMIC BUFFER: Calculated optimal buffer size {} for device (SR: {}, CH: {}, Target: {}ms)",
                   optimal_size, sample_rate, channels, target_latency_ms);
 
-            Ok(BufferSize::Fixed(optimal_size as u32))
-        }
-        Err(e) => {
-            warn!("Failed to get device config for buffer optimization: {}, using fallback", e);
-            Ok(BufferSize::Fixed(fallback_size as u32))
+                Ok(BufferSize::Fixed(optimal_size as u32))
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to get device config for buffer optimization: {}, using fallback",
+                    e
+                );
+                Ok(BufferSize::Fixed(fallback_size as u32))
+            }
         }
     }
-}
 
     /// Add an input stream for the specified device
     pub async fn add_input_stream(&self, device_id: &str) -> Result<()> {
@@ -188,12 +191,14 @@ impl VirtualMixer {
         //     }
         // }
 
-
         // Check if stream already exists
         {
             let input_streams = self.input_streams.lock().await;
             if input_streams.contains_key(device_id) {
-                warn!("Device {} already has an active input stream, removing first", device_id);
+                warn!(
+                    "Device {} already has an active input stream, removing first",
+                    device_id
+                );
                 drop(input_streams);
                 // Remove existing stream first
                 if let Err(e) = self.remove_input_stream(device_id).await {
@@ -202,15 +207,25 @@ impl VirtualMixer {
             }
         }
 
-       // **CRITICAL FIX**: Extended delay to allow proper stream cleanup and prevent crashes
+        // **CRITICAL FIX**: Extended delay to allow proper stream cleanup and prevent crashes
         // Increased from 50ms to 200ms to ensure complete resource cleanup
         tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
         // **CRASH FIX**: Find the actual cpal device with enhanced error handling and fallback
-        println!("🔍 CRASH DEBUG MIXER: About to find cpal device for: {}", device_id);
-        let cpal_device = match self.audio_device_manager.find_cpal_device(device_id, true).await {
+        println!(
+            "🔍 CRASH DEBUG MIXER: About to find cpal device for: {}",
+            device_id
+        );
+        let cpal_device = match self
+            .audio_device_manager
+            .find_cpal_device(device_id, true)
+            .await
+        {
             Ok(device) => {
-                println!("✅ CRASH DEBUG MIXER: Successfully found cpal device for: {}", device_id);
+                println!(
+                    "✅ CRASH DEBUG MIXER: Successfully found cpal device for: {}",
+                    device_id
+                );
                 device
             }
             Err(e) => {
@@ -223,13 +238,20 @@ impl VirtualMixer {
                 }
 
                 // Try one more time after refresh
-                match self.audio_device_manager.find_cpal_device(device_id, true).await {
+                match self
+                    .audio_device_manager
+                    .find_cpal_device(device_id, true)
+                    .await
+                {
                     Ok(device) => {
                         info!("Found input device '{}' after refresh", device_id);
                         device
                     }
                     Err(retry_err) => {
-                        error!("Input device '{}' still not found after refresh: {}", device_id, retry_err);
+                        error!(
+                            "Input device '{}' still not found after refresh: {}",
+                            device_id, retry_err
+                        );
                         return Err(anyhow::anyhow!("Input device '{}' not found or unavailable. Original error: {}. Retry error: {}", device_id, e, retry_err));
                     }
                 }
@@ -272,12 +294,10 @@ impl VirtualMixer {
         };
         input_stream.set_adaptive_chunk_size(actual_buffer_size);
 
-
-                // Get references for the audio callback
+        // Get references for the audio callback
         let audio_buffer = input_stream.audio_buffer.clone();
         println!("🍆 all the random ass shit fucking config data. \nbuffer_size: {}\noptimal_buffer_size: {:?}\nactual_buffer_size: {}, hardware_sample_rate: {}"
         , buffer_size, optimal_buffer_size, actual_buffer_size, hardware_sample_rate);
-
 
         // Create stream config using hardware-native configuration with optimized buffer
         let stream_config = cpal::StreamConfig {
@@ -289,18 +309,22 @@ impl VirtualMixer {
         println!("🔧 FORMAT FIX: Using native format - SR: {} Hz, CH: {}, Buffer: {:?} to prevent conversion distortion",
                  config.sample_rate().0, config.channels(), optimal_buffer_size);
 
-        println!("Using stream config: channels={}, sample_rate={}, buffer_size={}",
-                stream_config.channels, stream_config.sample_rate.0, buffer_size);
+        println!(
+            "Using stream config: channels={}, sample_rate={}, buffer_size={}",
+            stream_config.channels, stream_config.sample_rate.0, buffer_size
+        );
 
         // Add to streams collection first
         let mut streams = self.input_streams.lock().await;
         streams.insert(device_id.to_string(), Arc::new(input_stream));
         drop(streams); // Release the async lock
-        // Send stream creation command to the synchronous stream manager thread
-        println!("🔍 CRASH DEBUG MIXER: About to send command to stream manager for device: {}", device_id);
+                       // Send stream creation command to the synchronous stream manager thread
+        println!(
+            "🔍 CRASH DEBUG MIXER: About to send command to stream manager for device: {}",
+            device_id
+        );
         let stream_manager = get_stream_manager();
         println!("✅ CRASH DEBUG MIXER: Got stream manager reference");
-
 
         // **CRITICAL FIX**: Create actual CPAL stream using StreamManager
         let stream_manager = get_stream_manager();
@@ -325,16 +349,21 @@ impl VirtualMixer {
                 println!("✅ CRASH DEBUG MIXER: Successfully sent command to stream manager");
             }
             Err(e) => {
-                eprintln!("❌ CRASH DEBUG MIXER: Failed to send command to stream manager: {}", e);
-                return Err(anyhow::anyhow!("Failed to send stream creation command: {}", e));
+                eprintln!(
+                    "❌ CRASH DEBUG MIXER: Failed to send command to stream manager: {}",
+                    e
+                );
+                return Err(anyhow::anyhow!(
+                    "Failed to send stream creation command: {}",
+                    e
+                ));
             }
         }
 
-                // Wait for the response from the stream manager thread
-        let result = response_rx.recv()
-        .context("Failed to receive stream creation response")?;
-
-
+        // Wait for the response from the stream manager thread
+        let result = response_rx
+            .recv()
+            .context("Failed to receive stream creation response")?;
 
         // Initialize device health tracking
         if let Some(device_info) = self.audio_device_manager.get_device(device_id).await {
@@ -346,7 +375,10 @@ impl VirtualMixer {
 
         match result {
             Ok(()) => {
-                info!("Successfully started audio input stream for: {}", device_name);
+                info!(
+                    "Successfully started audio input stream for: {}",
+                    device_name
+                );
                 info!("Successfully added real audio input stream: {}", device_id);
                 Ok(())
             }
@@ -357,7 +389,6 @@ impl VirtualMixer {
                 Err(e)
             }
         }
-
     }
 
     /// Remove an input stream
@@ -489,145 +520,162 @@ impl VirtualMixer {
         }
     }
 
+    /// Create cpal output stream (existing implementation)
+    async fn create_cpal_output_stream(&self, device_id: &str, device: cpal::Device) -> Result<()> {
+        let device_name = device.name().unwrap_or_else(|_| device_id.to_string());
+        crate::audio_debug!("Found cpal output device: {}", device_name);
 
-        /// Create cpal output stream (existing implementation)
-        async fn create_cpal_output_stream(&self, device_id: &str, device: cpal::Device) -> Result<()> {
-            let device_name = device.name().unwrap_or_else(|_| device_id.to_string());
-            crate::audio_debug!("Found cpal output device: {}", device_name);
+        // Get the default output config for this device
+        let config = device
+            .default_output_config()
+            .context("Failed to get default output config")?;
 
-            // Get the default output config for this device
-            let config = device.default_output_config()
-                .context("Failed to get default output config")?;
+        crate::audio_debug!("Output device config: {:?}", config);
 
-            crate::audio_debug!("Output device config: {:?}", config);
+        // Create AudioOutputStream structure
+        let output_stream = AudioOutputStream::new(
+            device_id.to_string(),
+            device_name.clone(),
+            self.config.sample_rate,
+        )?;
 
-            // Create AudioOutputStream structure
-            let output_stream = AudioOutputStream::new(
-                device_id.to_string(),
-                device_name.clone(),
-                self.config.sample_rate,
-            )?;
+        // Get reference to the buffer for the output callback
+        let output_buffer = output_stream.input_buffer.clone();
+        let target_sample_rate = self.config.sample_rate;
+        let buffer_size = self.config.buffer_size as usize;
 
-            // Get reference to the buffer for the output callback
-            let output_buffer = output_stream.input_buffer.clone();
-            let target_sample_rate = self.config.sample_rate;
-            let buffer_size = self.config.buffer_size as usize;
+        // Create the appropriate stream config for output with DYNAMIC buffer sizing
+        let optimal_buffer_size = self
+            .calculate_optimal_buffer_size(&device, &config, buffer_size)
+            .await?;
+        let stream_config = StreamConfig {
+            channels: 2, // Force stereo output
+            sample_rate: SampleRate(target_sample_rate),
+            buffer_size: optimal_buffer_size,
+        };
 
-            // Create the appropriate stream config for output with DYNAMIC buffer sizing
-            let optimal_buffer_size = self.calculate_optimal_buffer_size(&device, &config, buffer_size).await?;
-            let stream_config = StreamConfig {
-                channels: 2, // Force stereo output
-                sample_rate: SampleRate(target_sample_rate),
-                buffer_size: optimal_buffer_size,
-            };
+        crate::audio_debug!(
+            "Using output stream config: channels={}, sample_rate={}, buffer_size={}",
+            stream_config.channels,
+            stream_config.sample_rate.0,
+            buffer_size
+        );
 
-            crate::audio_debug!("Using output stream config: channels={}, sample_rate={}, buffer_size={}",
-                    stream_config.channels, stream_config.sample_rate.0, buffer_size);
+        // **CRASH FIX**: Simplified stream creation with comprehensive error handling
+        crate::audio_debug!(
+            "Building cpal output stream with format: {:?}",
+            config.sample_format()
+        );
 
-            // **CRASH FIX**: Simplified stream creation with comprehensive error handling
-            crate::audio_debug!("Building cpal output stream with format: {:?}", config.sample_format());
-
-            // **CRASH FIX**: Handle stream creation and start in isolated scope to avoid Send trait issues
-            let stream_started = {
-                // Create stream and handle it immediately in the same scope
-                let create_stream_result = match config.sample_format() {
-                    cpal::SampleFormat::F32 => {
-                        info!("Creating F32 output stream for device: {}", device_name);
-                        device.build_output_stream(
-                            &stream_config,
-                            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                                // Safe, simple audio callback - just fill with silence for now to prevent crashes
-                                if let Ok(mut buffer) = output_buffer.try_lock() {
-                                    let available_samples = buffer.len().min(data.len());
-                                    if available_samples > 0 {
-                                        data[..available_samples].copy_from_slice(&buffer[..available_samples]);
-                                        buffer.drain(..available_samples);
-                                        if available_samples < data.len() {
-                                            data[available_samples..].fill(0.0);
-                                        }
-                                    } else {
-                                        data.fill(0.0);
+        // **CRASH FIX**: Handle stream creation and start in isolated scope to avoid Send trait issues
+        let stream_started = {
+            // Create stream and handle it immediately in the same scope
+            let create_stream_result = match config.sample_format() {
+                cpal::SampleFormat::F32 => {
+                    info!("Creating F32 output stream for device: {}", device_name);
+                    device.build_output_stream(
+                        &stream_config,
+                        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                            // Safe, simple audio callback - just fill with silence for now to prevent crashes
+                            if let Ok(mut buffer) = output_buffer.try_lock() {
+                                let available_samples = buffer.len().min(data.len());
+                                if available_samples > 0 {
+                                    data[..available_samples]
+                                        .copy_from_slice(&buffer[..available_samples]);
+                                    buffer.drain(..available_samples);
+                                    if available_samples < data.len() {
+                                        data[available_samples..].fill(0.0);
                                     }
                                 } else {
                                     data.fill(0.0);
                                 }
-                            },
-                            |err| error!("Output stream error: {}", err),
-                            None
-                        )
-                    },
-                    _ => {
-                        info!("Creating default format output stream for device: {}", device_name);
-                        // For non-F32 formats, try to create with F32 anyway as a fallback
-                        device.build_output_stream(
-                            &StreamConfig {
-                                channels: 2,
-                                sample_rate: config.sample_rate(),
-                                buffer_size: optimal_buffer_size,
-                            },
-                            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                                // Simple silence output for stability
-                                if let Ok(mut buffer) = output_buffer.try_lock() {
-                                    let available_samples = buffer.len().min(data.len());
-                                    if available_samples > 0 {
-                                        data[..available_samples].copy_from_slice(&buffer[..available_samples]);
-                                        buffer.drain(..available_samples);
-                                        if available_samples < data.len() {
-                                            data[available_samples..].fill(0.0);
-                                        }
-                                    } else {
-                                        data.fill(0.0);
+                            } else {
+                                data.fill(0.0);
+                            }
+                        },
+                        |err| error!("Output stream error: {}", err),
+                        None,
+                    )
+                }
+                _ => {
+                    info!(
+                        "Creating default format output stream for device: {}",
+                        device_name
+                    );
+                    // For non-F32 formats, try to create with F32 anyway as a fallback
+                    device.build_output_stream(
+                        &StreamConfig {
+                            channels: 2,
+                            sample_rate: config.sample_rate(),
+                            buffer_size: optimal_buffer_size,
+                        },
+                        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                            // Simple silence output for stability
+                            if let Ok(mut buffer) = output_buffer.try_lock() {
+                                let available_samples = buffer.len().min(data.len());
+                                if available_samples > 0 {
+                                    data[..available_samples]
+                                        .copy_from_slice(&buffer[..available_samples]);
+                                    buffer.drain(..available_samples);
+                                    if available_samples < data.len() {
+                                        data[available_samples..].fill(0.0);
                                     }
                                 } else {
                                     data.fill(0.0);
                                 }
-                            },
-                            |err| error!("Output stream error: {}", err),
-                            None
-                        )
-                    }
-                };
-
-                // Handle the stream result immediately without holding it across await points
-                match create_stream_result {
-                    Ok(stream) => {
-                        info!("Successfully built output stream for: {}", device_name);
-                        // Start the stream and return success/failure
-                        match stream.play() {
-                            Ok(()) => {
-                                info!("Successfully started output stream for: {}", device_name);
-                                true
+                            } else {
+                                data.fill(0.0);
                             }
-                            Err(e) => {
-                                error!("Failed to start output stream for {}: {}", device_name, e);
-                                false
-                            }
-                        }
-                        // stream is automatically dropped at end of scope
-                    }
-                    Err(e) => {
-                        error!("Failed to build output stream for {}: {}", device_name, e);
-                        return Err(anyhow::anyhow!("Failed to create output stream: {}", e));
-                    }
+                        },
+                        |err| error!("Output stream error: {}", err),
+                        None,
+                    )
                 }
             };
 
-            if stream_started {
-                // Track this device as having an active stream (stream is out of scope, safe to await)
-                let mut active_devices = self.active_output_devices.lock().await;
-                active_devices.insert(device_id.to_string());
-            } else {
-                return Err(anyhow::anyhow!("Failed to start output stream"));
+            // Handle the stream result immediately without holding it across await points
+            match create_stream_result {
+                Ok(stream) => {
+                    info!("Successfully built output stream for: {}", device_name);
+                    // Start the stream and return success/failure
+                    match stream.play() {
+                        Ok(()) => {
+                            info!("Successfully started output stream for: {}", device_name);
+                            true
+                        }
+                        Err(e) => {
+                            error!("Failed to start output stream for {}: {}", device_name, e);
+                            false
+                        }
+                    }
+                    // stream is automatically dropped at end of scope
+                }
+                Err(e) => {
+                    error!("Failed to build output stream for {}: {}", device_name, e);
+                    return Err(anyhow::anyhow!("Failed to create output stream: {}", e));
+                }
             }
+        };
 
-            // Store our wrapper
-            let mut stream_guard = self.output_stream.lock().await;
-            *stream_guard = Some(Arc::new(output_stream));
-
-            info!("Successfully created real cpal output stream: {}", device_id);
-
-            Ok(())
+        if stream_started {
+            // Track this device as having an active stream (stream is out of scope, safe to await)
+            let mut active_devices = self.active_output_devices.lock().await;
+            active_devices.insert(device_id.to_string());
+        } else {
+            return Err(anyhow::anyhow!("Failed to start output stream"));
         }
+
+        // Store our wrapper
+        let mut stream_guard = self.output_stream.lock().await;
+        *stream_guard = Some(Arc::new(output_stream));
+
+        info!(
+            "Successfully created real cpal output stream: {}",
+            device_id
+        );
+
+        Ok(())
+    }
 
     /// refactor appears to have completely fucking reimplemented this logic, see old impl above
     // async fn create_cpal_output_stream(&self, device_id: &str, device: cpal::Device) -> Result<()> {
@@ -640,8 +688,6 @@ impl VirtualMixer {
     //         .context("Failed to get default output config")?;
 
     //     info!("Output device config: {:?}", config);
-
-
 
     //     // Create AudioOutputStream structure
     //     let output_stream = AudioOutputStream::new(
@@ -880,7 +926,10 @@ impl VirtualMixer {
         {
             let input_streams = self.input_streams.lock().await;
             if let Some((_device_id, stream)) = input_streams.iter().next() {
-                info!("🔧 SAMPLE RATE FIX: Using hardware input rate {} Hz from active stream", stream.sample_rate);
+                info!(
+                    "🔧 SAMPLE RATE FIX: Using hardware input rate {} Hz from active stream",
+                    stream.sample_rate
+                );
                 return stream.sample_rate;
             }
         }
@@ -889,14 +938,20 @@ impl VirtualMixer {
         {
             let output_stream_guard = self.output_stream.lock().await;
             if let Some(stream) = output_stream_guard.as_ref() {
-                info!("🔧 SAMPLE RATE FIX: Using hardware output rate {} Hz from active stream", stream.sample_rate);
+                info!(
+                    "🔧 SAMPLE RATE FIX: Using hardware output rate {} Hz from active stream",
+                    stream.sample_rate
+                );
                 return stream.sample_rate;
             }
         }
 
         // Last resort: use mixer configured rate (should rarely happen)
         let mixer_rate = self.config.sample_rate;
-        warn!("🔧 SAMPLE RATE FIX: No active streams found, falling back to mixer config {} Hz", mixer_rate);
+        warn!(
+            "🔧 SAMPLE RATE FIX: No active streams found, falling back to mixer config {} Hz",
+            mixer_rate
+        );
         mixer_rate
     }
 

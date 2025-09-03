@@ -58,7 +58,6 @@ impl VirtualMixerHandle {
         //         channels.len()
         //     );
 
-
         //     for (device_id, _stream) in streams.iter() {
         //         crate::audio_debug!("  Active stream: {}", device_id);
         //     }
@@ -83,7 +82,6 @@ impl VirtualMixerHandle {
                 .iter()
                 .find(|ch| ch.input_device_id.as_ref() == Some(device_id))
             {
-
                 let stream_samples = stream.process_with_effects(channel);
 
                 if !stream_samples.is_empty() {
