@@ -1255,12 +1255,12 @@ impl VirtualMixer {
                 // **TIMING METRICS**: Report comprehensive timing every 10 seconds
                 if frame_count % ((sample_rate / buffer_size) as u64 * 10) == 0 {
                     if let Ok(metrics_guard) = timing_metrics.try_lock() {
-                        crate::audio_debug!("📈 {}", metrics_guard.get_performance_summary());
+                       println!("📈 {}", metrics_guard.get_performance_summary());
                     }
                     if let Ok(clock_guard) = audio_clock.try_lock() {
                         let sample_timestamp = clock_guard.get_sample_timestamp();
                         let drift = clock_guard.get_drift_compensation();
-                        crate::audio_debug!("⏰ Audio Clock: {} samples processed, {:.2}ms drift",
+                        println!("⏰ Audio Clock: {} samples processed, {:.2}ms drift",
                             sample_timestamp, drift / 1000.0);
                     }
                 }
