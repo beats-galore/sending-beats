@@ -1217,6 +1217,7 @@ impl VirtualMixer {
 
                 // **PRIORITY 5: Audio Clock Synchronization** - Update master clock and timing metrics
                 let samples_processed = buffer_size as usize;
+
                 let processing_time_us = timing_start.elapsed().as_micros() as f64;
 
                 let processing_time_us = timing_start.elapsed().as_micros() as f64;

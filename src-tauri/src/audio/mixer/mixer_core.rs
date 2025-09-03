@@ -50,28 +50,28 @@ impl VirtualMixerHandle {
         };
 
         // Log detailed status every 100 calls
-        if debug_count % 1000 == 0 {
-            crate::audio_debug!(
-                "🔍 INPUT STREAM STATUS Debug #{}: {} active streams, {} configured channels",
-                debug_count,
-                streams.len(),
-                channels.len()
-            );
+        // if debug_count % 1000 == 0 {
+        //     crate::audio_debug!(
+        //         "🔍 INPUT STREAM STATUS Debug #{}: {} active streams, {} configured channels",
+        //         debug_count,
+        //         streams.len(),
+        //         channels.len()
+        //     );
 
 
-            for (device_id, _stream) in streams.iter() {
-                crate::audio_debug!("  Active stream: {}", device_id);
-            }
+        //     for (device_id, _stream) in streams.iter() {
+        //         crate::audio_debug!("  Active stream: {}", device_id);
+        //     }
 
-            for channel in channels.iter() {
-                crate::audio_debug!(
-                    "  Configured channel '{}': input_device={:?}, muted={}",
-                    channel.name,
-                    channel.input_device_id,
-                    channel.muted
-                );
-            }
-        }
+        //     for channel in channels.iter() {
+        //         crate::audio_debug!(
+        //             "  Configured channel '{}': input_device={:?}, muted={}",
+        //             channel.name,
+        //             channel.input_device_id,
+        //             channel.muted
+        //         );
+        //     }
+        // }
 
         let num_streams = streams.len();
         let num_channels = channels.len();
@@ -83,7 +83,9 @@ impl VirtualMixerHandle {
                 .iter()
                 .find(|ch| ch.input_device_id.as_ref() == Some(device_id))
             {
+
                 let stream_samples = stream.process_with_effects(channel);
+                println!("processing with effects, got stream samples {}", stream_samples.len());
                 if !stream_samples.is_empty() {
                     let peak = stream_samples
                         .iter()
@@ -101,6 +103,7 @@ impl VirtualMixerHandle {
                 }
             } else {
                 // No channel config found, use raw samples
+                println!("processing raw");
                 let stream_samples = stream.get_samples();
                 if !stream_samples.is_empty() {
                     let peak = stream_samples
@@ -121,49 +124,49 @@ impl VirtualMixerHandle {
         }
 
         // **NEW**: Collect samples from virtual application audio input streams
-        let virtual_streams = crate::audio::ApplicationAudioManager::get_virtual_input_streams();
-        for (device_id, virtual_stream) in virtual_streams.iter() {
-            // Find the channel configuration for this virtual stream
-            if let Some(channel) = channels
-                .iter()
-                .find(|ch| ch.input_device_id.as_ref() == Some(device_id))
-            {
-                let stream_samples = virtual_stream.process_with_effects(channel);
-                if !stream_samples.is_empty() {
-                    let peak = stream_samples
-                        .iter()
-                        .map(|&s| s.abs())
-                        .fold(0.0f32, f32::max);
-                    let rms = (stream_samples.iter().map(|&s| s * s).sum::<f32>()
-                        / stream_samples.len() as f32)
-                        .sqrt();
+        // let virtual_streams = crate::audio::ApplicationAudioManager::get_virtual_input_streams();
+        // for (device_id, virtual_stream) in virtual_streams.iter() {
+        //     // Find the channel configuration for this virtual stream
+        //     if let Some(channel) = channels
+        //         .iter()
+        //         .find(|ch| ch.input_device_id.as_ref() == Some(device_id))
+        //     {
+        //         let stream_samples = virtual_stream.process_with_effects(channel);
+        //         if !stream_samples.is_empty() {
+        //             let peak = stream_samples
+        //                 .iter()
+        //                 .map(|&s| s.abs())
+        //                 .fold(0.0f32, f32::max);
+        //             let rms = (stream_samples.iter().map(|&s| s * s).sum::<f32>()
+        //                 / stream_samples.len() as f32)
+        //                 .sqrt();
 
-                    if debug_count % 200 == 0 || (peak > 0.01 && debug_count % 50 == 0) {
-                        crate::audio_debug!("🎯 COLLECT VIRTUAL APP [{}]: {} samples collected, peak: {:.4}, rms: {:.4}, channel: {}",
-                            device_id, stream_samples.len(), peak, rms, channel.name);
-                    }
-                    samples.insert(device_id.clone(), stream_samples);
-                }
-            } else {
-                // No channel config found, use raw samples from virtual stream
-                let stream_samples = virtual_stream.get_samples();
-                if !stream_samples.is_empty() {
-                    let peak = stream_samples
-                        .iter()
-                        .map(|&s| s.abs())
-                        .fold(0.0f32, f32::max);
-                    let rms = (stream_samples.iter().map(|&s| s * s).sum::<f32>()
-                        / stream_samples.len() as f32)
-                        .sqrt();
+        //             if debug_count % 200 == 0 || (peak > 0.01 && debug_count % 50 == 0) {
+        //                 crate::audio_debug!("🎯 COLLECT VIRTUAL APP [{}]: {} samples collected, peak: {:.4}, rms: {:.4}, channel: {}",
+        //                     device_id, stream_samples.len(), peak, rms, channel.name);
+        //             }
+        //             samples.insert(device_id.clone(), stream_samples);
+        //         }
+        //     } else {
+        //         // No channel config found, use raw samples from virtual stream
+        //         let stream_samples = virtual_stream.get_samples();
+        //         if !stream_samples.is_empty() {
+        //             let peak = stream_samples
+        //                 .iter()
+        //                 .map(|&s| s.abs())
+        //                 .fold(0.0f32, f32::max);
+        //             let rms = (stream_samples.iter().map(|&s| s * s).sum::<f32>()
+        //                 / stream_samples.len() as f32)
+        //                 .sqrt();
 
-                    if debug_count % 200 == 0 || (peak > 0.01 && debug_count % 50 == 0) {
-                        crate::audio_debug!("🎯 COLLECT VIRTUAL APP RAW [{}]: {} samples collected, peak: {:.4}, rms: {:.4} (no channel config)",
-                            device_id, stream_samples.len(), peak, rms);
-                    }
-                    samples.insert(device_id.clone(), stream_samples);
-                }
-            }
-        }
+        //             if debug_count % 200 == 0 || (peak > 0.01 && debug_count % 50 == 0) {
+        //                 crate::audio_debug!("🎯 COLLECT VIRTUAL APP RAW [{}]: {} samples collected, peak: {:.4}, rms: {:.4} (no channel config)",
+        //                     device_id, stream_samples.len(), peak, rms);
+        //             }
+        //             samples.insert(device_id.clone(), stream_samples);
+        //         }
+        //     }
+        // }
 
         let streams_len = streams.len(); // Get length before drop
         drop(streams); // Release the lock before potentially expensive operations
