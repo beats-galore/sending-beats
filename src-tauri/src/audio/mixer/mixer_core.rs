@@ -85,7 +85,7 @@ impl VirtualMixerHandle {
             {
 
                 let stream_samples = stream.process_with_effects(channel);
-                println!("processing with effects, got stream samples {}", stream_samples.len());
+
                 if !stream_samples.is_empty() {
                     let peak = stream_samples
                         .iter()

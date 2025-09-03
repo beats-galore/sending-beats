@@ -129,17 +129,40 @@ impl VirtualMixer {
         false
     }
 
-    /// Calculate optimal buffer size for a specific device
-    async fn calculate_optimal_buffer_size(
-        &self,
-        device: &cpal::Device,
-        config: &cpal::SupportedStreamConfig,
-        requested_size: usize,
-    ) -> Result<cpal::BufferSize> {
-        // For now, use default buffer size to ensure compatibility
-        // Could be enhanced later with device-specific optimization
-        Ok(cpal::BufferSize::Default)
+ /// Calculate optimal buffer size based on hardware capabilities and performance requirements
+ async fn calculate_optimal_buffer_size(
+    &self,
+    device: &cpal::Device,
+    config: &cpal::SupportedStreamConfig,
+    fallback_size: usize
+) -> Result<BufferSize> {
+    // Try to get the device's preferred buffer size
+    match device.default_input_config() {
+        Ok(device_config) => {
+            // Calculate optimal buffer size based on sample rate and latency requirements
+            let sample_rate = config.sample_rate().0;
+            let channels = config.channels();
+
+            // Target latency: 5-10ms for professional audio (balance between latency and stability)
+            let target_latency_ms = if sample_rate >= 48000 { 5.0 } else { 10.0 };
+            let target_buffer_size = ((sample_rate as f32 * target_latency_ms / 1000.0) as usize)
+                .max(64)   // Minimum 64 samples for stability
+                .min(2048); // Maximum 2048 samples to prevent excessive latency
+
+            // Round to next power of 2 for optimal hardware performance
+            let optimal_size = target_buffer_size.next_power_of_two().min(1024);
+
+            info!("🔧 DYNAMIC BUFFER: Calculated optimal buffer size {} for device (SR: {}, CH: {}, Target: {}ms)",
+                  optimal_size, sample_rate, channels, target_latency_ms);
+
+            Ok(BufferSize::Fixed(optimal_size as u32))
+        }
+        Err(e) => {
+            warn!("Failed to get device config for buffer optimization: {}, using fallback", e);
+            Ok(BufferSize::Fixed(fallback_size as u32))
+        }
     }
+}
 
     /// Add an input stream for the specified device
     pub async fn add_input_stream(&self, device_id: &str) -> Result<()> {
@@ -252,6 +275,8 @@ impl VirtualMixer {
 
                 // Get references for the audio callback
         let audio_buffer = input_stream.audio_buffer.clone();
+        println!("🍆 all the random ass shit fucking config data. \nbuffer_size: {}\noptimal_buffer_size: {:?}\nactual_buffer_size: {}, hardware_sample_rate: {}"
+        , buffer_size, optimal_buffer_size, actual_buffer_size, hardware_sample_rate);
 
 
         // Create stream config using hardware-native configuration with optimized buffer
