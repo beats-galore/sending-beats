@@ -1182,12 +1182,16 @@ impl VirtualMixer {
                 }
 
                 // Update mix buffer
-                if let Ok(mut buffer_guard) = mix_buffer.try_lock() {
-                    if buffer_guard.len() == reusable_output_buffer.len() {
-                        buffer_guard.copy_from_slice(&reusable_output_buffer);
+                match mix_buffer.try_lock() {
+                    Ok(mut buffer_guard) => {
+                        if buffer_guard.len() == reusable_output_buffer.len() {
+                            buffer_guard.copy_from_slice(&reusable_output_buffer);
+                        }
+                    },
+                    Err(_) => {
+                        eprintln!("🚨 CRITICAL: Failed to update mix_buffer - audio output may be silent!");
                     }
                 }
-
                 // Send to output stream
                 mixer_handle.send_to_output(&reusable_output_buffer).await;
 
@@ -1195,20 +1199,20 @@ impl VirtualMixer {
                 let _ = audio_output_tx.try_send(reusable_output_buffer.clone());
 
                 // **STREAMING INTEGRATION**: Also send to broadcast channel for streaming bridge
-                match audio_output_broadcast_tx.send(reusable_output_buffer.clone()) {
-                    Ok(_) => {
-                        if should_log_debug { // Log every ~100ms at 48kHz
-                            crate::audio_debug!("📡 Mixer broadcast: sent {} samples to {} receivers",
-                                reusable_output_buffer.len(),
-                                audio_output_broadcast_tx.receiver_count());
-                        }
-                    },
-                    Err(tokio::sync::broadcast::error::SendError(_)) => {
-                        if should_log_debug {
-                            crate::audio_debug!("📡 Mixer broadcast: no active receivers (recording/streaming stopped)");
-                        }
-                    }
-                }
+                // match audio_output_broadcast_tx.send(reusable_output_buffer.clone()) {
+                //     Ok(_) => {
+                //         if should_log_debug { // Log every ~100ms at 48kHz
+                //             crate::audio_debug!("📡 Mixer broadcast: sent {} samples to {} receivers",
+                //                 reusable_output_buffer.len(),
+                //                 audio_output_broadcast_tx.receiver_count());
+                //         }
+                //     },
+                //     Err(tokio::sync::broadcast::error::SendError(_)) => {
+                //         if should_log_debug {
+                //             crate::audio_debug!("📡 Mixer broadcast: no active receivers (recording/streaming stopped)");
+                //         }
+                //     }
+                // }
                 // Don't break on send failure - just continue processing
 
                 // **PRIORITY 5: Audio Clock Synchronization** - Update master clock and timing metrics
@@ -1231,8 +1235,11 @@ impl VirtualMixer {
                 if let Some(sync_info) = clock_guard.update(samples_processed) {
                     // Clock detected timing drift - log it
                     if sync_info.needs_adjustment {
-                        crate::audio_debug!("⚠️  TIMING DRIFT: {:.2}ms drift detected at {} samples",
+                        if should_log_debug {
+                            println!("⚠️  TIMING DRIFT: {:.2}ms drift detected at {} samples",
                             sync_info.drift_microseconds / 1000.0, sync_info.samples_processed);
+                        }
+
 
                         // Record sync adjustment in metrics
                         if let Ok(mut metrics_guard) = timing_metrics.try_lock() {
@@ -1287,7 +1294,7 @@ impl VirtualMixer {
 
                 // Debug timing changes every 5 seconds
                 if frame_count % ((sample_rate / buffer_size) as u64 * 5) == 0 {
-                    crate::audio_debug!("🕐 CALLBACK-DRIVEN: Processing triggered by audio data availability, no timer drift (was sleeping {:.2}ms)",
+                    println!("🕐 CALLBACK-DRIVEN: Processing triggered by audio data availability, no timer drift (was sleeping {:.2}ms)",
                         hardware_buffer_duration_ms);
                 }
 
@@ -1302,7 +1309,7 @@ impl VirtualMixer {
                 } else if elapsed.as_millis() > 50 {
                     // Processing took too long (> 50ms), log the overrun
                     if should_log_debug {
-                        crate::audio_debug!("⚠️  PROCESSING OVERRUN: {}ms processing time (audio callback driven)", elapsed.as_millis());
+                        println!("⚠️  PROCESSING OVERRUN: {}ms processing time (audio callback driven)", elapsed.as_millis());
                     }
                     tokio::task::yield_now().await;
                 }
