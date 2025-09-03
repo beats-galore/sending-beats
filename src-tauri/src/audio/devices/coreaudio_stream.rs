@@ -1,24 +1,22 @@
 #[cfg(target_os = "macos")]
 use anyhow::Result;
-use coreaudio_sys::{
-    kAudioFormatFlagIsFloat, kAudioFormatFlagIsNonInterleaved, kAudioFormatFlagIsPacked,
-    kAudioFormatLinearPCM, kAudioOutputUnitProperty_CurrentDevice,
-    kAudioOutputUnitProperty_EnableIO, kAudioUnitManufacturer_Apple,
-    kAudioUnitProperty_SetRenderCallback, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Global,
-    kAudioUnitScope_Input, kAudioUnitScope_Output, kAudioUnitSubType_HALOutput,
-    kAudioUnitType_Output, AURenderCallbackStruct, AudioBufferList, AudioComponentDescription,
-    AudioComponentFindNext, AudioComponentInstanceDispose, AudioComponentInstanceNew,
-    AudioDeviceID, AudioOutputUnitStart, AudioOutputUnitStop, AudioStreamBasicDescription,
-    AudioTimeStamp, AudioUnit, AudioUnitInitialize, AudioUnitRenderActionFlags,
-    AudioUnitSetProperty, AudioUnitUninitialize, OSStatus,
-};
-use std::os::raw::c_void;
-use std::ptr;
-use std::sync::{
-    atomic::{AtomicPtr, Ordering},
-    Arc, Mutex,
-};
 use tracing::warn;
+use std::sync::{Arc, Mutex, atomic::{AtomicPtr, Ordering}};
+use coreaudio_sys::{
+    AudioDeviceID, AudioUnit, AudioComponentDescription,
+    kAudioUnitType_Output, kAudioUnitSubType_HALOutput, kAudioUnitManufacturer_Apple,
+    kAudioOutputUnitProperty_CurrentDevice, kAudioUnitProperty_StreamFormat,
+    kAudioOutputUnitProperty_EnableIO, kAudioUnitScope_Input, kAudioUnitScope_Output,
+    kAudioUnitScope_Global, AudioStreamBasicDescription, kAudioFormatLinearPCM,
+    kAudioFormatFlagIsFloat, kAudioFormatFlagIsPacked, kAudioFormatFlagIsNonInterleaved,
+    AudioComponentFindNext, AudioComponentInstanceNew, AudioUnitInitialize,
+    AudioUnitSetProperty, AudioOutputUnitStart, AudioOutputUnitStop,
+    AudioUnitUninitialize, AudioComponentInstanceDispose,
+    AURenderCallbackStruct, kAudioUnitProperty_SetRenderCallback,
+    AudioUnitRenderActionFlags, AudioTimeStamp, AudioBufferList, OSStatus
+};
+use std::ptr;
+use std::os::raw::c_void;
 
 /// # CoreAudio Thread Safety Documentation
 ///
@@ -65,10 +63,7 @@ impl std::fmt::Debug for CoreAudioOutputStream {
             .field("channels", &self.channels)
             .field("is_running", &self.is_running)
             .field("audio_unit", &self.audio_unit.is_some())
-            .field(
-                "callback_buffer",
-                &(!self.callback_buffer.load(Ordering::Acquire).is_null()),
-            )
+            .field("callback_buffer", &(!self.callback_buffer.load(Ordering::Acquire).is_null()))
             .finish()
     }
 }
@@ -106,10 +101,7 @@ impl CoreAudioOutputStream {
     }
 
     pub fn start(&mut self) -> Result<()> {
-        println!(
-            "Starting CoreAudio Audio Unit stream for device: {}",
-            self.device_name
-        );
+        println!("Starting CoreAudio Audio Unit stream for device: {}", self.device_name);
 
         // Step 1: Find the Audio Unit component
         let component_desc = AudioComponentDescription {
@@ -129,10 +121,7 @@ impl CoreAudioOutputStream {
         let mut audio_unit: AudioUnit = ptr::null_mut();
         let status = unsafe { AudioComponentInstanceNew(component, &mut audio_unit) };
         if status != 0 {
-            return Err(anyhow::anyhow!(
-                "Failed to create Audio Unit instance: {}",
-                status
-            ));
+            return Err(anyhow::anyhow!("Failed to create Audio Unit instance: {}", status));
         }
 
         // Step 3: Enable output on the Audio Unit
@@ -235,10 +224,7 @@ impl CoreAudioOutputStream {
         let status = unsafe { AudioUnitInitialize(audio_unit) };
         if status != 0 {
             unsafe { AudioComponentInstanceDispose(audio_unit) };
-            return Err(anyhow::anyhow!(
-                "Failed to initialize Audio Unit: {}",
-                status
-            ));
+            return Err(anyhow::anyhow!("Failed to initialize Audio Unit: {}", status));
         }
 
         // Step 8: Start the Audio Unit
@@ -255,23 +241,14 @@ impl CoreAudioOutputStream {
         self.audio_unit = Some(audio_unit);
         *self.is_running.lock().unwrap() = true;
 
-        println!(
-            "✅ CoreAudio Audio Unit stream started for: {} (device {})",
-            self.device_name, self.device_id
-        );
-        println!(
-            "   Real audio streaming active with {} channels at {} Hz",
-            self.channels, self.sample_rate
-        );
+        println!("✅ CoreAudio Audio Unit stream started for: {} (device {})", self.device_name, self.device_id);
+        println!("   Real audio streaming active with {} channels at {} Hz", self.channels, self.sample_rate);
 
         Ok(())
     }
 
     pub fn stop(&mut self) -> Result<()> {
-        println!(
-            "🔴 STOP: Starting graceful stop sequence for device: {}",
-            self.device_name
-        );
+        println!("🔴 STOP: Starting graceful stop sequence for device: {}", self.device_name);
 
         // First, mark as not running to prevent callback from processing
         if let Ok(mut is_running) = self.is_running.lock() {
@@ -322,9 +299,7 @@ impl CoreAudioOutputStream {
         println!("🔴 STOP: Wait complete");
 
         println!("🔴 STOP: Swapping callback buffer pointer...");
-        let buffer_ptr = self
-            .callback_buffer
-            .swap(ptr::null_mut(), Ordering::Release);
+        let buffer_ptr = self.callback_buffer.swap(ptr::null_mut(), Ordering::Release);
         println!("🔴 STOP: Buffer pointer swapped, checking if null...");
 
         if !buffer_ptr.is_null() {
@@ -341,10 +316,7 @@ impl CoreAudioOutputStream {
                     let _ = Box::from_raw(buffer_ptr);
                     println!("🔴 STOP: Buffer deallocated successfully");
                 } else {
-                    println!(
-                        "🔴 STOP: NOT deallocating buffer - {} references still exist",
-                        strong_count
-                    );
+                    println!("🔴 STOP: NOT deallocating buffer - {} references still exist", strong_count);
                 }
             }
         } else {
@@ -435,8 +407,7 @@ extern "C" fn render_callback(
 
                 // Validate output data pointer and size
                 if !output_data.is_null() && audio_buffer.mDataByteSize > 0 {
-                    let total_samples =
-                        (audio_buffer.mDataByteSize as usize) / std::mem::size_of::<f32>();
+                    let total_samples = (audio_buffer.mDataByteSize as usize) / std::mem::size_of::<f32>();
                     let samples_to_copy = total_samples.min(buffer.len());
 
                     if samples_to_copy > 0 && !buffer.is_empty() {
@@ -498,7 +469,11 @@ fn fill_buffers_with_silence(buffer_list: &mut AudioBufferList, _frames_needed: 
             let total_samples = (audio_buffer.mDataByteSize as usize) / std::mem::size_of::<f32>();
 
             unsafe {
-                std::ptr::write_bytes(output_data, 0, total_samples * std::mem::size_of::<f32>());
+                std::ptr::write_bytes(
+                    output_data,
+                    0,
+                    total_samples * std::mem::size_of::<f32>(),
+                );
             }
         }
     }

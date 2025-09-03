@@ -58,6 +58,7 @@ impl VirtualMixerHandle {
                 channels.len()
             );
 
+
             for (device_id, _stream) in streams.iter() {
                 crate::audio_debug!("  Active stream: {}", device_id);
             }
@@ -93,7 +94,7 @@ impl VirtualMixerHandle {
                         .sqrt();
 
                     if debug_count % 200 == 0 || (peak > 0.01 && debug_count % 50 == 0) {
-                        crate::audio_debug!("🎯 COLLECT WITH EFFECTS [{}]: {} samples collected, peak: {:.4}, rms: {:.4}, channel: {}", 
+                        crate::audio_debug!("🎯 COLLECT WITH EFFECTS [{}]: {} samples collected, peak: {:.4}, rms: {:.4}, channel: {}",
                             device_id, stream_samples.len(), peak, rms, channel.name);
                     }
                     samples.insert(device_id.clone(), stream_samples);
@@ -111,7 +112,7 @@ impl VirtualMixerHandle {
                         .sqrt();
 
                     if debug_count % 200 == 0 || (peak > 0.01 && debug_count % 50 == 0) {
-                        println!("🎯 COLLECT RAW [{}]: {} samples collected, peak: {:.4}, rms: {:.4} (no channel config)", 
+                        println!("🎯 COLLECT RAW [{}]: {} samples collected, peak: {:.4}, rms: {:.4} (no channel config)",
                             device_id, stream_samples.len(), peak, rms);
                     }
                     samples.insert(device_id.clone(), stream_samples);
@@ -138,7 +139,7 @@ impl VirtualMixerHandle {
                         .sqrt();
 
                     if debug_count % 200 == 0 || (peak > 0.01 && debug_count % 50 == 0) {
-                        crate::audio_debug!("🎯 COLLECT VIRTUAL APP [{}]: {} samples collected, peak: {:.4}, rms: {:.4}, channel: {}", 
+                        crate::audio_debug!("🎯 COLLECT VIRTUAL APP [{}]: {} samples collected, peak: {:.4}, rms: {:.4}, channel: {}",
                             device_id, stream_samples.len(), peak, rms, channel.name);
                     }
                     samples.insert(device_id.clone(), stream_samples);
@@ -156,7 +157,7 @@ impl VirtualMixerHandle {
                         .sqrt();
 
                     if debug_count % 200 == 0 || (peak > 0.01 && debug_count % 50 == 0) {
-                        crate::audio_debug!("🎯 COLLECT VIRTUAL APP RAW [{}]: {} samples collected, peak: {:.4}, rms: {:.4} (no channel config)", 
+                        crate::audio_debug!("🎯 COLLECT VIRTUAL APP RAW [{}]: {} samples collected, peak: {:.4}, rms: {:.4} (no channel config)",
                             device_id, stream_samples.len(), peak, rms);
                     }
                     samples.insert(device_id.clone(), stream_samples);
@@ -177,7 +178,7 @@ impl VirtualMixerHandle {
             // Check if real levels are already available, otherwise generate representative levels
 
             if debug_count % 200 == 0 {
-                crate::audio_debug!("🔧 DEBUG: Bridge condition met - samples empty but {} streams active, checking {} channels", 
+                crate::audio_debug!("🔧 DEBUG: Bridge condition met - samples empty but {} streams active, checking {} channels",
                     streams_len, num_channels);
             }
 
@@ -195,7 +196,7 @@ impl VirtualMixerHandle {
                         for (channel_id, (peak_left, rms_left, peak_right, rms_right)) in
                             channel_levels_guard.iter()
                         {
-                            crate::audio_debug!("   Real Level [Channel {}]: L(peak={:.4}, rms={:.4}) R(peak={:.4}, rms={:.4})", 
+                            crate::audio_debug!("   Real Level [Channel {}]: L(peak={:.4}, rms={:.4}) R(peak={:.4}, rms={:.4})",
                                 channel_id, peak_left, rms_left, peak_right, rms_right);
                         }
                     }
@@ -226,7 +227,7 @@ impl VirtualMixerHandle {
                                         );
 
                                         if debug_count % 200 == 0 {
-                                            println!("🔗 BRIDGE [Channel {}]: Generated mock VU levels (peak: {:.4}, rms: {:.4}) - Real processing happening elsewhere", 
+                                            println!("🔗 BRIDGE [Channel {}]: Generated mock VU levels (peak: {:.4}, rms: {:.4}) - Real processing happening elsewhere",
                                                 channel.id, mock_peak, mock_rms);
                                         }
                                     }
@@ -259,7 +260,7 @@ impl VirtualMixerHandle {
 
         // Debug: Log collection summary
         if debug_count % 1000 == 0 {
-            crate::audio_debug!("📈 COLLECTION SUMMARY: {} streams available, {} channels configured, {} samples collected", 
+            crate::audio_debug!("📈 COLLECTION SUMMARY: {} streams available, {} channels configured, {} samples collected",
                 streams_len, num_channels, samples.len());
 
             if samples.is_empty() && streams_len > 0 {
@@ -311,6 +312,7 @@ impl VirtualMixerHandle {
                 if let Some(output_stream) = output_streams.get(&output_device.device_id) {
                     // Apply individual output device gain
                     if output_device.gain != 1.0 {
+                        println!("sending gained samples");
                         let mut gained_samples = samples.to_vec();
                         for sample in gained_samples.iter_mut() {
                             *sample *= output_device.gain;

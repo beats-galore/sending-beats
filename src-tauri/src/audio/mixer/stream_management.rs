@@ -151,6 +151,7 @@ impl AudioInputStream {
 
             // Apply effects if enabled
             if channel.effects_enabled && !samples.is_empty() {
+                println!("🔊 Applying effects to samples: {}", samples.len());
                 if let Ok(mut effects) = self.effects_chain.try_lock() {
                     // Update effects parameters based on channel settings
                     effects.set_eq_gain(EQBand::Low, channel.eq_low_gain);

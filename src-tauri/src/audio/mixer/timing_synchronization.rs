@@ -71,8 +71,7 @@ impl AudioClock {
             // Instead, we only track callback consistency and hardware timing variations.
 
             let callback_interval_us = now.duration_since(self.last_sync_time).as_micros() as f64;
-            let expected_interval_us =
-                (self.sync_interval_samples as f64 * 1_000_000.0) / self.sample_rate as f64;
+            let expected_interval_us = (self.sync_interval_samples as f64 * 1_000_000.0) / self.sample_rate as f64;
 
             // Only report drift if callback intervals are inconsistent with expected buffer timing
             // This detects real hardware timing issues, not software processing timing
@@ -90,15 +89,14 @@ impl AudioClock {
 
             let sync = TimingSync {
                 samples_processed: self.samples_processed,
-                callback_interval_us,
-                expected_interval_us,
-                timing_variation: interval_variation,
-                is_drift_significant: is_hardware_drift,
+                drift_microseconds: interval_variation,
+                needs_adjustment: is_hardware_drift,
+                sync_time: now,
             };
 
             // Only log actual hardware timing issues, not software processing timing
             if is_hardware_drift {
-                crate::audio_debug!("⏰ HARDWARE TIMING: Callback interval variation: {:.2}ms (expected: {:.2}ms, actual: {:.2}ms)", 
+                crate::audio_debug!("⏰ HARDWARE TIMING: Callback interval variation: {:.2}ms (expected: {:.2}ms, actual: {:.2}ms)",
                     interval_variation / 1000.0, expected_interval_us / 1000.0, callback_interval_us / 1000.0);
             }
 
@@ -169,27 +167,11 @@ impl AudioClock {
 #[derive(Debug, Clone)]
 pub struct TimingSync {
     pub samples_processed: u64,
-    pub callback_interval_us: f64,
-    pub expected_interval_us: f64,
-    pub timing_variation: f64,
-    pub is_drift_significant: bool,
+    pub drift_microseconds: f64,
+    pub needs_adjustment: bool,
+    pub sync_time: std::time::Instant,
 }
 
-impl TimingSync {
-    /// Get timing variation as a percentage
-    pub fn get_variation_percentage(&self) -> f64 {
-        if self.expected_interval_us > 0.0 {
-            (self.timing_variation / self.expected_interval_us) * 100.0
-        } else {
-            0.0
-        }
-    }
-
-    /// Check if timing is within acceptable bounds
-    pub fn is_timing_acceptable(&self) -> bool {
-        !self.is_drift_significant
-    }
-}
 
 /// Performance metrics for timing analysis
 #[derive(Debug, Clone)]
