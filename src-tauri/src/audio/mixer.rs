@@ -1168,6 +1168,12 @@ impl VirtualMixer {
                 let hardware_buffer_duration_ms = (buffer_size as f32 / sample_rate as f32) * 1000.0;
                 
                 // Debug timing changes every 5 seconds
+                if frame_count % ((sample_rate / buffer_size) as u64 * 5) == 0 {
+                    println!("🕐 CALLBACK-DRIVEN: Processing triggered by audio data availability, no timer drift (was sleeping {:.2}ms)",
+                        hardware_buffer_duration_ms);
+                }
+
+                // Debug timing changes every 5 seconds
                 if frame_count % ((sample_rate / buffer_size) as u64 * 10) == 0 {
                     if let Ok(metrics_guard) = timing_metrics.try_lock() {
                        println!("📈 {}", metrics_guard.get_summary());
