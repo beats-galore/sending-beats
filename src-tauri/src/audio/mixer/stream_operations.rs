@@ -83,7 +83,7 @@ impl VirtualMixer {
     /// Get information about active streams
     pub async fn get_stream_info(&self) -> StreamInfo {
         let input_count = {
-            let input_streams = self.input_streams.lock().await;
+            let input_streams: tokio::sync::MutexGuard<'_, std::collections::HashMap<String, Arc<AudioInputStream>>> = self.input_streams.lock().await;
             input_streams.len()
         };
 
@@ -1296,9 +1296,9 @@ impl VirtualMixer {
                 // Don't break on send failure - just continue processing
 
                 // **PRIORITY 5: Audio Clock Synchronization** - Update master clock and timing metrics
-                let samples_processed = buffer_size as usize;
-
-                let processing_time_us = timing_start.elapsed().as_micros() as f64;
+                let actual_samples_processed: usize = input_samples.values().map(|v| v.len()).sum();
+                let samples_processed = actual_samples_processed;
+                println!("actual samples processed? {}", samples_processed);
 
                 let processing_time_us = timing_start.elapsed().as_micros() as f64;
                 let actual_input_samples = input_samples.len();

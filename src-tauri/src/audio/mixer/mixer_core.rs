@@ -101,7 +101,6 @@ impl VirtualMixerHandle {
                 }
             } else {
                 // No channel config found, use raw samples
-                println!("processing raw");
                 let stream_samples = stream.get_samples();
                 if !stream_samples.is_empty() {
                     let peak = stream_samples
