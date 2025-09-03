@@ -850,6 +850,10 @@ impl VirtualMixer {
             println!("🎵 Audio processing thread started with real mixing, optimized buffers, and clock synchronization");
 
             while is_running.load(Ordering::Relaxed) {
+                frame_count += 1;
+                let should_log_debug = frame_count % 1000 == 0;
+
+
                 let process_start = std::time::Instant::now();
                 
                 // **PRIORITY 5: Audio Clock Synchronization** - Track processing timing
@@ -1090,14 +1094,12 @@ impl VirtualMixer {
                     Err(tokio::sync::broadcast::error::SendError(_)) => {
                         // Channel overflow or no receivers - this is normal, just log occasionally
                         if frame_count % 480 == 0 {
-                            println!("📡 Mixer broadcast: no active receivers (recording/streaming stopped)");
+                            // println!("📡 Mixer broadcast: no active receivers (recording/streaming stopped)");
                         }
                     }
                 }
                 // Don't break on send failure - just continue processing
 
-                frame_count += 1;
-                
                 // **PRIORITY 5: Audio Clock Synchronization** - Update master clock and timing metrics
                 let samples_processed = buffer_size as usize;
                 let processing_time_us = timing_start.elapsed().as_micros() as f64;
@@ -1107,8 +1109,11 @@ impl VirtualMixer {
                     if let Some(sync_info) = clock_guard.update(samples_processed) {
                         // Clock detected timing drift - log it
                         if sync_info.needs_adjustment {
-                            crate::audio_debug!("⚠️  TIMING DRIFT: {:.2}ms drift detected at {} samples", 
+                            if should_log_debug {
+                                println!("⚠️  TIMING DRIFT: {:.2}ms drift detected at {} samples",
                                 sync_info.drift_microseconds / 1000.0, sync_info.samples_processed);
+                            }
+                              
                             
                             // Record sync adjustment in metrics
                             if let Ok(mut metrics_guard) = timing_metrics.try_lock() {
@@ -1152,7 +1157,7 @@ impl VirtualMixer {
                     }
                     
                     if input_samples.len() > 0 {
-                        println!("Audio processing: CPU {:.1}%, {} active streams", cpu_usage, input_samples.len());
+                        // println!("Audio processing: CPU {:.1}%, {} active streams", cpu_usage, input_samples.len());
                     }
                 }
 
@@ -1163,10 +1168,17 @@ impl VirtualMixer {
                 let hardware_buffer_duration_ms = (buffer_size as f32 / sample_rate as f32) * 1000.0;
                 
                 // Debug timing changes every 5 seconds
-                if frame_count % ((sample_rate / buffer_size) as u64 * 5) == 0 {
-                    println!("🕐 CALLBACK-DRIVEN: Processing triggered by audio data availability, no timer drift (was sleeping {:.2}ms)", 
-                        hardware_buffer_duration_ms);
-                }
+                if frame_count % ((sample_rate / buffer_size) as u64 * 10) == 0 {
+                    if let Ok(metrics_guard) = timing_metrics.try_lock() {
+                       println!("📈 {}", metrics_guard.get_summary());
+                    }
+                    if let Ok(clock_guard) = audio_clock.try_lock() {
+                        let sample_timestamp = clock_guard.get_sample_timestamp();
+                        let drift = clock_guard.get_drift_compensation();
+                        println!("⏰ Audio Clock: {} samples processed, {:.2}ms drift",
+                            sample_timestamp, drift / 1000.0);
+                    }
+                  }
                 
                 // **CRITICAL TIMING FIX**: Instead of sleeping on a timer (which causes drift),
                 // wait for actual audio data to be available from hardware callbacks.

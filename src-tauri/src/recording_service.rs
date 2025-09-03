@@ -671,7 +671,7 @@ impl RecordingService {
                 println!("📈 get_status: Processed {} session updates", update_count);
             }
         } else {
-            println!("📈 get_status: No session update receiver available");
+            // println!("📈 get_status: No session update receiver available");
         }
         
         let current_session = self.current_session.lock().await.clone();
