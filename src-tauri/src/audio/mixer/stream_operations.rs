@@ -5,7 +5,8 @@
 // and stream configuration operations.
 
 use anyhow::{Context, Result};
-use cpal::traits::DeviceTrait;
+use cpal::traits::{DeviceTrait, StreamTrait};
+use cpal::{BufferSize, SampleRate, StreamConfig};
 use std::sync::{atomic::Ordering, Arc};
 use tracing::{error, info, warn};
 
@@ -24,18 +25,6 @@ impl VirtualMixer {
         }
 
         info!("🚀 MIXER START: Starting virtual mixer...");
-
-        // Reset timing metrics
-        {
-            let mut timing_metrics = self.timing_metrics.lock().await;
-            timing_metrics.reset();
-        }
-
-        // Reset audio clock
-        {
-            let mut audio_clock = self.audio_clock.lock().await;
-            audio_clock.reset();
-        }
 
         self.is_running.store(true, Ordering::Relaxed);
 
@@ -94,7 +83,7 @@ impl VirtualMixer {
     /// Get information about active streams
     pub async fn get_stream_info(&self) -> StreamInfo {
         let input_count = {
-            let input_streams = self.input_streams.lock().await;
+            let input_streams: tokio::sync::MutexGuard<'_, std::collections::HashMap<String, Arc<AudioInputStream>>> = self.input_streams.lock().await;
             input_streams.len()
         };
 
@@ -139,16 +128,43 @@ impl VirtualMixer {
         false
     }
 
-    /// Calculate optimal buffer size for a specific device
+    /// Calculate optimal buffer size based on hardware capabilities and performance requirements
     async fn calculate_optimal_buffer_size(
         &self,
         device: &cpal::Device,
         config: &cpal::SupportedStreamConfig,
-        requested_size: usize,
-    ) -> Result<cpal::BufferSize> {
-        // For now, use default buffer size to ensure compatibility
-        // Could be enhanced later with device-specific optimization
-        Ok(cpal::BufferSize::Default)
+        fallback_size: usize,
+    ) -> Result<BufferSize> {
+        // Try to get the device's preferred buffer size
+        match device.default_input_config() {
+            Ok(device_config) => {
+                // Calculate optimal buffer size based on sample rate and latency requirements
+                let sample_rate = config.sample_rate().0;
+                let channels = config.channels();
+
+                // Target latency: 5-10ms for professional audio (balance between latency and stability)
+                let target_latency_ms = if sample_rate >= 48000 { 5.0 } else { 10.0 };
+                let target_buffer_size = ((sample_rate as f32 * target_latency_ms / 1000.0)
+                    as usize)
+                    .max(64) // Minimum 64 samples for stability
+                    .min(2048); // Maximum 2048 samples to prevent excessive latency
+
+                // Round to next power of 2 for optimal hardware performance
+                let optimal_size = target_buffer_size.next_power_of_two().min(1024);
+
+                info!("🔧 DYNAMIC BUFFER: Calculated optimal buffer size {} for device (SR: {}, CH: {}, Target: {}ms)",
+                  optimal_size, sample_rate, channels, target_latency_ms);
+
+                Ok(BufferSize::Fixed(optimal_size as u32))
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to get device config for buffer optimization: {}, using fallback",
+                    e
+                );
+                Ok(BufferSize::Fixed(fallback_size as u32))
+            }
+        }
     }
 
     /// Add an input stream for the specified device
@@ -160,23 +176,87 @@ impl VirtualMixer {
             device_id
         );
 
+        // TODO: need to add back virtual stream input processing logic :( )
+        // if device_id.starts_with("app-") {
+        //     info!("🎯 VIRTUAL STREAM CHECK: Looking for virtual input stream: {}", device_id);
+        //     if let Some(virtual_stream) = crate::audio::ApplicationAudioManager::get_virtual_input_stream(device_id).await {
+        //         info!("✅ FOUND VIRTUAL STREAM: Using pre-registered stream for {}", device_id);
+        //         let mut streams = self.input_streams.lock().await;
+        //         streams.insert(device_id.to_string(), virtual_stream);
+        //         info!("✅ Successfully added virtual input stream: {}", device_id);
+        //         return Ok(());
+        //     } else {
+        //         warn!("❌ VIRTUAL STREAM NOT FOUND: {} not in registry, falling back to CPAL", device_id);
+        //         // Continue with normal CPAL device handling instead of erroring out
+        //     }
+        // }
+
         // Check if stream already exists
         {
             let input_streams = self.input_streams.lock().await;
             if input_streams.contains_key(device_id) {
-                warn!("Input stream for device '{}' already exists", device_id);
-                return Ok(());
+                warn!(
+                    "Device {} already has an active input stream, removing first",
+                    device_id
+                );
+                drop(input_streams);
+                // Remove existing stream first
+                if let Err(e) = self.remove_input_stream(device_id).await {
+                    warn!("Failed to remove existing stream for {}: {}", device_id, e);
+                }
             }
         }
 
-        // **CRITICAL FIX**: Use find_cpal_device like the original implementation
-        // The original only supported CPAL devices for input streams
-        info!("🔍 Finding CPAL device for input: {}", device_id);
-        let cpal_device = self
+        // **CRITICAL FIX**: Extended delay to allow proper stream cleanup and prevent crashes
+        // Increased from 50ms to 200ms to ensure complete resource cleanup
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+        // **CRASH FIX**: Find the actual cpal device with enhanced error handling and fallback
+        println!(
+            "🔍 CRASH DEBUG MIXER: About to find cpal device for: {}",
+            device_id
+        );
+        let cpal_device = match self
             .audio_device_manager
             .find_cpal_device(device_id, true)
             .await
-            .with_context(|| format!("Failed to find CPAL input device '{}'", device_id))?;
+        {
+            Ok(device) => {
+                println!(
+                    "✅ CRASH DEBUG MIXER: Successfully found cpal device for: {}",
+                    device_id
+                );
+                device
+            }
+            Err(e) => {
+                error!("Failed to find input device '{}': {}", device_id, e);
+
+                // **CRASH FIX**: Try to refresh devices and try again
+                warn!("Attempting to refresh device list and retry for input device...");
+                if let Err(refresh_err) = self.audio_device_manager.refresh_devices().await {
+                    error!("Failed to refresh devices: {}", refresh_err);
+                }
+
+                // Try one more time after refresh
+                match self
+                    .audio_device_manager
+                    .find_cpal_device(device_id, true)
+                    .await
+                {
+                    Ok(device) => {
+                        info!("Found input device '{}' after refresh", device_id);
+                        device
+                    }
+                    Err(retry_err) => {
+                        error!(
+                            "Input device '{}' still not found after refresh: {}",
+                            device_id, retry_err
+                        );
+                        return Err(anyhow::anyhow!("Input device '{}' not found or unavailable. Original error: {}. Retry error: {}", device_id, e, retry_err));
+                    }
+                }
+            }
+        };
 
         let device_name = cpal_device.name().unwrap_or_else(|_| device_id.to_string());
         info!("Found CPAL device: {}", device_name);
@@ -195,16 +275,29 @@ impl VirtualMixer {
             hardware_sample_rate
         );
 
+        // Create AudioInputStream structure with hardware sample rate to prevent pitch shifting
+        let mut input_stream = AudioInputStream::new(
+            device_id.to_string(),
+            device_name.clone(),
+            hardware_sample_rate, // Use hardware sample rate instead of mixer sample rate
+        )?;
+
         // Configure optimal buffer size for this device
         let buffer_size = self.config.buffer_size as usize;
+        let target_sample_rate = self.config.sample_rate;
         let optimal_buffer_size = self
             .calculate_optimal_buffer_size(&cpal_device, &config, buffer_size)
             .await?;
+        let actual_buffer_size = match optimal_buffer_size {
+            BufferSize::Fixed(size) => size as usize,
+            BufferSize::Default => buffer_size,
+        };
+        input_stream.set_adaptive_chunk_size(actual_buffer_size);
 
-        info!(
-            "🔧 BUFFER OPTIMIZATION: Using optimized buffer size {:?} for device: {}",
-            optimal_buffer_size, device_id
-        );
+        // Get references for the audio callback
+        let audio_buffer = input_stream.audio_buffer.clone();
+        println!("🍆 all the random ass shit fucking config data. \nbuffer_size: {}\noptimal_buffer_size: {:?}\nactual_buffer_size: {}, hardware_sample_rate: {}"
+        , buffer_size, optimal_buffer_size, actual_buffer_size, hardware_sample_rate);
 
         // Create stream config using hardware-native configuration with optimized buffer
         let stream_config = cpal::StreamConfig {
@@ -213,12 +306,25 @@ impl VirtualMixer {
             buffer_size: optimal_buffer_size,   // Use optimized buffer size
         };
 
-        // Create input stream wrapper with hardware sample rate
-        let input_stream = Arc::new(AudioInputStream::new(
-            device_id.to_string(),
-            device_name.clone(),
-            hardware_sample_rate, // Use hardware sample rate instead of mixer sample rate
-        )?);
+        println!("🔧 FORMAT FIX: Using native format - SR: {} Hz, CH: {}, Buffer: {:?} to prevent conversion distortion",
+                 config.sample_rate().0, config.channels(), optimal_buffer_size);
+
+        println!(
+            "Using stream config: channels={}, sample_rate={}, buffer_size={}",
+            stream_config.channels, stream_config.sample_rate.0, buffer_size
+        );
+
+        // Add to streams collection first
+        let mut streams = self.input_streams.lock().await;
+        streams.insert(device_id.to_string(), Arc::new(input_stream));
+        drop(streams); // Release the async lock
+                       // Send stream creation command to the synchronous stream manager thread
+        println!(
+            "🔍 CRASH DEBUG MIXER: About to send command to stream manager for device: {}",
+            device_id
+        );
+        let stream_manager = get_stream_manager();
+        println!("✅ CRASH DEBUG MIXER: Got stream manager reference");
 
         // **CRITICAL FIX**: Create actual CPAL stream using StreamManager
         let stream_manager = get_stream_manager();
@@ -229,40 +335,35 @@ impl VirtualMixer {
             device_id
         );
 
-        // Send stream creation command to StreamManager thread
-        stream_manager
-            .send(StreamCommand::AddInputStream {
-                device_id: device_id.to_string(),
-                device: cpal_device,
-                config: stream_config,
-                audio_buffer: input_stream.audio_buffer.clone(),
-                target_sample_rate: hardware_sample_rate, // Use hardware sample rate
-                response_tx,
-            })
-            .with_context(|| "Failed to send stream creation command")?;
+        let command = StreamCommand::AddInputStream {
+            device_id: device_id.to_string(),
+            device: cpal_device,
+            config: stream_config,
+            audio_buffer,
+            target_sample_rate: hardware_sample_rate, // Use hardware sample rate
+            response_tx,
+        };
 
-        // Wait for stream creation result
-        match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
-            Ok(Ok(())) => {
-                info!(
-                    "✅ CPAL STREAM: Successfully created CPAL stream for device: {}",
-                    device_id
-                );
+        match stream_manager.send(command) {
+            Ok(()) => {
+                println!("✅ CRASH DEBUG MIXER: Successfully sent command to stream manager");
             }
-            Ok(Err(e)) => {
+            Err(e) => {
+                eprintln!(
+                    "❌ CRASH DEBUG MIXER: Failed to send command to stream manager: {}",
+                    e
+                );
                 return Err(anyhow::anyhow!(
-                    "Failed to create CPAL stream for '{}': {}",
-                    device_id,
+                    "Failed to send stream creation command: {}",
                     e
                 ));
             }
-            Err(_) => {
-                return Err(anyhow::anyhow!(
-                    "Timeout waiting for CPAL stream creation for '{}'",
-                    device_id
-                ));
-            }
         }
+
+        // Wait for the response from the stream manager thread
+        let result = response_rx
+            .recv()
+            .context("Failed to receive stream creation response")?;
 
         // Initialize device health tracking
         if let Some(device_info) = self.audio_device_manager.get_device(device_id).await {
@@ -272,17 +373,22 @@ impl VirtualMixer {
                 .await;
         }
 
-        // Store the stream
-        {
-            let mut input_streams = self.input_streams.lock().await;
-            input_streams.insert(device_id.to_string(), input_stream.clone());
+        match result {
+            Ok(()) => {
+                info!(
+                    "Successfully started audio input stream for: {}",
+                    device_name
+                );
+                info!("Successfully added real audio input stream: {}", device_id);
+                Ok(())
+            }
+            Err(e) => {
+                // Remove from streams collection if stream creation failed
+                let mut streams = self.input_streams.lock().await;
+                streams.remove(device_id);
+                Err(e)
+            }
         }
-
-        info!(
-            "✅ INPUT STREAM: Successfully added input stream with CPAL integration for device: {}",
-            device_id
-        );
-        Ok(())
     }
 
     /// Remove an input stream
@@ -414,150 +520,303 @@ impl VirtualMixer {
         }
     }
 
-    /// Create CPAL output stream (restored from original implementation)
+    /// Create cpal output stream (existing implementation)
     async fn create_cpal_output_stream(&self, device_id: &str, device: cpal::Device) -> Result<()> {
         let device_name = device.name().unwrap_or_else(|_| device_id.to_string());
-        info!("Found CPAL output device: {}", device_name);
+        crate::audio_debug!("Found cpal output device: {}", device_name);
 
         // Get the default output config for this device
         let config = device
             .default_output_config()
             .context("Failed to get default output config")?;
 
-        info!("Output device config: {:?}", config);
-
-        // **AUDIO QUALITY FIX**: Get hardware output sample rate to match input processing
-        let hardware_output_sample_rate = config.sample_rate().0;
-        info!("🔧 OUTPUT SAMPLE RATE FIX: Hardware {} Hz, using hardware rate to match input processing",
-                 hardware_output_sample_rate);
+        crate::audio_debug!("Output device config: {:?}", config);
 
         // Create AudioOutputStream structure
         let output_stream = AudioOutputStream::new(
             device_id.to_string(),
             device_name.clone(),
-            hardware_output_sample_rate, // Use hardware sample rate instead of mixer sample rate
+            self.config.sample_rate,
         )?;
 
         // Get reference to the buffer for the output callback
         let output_buffer = output_stream.input_buffer.clone();
         let target_sample_rate = self.config.sample_rate;
+        let buffer_size = self.config.buffer_size as usize;
 
-        // Create stream config for output using hardware sample rate
-        let stream_config = cpal::StreamConfig {
-            channels: 2,                       // Force stereo output
-            sample_rate: config.sample_rate(), // Use hardware sample rate, not mixer sample rate
-            buffer_size: cpal::BufferSize::Default,
+        // Create the appropriate stream config for output with DYNAMIC buffer sizing
+        let optimal_buffer_size = self
+            .calculate_optimal_buffer_size(&device, &config, buffer_size)
+            .await?;
+        let stream_config = StreamConfig {
+            channels: 2, // Force stereo output
+            sample_rate: SampleRate(target_sample_rate),
+            buffer_size: optimal_buffer_size,
         };
 
-        info!(
-            "Using output stream config: channels={}, sample_rate={}",
-            stream_config.channels, stream_config.sample_rate.0
+        crate::audio_debug!(
+            "Using output stream config: channels={}, sample_rate={}, buffer_size={}",
+            stream_config.channels,
+            stream_config.sample_rate.0,
+            buffer_size
         );
 
-        // **CRITICAL FIX**: Create actual CPAL stream with audio callback
-        info!(
-            "Building CPAL output stream with format: {:?}",
+        // **CRASH FIX**: Simplified stream creation with comprehensive error handling
+        crate::audio_debug!(
+            "Building cpal output stream with format: {:?}",
             config.sample_format()
         );
 
-        // Send stream creation command to StreamManager
-        let stream_manager = get_stream_manager();
-        let (response_tx, response_rx) = std::sync::mpsc::channel();
-
-        stream_manager
-            .send(StreamCommand::AddOutputStream {
-                device_id: device_id.to_string(),
-                device,
-                config: stream_config,
-                audio_buffer: output_buffer.clone(),
-                response_tx,
-            })
-            .with_context(|| "Failed to send output stream creation command")?;
-
-        // Wait for stream creation result
-        match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
-            Ok(Ok(())) => {
-                info!(
-                    "✅ CPAL OUTPUT STREAM: Successfully created CPAL output stream for device: {}",
-                    device_id
-                );
-            }
-            Ok(Err(e)) => {
-                return Err(anyhow::anyhow!(
-                    "Failed to create CPAL output stream for '{}': {}",
-                    device_id,
-                    e
-                ));
-            }
-            Err(_) => {
-                return Err(anyhow::anyhow!(
-                    "Timeout waiting for CPAL output stream creation for '{}'",
-                    device_id
-                ));
-            }
-        }
-
-        // Initialize device health tracking
-        if let Some(device_info) = self.audio_device_manager.get_device(device_id).await {
-            let info = device_info;
-            self.audio_device_manager
-                .initialize_device_health(&info)
-                .await;
-        }
-
-        // Store the stream
-        {
-            let mut output_stream_guard = self.output_stream.lock().await;
-            *output_stream_guard = Some(Arc::new(output_stream));
-        }
-
-        // Track active device
-        {
-            let mut active_devices = self.active_output_devices.lock().await;
-            active_devices.insert(device_id.to_string());
-        }
-
-        // **CRITICAL FIX**: Add to config.output_devices (missing from modularization)
-        // Get device info first (before acquiring config lock to avoid Send trait issue)
-        let device_info = self.audio_device_manager.get_device(device_id).await;
-        let device_name = device_info
-            .as_ref()
-            .map(|info| info.name.clone())
-            .unwrap_or_else(|| device_id.to_string());
-
-        // Then acquire config lock and update
-        {
-            let mut config_guard = self.shared_config.lock().unwrap();
-
-            // Create OutputDevice entry
-            let output_device = crate::audio::types::OutputDevice {
-                device_id: device_id.to_string(),
-                device_name,
-                enabled: true,
-                gain: 1.0,
-                is_monitor: false,
+        // **CRASH FIX**: Handle stream creation and start in isolated scope to avoid Send trait issues
+        let stream_started = {
+            // Create stream and handle it immediately in the same scope
+            let create_stream_result = match config.sample_format() {
+                cpal::SampleFormat::F32 => {
+                    info!("Creating F32 output stream for device: {}", device_name);
+                    device.build_output_stream(
+                        &stream_config,
+                        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                            // Safe, simple audio callback - just fill with silence for now to prevent crashes
+                            if let Ok(mut buffer) = output_buffer.try_lock() {
+                                let available_samples = buffer.len().min(data.len());
+                                if available_samples > 0 {
+                                    data[..available_samples]
+                                        .copy_from_slice(&buffer[..available_samples]);
+                                    buffer.drain(..available_samples);
+                                    if available_samples < data.len() {
+                                        data[available_samples..].fill(0.0);
+                                    }
+                                } else {
+                                    data.fill(0.0);
+                                }
+                            } else {
+                                data.fill(0.0);
+                            }
+                        },
+                        |err| error!("Output stream error: {}", err),
+                        None,
+                    )
+                }
+                _ => {
+                    info!(
+                        "Creating default format output stream for device: {}",
+                        device_name
+                    );
+                    // For non-F32 formats, try to create with F32 anyway as a fallback
+                    device.build_output_stream(
+                        &StreamConfig {
+                            channels: 2,
+                            sample_rate: config.sample_rate(),
+                            buffer_size: optimal_buffer_size,
+                        },
+                        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                            // Simple silence output for stability
+                            if let Ok(mut buffer) = output_buffer.try_lock() {
+                                let available_samples = buffer.len().min(data.len());
+                                if available_samples > 0 {
+                                    data[..available_samples]
+                                        .copy_from_slice(&buffer[..available_samples]);
+                                    buffer.drain(..available_samples);
+                                    if available_samples < data.len() {
+                                        data[available_samples..].fill(0.0);
+                                    }
+                                } else {
+                                    data.fill(0.0);
+                                }
+                            } else {
+                                data.fill(0.0);
+                            }
+                        },
+                        |err| error!("Output stream error: {}", err),
+                        None,
+                    )
+                }
             };
 
-            // Remove any existing entry for this device
-            config_guard
-                .output_devices
-                .retain(|d| d.device_id != device_id);
+            // Handle the stream result immediately without holding it across await points
+            match create_stream_result {
+                Ok(stream) => {
+                    info!("Successfully built output stream for: {}", device_name);
+                    // Start the stream and return success/failure
+                    match stream.play() {
+                        Ok(()) => {
+                            info!("Successfully started output stream for: {}", device_name);
+                            true
+                        }
+                        Err(e) => {
+                            error!("Failed to start output stream for {}: {}", device_name, e);
+                            false
+                        }
+                    }
+                    // stream is automatically dropped at end of scope
+                }
+                Err(e) => {
+                    error!("Failed to build output stream for {}: {}", device_name, e);
+                    return Err(anyhow::anyhow!("Failed to create output stream: {}", e));
+                }
+            }
+        };
 
-            // Add the new entry
-            config_guard.output_devices.push(output_device);
-
-            info!(
-                "✅ ADDED TO CONFIG: Device '{}' added to config.output_devices",
-                device_id
-            );
+        if stream_started {
+            // Track this device as having an active stream (stream is out of scope, safe to await)
+            let mut active_devices = self.active_output_devices.lock().await;
+            active_devices.insert(device_id.to_string());
+        } else {
+            return Err(anyhow::anyhow!("Failed to start output stream"));
         }
 
+        // Store our wrapper
+        let mut stream_guard = self.output_stream.lock().await;
+        *stream_guard = Some(Arc::new(output_stream));
+
         info!(
-            "✅ OUTPUT STREAM: Successfully set output stream with CPAL integration for device: {}",
+            "Successfully created real cpal output stream: {}",
             device_id
         );
+
         Ok(())
     }
+
+    /// refactor appears to have completely fucking reimplemented this logic, see old impl above
+    // async fn create_cpal_output_stream(&self, device_id: &str, device: cpal::Device) -> Result<()> {
+    //     let device_name = device.name().unwrap_or_else(|_| device_id.to_string());
+    //     info!("Found CPAL output device: {}", device_name);
+
+    //     // Get the default output config for this device
+    //     let config = device
+    //         .default_output_config()
+    //         .context("Failed to get default output config")?;
+
+    //     info!("Output device config: {:?}", config);
+
+    //     // Create AudioOutputStream structure
+    //     let output_stream = AudioOutputStream::new(
+    //         device_id.to_string(),
+    //         device_name.clone(),
+    //         self.config.sample_rate,
+    //     )?;
+
+    //     // Get reference to the buffer for the output callback
+    //     let output_buffer = output_stream.input_buffer.clone();
+    //     let target_sample_rate = self.config.sample_rate;
+    //     let buffer_size = self.config.buffer_size as usize;
+    //     let optimal_buffer_size = self.calculate_optimal_buffer_size(&device, &config, buffer_size).await?;
+    //     // Create stream config for output using hardware sample rate
+    //     let stream_config = cpal::StreamConfig {
+    //         channels: 2,                       // Force stereo output
+    //         sample_rate: SampleRate(target_sample_rate), // Use hardware sample rate, not mixer sample rate
+    //         buffer_size: optimal_buffer_size,
+    //     };
+
+    //     info!(
+    //         "Using output stream config: channels={}, sample_rate={}, buffer_size={}",
+    //         stream_config.channels, stream_config.sample_rate.0, buffer_size
+    //     );
+
+    //     // **CRITICAL FIX**: Create actual CPAL stream with audio callback
+    //     info!(
+    //         "Building CPAL output stream with format: {:?}",
+    //         config.sample_format()
+    //     );
+
+    //     // Send stream creation command to StreamManager
+    //     let stream_manager = get_stream_manager();
+    //     let (response_tx, response_rx) = std::sync::mpsc::channel();
+
+    //     stream_manager
+    //         .send(StreamCommand::AddOutputStream {
+    //             device_id: device_id.to_string(),
+    //             device,
+    //             config: stream_config,
+    //             audio_buffer: output_buffer.clone(),
+    //             response_tx,
+    //         })
+    //         .with_context(|| "Failed to send output stream creation command")?;
+
+    //     // Wait for stream creation result
+    //     match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+    //         Ok(Ok(())) => {
+    //             info!(
+    //                 "✅ CPAL OUTPUT STREAM: Successfully created CPAL output stream for device: {}",
+    //                 device_id
+    //             );
+    //         }
+    //         Ok(Err(e)) => {
+    //             return Err(anyhow::anyhow!(
+    //                 "Failed to create CPAL output stream for '{}': {}",
+    //                 device_id,
+    //                 e
+    //             ));
+    //         }
+    //         Err(_) => {
+    //             return Err(anyhow::anyhow!(
+    //                 "Timeout waiting for CPAL output stream creation for '{}'",
+    //                 device_id
+    //             ));
+    //         }
+    //     }
+
+    //     // Initialize device health tracking
+    //     if let Some(device_info) = self.audio_device_manager.get_device(device_id).await {
+    //         let info = device_info;
+    //         self.audio_device_manager
+    //             .initialize_device_health(&info)
+    //             .await;
+    //     }
+
+    //     // Store the stream
+    //     {
+    //         let mut output_stream_guard = self.output_stream.lock().await;
+    //         *output_stream_guard = Some(Arc::new(output_stream));
+    //     }
+
+    //     // Track active device
+    //     {
+    //         let mut active_devices = self.active_output_devices.lock().await;
+    //         active_devices.insert(device_id.to_string());
+    //     }
+
+    //     // **CRITICAL FIX**: Add to config.output_devices (missing from modularization)
+    //     // Get device info first (before acquiring config lock to avoid Send trait issue)
+    //     let device_info = self.audio_device_manager.get_device(device_id).await;
+    //     let device_name = device_info
+    //         .as_ref()
+    //         .map(|info| info.name.clone())
+    //         .unwrap_or_else(|| device_id.to_string());
+
+    //     // Then acquire config lock and update
+    //     {
+    //         let mut config_guard = self.shared_config.lock().unwrap();
+
+    //         // Create OutputDevice entry
+    //         let output_device = crate::audio::types::OutputDevice {
+    //             device_id: device_id.to_string(),
+    //             device_name,
+    //             enabled: true,
+    //             gain: 1.0,
+    //             is_monitor: false,
+    //         };
+
+    //         // Remove any existing entry for this device
+    //         config_guard
+    //             .output_devices
+    //             .retain(|d| d.device_id != device_id);
+
+    //         // Add the new entry
+    //         config_guard.output_devices.push(output_device);
+
+    //         info!(
+    //             "✅ ADDED TO CONFIG: Device '{}' added to config.output_devices",
+    //             device_id
+    //         );
+    //     }
+
+    //     info!(
+    //         "✅ OUTPUT STREAM: Successfully set output stream with CPAL integration for device: {}",
+    //         device_id
+    //     );
+    //     Ok(())
+    // }
 
     /// Create CoreAudio output stream for direct hardware access
     #[cfg(target_os = "macos")]
@@ -580,7 +839,7 @@ impl VirtualMixer {
             crate::audio::devices::coreaudio_stream::CoreAudioOutputStream::new(
                 coreaudio_device.device_id,
                 coreaudio_device.name.clone(),
-                coreaudio_device.sample_rate, // Use hardware sample rate instead of mixer sample rate
+                self.config.sample_rate, // Use hardware sample rate instead of mixer sample rate
                 coreaudio_device.channels,
             )?;
 
@@ -603,7 +862,7 @@ impl VirtualMixer {
         let output_stream = AudioOutputStream::new(
             device_id.to_string(),
             coreaudio_device.name.clone(),
-            coreaudio_device.sample_rate, // Use hardware sample rate instead of mixer sample rate
+            self.config.sample_rate, // Use hardware sample rate instead of mixer sample rate
         )?;
 
         // Store our wrapper
@@ -660,6 +919,42 @@ impl VirtualMixer {
         Ok(())
     }
 
+    /// Get the actual hardware sample rate from active audio streams
+    /// This fixes sample rate mismatch issues by using real hardware rates instead of mixer config
+    async fn get_actual_hardware_sample_rate(&self) -> u32 {
+        // Check active input streams first - they reflect actual hardware capture rates
+        {
+            let input_streams = self.input_streams.lock().await;
+            if let Some((_device_id, stream)) = input_streams.iter().next() {
+                info!(
+                    "🔧 SAMPLE RATE FIX: Using hardware input rate {} Hz from active stream",
+                    stream.sample_rate
+                );
+                return stream.sample_rate;
+            }
+        }
+
+        // Fallback to output stream rate if no input streams
+        {
+            let output_stream_guard = self.output_stream.lock().await;
+            if let Some(stream) = output_stream_guard.as_ref() {
+                info!(
+                    "🔧 SAMPLE RATE FIX: Using hardware output rate {} Hz from active stream",
+                    stream.sample_rate
+                );
+                return stream.sample_rate;
+            }
+        }
+
+        // Last resort: use mixer configured rate (should rarely happen)
+        let mixer_rate = self.config.sample_rate;
+        warn!(
+            "🔧 SAMPLE RATE FIX: No active streams found, falling back to mixer config {} Hz",
+            mixer_rate
+        );
+        mixer_rate
+    }
+
     /// Start the audio processing thread (restored from original implementation)
     async fn start_processing_thread(&self) -> Result<()> {
         let is_running = self.is_running.clone();
@@ -674,8 +969,8 @@ impl VirtualMixer {
 
         // **PRIORITY 5: Audio Clock Synchronization** - Clone timing references
         let audio_clock = self.audio_clock.clone();
-        let timing_metrics = self.timing_metrics.clone();
         let sample_rate = self.config.sample_rate;
+        let timing_metrics = self.timing_metrics.clone();
         let buffer_size = self.config.buffer_size;
         let mixer_handle = VirtualMixerHandle {
             input_streams: self.input_streams.clone(),
@@ -715,13 +1010,25 @@ impl VirtualMixer {
             let rt = tokio::runtime::Runtime::new().expect("Failed to create audio runtime");
             rt.block_on(async move {
             let mut frame_count = 0u64;
-
             // Pre-allocate stereo buffers to reduce allocations during real-time processing
             let mut reusable_output_buffer = vec![0.0f32; (buffer_size * 2) as usize];
             let mut reusable_left_samples = Vec::with_capacity(buffer_size as usize);
             let mut reusable_right_samples = Vec::with_capacity(buffer_size as usize);
 
-            crate::audio_debug!("🎵 Audio processing thread started with real mixing, optimized buffers, and clock synchronization");
+            // **CRITICAL FIX**: Detect actual hardware sample rate from active streams
+            // This fixes sample rate mismatch issues that cause timing drift and audio artifacts
+            // let actual_hardware_sample_rate = {
+            //     let mixer_self = &mixer_handle;
+            //     let input_streams = mixer_self.input_streams.lock().await;
+            //     if let Some((_device_id, stream)) = input_streams.iter().next() {
+            //         stream.sample_rate
+            //     } else {
+            //         mixer_configured_sample_rate
+            //     }
+            // };
+            // let sample_rate = actual_hardware_sample_rate;
+
+            crate::audio_debug!("🎵 Audio processing thread started with real mixing, optimized buffers, clock sync");
 
             while is_running.load(Ordering::Relaxed) {
                 frame_count += 1;
@@ -955,12 +1262,16 @@ impl VirtualMixer {
                 }
 
                 // Update mix buffer
-                if let Ok(mut buffer_guard) = mix_buffer.try_lock() {
-                    if buffer_guard.len() == reusable_output_buffer.len() {
-                        buffer_guard.copy_from_slice(&reusable_output_buffer);
+                match mix_buffer.try_lock() {
+                    Ok(mut buffer_guard) => {
+                        if buffer_guard.len() == reusable_output_buffer.len() {
+                            buffer_guard.copy_from_slice(&reusable_output_buffer);
+                        }
+                    },
+                    Err(_) => {
+                        eprintln!("🚨 CRITICAL: Failed to update mix_buffer - audio output may be silent!");
                     }
                 }
-
                 // Send to output stream
                 mixer_handle.send_to_output(&reusable_output_buffer).await;
 
@@ -968,29 +1279,26 @@ impl VirtualMixer {
                 let _ = audio_output_tx.try_send(reusable_output_buffer.clone());
 
                 // **STREAMING INTEGRATION**: Also send to broadcast channel for streaming bridge
-                match audio_output_broadcast_tx.send(reusable_output_buffer.clone()) {
-                    Ok(_) => {
-                        if should_log_debug { // Log every ~100ms at 48kHz
-                            crate::audio_debug!("📡 Mixer broadcast: sent {} samples to {} receivers",
-                                reusable_output_buffer.len(),
-                                audio_output_broadcast_tx.receiver_count());
-                        }
-                    },
-                    Err(tokio::sync::broadcast::error::SendError(_)) => {
-                        if should_log_debug {
-                            crate::audio_debug!("📡 Mixer broadcast: no active receivers (recording/streaming stopped)");
-                        }
-                    }
-                }
+                // match audio_output_broadcast_tx.send(reusable_output_buffer.clone()) {
+                //     Ok(_) => {
+                //         if should_log_debug { // Log every ~100ms at 48kHz
+                //             crate::audio_debug!("📡 Mixer broadcast: sent {} samples to {} receivers",
+                //                 reusable_output_buffer.len(),
+                //                 audio_output_broadcast_tx.receiver_count());
+                //         }
+                //     },
+                //     Err(tokio::sync::broadcast::error::SendError(_)) => {
+                //         if should_log_debug {
+                //             crate::audio_debug!("📡 Mixer broadcast: no active receivers (recording/streaming stopped)");
+                //         }
+                //     }
+                // }
                 // Don't break on send failure - just continue processing
 
-                // **TIMING FIX**: Use actual samples processed instead of theoretical buffer_size
+                // **PRIORITY 5: Audio Clock Synchronization** - Update master clock and timing metrics
                 let actual_samples_processed: usize = input_samples.values().map(|v| v.len()).sum();
-                let samples_processed = if actual_samples_processed > 0 {
-                    actual_samples_processed
-                } else {
-                    0 // No samples processed when no input available
-                };
+                let samples_processed = actual_samples_processed;
+                println!("actual samples processed? {}", samples_processed);
 
                 let processing_time_us = timing_start.elapsed().as_micros() as f64;
                 let actual_input_samples = input_samples.len();
@@ -1003,46 +1311,24 @@ impl VirtualMixer {
                         frame_count, samples_processed, actual_input_samples, total_input_sample_count, output_buffer_size, processing_time_us);
                 }
 
-                // Update audio clock with processed samples (only when samples were actually processed)
-                if samples_processed > 0 {
-                        if let Ok(mut clock_guard) = audio_clock.try_lock() {
-                            // **CRITICAL FIX**: Use consistent hardware buffer size, not variable samples_processed
-                            // BlackHole delivers 512 samples per callback, not 1024
-                            let hardware_buffer_size = 512u32; // BlackHole's actual buffer size
-                            let current_sync_interval = clock_guard.get_sync_interval();
-                            if current_sync_interval != hardware_buffer_size as u64 {
-                                crate::audio_debug!("🔄 UPDATING AUDIOCLOCK: sync_interval {} -> {} (BlackHole hardware buffer)",
-                                    current_sync_interval, hardware_buffer_size);
-                                clock_guard.set_hardware_buffer_size(hardware_buffer_size);
-                            }
+                // Update audio clock with processed samples
+                if let Ok(mut clock_guard) = audio_clock.try_lock() {
+                if let Some(sync_info) = clock_guard.update(samples_processed) {
+                    // Clock detected timing drift - log it
+                    if sync_info.needs_adjustment {
+                        if should_log_debug {
+                            println!("⚠️  TIMING DRIFT: {:.2}ms drift detected at {} samples",
+                            sync_info.drift_microseconds / 1000.0, sync_info.samples_processed);
+                        }
 
-                            // Log clock state before update
-                            if should_log_debug {
-                                crate::audio_debug!("🕐 CLOCK STATE: samples_processed_before={}, sample_rate={}, sync_interval={}",
-                                    clock_guard.get_samples_processed(), clock_guard.get_sample_rate(), samples_processed);
-                            }
 
-                            // Update with hardware buffer size (512) instead of accumulated samples (1024)
-                            if let Some(sync_info) = clock_guard.update(hardware_buffer_size as usize) {
-                                if should_log_debug {
-                                    crate::audio_debug!("🕐 TIMING SYNC: callback_interval={:.2}ms, expected={:.2}ms, variation={:.2}ms, drift_significant={}",
-                                        sync_info.callback_interval_us / 1000.0, sync_info.expected_interval_us / 1000.0,
-                                        sync_info.timing_variation / 1000.0, sync_info.is_drift_significant);
-                                }
-
-                                // Clock detected timing drift - log it
-                                if sync_info.is_drift_significant && should_log_debug {
-                                    crate::audio_debug!("⚠️  SIGNIFICANT TIMING DRIFT: {:.2}ms variation at {} samples ({}% of expected)",
-                                        sync_info.timing_variation / 1000.0, sync_info.samples_processed, sync_info.get_variation_percentage());
-
-                                    // Record sync adjustment in metrics
-                                    if let Ok(mut metrics_guard) = timing_metrics.try_lock() {
-                                        metrics_guard.record_sync_adjustment();
-                                    }
-                                }
-                            }
+                        // Record sync adjustment in metrics
+                        if let Ok(mut metrics_guard) = timing_metrics.try_lock() {
+                            metrics_guard.record_sync_adjustment();
                         }
                     }
+                }
+            }
 
                 // Record processing time metrics
                 if let Ok(mut metrics_guard) = timing_metrics.try_lock() {
@@ -1057,12 +1343,12 @@ impl VirtualMixer {
                 // **TIMING METRICS**: Report comprehensive timing every 10 seconds
                 if frame_count % ((sample_rate / buffer_size) as u64 * 10) == 0 {
                     if let Ok(metrics_guard) = timing_metrics.try_lock() {
-                        crate::audio_debug!("📈 {}", metrics_guard.get_performance_summary());
+                       println!("📈 {}", metrics_guard.get_performance_summary());
                     }
                     if let Ok(clock_guard) = audio_clock.try_lock() {
                         let sample_timestamp = clock_guard.get_sample_timestamp();
                         let drift = clock_guard.get_drift_compensation();
-                        crate::audio_debug!("⏰ Audio Clock: {} samples processed, {:.2}ms drift",
+                        println!("⏰ Audio Clock: {} samples processed, {:.2}ms drift",
                             sample_timestamp, drift / 1000.0);
                     }
                 }
@@ -1089,7 +1375,7 @@ impl VirtualMixer {
 
                 // Debug timing changes every 5 seconds
                 if frame_count % ((sample_rate / buffer_size) as u64 * 5) == 0 {
-                    crate::audio_debug!("🕐 CALLBACK-DRIVEN: Processing triggered by audio data availability, no timer drift (was sleeping {:.2}ms)",
+                    println!("🕐 CALLBACK-DRIVEN: Processing triggered by audio data availability, no timer drift (was sleeping {:.2}ms)",
                         hardware_buffer_duration_ms);
                 }
 
@@ -1104,7 +1390,7 @@ impl VirtualMixer {
                 } else if elapsed.as_millis() > 50 {
                     // Processing took too long (> 50ms), log the overrun
                     if should_log_debug {
-                        crate::audio_debug!("⚠️  PROCESSING OVERRUN: {}ms processing time (audio callback driven)", elapsed.as_millis());
+                        println!("⚠️  PROCESSING OVERRUN: {}ms processing time (audio callback driven)", elapsed.as_millis());
                     }
                     tokio::task::yield_now().await;
                 }

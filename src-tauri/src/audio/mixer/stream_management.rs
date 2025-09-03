@@ -41,7 +41,7 @@ impl AudioInputStream {
             device_id,
             device_name,
             sample_rate,
-            channels: 1, // Start with mono
+            channels: 2, // Fixed: Match stereo hardware (BlackHole 2CH)
             audio_buffer,
             effects_chain,
             adaptive_chunk_size: optimal_chunk_size.max(64).min(1024), // Clamp between 64-1024 samples
@@ -151,6 +151,7 @@ impl AudioInputStream {
 
             // Apply effects if enabled
             if channel.effects_enabled && !samples.is_empty() {
+                println!("🔊 Applying effects to samples: {}", samples.len());
                 if let Ok(mut effects) = self.effects_chain.try_lock() {
                     // Update effects parameters based on channel settings
                     effects.set_eq_gain(EQBand::Low, channel.eq_low_gain);

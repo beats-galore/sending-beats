@@ -47,16 +47,16 @@ impl AudioClock {
 
     /// Update the sync interval to match actual hardware buffer size
     /// This is called when streams are created with known hardware buffer sizes
-    pub fn set_hardware_buffer_size(&mut self, hardware_buffer_size: u32) {
-        let old_interval = self.sync_interval_samples;
-        self.sync_interval_samples = hardware_buffer_size as u64;
-        if old_interval != self.sync_interval_samples {
-            info!(
-                "🔄 BUFFER SIZE UPDATE: AudioClock sync interval updated from {} to {} samples",
-                old_interval, self.sync_interval_samples
-            );
-        }
-    }
+    // pub fn set_hardware_buffer_size(&mut self, hardware_buffer_size: u32) {
+    //     let old_interval = self.sync_interval_samples;
+    //     self.sync_interval_samples = hardware_buffer_size as u64;
+    //     if old_interval != self.sync_interval_samples {
+    //         info!(
+    //             "🔄 BUFFER SIZE UPDATE: AudioClock sync interval updated from {} to {} samples",
+    //             old_interval, self.sync_interval_samples
+    //         );
+    //     }
+    // }
 
     /// Update the clock with processed samples - now tracks hardware callback timing instead of software timing
     pub fn update(&mut self, samples_added: usize) -> Option<TimingSync> {
@@ -90,15 +90,14 @@ impl AudioClock {
 
             let sync = TimingSync {
                 samples_processed: self.samples_processed,
-                callback_interval_us,
-                expected_interval_us,
-                timing_variation: interval_variation,
-                is_drift_significant: is_hardware_drift,
+                drift_microseconds: interval_variation,
+                needs_adjustment: is_hardware_drift,
+                sync_time: now,
             };
 
             // Only log actual hardware timing issues, not software processing timing
             if is_hardware_drift {
-                crate::audio_debug!("⏰ HARDWARE TIMING: Callback interval variation: {:.2}ms (expected: {:.2}ms, actual: {:.2}ms)", 
+                crate::audio_debug!("⏰ HARDWARE TIMING: Callback interval variation: {:.2}ms (expected: {:.2}ms, actual: {:.2}ms)",
                     interval_variation / 1000.0, expected_interval_us / 1000.0, callback_interval_us / 1000.0);
             }
 
@@ -169,26 +168,9 @@ impl AudioClock {
 #[derive(Debug, Clone)]
 pub struct TimingSync {
     pub samples_processed: u64,
-    pub callback_interval_us: f64,
-    pub expected_interval_us: f64,
-    pub timing_variation: f64,
-    pub is_drift_significant: bool,
-}
-
-impl TimingSync {
-    /// Get timing variation as a percentage
-    pub fn get_variation_percentage(&self) -> f64 {
-        if self.expected_interval_us > 0.0 {
-            (self.timing_variation / self.expected_interval_us) * 100.0
-        } else {
-            0.0
-        }
-    }
-
-    /// Check if timing is within acceptable bounds
-    pub fn is_timing_acceptable(&self) -> bool {
-        !self.is_drift_significant
-    }
+    pub drift_microseconds: f64,
+    pub needs_adjustment: bool,
+    pub sync_time: std::time::Instant,
 }
 
 /// Performance metrics for timing analysis
