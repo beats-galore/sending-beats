@@ -5,7 +5,7 @@ use tokio::sync::Mutex;
 
 use crate::audio::types::{AudioChannel, AudioDeviceHandle, MixerConfig, OutputDevice};
 
-use super::stream_management::{get_stream_manager, StreamCommand};
+// Legacy imports removed - using IsolatedAudioManager with AudioCommand instead
 
 // Global stream manager functions moved to stream_management.rs
 

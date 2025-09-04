@@ -519,28 +519,7 @@ impl IsolatedAudioManager {
     }
 }
 
-/// Commands that can be sent to the StreamManager thread
-pub enum StreamCommand {
-    AddInputStream {
-        device_id: String,
-        device: cpal::Device,
-        config: cpal::StreamConfig,
-        audio_buffer: Arc<Producer<f32>>, // RTRB Producer for audio callback (lock-free!)
-        target_sample_rate: u32,
-        response_tx: std::sync::mpsc::Sender<Result<()>>,
-    },
-    AddOutputStream {
-        device_id: String,
-        device: cpal::Device,
-        config: cpal::StreamConfig,
-        spmc_reader: Reader<f32>, // SPMC reader for audio callback consumption
-        response_tx: std::sync::mpsc::Sender<Result<()>>,
-    },
-    RemoveStream {
-        device_id: String,
-        response_tx: std::sync::mpsc::Sender<bool>,
-    },
-}
+// Legacy StreamCommand enum removed - using AudioCommand instead
 
 impl StreamManager {
     pub fn new() -> Self {
@@ -1070,67 +1049,9 @@ impl StreamManager {
     }
 }
 
-// Global stream manager instance
-static STREAM_MANAGER: std::sync::OnceLock<std::sync::mpsc::Sender<StreamCommand>> =
-    std::sync::OnceLock::new();
+// Legacy stream manager removed - using IsolatedAudioManager with AudioCommand instead
 
-// Initialize the stream manager thread
-fn init_stream_manager() -> std::sync::mpsc::Sender<StreamCommand> {
-    let (tx, rx) = std::sync::mpsc::channel::<StreamCommand>();
-
-    std::thread::spawn(move || {
-        let mut manager = StreamManager::new();
-        println!("Stream manager thread started");
-
-        while let Ok(command) = rx.recv() {
-            match command {
-                StreamCommand::AddInputStream {
-                    device_id,
-                    device,
-                    config,
-                    audio_buffer,
-                    target_sample_rate,
-                    response_tx,
-                } => {
-                    let result = manager.add_input_stream(
-                        device_id,
-                        device,
-                        config,
-                        audio_buffer,
-                        target_sample_rate,
-                    );
-                    let _ = response_tx.send(result);
-                }
-                StreamCommand::AddOutputStream {
-                    device_id,
-                    device,
-                    config,
-                    spmc_reader,
-                    response_tx,
-                } => {
-                    let result = manager.add_output_stream(device_id, device, config, spmc_reader);
-                    let _ = response_tx.send(result);
-                }
-                StreamCommand::RemoveStream {
-                    device_id,
-                    response_tx,
-                } => {
-                    let result = manager.remove_stream(&device_id);
-                    let _ = response_tx.send(result);
-                }
-            }
-        }
-
-        println!("Stream manager thread stopped");
-    });
-
-    tx
-}
-
-// Get or initialize the global stream manager
-pub fn get_stream_manager() -> &'static std::sync::mpsc::Sender<StreamCommand> {
-    STREAM_MANAGER.get_or_init(init_stream_manager)
-}
+// Legacy get_stream_manager removed - using IsolatedAudioManager with AudioCommand instead
 
 /// Information about current stream state
 #[derive(Debug, Clone)]
