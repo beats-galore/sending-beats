@@ -152,9 +152,9 @@ pub fn run() {
         // Create command channel for isolated audio thread communication
         let (audio_command_tx, audio_command_rx) = tokio::sync::mpsc::channel::<crate::audio::mixer::stream_management::AudioCommand>(100);
         
-        // Start isolated audio manager thread
+        // Start isolated audio manager in background task (CPAL streams aren't Send, so run without spawning)
         let mut isolated_audio_manager = crate::audio::mixer::stream_management::IsolatedAudioManager::new(audio_command_rx);
-        tokio::spawn(async move {
+        tokio::task::spawn_local(async move {
             isolated_audio_manager.run().await;
         });
         

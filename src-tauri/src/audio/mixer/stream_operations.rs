@@ -95,10 +95,9 @@ impl VirtualMixer {
         let is_running = self.is_running.load(Ordering::Relaxed);
 
         StreamInfo {
-            is_running,
-            input_stream_count: input_count,
-            output_stream_count: output_count,
-            active_output_devices: active_devices.into_iter().collect(),
+            input_streams: input_count,
+            output_streams: output_count,
+            active_devices: active_devices.into_iter().collect(),
         }
     }
 

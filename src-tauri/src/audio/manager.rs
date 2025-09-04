@@ -266,12 +266,15 @@ impl ApplicationAudioManager {
         );
 
         // Create the AudioInputStream immediately and register it
-        let audio_input_stream =
-            Arc::new(crate::audio::mixer::stream_management::AudioInputStream::new(
-                virtual_device_id.clone(),
-                channel_name.clone(),
-                48000,
-            )?);
+        {
+            let _audio_input_stream =
+                Arc::new(crate::audio::mixer::stream_management::AudioInputStream::new(
+                    virtual_device_id.clone(),
+                    channel_name.clone(),
+                    48000,
+                )?);
+            // Drop before await to avoid Send+Sync issues
+        }
 
         // Store in global registry IMMEDIATELY (STUBBED for command channel architecture)
         self.add_to_global_mixer_sync(virtual_device_id.clone(), ())
