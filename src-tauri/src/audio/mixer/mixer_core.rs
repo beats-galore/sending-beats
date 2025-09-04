@@ -73,34 +73,19 @@ impl VirtualMixerHandle {
         // STUB: Old method with undefined variables - needs proper implementation
         // TODO: Implement using command channel architecture
     }
-        //             "  Configured channel '{}': input_device={:?}, muted={}",
-        //             channel.name,
-        //             channel.input_device_id,
-        //             channel.muted
-        //         );
-        //     }
-        // }
 
-        let num_streams = streams.len();
-        let num_channels = channels.len();
+    pub async fn send_to_output(&self, _samples: &[f32]) {
+        // STUB: Old method needs updating for command channel architecture
+        // TODO: Remove duplicate methods and implement proper output handling
+    }
 
-        // First collect samples from regular CPAL input streams
-        for (device_id, stream) in streams.iter() {
-            // Find the channel configuration for this stream
-            if let Some(channel) = channels
-                .iter()
-                .find(|ch| ch.input_device_id.as_ref() == Some(device_id))
-            {
-                let stream_samples = stream.process_with_effects(channel);
+}
 
-                if !stream_samples.is_empty() {
-                    let peak = stream_samples
-                        .iter()
-                        .map(|&s| s.abs())
-                        .fold(0.0f32, f32::max);
-                    let rms = (stream_samples.iter().map(|&s| s * s).sum::<f32>()
-                        / stream_samples.len() as f32)
-                        .sqrt();
+impl VirtualMixer {
+    /// Check if the mixer is currently running
+    pub fn is_running(&self) -> bool {
+        self.is_running.load(std::sync::atomic::Ordering::Relaxed)
+    }
 
                     if debug_count % 200 == 0 || (peak > 0.01 && debug_count % 50 == 0) {
                         crate::audio_debug!("🎯 COLLECT WITH EFFECTS [{}]: {} samples collected, peak: {:.4}, rms: {:.4}, channel: {}",
