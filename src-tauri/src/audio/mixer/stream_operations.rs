@@ -143,7 +143,7 @@ impl VirtualMixer {
                 let channels = config.channels();
 
                 // Target latency: 5-10ms for professional audio (balance between latency and stability)
-                let target_latency_ms = if sample_rate >= 48000 { 5.0 } else { 10.0 };
+                let target_latency_ms = if sample_rate >= 48000 { 1.0 } else { 10.0 };
                 let target_buffer_size = ((sample_rate as f32 * target_latency_ms / 1000.0)
                     as usize)
                     .max(64) // Minimum 64 samples for stability
@@ -151,6 +151,9 @@ impl VirtualMixer {
 
                 // Round to next power of 2 for optimal hardware performance
                 let optimal_size = target_buffer_size.next_power_of_two().min(1024);
+
+                println!("🔍 BUFFER CALC DEBUG: target_latency_ms={}, sample_rate={}, target_buffer_size={}, optimal_size={}",
+                    target_latency_ms, sample_rate, target_buffer_size, optimal_size);
 
                 info!("🔧 DYNAMIC BUFFER: Calculated optimal buffer size {} for device (SR: {}, CH: {}, Target: {}ms)",
                   optimal_size, sample_rate, channels, target_latency_ms);
@@ -282,22 +285,22 @@ impl VirtualMixer {
             hardware_sample_rate, // Use hardware sample rate instead of mixer sample rate
         )?;
 
-        // Configure optimal buffer size for this device
-        let buffer_size = self.config.buffer_size as usize;
+        // Configure optimal buffer size for this device using dynamic calculation
+        let config_fallback_size = self.config.buffer_size as usize;
         let target_sample_rate = self.config.sample_rate;
         let optimal_buffer_size = self
-            .calculate_optimal_buffer_size(&cpal_device, &config, buffer_size)
+            .calculate_optimal_buffer_size(&cpal_device, &config, config_fallback_size)
             .await?;
         let actual_buffer_size = match optimal_buffer_size {
             BufferSize::Fixed(size) => size as usize,
-            BufferSize::Default => buffer_size,
+            BufferSize::Default => config_fallback_size,
         };
         input_stream.set_adaptive_chunk_size(actual_buffer_size);
 
         // Get references for the audio callback
         let audio_buffer = input_stream.audio_buffer.clone();
-        println!("🍆 all the random ass shit fucking config data. \nbuffer_size: {}\noptimal_buffer_size: {:?}\nactual_buffer_size: {}, hardware_sample_rate: {}"
-        , buffer_size, optimal_buffer_size, actual_buffer_size, hardware_sample_rate);
+        println!("🍆 all the random ass shit fucking config data. \nconfig_fallback_size: {}\noptimal_buffer_size: {:?}\nactual_buffer_size: {}, hardware_sample_rate: {}"
+        , config_fallback_size, optimal_buffer_size, actual_buffer_size, hardware_sample_rate);
 
         // Create stream config using hardware-native configuration with optimized buffer
         let stream_config = cpal::StreamConfig {
@@ -311,7 +314,7 @@ impl VirtualMixer {
 
         println!(
             "Using stream config: channels={}, sample_rate={}, buffer_size={}",
-            stream_config.channels, stream_config.sample_rate.0, buffer_size
+            stream_config.channels, stream_config.sample_rate.0, config_fallback_size
         );
 
         // Add to streams collection first
@@ -380,6 +383,14 @@ impl VirtualMixer {
                     device_name
                 );
                 info!("Successfully added real audio input stream: {}", device_id);
+
+                // Update AudioClock with the actual buffer size being used
+                if let Ok(mut audio_clock) = self.audio_clock.try_lock() {
+                    audio_clock.set_hardware_buffer_size(actual_buffer_size as u32);
+                } else {
+                    warn!("Could not update AudioClock buffer size - timing drift may be inaccurate");
+                }
+
                 Ok(())
             }
             Err(e) => {
@@ -542,11 +553,11 @@ impl VirtualMixer {
         // Get reference to the buffer for the output callback
         let output_buffer = output_stream.input_buffer.clone();
         let target_sample_rate = self.config.sample_rate;
-        let buffer_size = self.config.buffer_size as usize;
+        let config_fallback_size = self.config.buffer_size as usize;
 
         // Create the appropriate stream config for output with DYNAMIC buffer sizing
         let optimal_buffer_size = self
-            .calculate_optimal_buffer_size(&device, &config, buffer_size)
+            .calculate_optimal_buffer_size(&device, &config, config_fallback_size)
             .await?;
         let stream_config = StreamConfig {
             channels: 2, // Force stereo output
@@ -558,7 +569,7 @@ impl VirtualMixer {
             "Using output stream config: channels={}, sample_rate={}, buffer_size={}",
             stream_config.channels,
             stream_config.sample_rate.0,
-            buffer_size
+            config_fallback_size
         );
 
         // **CRASH FIX**: Simplified stream creation with comprehensive error handling
@@ -1010,10 +1021,10 @@ impl VirtualMixer {
             let rt = tokio::runtime::Runtime::new().expect("Failed to create audio runtime");
             rt.block_on(async move {
             let mut frame_count = 0u64;
-            // Pre-allocate stereo buffers to reduce allocations during real-time processing
-            let mut reusable_output_buffer = vec![0.0f32; (buffer_size * 2) as usize];
-            let mut reusable_left_samples = Vec::with_capacity(buffer_size as usize);
-            let mut reusable_right_samples = Vec::with_capacity(buffer_size as usize);
+            // Dynamic buffers that adapt to actual sample counts - no fixed allocation
+            let mut reusable_output_buffer = Vec::new();
+            let mut reusable_left_samples = Vec::new();
+            let mut reusable_right_samples = Vec::new();
 
             // **CRITICAL FIX**: Detect actual hardware sample rate from active streams
             // This fixes sample rate mismatch issues that cause timing drift and audio artifacts
@@ -1073,8 +1084,17 @@ impl VirtualMixer {
                     continue;
                 }
 
-                // Clear and reuse pre-allocated stereo buffers
-                reusable_output_buffer.fill(0.0);
+                // Calculate required buffer size based on actual input samples
+                let total_input_samples: usize = input_samples.values().map(|v| v.len()).sum();
+                let required_stereo_samples = if total_input_samples > 0 {
+                    total_input_samples // Use actual sample count - no artificial minimum
+                } else {
+                    256 // Only use fallback when no samples available
+                };
+
+                // Resize buffers dynamically to handle actual sample counts
+                reusable_output_buffer.clear();
+                reusable_output_buffer.resize(required_stereo_samples, 0.0);
                 reusable_left_samples.clear();
                 reusable_right_samples.clear();
 
@@ -1261,12 +1281,12 @@ impl VirtualMixer {
                     }
                 }
 
-                // Update mix buffer
+                // Update mix buffer - resize dynamically to match actual output
                 match mix_buffer.try_lock() {
                     Ok(mut buffer_guard) => {
-                        if buffer_guard.len() == reusable_output_buffer.len() {
-                            buffer_guard.copy_from_slice(&reusable_output_buffer);
-                        }
+                        // Always resize to match current audio output size
+                        buffer_guard.clear();
+                        buffer_guard.extend_from_slice(&reusable_output_buffer);
                     },
                     Err(_) => {
                         eprintln!("🚨 CRITICAL: Failed to update mix_buffer - audio output may be silent!");
@@ -1298,8 +1318,6 @@ impl VirtualMixer {
                 // **PRIORITY 5: Audio Clock Synchronization** - Update master clock and timing metrics
                 let actual_samples_processed: usize = input_samples.values().map(|v| v.len()).sum();
                 let samples_processed = actual_samples_processed;
-                println!("actual samples processed? {}", samples_processed);
-
                 let processing_time_us = timing_start.elapsed().as_micros() as f64;
                 let actual_input_samples = input_samples.len();
                 let total_input_sample_count: usize = input_samples.values().map(|v| v.len()).sum();
@@ -1340,8 +1358,8 @@ impl VirtualMixer {
                     }
                 }
 
-                // **TIMING METRICS**: Report comprehensive timing every 10 seconds
-                if frame_count % ((sample_rate / buffer_size) as u64 * 10) == 0 {
+                // **TIMING METRICS**: Report comprehensive timing every 10000 frames (~10 seconds)
+                if frame_count % 10000 == 0 {
                     if let Ok(metrics_guard) = timing_metrics.try_lock() {
                        println!("📈 {}", metrics_guard.get_performance_summary());
                     }
@@ -1353,17 +1371,21 @@ impl VirtualMixer {
                     }
                 }
 
-                // Update metrics every second
-                if frame_count % (sample_rate / buffer_size) as u64 == 0 {
+                // Update metrics every ~1000 frames (adaptive based on actual processing)
+                if frame_count % 1000 == 0 {
                     let cpu_time = process_start.elapsed().as_secs_f32();
-                    let max_cpu_time = buffer_size as f32 / sample_rate as f32;
-                    let cpu_usage = (cpu_time / max_cpu_time) * 100.0;
+                    // Calculate CPU usage based on actual sample processing time
+                    let actual_samples = samples_processed.max(1); // Prevent division by zero
+                    let theoretical_time = actual_samples as f32 / sample_rate as f32;
+                    let cpu_usage = (cpu_time / theoretical_time) * 100.0;
+
                     if let Ok(mut metrics_guard) = metrics.try_lock() {
-                        metrics_guard.cpu_usage = cpu_usage;
+                        metrics_guard.cpu_usage = cpu_usage.min(100.0); // Cap at 100%
                     }
 
                     if input_samples.len() > 0 {
-                        crate::audio_debug!("Audio processing: CPU {:.1}%, {} active streams", cpu_usage, input_samples.len());
+                        crate::audio_debug!("Audio processing: CPU {:.1}%, {} active streams, {} samples",
+                            cpu_usage.min(100.0), input_samples.len(), actual_samples);
                     }
                 }
 
@@ -1371,12 +1393,16 @@ impl VirtualMixer {
                 // Only process when we have sufficient audio data from callbacks, eliminating drift
 
                 let elapsed = process_start.elapsed();
-                let hardware_buffer_duration_ms = (buffer_size as f32 / sample_rate as f32) * 1000.0;
+                let actual_buffer_duration_ms = if samples_processed > 0 {
+                    (samples_processed as f32 / sample_rate as f32) * 1000.0
+                } else {
+                    5.0 // fallback estimate
+                };
 
-                // Debug timing changes every 5 seconds
-                if frame_count % ((sample_rate / buffer_size) as u64 * 5) == 0 {
-                    println!("🕐 CALLBACK-DRIVEN: Processing triggered by audio data availability, no timer drift (was sleeping {:.2}ms)",
-                        hardware_buffer_duration_ms);
+                // Debug timing changes every 5000 frames (~5 seconds)
+                if frame_count % 5000 == 0 {
+                    println!("🕐 CALLBACK-DRIVEN: Processing triggered by audio data availability, no timer drift (processing {:.2}ms chunks)",
+                        actual_buffer_duration_ms);
                 }
 
                 // **CRITICAL TIMING FIX**: Instead of sleeping on a timer (which causes drift),
