@@ -102,13 +102,12 @@ impl VirtualMixer {
         let (audio_output_tx, _) = mpsc::channel(1000);
         let (audio_output_broadcast_tx, _) = tokio::sync::broadcast::channel(100);
 
-        let buffer_size = config.buffer_size;
         let sample_rate = config.sample_rate;
 
         Ok(Self {
             config: config.clone(),
             is_running: Arc::new(AtomicBool::new(false)),
-            mix_buffer: Arc::new(Mutex::new(vec![0.0; buffer_size as usize * 2])), // Stereo
+            mix_buffer: Arc::new(Mutex::new(Vec::new())), // Dynamic allocation - starts empty
             sample_rate_converter: None,
             audio_analyzer: AudioAnalyzer::new(sample_rate),
             command_tx,
@@ -120,7 +119,7 @@ impl VirtualMixer {
             channel_levels_cache: Arc::new(Mutex::new(HashMap::new())),
             master_levels: Arc::new(Mutex::new((0.0, 0.0, 0.0, 0.0))),
             master_levels_cache: Arc::new(Mutex::new((0.0, 0.0, 0.0, 0.0))),
-            audio_clock: Arc::new(Mutex::new(AudioClock::new(sample_rate, buffer_size as u32))),
+            audio_clock: Arc::new(Mutex::new(AudioClock::new(sample_rate, 512))), // Initial buffer size, will be updated dynamically
             timing_metrics: Arc::new(Mutex::new(TimingMetrics::new())),
             shared_config: Arc::new(std::sync::Mutex::new(config)),
             audio_device_manager: device_manager,

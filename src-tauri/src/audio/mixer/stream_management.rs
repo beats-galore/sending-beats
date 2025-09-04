@@ -54,8 +54,16 @@ impl AudioInputStream {
         let adaptive_size = if hardware_buffer_size > 32 && hardware_buffer_size <= 2048 {
             hardware_buffer_size
         } else {
-            // Fallback to time-based calculation (5ms)
-            (self.sample_rate as f32 * 0.005) as usize
+            // Fallback: Use a reasonable default instead of hardcoded 5ms
+            // Calculate based on sample rate for low latency
+            let fallback_latency_ms = if self.sample_rate >= 48000 {
+                5.0 // 5ms for high sample rates
+            } else {
+                10.0 // 10ms for lower sample rates
+            };
+            ((self.sample_rate as f32 * fallback_latency_ms / 1000.0) as usize)
+                .max(64) // Minimum for stability
+                .min(1024) // Maximum to prevent excessive latency
         };
 
         self.adaptive_chunk_size = adaptive_size;
@@ -65,154 +73,232 @@ impl AudioInputStream {
         );
     }
 
-    pub fn get_samples(&self) -> Vec<f32> {
-        if let Ok(mut buffer) = self.audio_buffer.try_lock() {
-            // **BUFFER UNDERRUN FIX**: Process available samples instead of waiting for full chunks
-            let chunk_size = self.adaptive_chunk_size;
-
-            if buffer.is_empty() {
-                return Vec::new(); // No samples available at all
+    pub async fn get_samples(&self) -> Vec<f32> {
+        // Use timeout to prevent audio dropouts from lock contention
+        let timeout = std::time::Duration::from_micros(500); // 0.5ms timeout
+        let lock_start = std::time::Instant::now();
+        match tokio::time::timeout(timeout, self.audio_buffer.lock()).await {
+            Err(_) => {
+                let lock_time = lock_start.elapsed().as_micros();
+                crate::audio_debug!("⏰ GET_SAMPLES_TIMEOUT: Failed to acquire buffer lock within 0.5ms for device {} (waited {}μs)", self.device_id, lock_time);
+                return Vec::new();
             }
-
-            // **REAL FIX**: Process ALL available samples to prevent buffer buildup
-            let samples: Vec<f32> = buffer.drain(..).collect();
-            let sample_count = samples.len();
-
-            // Debug: Log when we're actually reading samples
-            use std::sync::{LazyLock, Mutex as StdMutex};
-            static GET_SAMPLES_COUNT: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> =
-                LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
-
-            if let Ok(mut count_map) = GET_SAMPLES_COUNT.lock() {
-                let count = count_map.entry(self.device_id.clone()).or_insert(0);
-                *count += 1;
-
-                if sample_count > 0 {
-                    if *count % 100 == 0 || (*count < 10) {
-                        let peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                        let rms = (samples.iter().map(|&s| s * s).sum::<f32>()
-                            / samples.len() as f32)
-                            .sqrt();
-                        println!("📖 GET_SAMPLES [{}]: Retrieved {} samples (call #{}), peak: {:.4}, rms: {:.4}",
-                            self.device_id, sample_count, count, peak, rms);
-                    }
-                } else if *count % 500 == 0 {
-                    println!(
-                        "📪 GET_SAMPLES [{}]: Empty buffer (call #{})",
-                        self.device_id, count
+            Ok(mut buffer) => {
+                let lock_time = lock_start.elapsed().as_micros();
+                if lock_time > 100 {
+                    // Log if lock took more than 100μs
+                    crate::audio_debug!(
+                        "🔒 GET_SAMPLES_SLOW_LOCK: Lock acquired in {}μs for device {}",
+                        lock_time,
+                        self.device_id
                     );
                 }
-            }
+                let chunk_size = self.adaptive_chunk_size;
 
-            samples
-        } else {
-            Vec::new()
+                if buffer.is_empty() {
+                    return Vec::new(); // No samples available at all
+                }
+
+                // **USE ADAPTIVE CHUNK SIZE**: Process exactly the calculated buffer size for proper timing
+                let available_samples = buffer.len();
+                let samples_to_take = chunk_size.min(available_samples);
+
+                if samples_to_take == 0 {
+                    return Vec::new();
+                }
+
+                // Take exactly chunk_size samples for consistent timing
+                let samples: Vec<f32> = buffer.drain(..samples_to_take).collect();
+                let sample_count = samples.len();
+
+                // Debug: Log when we're actually reading samples
+                use std::sync::{LazyLock, Mutex as StdMutex};
+                static GET_SAMPLES_COUNT: LazyLock<
+                    StdMutex<std::collections::HashMap<String, u64>>,
+                > = LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
+
+                if let Ok(mut count_map) = GET_SAMPLES_COUNT.lock() {
+                    let count = count_map.entry(self.device_id.clone()).or_insert(0);
+                    *count += 1;
+
+                    if sample_count > 0 {
+                        if *count % 100 == 0 || (*count < 10) {
+                            let peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                            let rms = (samples.iter().map(|&s| s * s).sum::<f32>()
+                                / samples.len() as f32)
+                                .sqrt();
+                            println!("📖 GET_SAMPLES [{}]: Retrieved {} samples (call #{}), peak: {:.4}, rms: {:.4}",
+                            self.device_id, sample_count, count, peak, rms);
+                        }
+                    } else if *count % 500 == 0 {
+                        println!(
+                            "📪 GET_SAMPLES [{}]: Empty buffer (call #{})",
+                            self.device_id, count
+                        );
+                    }
+                }
+
+                samples
+            }
+            Err(_timeout_elapsed) => {
+                // Track timeout failures
+                use std::sync::atomic::{AtomicU64, Ordering};
+                static TIMEOUT_FAILURES: AtomicU64 = AtomicU64::new(0);
+                let failures = TIMEOUT_FAILURES.fetch_add(1, Ordering::Relaxed);
+
+                if failures % 100 == 0 || failures < 10 {
+                    println!(
+                        "⏱️ GET_SAMPLES TIMEOUT [{}]: #{} timeout failures (0.5ms timeout)",
+                        self.device_id, failures
+                    );
+                }
+
+                Vec::new()
+            }
         }
     }
 
     /// Apply effects to input samples and update channel settings
-    pub fn process_with_effects(&self, channel: &AudioChannel) -> Vec<f32> {
-        if let Ok(mut buffer) = self.audio_buffer.try_lock() {
-            // **BUFFER UNDERRUN FIX**: Process available samples instead of waiting for full chunks
-            let _chunk_size = self.adaptive_chunk_size;
-
-            if buffer.is_empty() {
-                return Vec::new(); // No samples available at all
+    pub async fn process_with_effects(&self, channel: &AudioChannel) -> Vec<f32> {
+        // Use timeout to prevent audio dropouts from lock contention
+        let timeout = std::time::Duration::from_micros(500); // 0.5ms timeout
+        let lock_start = std::time::Instant::now();
+        match tokio::time::timeout(timeout, self.audio_buffer.lock()).await {
+            Err(_) => {
+                let lock_time = lock_start.elapsed().as_micros();
+                crate::audio_debug!("⏰ PROCESS_EFFECTS_TIMEOUT: Failed to acquire buffer lock within 0.5ms for device {} (waited {}μs)", self.device_id, lock_time);
+                return Vec::new();
             }
+            Ok(mut buffer) => {
+                let lock_time = lock_start.elapsed().as_micros();
+                if lock_time > 100 {
+                    // Log if lock took more than 100μs
+                    crate::audio_debug!(
+                        "🔒 PROCESS_EFFECTS_SLOW_LOCK: Lock acquired in {}μs for device {}",
+                        lock_time,
+                        self.device_id
+                    );
+                }
+                let chunk_size = self.adaptive_chunk_size;
 
-            // **REAL FIX**: Process ALL available samples to prevent buffer buildup
-            let mut samples: Vec<f32> = buffer.drain(..).collect();
-            let original_sample_count = samples.len();
+                if buffer.is_empty() {
+                    return Vec::new(); // No samples available at all
+                }
 
-            // Debug: Log processing activity
-            use std::sync::{LazyLock, Mutex as StdMutex};
-            static PROCESS_COUNT: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> =
-                LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
+                // **USE ADAPTIVE CHUNK SIZE**: Process exactly the calculated buffer size for proper timing
+                let available_samples = buffer.len();
+                let samples_to_take = chunk_size.min(available_samples);
 
-            if let Ok(mut count_map) = PROCESS_COUNT.lock() {
-                let count = count_map.entry(self.device_id.clone()).or_insert(0);
-                *count += 1;
+                if samples_to_take == 0 {
+                    return Vec::new();
+                }
 
-                if original_sample_count > 0 {
-                    let original_peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                // Take exactly chunk_size samples for consistent timing and effects processing
+                let mut samples: Vec<f32> = buffer.drain(..samples_to_take).collect();
+                let original_sample_count = samples.len();
 
-                    if *count % 100 == 0 || (*count < 10) {
-                        crate::audio_debug!("⚙️  PROCESS_WITH_EFFECTS [{}]: Processing {} samples (call #{}), peak: {:.4}, channel: {}",
+                // Debug: Log processing activity
+                use std::sync::{LazyLock, Mutex as StdMutex};
+                static PROCESS_COUNT: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> =
+                    LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
+
+                if let Ok(mut count_map) = PROCESS_COUNT.lock() {
+                    let count = count_map.entry(self.device_id.clone()).or_insert(0);
+                    *count += 1;
+
+                    if original_sample_count > 0 {
+                        let original_peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+
+                        if *count % 100 == 0 || (*count < 10) {
+                            crate::audio_debug!("⚙️  PROCESS_WITH_EFFECTS [{}]: Processing {} samples (call #{}), peak: {:.4}, channel: {}",
                             self.device_id, original_sample_count, count, original_peak, channel.name);
-                        crate::audio_debug!(
-                            "   Settings: gain: {:.2}, muted: {}, effects: {}",
-                            channel.gain,
-                            channel.muted,
-                            channel.effects_enabled
-                        );
+                            crate::audio_debug!(
+                                "   Settings: gain: {:.2}, muted: {}, effects: {}",
+                                channel.gain,
+                                channel.muted,
+                                channel.effects_enabled
+                            );
+                        }
                     }
                 }
-            }
 
-            // Apply effects if enabled
-            if channel.effects_enabled && !samples.is_empty() {
-                println!("🔊 Applying effects to samples: {}", samples.len());
-                if let Ok(mut effects) = self.effects_chain.try_lock() {
-                    // Update effects parameters based on channel settings
-                    effects.set_eq_gain(EQBand::Low, channel.eq_low_gain);
-                    effects.set_eq_gain(EQBand::Mid, channel.eq_mid_gain);
-                    effects.set_eq_gain(EQBand::High, channel.eq_high_gain);
+                // Apply effects if enabled
+                if channel.effects_enabled && !samples.is_empty() {
+                    println!("🔊 Applying effects to samples: {}", samples.len());
+                    if let Ok(mut effects) = self.effects_chain.try_lock() {
+                        // Update effects parameters based on channel settings
+                        effects.set_eq_gain(EQBand::Low, channel.eq_low_gain);
+                        effects.set_eq_gain(EQBand::Mid, channel.eq_mid_gain);
+                        effects.set_eq_gain(EQBand::High, channel.eq_high_gain);
 
-                    if channel.comp_enabled {
-                        effects.set_compressor_params(
-                            channel.comp_threshold,
-                            channel.comp_ratio,
-                            channel.comp_attack,
-                            channel.comp_release,
-                        );
-                    }
+                        if channel.comp_enabled {
+                            effects.set_compressor_params(
+                                channel.comp_threshold,
+                                channel.comp_ratio,
+                                channel.comp_attack,
+                                channel.comp_release,
+                            );
+                        }
 
-                    if channel.limiter_enabled {
-                        effects.set_limiter_threshold(channel.limiter_threshold);
-                    }
+                        if channel.limiter_enabled {
+                            effects.set_limiter_threshold(channel.limiter_threshold);
+                        }
 
-                    // Process samples through effects chain
-                    effects.process(&mut samples);
-                }
-            }
-
-            // **CRITICAL FIX**: Apply channel-specific gain and mute (this was missing!)
-            if !channel.muted && channel.gain > 0.0 {
-                for sample in samples.iter_mut() {
-                    *sample *= channel.gain;
-                }
-
-                // Debug: Log final processed levels
-                if let Ok(count_map) = PROCESS_COUNT.lock() {
-                    let count = count_map.get(&self.device_id).unwrap_or(&0);
-                    if original_sample_count > 0 && (*count % 100 == 0 || *count < 10) {
-                        let final_peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                        let final_rms = (samples.iter().map(|&s| s * s).sum::<f32>()
-                            / samples.len() as f32)
-                            .sqrt();
-                        crate::audio_debug!(
-                            "✅ PROCESSED [{}]: Final {} samples, peak: {:.4}, rms: {:.4}",
-                            self.device_id,
-                            samples.len(),
-                            final_peak,
-                            final_rms
-                        );
+                        // Process samples through effects chain
+                        effects.process(&mut samples);
                     }
                 }
-            } else {
-                samples.fill(0.0);
-                if let Ok(count_map) = PROCESS_COUNT.lock() {
-                    let count = count_map.get(&self.device_id).unwrap_or(&0);
-                    if original_sample_count > 0 && (*count % 200 == 0 || *count < 5) {
-                        println!("🔇 MUTED/ZERO_GAIN [{}]: {} samples set to silence (muted: {}, gain: {:.2})",
+
+                // **CRITICAL FIX**: Apply channel-specific gain and mute (this was missing!)
+                if !channel.muted && channel.gain > 0.0 {
+                    for sample in samples.iter_mut() {
+                        *sample *= channel.gain;
+                    }
+
+                    // Debug: Log final processed levels
+                    if let Ok(count_map) = PROCESS_COUNT.lock() {
+                        let count = count_map.get(&self.device_id).unwrap_or(&0);
+                        if original_sample_count > 0 && (*count % 100 == 0 || *count < 10) {
+                            let final_peak =
+                                samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                            let final_rms = (samples.iter().map(|&s| s * s).sum::<f32>()
+                                / samples.len() as f32)
+                                .sqrt();
+                            crate::audio_debug!(
+                                "✅ PROCESSED [{}]: Final {} samples, peak: {:.4}, rms: {:.4}",
+                                self.device_id,
+                                samples.len(),
+                                final_peak,
+                                final_rms
+                            );
+                        }
+                    }
+                } else {
+                    samples.fill(0.0);
+                    if let Ok(count_map) = PROCESS_COUNT.lock() {
+                        let count = count_map.get(&self.device_id).unwrap_or(&0);
+                        if original_sample_count > 0 && (*count % 200 == 0 || *count < 5) {
+                            println!("🔇 MUTED/ZERO_GAIN [{}]: {} samples set to silence (muted: {}, gain: {:.2})",
                             self.device_id, samples.len(), channel.muted, channel.gain);
+                        }
                     }
                 }
-            }
 
-            samples
-        } else {
-            Vec::new()
+                samples
+            }
+            Err(_timeout_elapsed) => {
+                // Track timeout failures in effects processing
+                use std::sync::atomic::{AtomicU64, Ordering};
+                static EFFECTS_TIMEOUT_FAILURES: AtomicU64 = AtomicU64::new(0);
+                let failures = EFFECTS_TIMEOUT_FAILURES.fetch_add(1, Ordering::Relaxed);
+
+                if failures % 100 == 0 || failures < 10 {
+                    println!("⏱️ PROCESS_WITH_EFFECTS TIMEOUT [{}]: #{} timeout failures (0.5ms timeout)",
+                        self.device_id, failures);
+                }
+
+                Vec::new()
+            }
         }
     }
 }

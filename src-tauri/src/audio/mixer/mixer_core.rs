@@ -35,6 +35,7 @@ impl VirtualMixerHandle {
         &self,
         channels: &[AudioChannel],
     ) -> HashMap<String, Vec<f32>> {
+        let collection_start = std::time::Instant::now();
         let mut samples = HashMap::new();
         let streams = self.input_streams.lock().await;
 
@@ -82,7 +83,7 @@ impl VirtualMixerHandle {
                 .iter()
                 .find(|ch| ch.input_device_id.as_ref() == Some(device_id))
             {
-                let stream_samples = stream.process_with_effects(channel);
+                let stream_samples = stream.process_with_effects(channel).await;
 
                 if !stream_samples.is_empty() {
                     let peak = stream_samples
@@ -101,7 +102,7 @@ impl VirtualMixerHandle {
                 }
             } else {
                 // No channel config found, use raw samples
-                let stream_samples = stream.get_samples();
+                let stream_samples = stream.get_samples().await;
                 if !stream_samples.is_empty() {
                     let peak = stream_samples
                         .iter()
@@ -285,6 +286,18 @@ impl VirtualMixerHandle {
                     }
                 }
             }
+        }
+
+        let collection_time = collection_start.elapsed().as_micros();
+        
+        // Log collection timing to identify performance bottlenecks
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COLLECTION_COUNTER: AtomicU64 = AtomicU64::new(0);
+        let counter = COLLECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
+        
+        if collection_time > 1000 || counter % 500 == 0 { // Log if > 1ms or every 500 calls
+            crate::audio_debug!("⏱️ COLLECTION_TIMING: Collected {} streams in {}μs (call #{})", 
+                samples.len(), collection_time, counter);
         }
 
         samples
