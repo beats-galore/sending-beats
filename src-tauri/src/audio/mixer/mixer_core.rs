@@ -65,12 +65,9 @@ impl VirtualMixerHandle {
     }
 
     pub async fn send_to_output(&self, samples: &[f32]) {
-        //     crate::audio_debug!(
-        //         "🔍 INPUT STREAM STATUS Debug #{}: {} active streams, {} configured channels",
-        //         debug_count,
-        //         streams.len(),
-        //         channels.len()
-        //     );
+        // STUB: This is a duplicate method - the real implementation is below
+        // TODO: Remove this duplicate and use command channel architecture
+    }
 
         //     for (device_id, _stream) in streams.iter() {
         //         crate::audio_debug!("  Active stream: {}", device_id);
