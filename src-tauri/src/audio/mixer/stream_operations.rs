@@ -83,7 +83,10 @@ impl VirtualMixer {
     /// Get information about active streams
     pub async fn get_stream_info(&self) -> StreamInfo {
         let input_count = {
-            let input_streams: tokio::sync::MutexGuard<'_, std::collections::HashMap<String, Arc<AudioInputStream>>> = self.input_streams.lock().await;
+            let input_streams: tokio::sync::MutexGuard<
+                '_,
+                std::collections::HashMap<String, Arc<AudioInputStream>>,
+            > = self.input_streams.lock().await;
             input_streams.len()
         };
 
@@ -388,7 +391,9 @@ impl VirtualMixer {
                 if let Ok(mut audio_clock) = self.audio_clock.try_lock() {
                     audio_clock.set_hardware_buffer_size(actual_buffer_size as u32);
                 } else {
-                    warn!("Could not update AudioClock buffer size - timing drift may be inaccurate");
+                    warn!(
+                        "Could not update AudioClock buffer size - timing drift may be inaccurate"
+                    );
                 }
 
                 Ok(())
