@@ -56,10 +56,10 @@ impl AudioInputStream {
         } else {
             // Fallback: Use a reasonable default instead of hardcoded 5ms
             // Calculate based on sample rate for low latency
-            let fallback_latency_ms = if self.sample_rate >= 48000 { 
+            let fallback_latency_ms = if self.sample_rate >= 48000 {
                 5.0 // 5ms for high sample rates
-            } else { 
-                10.0 // 10ms for lower sample rates 
+            } else {
+                10.0 // 10ms for lower sample rates
             };
             ((self.sample_rate as f32 * fallback_latency_ms / 1000.0) as usize)
                 .max(64)  // Minimum for stability
@@ -74,6 +74,9 @@ impl AudioInputStream {
     }
 
     pub fn get_samples(&self) -> Vec<f32> {
+        // Track lock failures - potential cause of audio stutters
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static LOCK_FAILURES: AtomicU64 = AtomicU64::new(0);
         if let Ok(mut buffer) = self.audio_buffer.try_lock() {
             let chunk_size = self.adaptive_chunk_size;
 
@@ -84,11 +87,11 @@ impl AudioInputStream {
             // **USE ADAPTIVE CHUNK SIZE**: Process exactly the calculated buffer size for proper timing
             let available_samples = buffer.len();
             let samples_to_take = chunk_size.min(available_samples);
-            
+
             if samples_to_take == 0 {
                 return Vec::new();
             }
-            
+
             // Take exactly chunk_size samples for consistent timing
             let samples: Vec<f32> = buffer.drain(..samples_to_take).collect();
             let sample_count = samples.len();
@@ -121,16 +124,13 @@ impl AudioInputStream {
 
             samples
         } else {
-            // Track lock failures - potential cause of audio stutters
-            use std::sync::atomic::{AtomicU64, Ordering};
-            static LOCK_FAILURES: AtomicU64 = AtomicU64::new(0);
+
             let failures = LOCK_FAILURES.fetch_add(1, Ordering::Relaxed);
-            
-            if failures % 100 == 0 || failures < 10 {
-                println!("🚫 GET_SAMPLES LOCK FAILED [{}]: #{} lock failures - potential audio dropout cause", 
+
+                println!("🚫 GET_SAMPLES LOCK FAILED [{}]: #{} lock failures - potential audio dropout cause",
                     self.device_id, failures);
-            }
-            
+
+
             Vec::new()
         }
     }
@@ -147,11 +147,11 @@ impl AudioInputStream {
             // **USE ADAPTIVE CHUNK SIZE**: Process exactly the calculated buffer size for proper timing
             let available_samples = buffer.len();
             let samples_to_take = chunk_size.min(available_samples);
-            
+
             if samples_to_take == 0 {
                 return Vec::new();
             }
-            
+
             // Take exactly chunk_size samples for consistent timing and effects processing
             let mut samples: Vec<f32> = buffer.drain(..samples_to_take).collect();
             let original_sample_count = samples.len();
@@ -248,12 +248,12 @@ impl AudioInputStream {
             use std::sync::atomic::{AtomicU64, Ordering};
             static EFFECTS_LOCK_FAILURES: AtomicU64 = AtomicU64::new(0);
             let failures = EFFECTS_LOCK_FAILURES.fetch_add(1, Ordering::Relaxed);
-            
+
             if failures % 100 == 0 || failures < 10 {
-                println!("🚫 PROCESS_WITH_EFFECTS LOCK FAILED [{}]: #{} lock failures - potential audio dropout cause", 
+                println!("🚫 PROCESS_WITH_EFFECTS LOCK FAILED [{}]: #{} lock failures - potential audio dropout cause",
                     self.device_id, failures);
             }
-            
+
             Vec::new()
         }
     }
