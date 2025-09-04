@@ -683,7 +683,7 @@ impl VirtualMixer {
 
         // Store our wrapper
         let mut stream_guard = self.active_output_devices.lock().await;
-        *stream_guard = Some(Arc::new(output_stream));
+        stream_guard.insert(device_id.to_string());
 
         info!(
             "Successfully created real cpal output stream: {}",
@@ -883,7 +883,7 @@ impl VirtualMixer {
 
         // Store our wrapper
         let mut stream_guard = self.active_output_devices.lock().await;
-        *stream_guard = Some(Arc::new(output_stream));
+        stream_guard.insert(device_id.to_string());
 
         info!(
             "✅ Real CoreAudio output stream created and started for: {}",
@@ -922,7 +922,7 @@ impl VirtualMixer {
         // Clear output stream
         {
             let mut output_stream_guard = self.active_output_devices.lock().await;
-            *output_stream_guard = None;
+            output_stream_guard.clear();
         }
 
         // Clear output streams collection
@@ -953,13 +953,11 @@ impl VirtualMixer {
         // Fallback to output stream rate if no input streams
         {
             let output_stream_guard = self.active_output_devices.lock().await;
-            if let Some(stream) = output_stream_guard.as_ref() {
-                info!(
-                    "🔧 SAMPLE RATE FIX: Using hardware output rate {} Hz from active stream",
-                    stream.sample_rate
-                );
-                return stream.sample_rate;
-            }
+            // TODO: Get actual sample rate from device via command channel
+            // For now, skip output stream sample rate check - needs proper implementation
+            // if let Some(device_id) = output_stream_guard.iter().next() {
+            //     // Send command to audio thread to get actual device sample rate
+            // }
         }
 
         // Last resort: use mixer configured rate (should rarely happen)
@@ -989,13 +987,11 @@ impl VirtualMixer {
         let timing_metrics = self.timing_metrics.clone();
         let buffer_size = self.config.buffer_size;
         let mixer_handle = VirtualMixerHandle {
-            input_devices: self.input_devices.clone(),
-            output_stream: self.active_output_devices.clone(),
-            output_streams: self.active_output_devices.clone(), // Add multiple outputs support
+            audio_command_tx: self.audio_command_tx.clone(),
             #[cfg(target_os = "macos")]
             coreaudio_stream: self.coreaudio_stream.clone(),
             channel_levels: self.channel_levels.clone(),
-            config: self.shared_config.clone(),
+            config: Arc::new(std::sync::Mutex::new(self.config.clone())),
         };
 
         // **CRITICAL FIX**: Use dedicated high-priority thread for real-time audio processing

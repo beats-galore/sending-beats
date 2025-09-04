@@ -1,5 +1,6 @@
 use crate::{AudioDeviceInfo, AudioState};
 use tauri::State;
+use cpal::traits::DeviceTrait;
 
 #[tauri::command]
 pub async fn enumerate_audio_devices(
@@ -67,7 +68,7 @@ pub async fn report_device_error(
 ) -> Result<(), String> {
     let mixer_guard = audio_state.mixer.lock().await;
     if let Some(ref mixer) = *mixer_guard {
-        mixer.report_device_error(&device_id, error).await;
+        mixer.audio_device_manager.report_device_error(&device_id, error).await;
         Ok(())
     } else {
         Err("No mixer created".to_string())

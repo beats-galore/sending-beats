@@ -87,7 +87,8 @@ impl VirtualMixer {
     /// Create a new virtual mixer with default device manager
     pub async fn new(config: MixerConfig) -> anyhow::Result<Self> {
         let device_manager = Arc::new(AudioDeviceManager::new()?);
-        Self::new_with_device_manager(config, device_manager).await
+        let (audio_command_tx, _audio_command_rx) = tokio::sync::mpsc::channel(100);
+        Self::new_with_device_manager(config, device_manager, audio_command_tx).await
     }
 
     /// Create a new virtual mixer with provided device manager and audio command channel

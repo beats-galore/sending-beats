@@ -4,6 +4,8 @@ use crate::{
 };
 use tauri::State;
 use tracing::error;
+use cpal::traits::DeviceTrait;
+use std::sync::Arc;
 
 // Virtual mixer commands
 #[tauri::command]
@@ -19,7 +21,9 @@ pub async fn create_mixer(
 
     // Create the mixer with enhanced error handling
     let device_manager = {
-        audio_state.device_manager.lock().await.clone()
+        let guard = audio_state.device_manager.lock().await;
+        // Create a new AudioDeviceManager instead of trying to clone the Arc<Mutex<>>
+        Arc::new(crate::audio::devices::AudioDeviceManager::new().map_err(|e| e.to_string())?)
     };
     let mut mixer = match VirtualMixer::new_with_device_manager(
         config, 

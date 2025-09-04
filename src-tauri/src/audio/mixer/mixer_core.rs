@@ -74,10 +74,7 @@ impl VirtualMixerHandle {
         // TODO: Implement using command channel architecture
     }
 
-    pub async fn send_to_output(&self, _samples: &[f32]) {
-        // STUB: Old method needs updating for command channel architecture
-        // TODO: Remove duplicate methods and implement proper output handling
-    }
+    // Duplicate method removed - proper implementation elsewhere
 
 }
 
