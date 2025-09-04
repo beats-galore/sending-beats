@@ -16,6 +16,9 @@ use crate::audio::effects::{AudioEffectsChain, EQBand};
 use crate::audio::types::AudioChannel;
 use tokio::sync::Mutex;
 
+// Lock-free audio buffer imports
+use rtrb::{RingBuffer, Consumer, Producer};
+
 // Audio stream management structures
 #[derive(Debug)]
 pub struct AudioInputStream {
@@ -23,7 +26,8 @@ pub struct AudioInputStream {
     pub device_name: String,
     pub sample_rate: u32,
     pub channels: u16,
-    pub audio_buffer: Arc<Mutex<Vec<f32>>>,
+    pub audio_buffer_consumer: Arc<Mutex<Consumer<f32>>>, // RTRB consumer for mixer thread
+    pub audio_buffer_producer: Arc<Mutex<Producer<f32>>>, // RTRB producer for audio callback
     pub effects_chain: Arc<Mutex<AudioEffectsChain>>,
     pub adaptive_chunk_size: usize, // Adaptive buffer chunk size based on hardware
                                     // Stream is managed separately via StreamManager to avoid Send/Sync issues
@@ -31,20 +35,28 @@ pub struct AudioInputStream {
 
 impl AudioInputStream {
     pub fn new(device_id: String, device_name: String, sample_rate: u32) -> Result<Self> {
-        let audio_buffer = Arc::new(Mutex::new(Vec::new()));
-        let effects_chain = Arc::new(Mutex::new(AudioEffectsChain::new(sample_rate)));
-
         // Calculate optimal chunk size based on sample rate for low latency (5-10ms target)
         let optimal_chunk_size = (sample_rate as f32 * 0.005) as usize; // 5ms default
+        let clamped_chunk_size = optimal_chunk_size.max(64).min(1024); // Clamp between 64-1024 samples
+        
+        // Create RTRB ring buffer with capacity for ~100ms of audio (larger buffer for burst handling)
+        let buffer_capacity = (sample_rate as usize * 2) / 10; // 100ms of stereo samples
+        let buffer_capacity = buffer_capacity.max(4096).min(16384); // Clamp between 4K-16K samples
+        
+        let (producer, consumer) = RingBuffer::<f32>::new(buffer_capacity);
+        let audio_buffer_producer = Arc::new(Mutex::new(producer));
+        let audio_buffer_consumer = Arc::new(Mutex::new(consumer));
+        let effects_chain = Arc::new(Mutex::new(AudioEffectsChain::new(sample_rate)));
 
         Ok(AudioInputStream {
             device_id,
             device_name,
             sample_rate,
             channels: 2, // Fixed: Match stereo hardware (BlackHole 2CH)
-            audio_buffer,
+            audio_buffer_consumer,
+            audio_buffer_producer,
             effects_chain,
-            adaptive_chunk_size: optimal_chunk_size.max(64).min(1024), // Clamp between 64-1024 samples
+            adaptive_chunk_size: clamped_chunk_size,
         })
     }
 
@@ -74,232 +86,168 @@ impl AudioInputStream {
     }
 
     pub async fn get_samples(&self) -> Vec<f32> {
-        // Use timeout to prevent audio dropouts from lock contention
-        let timeout = std::time::Duration::from_micros(500); // 0.5ms timeout
-        let lock_start = std::time::Instant::now();
-        match tokio::time::timeout(timeout, self.audio_buffer.lock()).await {
+        // RTRB: Lock-free sample consumption from ring buffer
+        let mut consumer_guard = match self.audio_buffer_consumer.try_lock() {
+            Ok(guard) => guard,
             Err(_) => {
-                let lock_time = lock_start.elapsed().as_micros();
-                crate::audio_debug!("⏰ GET_SAMPLES_TIMEOUT: Failed to acquire buffer lock within 0.5ms for device {} (waited {}μs)", self.device_id, lock_time);
+                // Consumer is busy (should be rare in SPSC scenario)
+                crate::audio_debug!("⚠️ GET_SAMPLES_CONSUMER_BUSY: Consumer lock busy for device {}", self.device_id);
                 return Vec::new();
             }
-            Ok(mut buffer) => {
-                let lock_time = lock_start.elapsed().as_micros();
-                if lock_time > 100 {
-                    // Log if lock took more than 100μs
-                    crate::audio_debug!(
-                        "🔒 GET_SAMPLES_SLOW_LOCK: Lock acquired in {}μs for device {}",
-                        lock_time,
-                        self.device_id
-                    );
+        };
+        
+        let chunk_size = self.adaptive_chunk_size;
+        
+        // Check available samples in ring buffer
+        let available_samples = consumer_guard.slots();
+        if available_samples == 0 {
+            return Vec::new(); // No samples available
+        }
+        
+        // Take up to chunk_size samples for consistent timing
+        let samples_to_take = chunk_size.min(available_samples);
+        let mut samples = Vec::with_capacity(samples_to_take);
+        
+        // Use RTRB's read method for bulk read
+        let mut read_count = 0;
+        while read_count < samples_to_take {
+            match consumer_guard.pop() {
+                Ok(sample) => {
+                    samples.push(sample);
+                    read_count += 1;
                 }
-                let chunk_size = self.adaptive_chunk_size;
-
-                if buffer.is_empty() {
-                    return Vec::new(); // No samples available at all
-                }
-
-                // **USE ADAPTIVE CHUNK SIZE**: Process exactly the calculated buffer size for proper timing
-                let available_samples = buffer.len();
-                let samples_to_take = chunk_size.min(available_samples);
-
-                if samples_to_take == 0 {
-                    return Vec::new();
-                }
-
-                // Take exactly chunk_size samples for consistent timing
-                let samples: Vec<f32> = buffer.drain(..samples_to_take).collect();
-                let sample_count = samples.len();
-
-                // Debug: Log when we're actually reading samples
-                use std::sync::{LazyLock, Mutex as StdMutex};
-                static GET_SAMPLES_COUNT: LazyLock<
-                    StdMutex<std::collections::HashMap<String, u64>>,
-                > = LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
-
-                if let Ok(mut count_map) = GET_SAMPLES_COUNT.lock() {
-                    let count = count_map.entry(self.device_id.clone()).or_insert(0);
-                    *count += 1;
-
-                    if sample_count > 0 {
-                        if *count % 100 == 0 || (*count < 10) {
-                            let peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                            let rms = (samples.iter().map(|&s| s * s).sum::<f32>()
-                                / samples.len() as f32)
-                                .sqrt();
-                            println!("📖 GET_SAMPLES [{}]: Retrieved {} samples (call #{}), peak: {:.4}, rms: {:.4}",
-                            self.device_id, sample_count, count, peak, rms);
-                        }
-                    } else if *count % 500 == 0 {
-                        println!(
-                            "📪 GET_SAMPLES [{}]: Empty buffer (call #{})",
-                            self.device_id, count
-                        );
-                    }
-                }
-
-                samples
-            }
-            Err(_timeout_elapsed) => {
-                // Track timeout failures
-                use std::sync::atomic::{AtomicU64, Ordering};
-                static TIMEOUT_FAILURES: AtomicU64 = AtomicU64::new(0);
-                let failures = TIMEOUT_FAILURES.fetch_add(1, Ordering::Relaxed);
-
-                if failures % 100 == 0 || failures < 10 {
-                    println!(
-                        "⏱️ GET_SAMPLES TIMEOUT [{}]: #{} timeout failures (0.5ms timeout)",
-                        self.device_id, failures
-                    );
-                }
-
-                Vec::new()
+                Err(_) => break, // No more samples available
             }
         }
+        
+        let sample_count = samples.len();
+        
+        // Debug: Log when we're reading samples
+        use std::sync::{LazyLock, Mutex as StdMutex};
+        static GET_SAMPLES_COUNT: LazyLock<
+            StdMutex<std::collections::HashMap<String, u64>>,
+        > = LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
+
+        if let Ok(mut count_map) = GET_SAMPLES_COUNT.lock() {
+            let count = count_map.entry(self.device_id.clone()).or_insert(0);
+            *count += 1;
+
+            if sample_count > 0 {
+                if *count % 100 == 0 || (*count < 10) {
+                    let peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                    let rms = (samples.iter().map(|&s| s * s).sum::<f32>()
+                        / samples.len() as f32)
+                        .sqrt();
+                    println!("📖 RTRB_GET_SAMPLES [{}]: Retrieved {} samples (call #{}), available: {}, peak: {:.4}, rms: {:.4}",
+                        self.device_id, sample_count, count, available_samples, peak, rms);
+                }
+            } else if *count % 500 == 0 {
+                println!(
+                    "📪 RTRB_GET_SAMPLES [{}]: Empty ring buffer (call #{})",
+                    self.device_id, count
+                );
+            }
+        }
+        
+        samples
     }
 
     /// Apply effects to input samples and update channel settings
     pub async fn process_with_effects(&self, channel: &AudioChannel) -> Vec<f32> {
-        // Use timeout to prevent audio dropouts from lock contention
-        let timeout = std::time::Duration::from_micros(500); // 0.5ms timeout
-        let lock_start = std::time::Instant::now();
-        match tokio::time::timeout(timeout, self.audio_buffer.lock()).await {
+        // RTRB: Get samples from ring buffer first (same as get_samples but with effects)
+        let mut consumer_guard = match self.audio_buffer_consumer.try_lock() {
+            Ok(guard) => guard,
             Err(_) => {
-                let lock_time = lock_start.elapsed().as_micros();
-                crate::audio_debug!("⏰ PROCESS_EFFECTS_TIMEOUT: Failed to acquire buffer lock within 0.5ms for device {} (waited {}μs)", self.device_id, lock_time);
+                crate::audio_debug!("⚠️ PROCESS_EFFECTS_CONSUMER_BUSY: Consumer lock busy for device {}", self.device_id);
                 return Vec::new();
             }
-            Ok(mut buffer) => {
-                let lock_time = lock_start.elapsed().as_micros();
-                if lock_time > 100 {
-                    // Log if lock took more than 100μs
-                    crate::audio_debug!(
-                        "🔒 PROCESS_EFFECTS_SLOW_LOCK: Lock acquired in {}μs for device {}",
-                        lock_time,
-                        self.device_id
-                    );
+        };
+        
+        let chunk_size = self.adaptive_chunk_size;
+        let available_samples = consumer_guard.slots();
+        if available_samples == 0 {
+            return Vec::new();
+        }
+        
+        // Take up to chunk_size samples for consistent timing
+        let samples_to_take = chunk_size.min(available_samples);
+        let mut samples = Vec::with_capacity(samples_to_take);
+        
+        // Read samples from RTRB
+        let mut read_count = 0;
+        while read_count < samples_to_take {
+            match consumer_guard.pop() {
+                Ok(sample) => {
+                    samples.push(sample);
+                    read_count += 1;
                 }
-                let chunk_size = self.adaptive_chunk_size;
-
-                if buffer.is_empty() {
-                    return Vec::new(); // No samples available at all
-                }
-
-                // **USE ADAPTIVE CHUNK SIZE**: Process exactly the calculated buffer size for proper timing
-                let available_samples = buffer.len();
-                let samples_to_take = chunk_size.min(available_samples);
-
-                if samples_to_take == 0 {
-                    return Vec::new();
-                }
-
-                // Take exactly chunk_size samples for consistent timing and effects processing
-                let mut samples: Vec<f32> = buffer.drain(..samples_to_take).collect();
-                let original_sample_count = samples.len();
-
-                // Debug: Log processing activity
-                use std::sync::{LazyLock, Mutex as StdMutex};
-                static PROCESS_COUNT: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> =
-                    LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
-
-                if let Ok(mut count_map) = PROCESS_COUNT.lock() {
-                    let count = count_map.entry(self.device_id.clone()).or_insert(0);
-                    *count += 1;
-
-                    if original_sample_count > 0 {
-                        let original_peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-
-                        if *count % 100 == 0 || (*count < 10) {
-                            crate::audio_debug!("⚙️  PROCESS_WITH_EFFECTS [{}]: Processing {} samples (call #{}), peak: {:.4}, channel: {}",
-                            self.device_id, original_sample_count, count, original_peak, channel.name);
-                            crate::audio_debug!(
-                                "   Settings: gain: {:.2}, muted: {}, effects: {}",
-                                channel.gain,
-                                channel.muted,
-                                channel.effects_enabled
-                            );
-                        }
-                    }
-                }
-
-                // Apply effects if enabled
-                if channel.effects_enabled && !samples.is_empty() {
-                    println!("🔊 Applying effects to samples: {}", samples.len());
-                    if let Ok(mut effects) = self.effects_chain.try_lock() {
-                        // Update effects parameters based on channel settings
-                        effects.set_eq_gain(EQBand::Low, channel.eq_low_gain);
-                        effects.set_eq_gain(EQBand::Mid, channel.eq_mid_gain);
-                        effects.set_eq_gain(EQBand::High, channel.eq_high_gain);
-
-                        if channel.comp_enabled {
-                            effects.set_compressor_params(
-                                channel.comp_threshold,
-                                channel.comp_ratio,
-                                channel.comp_attack,
-                                channel.comp_release,
-                            );
-                        }
-
-                        if channel.limiter_enabled {
-                            effects.set_limiter_threshold(channel.limiter_threshold);
-                        }
-
-                        // Process samples through effects chain
-                        effects.process(&mut samples);
-                    }
-                }
-
-                // **CRITICAL FIX**: Apply channel-specific gain and mute (this was missing!)
-                if !channel.muted && channel.gain > 0.0 {
-                    for sample in samples.iter_mut() {
-                        *sample *= channel.gain;
-                    }
-
-                    // Debug: Log final processed levels
-                    if let Ok(count_map) = PROCESS_COUNT.lock() {
-                        let count = count_map.get(&self.device_id).unwrap_or(&0);
-                        if original_sample_count > 0 && (*count % 100 == 0 || *count < 10) {
-                            let final_peak =
-                                samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                            let final_rms = (samples.iter().map(|&s| s * s).sum::<f32>()
-                                / samples.len() as f32)
-                                .sqrt();
-                            crate::audio_debug!(
-                                "✅ PROCESSED [{}]: Final {} samples, peak: {:.4}, rms: {:.4}",
-                                self.device_id,
-                                samples.len(),
-                                final_peak,
-                                final_rms
-                            );
-                        }
-                    }
-                } else {
-                    samples.fill(0.0);
-                    if let Ok(count_map) = PROCESS_COUNT.lock() {
-                        let count = count_map.get(&self.device_id).unwrap_or(&0);
-                        if original_sample_count > 0 && (*count % 200 == 0 || *count < 5) {
-                            println!("🔇 MUTED/ZERO_GAIN [{}]: {} samples set to silence (muted: {}, gain: {:.2})",
-                            self.device_id, samples.len(), channel.muted, channel.gain);
-                        }
-                    }
-                }
-
-                samples
-            }
-            Err(_timeout_elapsed) => {
-                // Track timeout failures in effects processing
-                use std::sync::atomic::{AtomicU64, Ordering};
-                static EFFECTS_TIMEOUT_FAILURES: AtomicU64 = AtomicU64::new(0);
-                let failures = EFFECTS_TIMEOUT_FAILURES.fetch_add(1, Ordering::Relaxed);
-
-                if failures % 100 == 0 || failures < 10 {
-                    println!("⏱️ PROCESS_WITH_EFFECTS TIMEOUT [{}]: #{} timeout failures (0.5ms timeout)",
-                        self.device_id, failures);
-                }
-
-                Vec::new()
+                Err(_) => break,
             }
         }
+        
+        // Drop the consumer lock early to avoid holding it during effects processing
+        drop(consumer_guard);
+        
+        let original_sample_count = samples.len();
+        if original_sample_count == 0 {
+            return Vec::new();
+        }
+
+        // Debug: Log processing activity
+        use std::sync::{LazyLock, Mutex as StdMutex};
+        static PROCESS_COUNT: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> =
+            LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
+
+        if let Ok(mut count_map) = PROCESS_COUNT.lock() {
+            let count = count_map.entry(self.device_id.clone()).or_insert(0);
+            *count += 1;
+
+            if original_sample_count > 0 {
+                let original_peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+
+                if *count % 100 == 0 || (*count < 10) {
+                    crate::audio_debug!("⚙️  RTRB_PROCESS_WITH_EFFECTS [{}]: Processing {} samples (call #{}), available: {}, peak: {:.4}, channel: {}",
+                    self.device_id, original_sample_count, count, available_samples, original_peak, channel.name);
+                }
+            }
+        }
+
+        // Apply effects if enabled
+        if channel.effects_enabled && !samples.is_empty() {
+            if let Ok(mut effects) = self.effects_chain.try_lock() {
+                // Update effects parameters based on channel settings
+                effects.set_eq_gain(EQBand::Low, channel.eq_low_gain);
+                effects.set_eq_gain(EQBand::Mid, channel.eq_mid_gain);
+                effects.set_eq_gain(EQBand::High, channel.eq_high_gain);
+
+                if channel.comp_enabled {
+                    effects.set_compressor_params(
+                        channel.comp_threshold,
+                        channel.comp_ratio,
+                        channel.comp_attack,
+                        channel.comp_release,
+                    );
+                }
+
+                if channel.limiter_enabled {
+                    effects.set_limiter_threshold(channel.limiter_threshold);
+                }
+
+                // Process samples through effects chain
+                effects.process(&mut samples);
+            }
+        }
+
+        // Apply channel-specific gain and mute
+        if !channel.muted && channel.gain > 0.0 {
+            for sample in samples.iter_mut() {
+                *sample *= channel.gain;
+            }
+        } else {
+            samples.fill(0.0);
+        }
+
+        samples
     }
 }
 
@@ -363,7 +311,7 @@ pub enum StreamCommand {
         device_id: String,
         device: cpal::Device,
         config: cpal::StreamConfig,
-        audio_buffer: Arc<Mutex<Vec<f32>>>,
+        audio_buffer: Arc<Mutex<Producer<f32>>>, // RTRB Producer for audio callback
         target_sample_rate: u32,
         response_tx: std::sync::mpsc::Sender<Result<()>>,
     },
@@ -392,7 +340,7 @@ impl StreamManager {
         device_id: String,
         device: cpal::Device,
         config: cpal::StreamConfig,
-        audio_buffer: Arc<Mutex<Vec<f32>>>,
+        audio_buffer: Arc<Mutex<Producer<f32>>>, // RTRB Producer for audio callback
         target_sample_rate: u32,
     ) -> Result<()> {
         self.add_input_stream_with_error_handling(
@@ -410,7 +358,7 @@ impl StreamManager {
         device_id: String,
         device: cpal::Device,
         config: cpal::StreamConfig,
-        audio_buffer: Arc<Mutex<Vec<f32>>>,
+        audio_buffer: Arc<Mutex<Producer<f32>>>, // RTRB Producer for audio callback
         target_sample_rate: u32,
         device_manager: Option<std::sync::Weak<crate::audio::devices::AudioDeviceManager>>,
     ) -> Result<()> {
@@ -521,15 +469,28 @@ impl StreamManager {
                             crate::audio_debug!("   Total samples captured: {}, stereo samples: {}", total_samples_captured, audio_samples.len());
                         }
 
-                        // Store in buffer with additional debugging
-                        if let Ok(mut buffer) = audio_buffer.try_lock() {
-                            let buffer_size_before = buffer.len();
-                            buffer.extend_from_slice(&audio_samples);
-                            let buffer_size_after = buffer.len();
-
-                            // Only log buffer state changes when significant or debug needed
-                            if buffer_size_before == 0 && buffer_size_after > 0 && callback_count < 10 {
-                                crate::audio_debug!("📦 BUFFER: First audio data stored in buffer for {}: {} samples", debug_device_id, buffer_size_after);
+                        // Store in RTRB ring buffer with additional debugging
+                        if let Ok(mut producer) = audio_buffer.try_lock() {
+                            let available_slots = producer.slots();
+                            
+                            // Push samples to RTRB ring buffer
+                            let mut pushed_count = 0;
+                            for &sample in audio_samples.iter() {
+                                match producer.push(sample) {
+                                    Ok(_) => pushed_count += 1,
+                                    Err(_) => break, // Ring buffer is full, drop remaining samples
+                                }
+                            }
+                            
+                            // Log buffer activity for debugging
+                            if pushed_count > 0 && callback_count < 10 {
+                                crate::audio_debug!("📦 RTRB_BUFFER: Pushed {} samples to ring buffer for {} (available slots: {})", 
+                                    pushed_count, debug_device_id, available_slots);
+                            }
+                            
+                            if pushed_count < audio_samples.len() {
+                                crate::audio_debug!("⚠️ RTRB_BUFFER_FULL: Dropped {} samples for {} (ring buffer full)", 
+                                    audio_samples.len() - pushed_count, debug_device_id);
                             }
 
                             // **SIMPLE BUFFER MANAGEMENT**: Just store incoming samples, consumer drains them completely

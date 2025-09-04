@@ -274,11 +274,11 @@ impl VirtualMixerHandle {
                 if let Ok(streams_debug) = self.input_streams.try_lock() {
                     // Debug each stream buffer state
                     for (device_id, stream) in streams_debug.iter() {
-                        if let Ok(buffer_guard) = stream.audio_buffer.try_lock() {
+                        if let Ok(consumer_guard) = stream.audio_buffer_consumer.try_lock() {
                             crate::audio_debug!(
-                                "   Stream [{}]: buffer has {} samples",
+                                "   Stream [{}]: RTRB buffer has {} samples",
                                 device_id,
-                                buffer_guard.len()
+                                consumer_guard.slots()
                             );
                         } else {
                             crate::audio_debug!("   Stream [{}]: buffer locked", device_id);

@@ -267,17 +267,11 @@ impl ApplicationAudioManager {
 
         // Create the AudioInputStream immediately and register it
         let audio_input_stream =
-            Arc::new(crate::audio::mixer::stream_management::AudioInputStream {
-                device_id: virtual_device_id.clone(),
-                device_name: channel_name.clone(),
-                sample_rate: 48000,
-                channels: 2,
-                audio_buffer: bridge_buffer.clone(),
-                effects_chain: Arc::new(tokio::sync::Mutex::new(
-                    crate::audio::effects::AudioEffectsChain::new(48000),
-                )),
-                adaptive_chunk_size: 480, // 10ms at 48kHz
-            });
+            Arc::new(crate::audio::mixer::stream_management::AudioInputStream::new(
+                virtual_device_id.clone(),
+                channel_name.clone(),
+                48000,
+            )?);
 
         // Store in global registry IMMEDIATELY
         self.add_to_global_mixer_sync(virtual_device_id.clone(), audio_input_stream)

@@ -301,7 +301,7 @@ impl VirtualMixer {
         input_stream.set_adaptive_chunk_size(actual_buffer_size);
 
         // Get references for the audio callback
-        let audio_buffer = input_stream.audio_buffer.clone();
+        let audio_buffer_producer = input_stream.audio_buffer_producer.clone();
         println!("🍆 all the random ass shit fucking config data. \nconfig_fallback_size: {}\noptimal_buffer_size: {:?}\nactual_buffer_size: {}, hardware_sample_rate: {}"
         , config_fallback_size, optimal_buffer_size, actual_buffer_size, hardware_sample_rate);
 
@@ -345,7 +345,7 @@ impl VirtualMixer {
             device_id: device_id.to_string(),
             device: cpal_device,
             config: stream_config,
-            audio_buffer,
+            audio_buffer: audio_buffer_producer,
             target_sample_rate: hardware_sample_rate, // Use hardware sample rate
             response_tx,
         };
