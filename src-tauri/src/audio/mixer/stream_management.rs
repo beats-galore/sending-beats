@@ -496,10 +496,10 @@ impl StreamManager {
                             // **SIMPLE BUFFER MANAGEMENT**: Just store incoming samples, consumer drains them completely
                             // No complex overflow management needed since we process all available samples
 
-                            // Debug buffer state periodically
-                            if callback_count % 500 == 0 && buffer.len() > 0 {
-                                crate::audio_debug!("📊 BUFFER STATUS [{}]: {} samples stored",
-                                    debug_device_id, buffer.len());
+                            // Debug ring buffer state periodically  
+                            if callback_count % 500 == 0 && available_slots < producer.slots() {
+                                crate::audio_debug!("📊 RTRB_BUFFER STATUS [{}]: ring buffer has {} available slots",
+                                    debug_device_id, available_slots);
                             }
                         } else {
                             if callback_count % 100 == 0 {
@@ -572,17 +572,31 @@ impl StreamManager {
                                 debug_device_id_i16, callback_count, data.len(), peak_level, rms_level);
                         }
 
-                        if let Ok(mut buffer) = audio_buffer.try_lock() {
-                            let buffer_size_before = buffer.len();
-                            buffer.extend_from_slice(&audio_samples);
-
-                            if buffer_size_before == 0 && buffer.len() > 0 && callback_count < 10 {
-                                println!("📦 BUFFER I16: First audio data stored for {}: {} samples", debug_device_id_i16, buffer.len());
+                        if let Ok(mut producer) = audio_buffer.try_lock() {
+                            let available_slots = producer.slots();
+                            
+                            // Push samples to RTRB ring buffer  
+                            let mut pushed_count = 0;
+                            for &sample in audio_samples.iter() {
+                                match producer.push(sample) {
+                                    Ok(_) => pushed_count += 1,
+                                    Err(_) => break, // Ring buffer full, drop remaining samples
+                                }
+                            }
+                            
+                            // Log buffer activity for debugging
+                            if pushed_count > 0 && callback_count < 10 {
+                                println!("📦 I16_RTRB_BUFFER: Pushed {} samples to ring buffer for {} (available slots: {})",
+                                    pushed_count, debug_device_id_i16, available_slots);
+                            }
+                            
+                            if pushed_count < audio_samples.len() {
+                                crate::audio_debug!("⚠️ I16_RTRB_BUFFER_FULL: Dropped {} samples for {} (ring buffer full)",
+                                    audio_samples.len() - pushed_count, debug_device_id_i16);
                             }
 
 
-                            // **CLEANED UP**: Use centralized buffer management
-                            crate::audio::mixer::audio_processing::AudioFormatConverter::manage_buffer_overflow_optimized(&mut buffer, target_sample_rate, &debug_device_id_i16, callback_count);
+                            // **RTRB**: No overflow management needed - ring buffer automatically drops samples when full
                         }
                     },
                     {
@@ -610,11 +624,28 @@ impl StreamManager {
                         // Keep stereo data as-is to prevent pitch shifting - don't convert to mono
                         let audio_samples = f32_samples;
 
-                        if let Ok(mut buffer) = audio_buffer.try_lock() {
-                            buffer.extend_from_slice(&audio_samples);
-
-                            // **CLEANED UP**: Use centralized buffer management
-                            crate::audio::mixer::audio_processing::AudioFormatConverter::manage_buffer_overflow_optimized(&mut buffer, target_sample_rate, "U16_device", 0);
+                        if let Ok(mut producer) = audio_buffer.try_lock() {
+                            let available_slots = producer.slots();
+                            
+                            // Push samples to RTRB ring buffer
+                            let mut pushed_count = 0; 
+                            for &sample in audio_samples.iter() {
+                                match producer.push(sample) {
+                                    Ok(_) => pushed_count += 1,
+                                    Err(_) => break, // Ring buffer full, drop remaining samples
+                                }
+                            }
+                            
+                            // Log buffer activity for debugging (U16 callback usually rare)
+                            if pushed_count > 0 {
+                                println!("📦 U16_RTRB_BUFFER: Pushed {} samples to ring buffer (available slots: {})",
+                                    pushed_count, available_slots);
+                            }
+                            
+                            if pushed_count < audio_samples.len() {
+                                crate::audio_debug!("⚠️ U16_RTRB_BUFFER_FULL: Dropped {} samples (ring buffer full)",
+                                    audio_samples.len() - pushed_count);
+                            }
                         }
                     },
                     |err| eprintln!("Audio input error: {}", err),
