@@ -64,15 +64,7 @@ impl VirtualMixerHandle {
         samples
     }
 
-        let debug_count = if let Ok(mut count) = DEBUG_COUNT.lock() {
-            *count += 1;
-            *count
-        } else {
-            0
-        };
-
-        // Log detailed status every 100 calls
-        // if debug_count % 1000 == 0 {
+    pub async fn send_to_output(&self, samples: &[f32]) {
         //     crate::audio_debug!(
         //         "🔍 INPUT STREAM STATUS Debug #{}: {} active streams, {} configured channels",
         //         debug_count,

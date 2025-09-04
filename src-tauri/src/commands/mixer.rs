@@ -86,21 +86,38 @@ pub async fn add_mixer_channel(
 ) -> Result<(), String> {
     // NEW ARCHITECTURE: Use message passing instead of direct Arc access
     
-    // For now, extract device information from the channel
-    // TODO: This will need to be updated when we understand the full AudioChannel -> device mapping
-    let device_id = channel.id.clone();
+    // Extract device information from the channel
+    let device_id = channel.input_device_id.clone()
+        .ok_or_else(|| "No input device ID specified in channel".to_string())?;
+    
+    // Get the actual CPAL device and config using the device manager
+    let device_manager = audio_state.device_manager.lock().await;
+    let device_handle = device_manager.find_audio_device(&device_id, true).await
+        .map_err(|e| format!("Failed to find input device {}: {}", device_id, e))?;
+    
+    let device = match device_handle {
+        crate::audio::types::AudioDeviceHandle::Cpal(cpal_device) => cpal_device,
+        #[cfg(target_os = "macos")]
+        _ => return Err("Only CPAL devices supported for input streams".to_string()),
+        #[cfg(not(target_os = "macos"))]
+        _ => return Err("Unknown device handle type".to_string()),
+    };
+    
+    // Get the default input config for this device
+    let config = device.default_input_config()
+        .map_err(|e| format!("Failed to get device config: {}", e))?
+        .config();
+    
+    let target_sample_rate = config.sample_rate.0;
     
     // Send command to isolated audio thread using the command channel
     let (response_tx, response_rx) = tokio::sync::oneshot::channel();
     
-    // Create a placeholder add input stream command
-    // TODO: We need to get the actual device and config from the channel
-    // For now, this demonstrates the new message-passing pattern
     let command = crate::audio::mixer::stream_management::AudioCommand::AddInputStream {
         device_id: device_id.clone(),
-        device: todo!("Extract device from channel"), // TODO: Need proper device extraction
-        config: todo!("Extract config from channel"), // TODO: Need proper config extraction  
-        target_sample_rate: 48000, // TODO: Extract from channel/device
+        device,
+        config,
+        target_sample_rate,
         response_tx,
     };
     
