@@ -18,6 +18,7 @@ use tokio::sync::Mutex;
 
 // Lock-free audio buffer imports
 use rtrb::{RingBuffer, Consumer, Producer};
+use spmcq::{ring_buffer, Reader, Writer};
 
 // Audio stream management structures
 #[derive(Debug)]
@@ -27,7 +28,7 @@ pub struct AudioInputStream {
     pub sample_rate: u32,
     pub channels: u16,
     pub audio_buffer_consumer: Arc<Mutex<Consumer<f32>>>, // RTRB consumer for mixer thread
-    pub audio_buffer_producer: Arc<Mutex<Producer<f32>>>, // RTRB producer for audio callback
+    pub audio_buffer_producer: Arc<Producer<f32>>, // RTRB producer for audio callback (lock-free!)
     pub effects_chain: Arc<Mutex<AudioEffectsChain>>,
     pub adaptive_chunk_size: usize, // Adaptive buffer chunk size based on hardware
                                     // Stream is managed separately via StreamManager to avoid Send/Sync issues
@@ -44,8 +45,8 @@ impl AudioInputStream {
         let buffer_capacity = buffer_capacity.max(4096).min(16384); // Clamp between 4K-16K samples
         
         let (producer, consumer) = RingBuffer::<f32>::new(buffer_capacity);
-        let audio_buffer_producer = Arc::new(Mutex::new(producer));
-        let audio_buffer_consumer = Arc::new(Mutex::new(consumer));
+        let audio_buffer_producer = Arc::new(producer); // Lock-free producer, shared via Arc
+        let audio_buffer_consumer = Arc::new(Mutex::new(consumer)); // Consumer still needs mutex for shared access
         let effects_chain = Arc::new(Mutex::new(AudioEffectsChain::new(sample_rate)));
 
         Ok(AudioInputStream {
@@ -251,27 +252,47 @@ impl AudioInputStream {
     }
 }
 
-#[derive(Debug)]
 pub struct AudioOutputStream {
     pub device_id: String,
     pub device_name: String,
     pub sample_rate: u32,
     pub channels: u16,
-    pub input_buffer: Arc<Mutex<Vec<f32>>>,
+    pub spmc_writer: Arc<Mutex<Writer<f32>>>, // SPMC writer for mixer thread
     // Stream is handled separately to avoid Send/Sync issues
 }
 
-impl AudioOutputStream {
-    pub fn new(device_id: String, device_name: String, sample_rate: u32) -> Result<Self> {
-        let input_buffer = Arc::new(Mutex::new(Vec::new()));
+// Manual Debug implementation since spmcq::Writer doesn't implement Debug
+impl std::fmt::Debug for AudioOutputStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AudioOutputStream")
+            .field("device_id", &self.device_id)
+            .field("device_name", &self.device_name)
+            .field("sample_rate", &self.sample_rate)
+            .field("channels", &self.channels)
+            .field("spmc_writer", &"<SPMC Writer>")
+            .finish()
+    }
+}
 
-        Ok(AudioOutputStream {
+impl AudioOutputStream {
+    pub fn new(device_id: String, device_name: String, sample_rate: u32) -> (Self, Reader<f32>) {
+        // Create SPMC queue with capacity for ~100ms of stereo audio
+        let buffer_capacity = (sample_rate as usize * 2) / 10; // 100ms of stereo samples
+        let buffer_capacity = buffer_capacity.max(4096).min(16384); // Clamp between 4K-16K samples
+        
+        let (reader, writer) = ring_buffer(buffer_capacity);
+        
+        let spmc_writer = Arc::new(Mutex::new(writer));
+
+        let output_stream = AudioOutputStream {
             device_id,
             device_name,
             sample_rate,
             channels: 2, // Stereo output
-            input_buffer,
-        })
+            spmc_writer,
+        };
+        
+        (output_stream, reader)
     }
 
     /// Get device ID
@@ -280,14 +301,21 @@ impl AudioOutputStream {
     }
 
     pub fn send_samples(&self, samples: &[f32]) {
-        if let Ok(mut buffer) = self.input_buffer.try_lock() {
-            buffer.extend_from_slice(samples);
-            // Limit buffer size to prevent memory issues
-            let max_samples = self.sample_rate as usize * 2; // 2 seconds max
-            let buffer_len = buffer.len();
-            if buffer_len > max_samples {
-                buffer.drain(0..(buffer_len - max_samples));
+        if let Ok(mut writer) = self.spmc_writer.try_lock() {
+            // Push samples to SPMC queue - all consumers will receive them
+            let mut pushed_count = 0;
+            for &sample in samples {
+                writer.write(sample);
+                pushed_count += 1;
             }
+            
+            // Log if we couldn't write all samples (unlikely with proper sizing)
+            if pushed_count < samples.len() {
+                crate::audio_debug!("⚠️ SPMC_OUTPUT_PARTIAL: Only wrote {} of {} samples to device {}", 
+                    pushed_count, samples.len(), self.device_id);
+            }
+        } else {
+            crate::audio_debug!("⚠️ SPMC_OUTPUT_LOCK_BUSY: Writer lock busy for device {}", self.device_id);
         }
     }
 }
@@ -311,7 +339,7 @@ pub enum StreamCommand {
         device_id: String,
         device: cpal::Device,
         config: cpal::StreamConfig,
-        audio_buffer: Arc<Mutex<Producer<f32>>>, // RTRB Producer for audio callback
+        audio_buffer: Arc<Producer<f32>>, // RTRB Producer for audio callback (lock-free!)
         target_sample_rate: u32,
         response_tx: std::sync::mpsc::Sender<Result<()>>,
     },
@@ -319,7 +347,7 @@ pub enum StreamCommand {
         device_id: String,
         device: cpal::Device,
         config: cpal::StreamConfig,
-        audio_buffer: Arc<Mutex<Vec<f32>>>,
+        spmc_reader: Reader<f32>, // SPMC reader for audio callback consumption
         response_tx: std::sync::mpsc::Sender<Result<()>>,
     },
     RemoveStream {
@@ -340,7 +368,7 @@ impl StreamManager {
         device_id: String,
         device: cpal::Device,
         config: cpal::StreamConfig,
-        audio_buffer: Arc<Mutex<Producer<f32>>>, // RTRB Producer for audio callback
+        audio_buffer: Arc<Producer<f32>>, // RTRB Producer for audio callback (lock-free!)
         target_sample_rate: u32,
     ) -> Result<()> {
         self.add_input_stream_with_error_handling(
@@ -358,7 +386,7 @@ impl StreamManager {
         device_id: String,
         device: cpal::Device,
         config: cpal::StreamConfig,
-        audio_buffer: Arc<Mutex<Producer<f32>>>, // RTRB Producer for audio callback
+        audio_buffer: Arc<Producer<f32>>, // RTRB Producer for audio callback (lock-free!)
         target_sample_rate: u32,
         device_manager: Option<std::sync::Weak<crate::audio::devices::AudioDeviceManager>>,
     ) -> Result<()> {
@@ -469,14 +497,14 @@ impl StreamManager {
                             crate::audio_debug!("   Total samples captured: {}, stereo samples: {}", total_samples_captured, audio_samples.len());
                         }
 
-                        // Store in RTRB ring buffer with additional debugging
-                        if let Ok(mut producer) = audio_buffer.try_lock() {
-                            let available_slots = producer.slots();
+                        // Store in RTRB ring buffer - NOW LOCK-FREE!
+                        {
+                            let available_slots = audio_buffer.slots();
                             
-                            // Push samples to RTRB ring buffer
+                            // Push samples to RTRB ring buffer (no mutex needed!)
                             let mut pushed_count = 0;
                             for &sample in audio_samples.iter() {
-                                match producer.push(sample) {
+                                match audio_buffer.push(sample) {
                                     Ok(_) => pushed_count += 1,
                                     Err(_) => break, // Ring buffer is full, drop remaining samples
                                 }
@@ -497,13 +525,9 @@ impl StreamManager {
                             // No complex overflow management needed since we process all available samples
 
                             // Debug ring buffer state periodically  
-                            if callback_count % 500 == 0 && available_slots < producer.slots() {
+                            if callback_count % 500 == 0 && available_slots < audio_buffer.slots() {
                                 crate::audio_debug!("📊 RTRB_BUFFER STATUS [{}]: ring buffer has {} available slots",
                                     debug_device_id, available_slots);
-                            }
-                        } else {
-                            if callback_count % 100 == 0 {
-                                crate::audio_debug!("🔒 BUFFER LOCK FAILED [{}]: Callback #{} couldn't access buffer", debug_device_id, callback_count);
                             }
                         }
                     },
@@ -572,13 +596,14 @@ impl StreamManager {
                                 debug_device_id_i16, callback_count, data.len(), peak_level, rms_level);
                         }
 
-                        if let Ok(mut producer) = audio_buffer.try_lock() {
-                            let available_slots = producer.slots();
+                        // RTRB I16 callback - NOW LOCK-FREE!
+                        {
+                            let available_slots = audio_buffer.slots();
                             
-                            // Push samples to RTRB ring buffer  
+                            // Push samples to RTRB ring buffer (no mutex needed!)
                             let mut pushed_count = 0;
                             for &sample in audio_samples.iter() {
-                                match producer.push(sample) {
+                                match audio_buffer.push(sample) {
                                     Ok(_) => pushed_count += 1,
                                     Err(_) => break, // Ring buffer full, drop remaining samples
                                 }
@@ -624,13 +649,14 @@ impl StreamManager {
                         // Keep stereo data as-is to prevent pitch shifting - don't convert to mono
                         let audio_samples = f32_samples;
 
-                        if let Ok(mut producer) = audio_buffer.try_lock() {
-                            let available_slots = producer.slots();
+                        // RTRB U16 callback - NOW LOCK-FREE!
+                        {
+                            let available_slots = audio_buffer.slots();
                             
-                            // Push samples to RTRB ring buffer
+                            // Push samples to RTRB ring buffer (no mutex needed!)
                             let mut pushed_count = 0; 
                             for &sample in audio_samples.iter() {
-                                match producer.push(sample) {
+                                match audio_buffer.push(sample) {
                                     Ok(_) => pushed_count += 1,
                                     Err(_) => break, // Ring buffer full, drop remaining samples
                                 }
@@ -718,7 +744,7 @@ impl StreamManager {
         device_id: String,
         device: cpal::Device,
         config: cpal::StreamConfig,
-        audio_buffer: Arc<Mutex<Vec<f32>>>,
+        spmc_reader: Reader<f32>,
     ) -> Result<()> {
         use cpal::traits::StreamTrait;
 
@@ -758,29 +784,24 @@ impl StreamManager {
                 device.build_output_stream(
                     &config,
                     {
-                        let audio_buffer = audio_buffer.clone();
+                        let mut spmc_reader = spmc_reader.clone();
                         let _device = device_id.clone();
                         move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                            // Fill output buffer with audio from our mixer
-                            if let Ok(mut buffer) = audio_buffer.try_lock() {
-                                let available_samples = buffer.len().min(data.len());
-                                if available_samples > 0 {
-                                    // Copy samples from buffer to output
-                                    data[..available_samples]
-                                        .copy_from_slice(&buffer[..available_samples]);
-                                    // Remove used samples from buffer
-                                    buffer.drain(..available_samples);
-                                    // Fill remaining with silence if needed
-                                    if available_samples < data.len() {
-                                        data[available_samples..].fill(0.0);
+                            // Fill output buffer with audio from SPMC queue
+                            for sample in data.iter_mut() {
+                                match spmc_reader.read() {
+                                    spmcq::ReadResult::Ok(audio_sample) => {
+                                        *sample = audio_sample;
                                     }
-                                } else {
-                                    // No audio available, output silence
-                                    data.fill(0.0);
+                                    spmcq::ReadResult::Dropout(audio_sample) => {
+                                        // Got data but missed some, still use the sample
+                                        *sample = audio_sample;
+                                    }
+                                    spmcq::ReadResult::Empty => {
+                                        // No data available, fill with silence
+                                        *sample = 0.0;
+                                    }
                                 }
-                            } else {
-                                // Can't lock buffer, output silence
-                                data.fill(0.0);
                             }
                         }
                     },
@@ -804,23 +825,24 @@ impl StreamManager {
                         buffer_size: config.buffer_size,
                     },
                     {
-                        let audio_buffer = audio_buffer.clone();
+                        let mut spmc_reader = spmc_reader.clone();
                         let _device = device_id.clone();
                         move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                            if let Ok(mut buffer) = audio_buffer.try_lock() {
-                                let available_samples = buffer.len().min(data.len());
-                                if available_samples > 0 {
-                                    data[..available_samples]
-                                        .copy_from_slice(&buffer[..available_samples]);
-                                    buffer.drain(..available_samples);
-                                    if available_samples < data.len() {
-                                        data[available_samples..].fill(0.0);
+                            // Fill output buffer with audio from SPMC queue
+                            for sample in data.iter_mut() {
+                                match spmc_reader.read() {
+                                    spmcq::ReadResult::Ok(audio_sample) => {
+                                        *sample = audio_sample;
                                     }
-                                } else {
-                                    data.fill(0.0);
+                                    spmcq::ReadResult::Dropout(audio_sample) => {
+                                        // Got data but missed some, still use the sample
+                                        *sample = audio_sample;
+                                    }
+                                    spmcq::ReadResult::Empty => {
+                                        // No data available, fill with silence
+                                        *sample = 0.0;
+                                    }
                                 }
-                            } else {
-                                data.fill(0.0);
                             }
                         }
                     },
@@ -897,10 +919,10 @@ fn init_stream_manager() -> std::sync::mpsc::Sender<StreamCommand> {
                     device_id,
                     device,
                     config,
-                    audio_buffer,
+                    spmc_reader,
                     response_tx,
                 } => {
-                    let result = manager.add_output_stream(device_id, device, config, audio_buffer);
+                    let result = manager.add_output_stream(device_id, device, config, spmc_reader);
                     let _ = response_tx.send(result);
                 }
                 StreamCommand::RemoveStream {

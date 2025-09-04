@@ -262,11 +262,12 @@ impl VirtualMixer {
             }
         };
 
-        let output_stream = Arc::new(AudioOutputStream::new(
+        let (output_stream_instance, _reader) = AudioOutputStream::new(
             output_device.device_id.clone(),
             device_info.name.clone(),
             self.config.sample_rate,
-        )?);
+        );
+        let output_stream = Arc::new(output_stream_instance);
 
         // Add to output streams collection
         self.output_streams

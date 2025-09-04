@@ -548,15 +548,14 @@ impl VirtualMixer {
 
         crate::audio_debug!("Output device config: {:?}", config);
 
-        // Create AudioOutputStream structure
-        let output_stream = AudioOutputStream::new(
+        // Create AudioOutputStream structure  
+        let (output_stream, spmc_reader) = AudioOutputStream::new(
             device_id.to_string(),
             device_name.clone(),
             self.config.sample_rate,
-        )?;
+        );
 
-        // Get reference to the buffer for the output callback
-        let output_buffer = output_stream.input_buffer.clone();
+        // The SPMC reader will be used by the audio callback to consume mixed audio
         let target_sample_rate = self.config.sample_rate;
         let config_fallback_size = self.config.buffer_size as usize;
 
@@ -591,22 +590,25 @@ impl VirtualMixer {
                     info!("Creating F32 output stream for device: {}", device_name);
                     device.build_output_stream(
                         &stream_config,
-                        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                            // Safe, simple audio callback - just fill with silence for now to prevent crashes
-                            if let Ok(mut buffer) = output_buffer.try_lock() {
-                                let available_samples = buffer.len().min(data.len());
-                                if available_samples > 0 {
-                                    data[..available_samples]
-                                        .copy_from_slice(&buffer[..available_samples]);
-                                    buffer.drain(..available_samples);
-                                    if available_samples < data.len() {
-                                        data[available_samples..].fill(0.0);
+                        {
+                            let mut reader = spmc_reader.clone();
+                            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                                // Fill output buffer with audio from SPMC queue
+                                for sample in data.iter_mut() {
+                                    match reader.read() {
+                                        spmcq::ReadResult::Ok(audio_sample) => {
+                                            *sample = audio_sample;
+                                        }
+                                        spmcq::ReadResult::Dropout(audio_sample) => {
+                                            // Got data but missed some, still use the sample
+                                            *sample = audio_sample;
+                                        }
+                                        spmcq::ReadResult::Empty => {
+                                            // No data available, fill with silence
+                                            *sample = 0.0;
+                                        }
                                     }
-                                } else {
-                                    data.fill(0.0);
                                 }
-                            } else {
-                                data.fill(0.0);
                             }
                         },
                         |err| error!("Output stream error: {}", err),
@@ -625,22 +627,25 @@ impl VirtualMixer {
                             sample_rate: config.sample_rate(),
                             buffer_size: optimal_buffer_size,
                         },
-                        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                            // Simple silence output for stability
-                            if let Ok(mut buffer) = output_buffer.try_lock() {
-                                let available_samples = buffer.len().min(data.len());
-                                if available_samples > 0 {
-                                    data[..available_samples]
-                                        .copy_from_slice(&buffer[..available_samples]);
-                                    buffer.drain(..available_samples);
-                                    if available_samples < data.len() {
-                                        data[available_samples..].fill(0.0);
+                        {
+                            let mut reader = spmc_reader.clone();
+                            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                                // Fill output buffer with audio from SPMC queue
+                                for sample in data.iter_mut() {
+                                    match reader.read() {
+                                        spmcq::ReadResult::Ok(audio_sample) => {
+                                            *sample = audio_sample;
+                                        }
+                                        spmcq::ReadResult::Dropout(audio_sample) => {
+                                            // Got data but missed some, still use the sample
+                                            *sample = audio_sample;
+                                        }
+                                        spmcq::ReadResult::Empty => {
+                                            // No data available, fill with silence
+                                            *sample = 0.0;
+                                        }
                                     }
-                                } else {
-                                    data.fill(0.0);
                                 }
-                            } else {
-                                data.fill(0.0);
                             }
                         },
                         |err| error!("Output stream error: {}", err),
@@ -875,11 +880,11 @@ impl VirtualMixer {
         *coreaudio_guard = Some(coreaudio_stream);
 
         // Create AudioOutputStream structure for compatibility
-        let output_stream = AudioOutputStream::new(
+        let (output_stream, _spmc_reader) = AudioOutputStream::new(
             device_id.to_string(),
             coreaudio_device.name.clone(),
             self.config.sample_rate, // Use hardware sample rate instead of mixer sample rate
-        )?;
+        );
 
         // Store our wrapper
         let mut stream_guard = self.output_stream.lock().await;
