@@ -273,8 +273,8 @@ impl ApplicationAudioManager {
                 48000,
             )?);
 
-        // Store in global registry IMMEDIATELY
-        self.add_to_global_mixer_sync(virtual_device_id.clone(), audio_input_stream)
+        // Store in global registry IMMEDIATELY (STUBBED for command channel architecture)
+        self.add_to_global_mixer_sync(virtual_device_id.clone(), ())
             .await?;
 
         info!(
@@ -284,30 +284,20 @@ impl ApplicationAudioManager {
         Ok(())
     }
 
-    /// Synchronously add virtual stream to global mixer registry
+    /// Synchronously add virtual stream to global mixer registry (STUBBED for command channel architecture)
     async fn add_to_global_mixer_sync(
         &self,
         device_id: String,
-        audio_input_stream: Arc<crate::audio::mixer::stream_management::AudioInputStream>,
+        _audio_input_stream_placeholder: (), // Stubbed out for command channel architecture
     ) -> Result<()> {
         info!(
-            "🔗 SYNC: Adding virtual stream {} to global mixer registry",
+            "🔗 SYNC: [STUBBED] Adding virtual stream {} to global mixer registry (command channel architecture)",
             device_id
         );
-
-        // Use centralized registry function
-        let registry = get_virtual_input_registry();
-        if let Ok(mut reg) = registry.lock() {
-            reg.insert(device_id.clone(), audio_input_stream);
-            info!(
-                "✅ SYNC: Registered virtual stream {} in global registry (total: {})",
-                device_id,
-                reg.len()
-            );
-        } else {
-            return Err(anyhow::anyhow!("Failed to lock virtual input registry"));
-        }
-
+        
+        // TODO: Implement command channel integration for virtual streams
+        warn!("STUBBED: add_to_global_mixer_sync - implement command channel communication");
+        
         Ok(())
     }
 
@@ -435,37 +425,23 @@ impl ApplicationAudioManager {
         };
     }
 
-    /// Get a virtual input stream from the ApplicationAudioManager registry
-    pub async fn get_virtual_input_stream(&self, device_id: &str) -> Option<Arc<AudioInputStream>> {
+    /// Get a virtual input stream from the ApplicationAudioManager registry (STUBBED for command channel architecture)
+    pub async fn get_virtual_input_stream(&self, device_id: &str) -> Option<()> {
         info!(
-            "🔍 Looking up virtual input stream for device: {}",
+            "🔍 [STUBBED] Looking up virtual input stream for device: {} (command channel architecture)",
             device_id
         );
-
-        let virtual_streams = crate::audio::ApplicationAudioManager::get_virtual_input_streams();
-        if let Some(stream) = virtual_streams.get(device_id) {
-            info!("✅ Found virtual input stream for device: {}", device_id);
-            Some(stream.clone())
-        } else {
-            info!(
-                "❌ No virtual input stream found for device: {} (available: {:?})",
-                device_id,
-                virtual_streams.keys().collect::<Vec<_>>()
-            );
-            None
-        }
+        
+        // TODO: Implement command channel lookup for virtual streams
+        warn!("STUBBED: get_virtual_input_stream - implement command channel communication");
+        None
     }
 
-    /// Get all registered virtual input streams (for mixer integration)
-    pub fn get_virtual_input_streams(
-    ) -> HashMap<String, Arc<crate::audio::mixer::stream_management::AudioInputStream>> {
-        // Use centralized registry function
-        let registry = get_virtual_input_registry();
-        if let Ok(reg) = registry.lock() {
-            reg.clone()
-        } else {
-            HashMap::new()
-        }
+    /// Get all registered virtual input streams (STUBBED for command channel architecture)  
+    pub fn get_virtual_input_streams() -> HashMap<String, ()> {
+        // STUBBED: Return empty HashMap for command channel architecture
+        warn!("STUBBED: get_virtual_input_streams - implement command channel communication");
+        HashMap::new()
     }
 
     /// Check if permissions are currently granted

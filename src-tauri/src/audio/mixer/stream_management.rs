@@ -14,11 +14,58 @@ use tracing::{error, info, warn};
 use super::types::VirtualMixer;
 use crate::audio::effects::{AudioEffectsChain, EQBand};
 use crate::audio::types::AudioChannel;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc, oneshot};
 
 // Lock-free audio buffer imports
 use rtrb::{RingBuffer, Consumer, Producer};
 use spmcq::{ring_buffer, Reader, Writer};
+
+// Command channel for isolated audio thread communication
+#[derive(Debug)]
+pub enum AudioCommand {
+    AddInputStream {
+        device_id: String,
+        device: cpal::Device,
+        config: cpal::StreamConfig,
+        target_sample_rate: u32,
+        response_tx: oneshot::Sender<Result<()>>,
+    },
+    RemoveInputStream {
+        device_id: String,
+        response_tx: oneshot::Sender<Result<bool>>,
+    },
+    AddOutputStream {
+        device_id: String,
+        device: cpal::Device,
+        config: cpal::StreamConfig,
+        response_tx: oneshot::Sender<Result<()>>,
+    },
+    UpdateEffects {
+        device_id: String,
+        effects: AudioEffectsChain,
+        response_tx: oneshot::Sender<Result<()>>,
+    },
+    GetVULevels {
+        response_tx: oneshot::Sender<HashMap<String, f32>>,
+    },
+    GetAudioMetrics {
+        response_tx: oneshot::Sender<AudioMetrics>,
+    },
+    GetSamples {
+        device_id: String,
+        channel_config: crate::audio::types::AudioChannel,
+        response_tx: oneshot::Sender<Vec<f32>>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct AudioMetrics {
+    pub input_streams: usize,
+    pub output_streams: usize,
+    pub total_samples_processed: u64,
+    pub buffer_underruns: u32,
+    pub average_latency_ms: f32,
+}
 
 // Audio stream management structures
 #[derive(Debug)]
@@ -27,8 +74,8 @@ pub struct AudioInputStream {
     pub device_name: String,
     pub sample_rate: u32,
     pub channels: u16,
-    pub audio_buffer_consumer: Arc<Mutex<Consumer<f32>>>, // RTRB consumer for mixer thread
-    pub audio_buffer_producer: Arc<Producer<f32>>, // RTRB producer for audio callback (lock-free!)
+    pub audio_buffer_consumer: Consumer<f32>, // RTRB consumer for mixer thread (owned, not shared)
+    pub audio_buffer_producer: Producer<f32>, // RTRB producer for audio callback (owned, not shared)
     pub effects_chain: Arc<Mutex<AudioEffectsChain>>,
     pub adaptive_chunk_size: usize, // Adaptive buffer chunk size based on hardware
                                     // Stream is managed separately via StreamManager to avoid Send/Sync issues
@@ -45,8 +92,8 @@ impl AudioInputStream {
         let buffer_capacity = buffer_capacity.max(4096).min(16384); // Clamp between 4K-16K samples
         
         let (producer, consumer) = RingBuffer::<f32>::new(buffer_capacity);
-        let audio_buffer_producer = Arc::new(producer); // Lock-free producer, shared via Arc
-        let audio_buffer_consumer = Arc::new(Mutex::new(consumer)); // Consumer still needs mutex for shared access
+        let audio_buffer_producer = producer; // Lock-free producer, owned by this stream
+        let audio_buffer_consumer = consumer; // Lock-free consumer, owned by this stream
         let effects_chain = Arc::new(Mutex::new(AudioEffectsChain::new(sample_rate)));
 
         Ok(AudioInputStream {
@@ -86,21 +133,14 @@ impl AudioInputStream {
         );
     }
 
-    pub async fn get_samples(&self) -> Vec<f32> {
-        // RTRB: Lock-free sample consumption from ring buffer
-        let mut consumer_guard = match self.audio_buffer_consumer.try_lock() {
-            Ok(guard) => guard,
-            Err(_) => {
-                // Consumer is busy (should be rare in SPSC scenario)
-                crate::audio_debug!("⚠️ GET_SAMPLES_CONSUMER_BUSY: Consumer lock busy for device {}", self.device_id);
-                return Vec::new();
-            }
-        };
+    pub fn get_samples(&mut self) -> Vec<f32> {
+        // RTRB: True lock-free sample consumption from ring buffer (no mutex!)
+        let consumer = &mut self.audio_buffer_consumer;
         
         let chunk_size = self.adaptive_chunk_size;
         
         // Check available samples in ring buffer
-        let available_samples = consumer_guard.slots();
+        let available_samples = consumer.slots();
         if available_samples == 0 {
             return Vec::new(); // No samples available
         }
@@ -109,10 +149,10 @@ impl AudioInputStream {
         let samples_to_take = chunk_size.min(available_samples);
         let mut samples = Vec::with_capacity(samples_to_take);
         
-        // Use RTRB's read method for bulk read
+        // Use RTRB's read method for bulk read - TRUE LOCK-FREE!
         let mut read_count = 0;
         while read_count < samples_to_take {
-            match consumer_guard.pop() {
+            match consumer.pop() {
                 Ok(sample) => {
                     samples.push(sample);
                     read_count += 1;
@@ -154,18 +194,12 @@ impl AudioInputStream {
     }
 
     /// Apply effects to input samples and update channel settings
-    pub async fn process_with_effects(&self, channel: &AudioChannel) -> Vec<f32> {
-        // RTRB: Get samples from ring buffer first (same as get_samples but with effects)
-        let mut consumer_guard = match self.audio_buffer_consumer.try_lock() {
-            Ok(guard) => guard,
-            Err(_) => {
-                crate::audio_debug!("⚠️ PROCESS_EFFECTS_CONSUMER_BUSY: Consumer lock busy for device {}", self.device_id);
-                return Vec::new();
-            }
-        };
+    pub fn process_with_effects(&mut self, channel: &AudioChannel) -> Vec<f32> {
+        // RTRB: True lock-free sample consumption from ring buffer (no mutex!)
+        let consumer = &mut self.audio_buffer_consumer;
         
         let chunk_size = self.adaptive_chunk_size;
-        let available_samples = consumer_guard.slots();
+        let available_samples = consumer.slots();
         if available_samples == 0 {
             return Vec::new();
         }
@@ -177,7 +211,7 @@ impl AudioInputStream {
         // Read samples from RTRB
         let mut read_count = 0;
         while read_count < samples_to_take {
-            match consumer_guard.pop() {
+            match consumer.pop() {
                 Ok(sample) => {
                     samples.push(sample);
                     read_count += 1;
@@ -187,7 +221,7 @@ impl AudioInputStream {
         }
         
         // Drop the consumer lock early to avoid holding it during effects processing
-        drop(consumer_guard);
+        // No need to drop - consumer is owned directly
         
         let original_sample_count = samples.len();
         if original_sample_count == 0 {
@@ -330,6 +364,158 @@ impl std::fmt::Debug for StreamManager {
         f.debug_struct("StreamManager")
             .field("streams", &format!("{} streams", self.streams.len()))
             .finish()
+    }
+}
+
+/// Isolated Audio Manager - owns audio streams directly, no Arc sharing!
+pub struct IsolatedAudioManager {
+    input_streams: HashMap<String, AudioInputStream>,
+    output_streams: HashMap<String, AudioOutputStream>, 
+    stream_manager: StreamManager,
+    command_rx: mpsc::Receiver<AudioCommand>,
+    metrics: AudioMetrics,
+}
+
+impl IsolatedAudioManager {
+    pub fn new(command_rx: mpsc::Receiver<AudioCommand>) -> Self {
+        Self {
+            input_streams: HashMap::new(),
+            output_streams: HashMap::new(),
+            stream_manager: StreamManager::new(),
+            command_rx,
+            metrics: AudioMetrics {
+                input_streams: 0,
+                output_streams: 0,
+                total_samples_processed: 0,
+                buffer_underruns: 0,
+                average_latency_ms: 0.0,
+            },
+        }
+    }
+
+    /// Main processing loop for the isolated audio thread
+    pub async fn run(&mut self) {
+        info!("🎵 Isolated audio manager started - lock-free RTRB architecture");
+        
+        while let Some(command) = self.command_rx.recv().await {
+            match command {
+                AudioCommand::AddInputStream { device_id, device, config, target_sample_rate, response_tx } => {
+                    let result = self.handle_add_input_stream(device_id, device, config, target_sample_rate).await;
+                    let _ = response_tx.send(result);
+                }
+                AudioCommand::RemoveInputStream { device_id, response_tx } => {
+                    let result = self.handle_remove_input_stream(device_id);
+                    let _ = response_tx.send(Ok(result));
+                }
+                AudioCommand::AddOutputStream { device_id, device, config, response_tx } => {
+                    let result = self.handle_add_output_stream(device_id, device, config).await;
+                    let _ = response_tx.send(result);
+                }
+                AudioCommand::UpdateEffects { device_id, effects, response_tx } => {
+                    let result = self.handle_update_effects(device_id, effects);
+                    let _ = response_tx.send(result);
+                }
+                AudioCommand::GetVULevels { response_tx } => {
+                    let levels = self.get_vu_levels();
+                    let _ = response_tx.send(levels);
+                }
+                AudioCommand::GetAudioMetrics { response_tx } => {
+                    let metrics = self.get_metrics();
+                    let _ = response_tx.send(metrics);
+                }
+                AudioCommand::GetSamples { device_id, channel_config, response_tx } => {
+                    let samples = self.get_samples_for_device(&device_id, &channel_config);
+                    let _ = response_tx.send(samples);
+                }
+            }
+        }
+    }
+
+    async fn handle_add_input_stream(&mut self, device_id: String, device: cpal::Device, config: cpal::StreamConfig, target_sample_rate: u32) -> Result<()> {
+        // Create AudioInputStream - producer/consumer owned directly
+        let input_stream = AudioInputStream::new(device_id.clone(), device.name().unwrap_or_default(), target_sample_rate)?;
+        
+        // Move the producer to the stream manager for audio callbacks
+        let producer = input_stream.audio_buffer_producer;
+        
+        // Store the input stream (with consumer) in our owned collection
+        self.input_streams.insert(device_id.clone(), input_stream);
+        
+        // Set up the actual audio stream with CPAL
+        // TODO: This needs to be updated to work with owned Producer instead of Arc<Mutex<Producer>>
+        // For now, wrap in Arc<Mutex> just for the stream callback, but keep owned version for processing
+        let producer_for_callback = Arc::new(Mutex::new(producer));
+        self.stream_manager.add_input_stream(device_id, device, config, producer_for_callback, target_sample_rate)?;
+        
+        self.metrics.input_streams = self.input_streams.len();
+        Ok(())
+    }
+
+    fn handle_remove_input_stream(&mut self, device_id: String) -> bool {
+        let removed = self.input_streams.remove(&device_id).is_some();
+        self.stream_manager.remove_stream(&device_id);
+        self.metrics.input_streams = self.input_streams.len();
+        removed
+    }
+
+    async fn handle_add_output_stream(&mut self, device_id: String, device: cpal::Device, config: cpal::StreamConfig) -> Result<()> {
+        let (output_stream, spmc_reader) = AudioOutputStream::new(device_id.clone(), device.name().unwrap_or_default(), config.sample_rate.0);
+        
+        self.output_streams.insert(device_id.clone(), output_stream);
+        self.stream_manager.add_output_stream(device_id, device, config, spmc_reader)?;
+        
+        self.metrics.output_streams = self.output_streams.len();
+        Ok(())
+    }
+
+    fn handle_update_effects(&mut self, device_id: String, effects: AudioEffectsChain) -> Result<()> {
+        if let Some(input_stream) = self.input_streams.get_mut(&device_id) {
+            if let Ok(mut effects_guard) = input_stream.effects_chain.try_lock() {
+                *effects_guard = effects;
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("Could not lock effects chain"))
+            }
+        } else {
+            Err(anyhow::anyhow!("Input stream not found: {}", device_id))
+        }
+    }
+
+    fn get_vu_levels(&mut self) -> HashMap<String, f32> {
+        let mut levels = HashMap::new();
+        
+        // Get samples from each input stream and calculate VU levels
+        for (device_id, input_stream) in &mut self.input_streams {
+            let samples = input_stream.get_samples();
+            if !samples.is_empty() {
+                // Calculate RMS level for VU meter
+                let rms = (samples.iter().map(|&s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
+                let db_level = if rms > 0.0 { 20.0 * rms.log10() } else { -60.0 };
+                levels.insert(device_id.clone(), db_level);
+                
+                self.metrics.total_samples_processed += samples.len() as u64;
+            }
+        }
+        
+        levels
+    }
+
+    fn get_metrics(&self) -> AudioMetrics {
+        self.metrics.clone()
+    }
+
+    /// Get processed samples from a specific device using lock-free RTRB queues
+    fn get_samples_for_device(&mut self, device_id: &str, channel_config: &crate::audio::types::AudioChannel) -> Vec<f32> {
+        if let Some(stream) = self.input_streams.get_mut(device_id) {
+            // Use the lock-free RTRB implementation that's already working
+            if channel_config.effects_enabled {
+                stream.process_with_effects(channel_config)
+            } else {
+                stream.get_samples()
+            }
+        } else {
+            Vec::new()
+        }
     }
 }
 

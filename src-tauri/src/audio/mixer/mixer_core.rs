@@ -16,12 +16,10 @@ use super::stream_management::{AudioInputStream, AudioOutputStream, StreamInfo};
 use super::types::VirtualMixer;
 use crate::audio::types::{AudioChannel, MixerConfig};
 
-// Helper structure for processing thread
+// Helper structure for processing thread (using command channel architecture)
 #[derive(Debug)]
 pub struct VirtualMixerHandle {
-    pub input_streams: Arc<Mutex<HashMap<String, Arc<AudioInputStream>>>>,
-    pub output_stream: Arc<Mutex<Option<Arc<AudioOutputStream>>>>, // Legacy single output
-    pub output_streams: Arc<Mutex<HashMap<String, Arc<AudioOutputStream>>>>, // New multiple outputs
+    pub audio_command_tx: tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>,
     #[cfg(target_os = "macos")]
     pub coreaudio_stream:
         Arc<Mutex<Option<crate::audio::devices::coreaudio_stream::CoreAudioOutputStream>>>,
@@ -30,18 +28,41 @@ pub struct VirtualMixerHandle {
 }
 
 impl VirtualMixerHandle {
-    /// Get samples from all active input streams with effects processing
+    /// Get samples from all active input streams with effects processing (using command channel)
     pub async fn collect_input_samples_with_effects(
         &self,
         channels: &[AudioChannel],
     ) -> HashMap<String, Vec<f32>> {
-        let collection_start = std::time::Instant::now();
         let mut samples = HashMap::new();
-        let streams = self.input_streams.lock().await;
-
-        // **DEBUG**: Log input stream status
-        use std::sync::{LazyLock, Mutex as StdMutex};
-        static DEBUG_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
+        
+        // Send GetSamples command to IsolatedAudioManager for each active channel
+        for channel in channels {
+            if let Some(device_id) = &channel.input_device_id {
+                // Use command channel to request samples from lock-free RTRB queues
+                let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+                
+                let command = crate::audio::mixer::stream_management::AudioCommand::GetSamples {
+                    device_id: device_id.clone(),
+                    channel_config: channel.clone(),
+                    response_tx,
+                };
+                
+                // Send command to isolated audio thread
+                if let Err(_) = self.audio_command_tx.send(command).await {
+                    continue; // Skip if command channel is closed
+                }
+                
+                // Receive processed samples from lock-free pipeline
+                if let Ok(stream_samples) = response_rx.await {
+                    if !stream_samples.is_empty() {
+                        samples.insert(device_id.clone(), stream_samples);
+                    }
+                }
+            }
+        }
+        
+        samples
+    }
 
         let debug_count = if let Ok(mut count) = DEBUG_COUNT.lock() {
             *count += 1;
@@ -83,7 +104,7 @@ impl VirtualMixerHandle {
                 .iter()
                 .find(|ch| ch.input_device_id.as_ref() == Some(device_id))
             {
-                let stream_samples = stream.process_with_effects(channel).await;
+                let stream_samples = stream.process_with_effects(channel);
 
                 if !stream_samples.is_empty() {
                     let peak = stream_samples
@@ -102,7 +123,7 @@ impl VirtualMixerHandle {
                 }
             } else {
                 // No channel config found, use raw samples
-                let stream_samples = stream.get_samples().await;
+                let stream_samples = stream.get_samples();
                 if !stream_samples.is_empty() {
                     let peak = stream_samples
                         .iter()
@@ -270,21 +291,7 @@ impl VirtualMixerHandle {
                     streams_len
                 );
 
-                // Reacquire the lock for debugging if needed
-                if let Ok(streams_debug) = self.input_streams.try_lock() {
-                    // Debug each stream buffer state
-                    for (device_id, stream) in streams_debug.iter() {
-                        if let Ok(consumer_guard) = stream.audio_buffer_consumer.try_lock() {
-                            crate::audio_debug!(
-                                "   Stream [{}]: RTRB buffer has {} samples",
-                                device_id,
-                                consumer_guard.slots()
-                            );
-                        } else {
-                            crate::audio_debug!("   Stream [{}]: buffer locked", device_id);
-                        }
-                    }
-                }
+                // Debug: Command channel architecture - no direct stream access needed
             }
         }
 

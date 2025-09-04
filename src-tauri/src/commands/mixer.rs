@@ -18,7 +18,14 @@ pub async fn create_mixer(
     );
 
     // Create the mixer with enhanced error handling
-    let mut mixer = match VirtualMixer::new(config).await {
+    let device_manager = {
+        audio_state.device_manager.lock().await.clone()
+    };
+    let mut mixer = match VirtualMixer::new_with_device_manager(
+        config, 
+        device_manager, 
+        audio_state.audio_command_tx.clone()
+    ).await {
         Ok(mixer) => {
             println!("✅ Mixer structure created successfully");
             mixer
@@ -77,16 +84,43 @@ pub async fn add_mixer_channel(
     audio_state: State<'_, AudioState>,
     channel: AudioChannel,
 ) -> Result<(), String> {
-    let mut mixer_guard = audio_state.mixer.lock().await;
-    if let Some(ref mut mixer) = *mixer_guard {
-        mixer
-            .add_channel(channel)
-            .await
-            .map_err(|e| e.to_string())?;
-    } else {
-        return Err("No mixer created".to_string());
+    // NEW ARCHITECTURE: Use message passing instead of direct Arc access
+    
+    // For now, extract device information from the channel
+    // TODO: This will need to be updated when we understand the full AudioChannel -> device mapping
+    let device_id = channel.id.clone();
+    
+    // Send command to isolated audio thread using the command channel
+    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+    
+    // Create a placeholder add input stream command
+    // TODO: We need to get the actual device and config from the channel
+    // For now, this demonstrates the new message-passing pattern
+    let command = crate::audio::mixer::stream_management::AudioCommand::AddInputStream {
+        device_id: device_id.clone(),
+        device: todo!("Extract device from channel"), // TODO: Need proper device extraction
+        config: todo!("Extract config from channel"), // TODO: Need proper config extraction  
+        target_sample_rate: 48000, // TODO: Extract from channel/device
+        response_tx,
+    };
+    
+    // Send command to isolated audio thread
+    if let Err(_) = audio_state.audio_command_tx.send(command).await {
+        return Err("Audio system not available".to_string());
     }
-    Ok(())
+    
+    // Wait for response from isolated audio thread
+    match response_rx.await {
+        Ok(Ok(())) => {
+            tracing::info!("✅ Successfully added mixer channel: {}", device_id);
+            Ok(())
+        }
+        Ok(Err(e)) => {
+            tracing::error!("❌ Failed to add mixer channel: {}", e);
+            Err(e.to_string())
+        }
+        Err(_) => Err("Audio system communication failed".to_string()),
+    }
 }
 
 #[tauri::command]

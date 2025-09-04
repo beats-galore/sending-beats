@@ -451,13 +451,10 @@ impl VirtualMixer {
             }
         }
 
-        // Remove from input streams
-        let removed_stream = {
-            let mut input_streams = self.input_streams.lock().await;
-            input_streams.remove(device_id)
-        };
+        // Remove from active input devices tracking (command channel architecture)
+        let removed = self.active_input_devices.lock().await.remove(device_id);
 
-        if removed_stream.is_some() {
+        if removed {
             info!(
                 "✅ INPUT STREAM: Successfully removed input stream for device: {}",
                 device_id

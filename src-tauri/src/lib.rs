@@ -50,6 +50,7 @@ struct AudioState {
     mixer: Arc<AsyncMutex<Option<VirtualMixer>>>,
     database: Arc<AudioDatabase>,
     event_bus: Arc<AudioEventBus>,
+    audio_command_tx: tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>,
 }
 struct RecordingState {
     service: Arc<RecordingService>,
@@ -148,11 +149,23 @@ pub fn run() {
 
         tracing::info!("✅ Audio system initialization complete");
 
+        // Create command channel for isolated audio thread communication
+        let (audio_command_tx, audio_command_rx) = tokio::sync::mpsc::channel::<crate::audio::mixer::stream_management::AudioCommand>(100);
+        
+        // Start isolated audio manager thread
+        let mut isolated_audio_manager = crate::audio::mixer::stream_management::IsolatedAudioManager::new(audio_command_rx);
+        tokio::spawn(async move {
+            isolated_audio_manager.run().await;
+        });
+        
+        tracing::info!("🎵 Started isolated audio manager with lock-free RTRB architecture");
+
         AudioState {
             device_manager: audio_device_manager,
             mixer: Arc::new(AsyncMutex::new(None)),
             database,
             event_bus,
+            audio_command_tx,
         }
     });
 
