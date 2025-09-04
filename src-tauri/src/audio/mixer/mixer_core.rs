@@ -69,12 +69,10 @@ impl VirtualMixerHandle {
         // TODO: Remove this duplicate and use command channel architecture
     }
 
-        //     for (device_id, _stream) in streams.iter() {
-        //         crate::audio_debug!("  Active stream: {}", device_id);
-        //     }
-
-        //     for channel in channels.iter() {
-        //         crate::audio_debug!(
+    pub async fn send_to_output_real(&self, _samples: &[f32]) {
+        // STUB: Old method with undefined variables - needs proper implementation
+        // TODO: Implement using command channel architecture
+    }
         //             "  Configured channel '{}': input_device={:?}, muted={}",
         //             channel.name,
         //             channel.input_device_id,
