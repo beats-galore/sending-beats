@@ -323,7 +323,7 @@ pub async fn add_output_device(
     // Send AddOutputStream command to isolated audio thread
     let (response_tx, response_rx) = tokio::sync::oneshot::channel();
     
-    let command = crate::audio::mixer::stream_management::AudioCommand::AddOutputStream {
+    let command = crate::audio::mixer::stream_management::AudioCommand::AddCPALOutputStream {
         device_id: device_id.clone(),
         device,
         config,

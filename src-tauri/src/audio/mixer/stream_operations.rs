@@ -11,6 +11,12 @@ use std::sync::{atomic::Ordering, Arc};
 use tracing::{error, info, warn};
 
 use super::mixer_core::VirtualMixerHandle;
+
+/// Calculate optimal target latency based on sample rate
+/// Professional audio target: 1ms for high sample rates (48kHz+), 10ms for lower rates
+pub fn calculate_target_latency_ms(sample_rate: u32) -> f32 {
+    if sample_rate >= 48000 { 1.0 } else { 10.0 }
+}
 use super::stream_management::{
     AudioInputStream, AudioOutputStream, StreamInfo,
 };
@@ -136,8 +142,8 @@ impl VirtualMixer {
                 let sample_rate = config.sample_rate().0;
                 let channels = config.channels();
 
-                // Target latency: 5-10ms for professional audio (balance between latency and stability)
-                let target_latency_ms = if sample_rate >= 48000 { 1.0 } else { 10.0 };
+                // Target latency: 1ms for high sample rates (48kHz+), 10ms for lower rates
+                let target_latency_ms = calculate_target_latency_ms(sample_rate);
                 let target_buffer_size = ((sample_rate as f32 * target_latency_ms / 1000.0)
                     as usize)
                     .max(64) // Minimum 64 samples for stability
@@ -472,16 +478,9 @@ impl VirtualMixer {
             device_id
         );
 
-        // **CRITICAL FIX**: Stop existing output streams first
-        info!("🔴 Stopping existing output streams before device change...");
-        if let Err(e) = self.stop_output_streams().await {
-            warn!("Error stopping existing output streams: {}", e);
-        }
+        // **HYBRID ARCHITECTURE**: Use command queue for CPAL devices, direct for CoreAudio
 
-        // Extended delay for complete audio resource cleanup
-        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-
-        // Find the audio device with fallback
+        // Get the device using the device manager
         let device_handle = match self
             .audio_device_manager
             .find_audio_device(device_id, false)
@@ -490,43 +489,70 @@ impl VirtualMixer {
             Ok(handle) => handle,
             Err(e) => {
                 error!("Failed to find output device '{}': {}", device_id, e);
-
-                // Try to refresh devices and try again
-                warn!("Attempting to refresh device list and retry...");
-                if let Err(refresh_err) = self.audio_device_manager.refresh_devices().await {
-                    error!("Failed to refresh devices: {}", refresh_err);
-                }
-
-                match self
-                    .audio_device_manager
-                    .find_audio_device(device_id, false)
-                    .await
-                {
-                    Ok(handle) => {
-                        info!("Found output device '{}' after refresh", device_id);
-                        handle
-                    }
-                    Err(retry_err) => {
-                        error!(
-                            "Output device '{}' still not found after refresh: {}",
-                            device_id, retry_err
-                        );
-                        return Err(anyhow::anyhow!("Output device '{}' not found or unavailable. Original error: {}. Retry error: {}", device_id, e, retry_err));
-                    }
-                }
+                return Err(anyhow::anyhow!("Failed to find output device: {}", e));
             }
         };
 
-        // **CRITICAL FIX**: Handle different device types and create actual CPAL streams
+        // Handle different device types using command queue
         match device_handle {
             crate::audio::types::AudioDeviceHandle::Cpal(device) => {
-                self.create_cpal_output_stream(device_id, device).await
+                // Use command queue for CPAL devices
+                let config = device.default_output_config()
+                    .map_err(|e| anyhow::anyhow!("Failed to get device config: {}", e))?
+                    .config();
+
+                let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+
+                let command = crate::audio::mixer::stream_management::AudioCommand::AddCPALOutputStream {
+                    device_id: device_id.to_string(),
+                    device,
+                    config,
+                    response_tx,
+                };
+
+                info!("🔍 Sending CPAL output stream creation command to isolated audio thread for device: {}", device_id);
+
+                if let Err(_) = self.audio_command_tx.send(command).await {
+                    return Err(anyhow::anyhow!("Audio system not available"));
+                }
+
+                match response_rx.await {
+                    Ok(Ok(())) => {
+                        info!("✅ Added CPAL output device via command queue: {}", device_id);
+                        Ok(())
+                    }
+                    Ok(Err(e)) => Err(anyhow::anyhow!("Failed to add CPAL output device: {}", e)),
+                    Err(_) => Err(anyhow::anyhow!("Audio system did not respond")),
+                }
             }
             #[cfg(target_os = "macos")]
             crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => {
-                self.create_coreaudio_output_stream(device_id, coreaudio_device)
-                    .await
+                // Use command queue for CoreAudio devices
+                let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+
+                let command = crate::audio::mixer::stream_management::AudioCommand::AddCoreAudioOutputStream {
+                    device_id: device_id.to_string(),
+                    coreaudio_device,
+                    response_tx,
+                };
+
+                info!("🔍 Sending CoreAudio output stream creation command to isolated audio thread for device: {}", device_id);
+
+                if let Err(_) = self.audio_command_tx.send(command).await {
+                    return Err(anyhow::anyhow!("Audio system not available"));
+                }
+
+                match response_rx.await {
+                    Ok(Ok(())) => {
+                        info!("✅ Added CoreAudio output device via command queue: {}", device_id);
+                        Ok(())
+                    }
+                    Ok(Err(e)) => Err(anyhow::anyhow!("Failed to add CoreAudio output device: {}", e)),
+                    Err(_) => Err(anyhow::anyhow!("Audio system did not respond")),
+                }
             }
+            #[cfg(not(target_os = "macos"))]
+            _ => Err(anyhow::anyhow!("Unknown device handle type")),
         }
     }
 
@@ -542,7 +568,7 @@ impl VirtualMixer {
 
         crate::audio_debug!("Output device config: {:?}", config);
 
-        // Create AudioOutputStream structure  
+        // Create AudioOutputStream structure
         let (output_stream, spmc_reader) = AudioOutputStream::new(
             device_id.to_string(),
             device_name.clone(),
@@ -692,146 +718,6 @@ impl VirtualMixer {
         Ok(())
     }
 
-    /// refactor appears to have completely fucking reimplemented this logic, see old impl above
-    // async fn create_cpal_output_stream(&self, device_id: &str, device: cpal::Device) -> Result<()> {
-    //     let device_name = device.name().unwrap_or_else(|_| device_id.to_string());
-    //     info!("Found CPAL output device: {}", device_name);
-
-    //     // Get the default output config for this device
-    //     let config = device
-    //         .default_output_config()
-    //         .context("Failed to get default output config")?;
-
-    //     info!("Output device config: {:?}", config);
-
-    //     // Create AudioOutputStream structure
-    //     let output_stream = AudioOutputStream::new(
-    //         device_id.to_string(),
-    //         device_name.clone(),
-    //         self.config.sample_rate,
-    //     )?;
-
-    //     // Get reference to the buffer for the output callback
-    //     let output_buffer = output_stream.input_buffer.clone();
-    //     let target_sample_rate = self.config.sample_rate;
-    //     let buffer_size = self.config.buffer_size as usize;
-    //     let optimal_buffer_size = self.calculate_optimal_buffer_size(&device, &config, buffer_size).await?;
-    //     // Create stream config for output using hardware sample rate
-    //     let stream_config = cpal::StreamConfig {
-    //         channels: 2,                       // Force stereo output
-    //         sample_rate: SampleRate(target_sample_rate), // Use hardware sample rate, not mixer sample rate
-    //         buffer_size: optimal_buffer_size,
-    //     };
-
-    //     info!(
-    //         "Using output stream config: channels={}, sample_rate={}, buffer_size={}",
-    //         stream_config.channels, stream_config.sample_rate.0, buffer_size
-    //     );
-
-    //     // **CRITICAL FIX**: Create actual CPAL stream with audio callback
-    //     info!(
-    //         "Building CPAL output stream with format: {:?}",
-    //         config.sample_format()
-    //     );
-
-    //     // Send stream creation command to StreamManager
-    //     let stream_manager = get_stream_manager();
-    //     let (response_tx, response_rx) = std::sync::mpsc::channel();
-
-    //     stream_manager
-    //         .send(StreamCommand::AddOutputStream {
-    //             device_id: device_id.to_string(),
-    //             device,
-    //             config: stream_config,
-    //             audio_buffer: output_buffer.clone(),
-    //             response_tx,
-    //         })
-    //         .with_context(|| "Failed to send output stream creation command")?;
-
-    //     // Wait for stream creation result
-    //     match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
-    //         Ok(Ok(())) => {
-    //             info!(
-    //                 "✅ CPAL OUTPUT STREAM: Successfully created CPAL output stream for device: {}",
-    //                 device_id
-    //             );
-    //         }
-    //         Ok(Err(e)) => {
-    //             return Err(anyhow::anyhow!(
-    //                 "Failed to create CPAL output stream for '{}': {}",
-    //                 device_id,
-    //                 e
-    //             ));
-    //         }
-    //         Err(_) => {
-    //             return Err(anyhow::anyhow!(
-    //                 "Timeout waiting for CPAL output stream creation for '{}'",
-    //                 device_id
-    //             ));
-    //         }
-    //     }
-
-    //     // Initialize device health tracking
-    //     if let Some(device_info) = self.audio_device_manager.get_device(device_id).await {
-    //         let info = device_info;
-    //         self.audio_device_manager
-    //             .initialize_device_health(&info)
-    //             .await;
-    //     }
-
-    //     // Store the stream
-    //     {
-    //         let mut output_stream_guard = self.active_output_devices.lock().await;
-    //         *output_stream_guard = Some(Arc::new(output_stream));
-    //     }
-
-    //     // Track active device
-    //     {
-    //         let mut active_devices = self.active_output_devices.lock().await;
-    //         active_devices.insert(device_id.to_string());
-    //     }
-
-    //     // **CRITICAL FIX**: Add to config.output_devices (missing from modularization)
-    //     // Get device info first (before acquiring config lock to avoid Send trait issue)
-    //     let device_info = self.audio_device_manager.get_device(device_id).await;
-    //     let device_name = device_info
-    //         .as_ref()
-    //         .map(|info| info.name.clone())
-    //         .unwrap_or_else(|| device_id.to_string());
-
-    //     // Then acquire config lock and update
-    //     {
-    //         let mut config_guard = self.shared_config.lock().unwrap();
-
-    //         // Create OutputDevice entry
-    //         let output_device = crate::audio::types::OutputDevice {
-    //             device_id: device_id.to_string(),
-    //             device_name,
-    //             enabled: true,
-    //             gain: 1.0,
-    //             is_monitor: false,
-    //         };
-
-    //         // Remove any existing entry for this device
-    //         config_guard
-    //             .output_devices
-    //             .retain(|d| d.device_id != device_id);
-
-    //         // Add the new entry
-    //         config_guard.output_devices.push(output_device);
-
-    //         info!(
-    //             "✅ ADDED TO CONFIG: Device '{}' added to config.output_devices",
-    //             device_id
-    //         );
-    //     }
-
-    //     info!(
-    //         "✅ OUTPUT STREAM: Successfully set output stream with CPAL integration for device: {}",
-    //         device_id
-    //     );
-    //     Ok(())
-    // }
 
     /// Create CoreAudio output stream for direct hardware access
     #[cfg(target_os = "macos")]

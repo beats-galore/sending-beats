@@ -12,6 +12,7 @@ use std::sync::Arc;
 use tracing::{error, info, warn};
 
 use super::types::VirtualMixer;
+use super::stream_operations::calculate_target_latency_ms;
 use crate::audio::effects::{AudioEffectsChain, EQBand};
 use crate::audio::types::AudioChannel;
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -34,10 +35,16 @@ pub enum AudioCommand {
         device_id: String,
         response_tx: oneshot::Sender<Result<bool>>,
     },
-    AddOutputStream {
+    AddCPALOutputStream {
         device_id: String,
         device: cpal::Device,
         config: cpal::StreamConfig,
+        response_tx: oneshot::Sender<Result<()>>,
+    },
+    #[cfg(target_os = "macos")]
+    AddCoreAudioOutputStream {
+        device_id: String,
+        coreaudio_device: crate::audio::types::CoreAudioDevice,
         response_tx: oneshot::Sender<Result<()>>,
     },
     UpdateEffects {
@@ -86,11 +93,11 @@ impl AudioInputStream {
         // Calculate optimal chunk size based on sample rate for low latency (5-10ms target)
         let optimal_chunk_size = (sample_rate as f32 * 0.005) as usize; // 5ms default
         let clamped_chunk_size = optimal_chunk_size.max(64).min(1024); // Clamp between 64-1024 samples
-        
+
         // Create RTRB ring buffer with capacity for ~100ms of audio (larger buffer for burst handling)
         let buffer_capacity = (sample_rate as usize * 2) / 10; // 100ms of stereo samples
         let buffer_capacity = buffer_capacity.max(4096).min(16384); // Clamp between 4K-16K samples
-        
+
         let (producer, consumer) = RingBuffer::<f32>::new(buffer_capacity);
         let audio_buffer_producer = producer; // Lock-free producer, owned by this stream
         let audio_buffer_consumer = consumer; // Lock-free consumer, owned by this stream
@@ -136,19 +143,19 @@ impl AudioInputStream {
     pub fn get_samples(&mut self) -> Vec<f32> {
         // RTRB: True lock-free sample consumption from ring buffer (no mutex!)
         let consumer = &mut self.audio_buffer_consumer;
-        
+
         let chunk_size = self.adaptive_chunk_size;
-        
+
         // Check available samples in ring buffer
         let available_samples = consumer.slots();
         if available_samples == 0 {
             return Vec::new(); // No samples available
         }
-        
+
         // Take up to chunk_size samples for consistent timing
         let samples_to_take = chunk_size.min(available_samples);
         let mut samples = Vec::with_capacity(samples_to_take);
-        
+
         // Use RTRB's read method for bulk read - TRUE LOCK-FREE!
         let mut read_count = 0;
         while read_count < samples_to_take {
@@ -160,9 +167,9 @@ impl AudioInputStream {
                 Err(_) => break, // No more samples available
             }
         }
-        
+
         let sample_count = samples.len();
-        
+
         // Debug: Log when we're reading samples
         use std::sync::{LazyLock, Mutex as StdMutex};
         static GET_SAMPLES_COUNT: LazyLock<
@@ -189,7 +196,7 @@ impl AudioInputStream {
                 );
             }
         }
-        
+
         samples
     }
 
@@ -197,17 +204,17 @@ impl AudioInputStream {
     pub fn process_with_effects(&mut self, channel: &AudioChannel) -> Vec<f32> {
         // RTRB: True lock-free sample consumption from ring buffer (no mutex!)
         let consumer = &mut self.audio_buffer_consumer;
-        
+
         let chunk_size = self.adaptive_chunk_size;
         let available_samples = consumer.slots();
         if available_samples == 0 {
             return Vec::new();
         }
-        
+
         // Take up to chunk_size samples for consistent timing
         let samples_to_take = chunk_size.min(available_samples);
         let mut samples = Vec::with_capacity(samples_to_take);
-        
+
         // Read samples from RTRB
         let mut read_count = 0;
         while read_count < samples_to_take {
@@ -219,10 +226,10 @@ impl AudioInputStream {
                 Err(_) => break,
             }
         }
-        
+
         // Drop the consumer lock early to avoid holding it during effects processing
         // No need to drop - consumer is owned directly
-        
+
         let original_sample_count = samples.len();
         if original_sample_count == 0 {
             return Vec::new();
@@ -313,9 +320,9 @@ impl AudioOutputStream {
         // Create SPMC queue with capacity for ~100ms of stereo audio
         let buffer_capacity = (sample_rate as usize * 2) / 10; // 100ms of stereo samples
         let buffer_capacity = buffer_capacity.max(4096).min(16384); // Clamp between 4K-16K samples
-        
+
         let (reader, writer) = ring_buffer(buffer_capacity);
-        
+
         let spmc_writer = Arc::new(Mutex::new(writer));
 
         let output_stream = AudioOutputStream {
@@ -325,7 +332,7 @@ impl AudioOutputStream {
             channels: 2, // Stereo output
             spmc_writer,
         };
-        
+
         (output_stream, reader)
     }
 
@@ -342,10 +349,10 @@ impl AudioOutputStream {
                 writer.write(sample);
                 pushed_count += 1;
             }
-            
+
             // Log if we couldn't write all samples (unlikely with proper sizing)
             if pushed_count < samples.len() {
-                crate::audio_debug!("⚠️ SPMC_OUTPUT_PARTIAL: Only wrote {} of {} samples to device {}", 
+                crate::audio_debug!("⚠️ SPMC_OUTPUT_PARTIAL: Only wrote {} of {} samples to device {}",
                     pushed_count, samples.len(), self.device_id);
             }
         } else {
@@ -357,6 +364,8 @@ impl AudioOutputStream {
 // Stream management handles the actual cpal streams in a separate synchronous context
 pub struct StreamManager {
     streams: HashMap<String, cpal::Stream>,
+    #[cfg(target_os = "macos")]
+    coreaudio_streams: HashMap<String, crate::audio::devices::CoreAudioOutputStream>,
 }
 
 impl std::fmt::Debug for StreamManager {
@@ -370,13 +379,37 @@ impl std::fmt::Debug for StreamManager {
 /// Isolated Audio Manager - owns audio streams directly, no Arc sharing!
 pub struct IsolatedAudioManager {
     input_streams: HashMap<String, AudioInputStream>,
-    output_streams: HashMap<String, AudioOutputStream>, 
+    output_streams: HashMap<String, AudioOutputStream>,
     stream_manager: StreamManager,
     command_rx: mpsc::Receiver<AudioCommand>,
     metrics: AudioMetrics,
 }
 
 impl IsolatedAudioManager {
+    /// Calculate optimal processing interval based on active streams' sample rates
+    fn calculate_processing_interval_ms(&self) -> f32 {
+        // Find highest sample rate among all active streams
+        let max_input_rate = self.input_streams.values()
+            .map(|stream| stream.sample_rate)
+            .max()
+            .unwrap_or(0);
+            
+        let max_output_rate = self.output_streams.values()
+            .map(|stream| stream.sample_rate)
+            .max()
+            .unwrap_or(0);
+            
+        let max_sample_rate = max_input_rate.max(max_output_rate);
+        
+        // Default to conservative interval when no streams
+        if max_sample_rate == 0 {
+            return 5.0; // 5ms default when no active streams
+        }
+        
+        // Use same logic as calculate_optimal_buffer_size
+        calculate_target_latency_ms(max_sample_rate)
+    }
+
     pub fn new(command_rx: mpsc::Receiver<AudioCommand>) -> Self {
         Self {
             input_streams: HashMap::new(),
@@ -396,28 +429,40 @@ impl IsolatedAudioManager {
     /// Main processing loop for the isolated audio thread
     pub async fn run(&mut self) {
         info!("🎵 Isolated audio manager started - lock-free RTRB architecture");
-        
+
         // Start continuous audio processing task
-        let mut audio_processing_interval = tokio::time::interval(tokio::time::Duration::from_millis(1)); // ~1kHz processing rate
-        
+        // Use calculated processing interval based on active streams' sample rates
+        let mut last_calculated_interval_ms = 5.0; // Conservative default
+        let mut audio_processing_interval = tokio::time::interval(tokio::time::Duration::from_millis(last_calculated_interval_ms as u64));
+
         loop {
             tokio::select! {
                 // Handle commands
                 command = self.command_rx.recv() => {
                     match command {
-                        Some(cmd) => self.handle_command(cmd).await,
+                        Some(cmd) => {
+                            self.handle_command(cmd).await;
+                            
+                            // Recalculate processing interval after stream changes
+                            let new_interval_ms = self.calculate_processing_interval_ms();
+                            if (new_interval_ms - last_calculated_interval_ms).abs() > 0.1 {
+                                last_calculated_interval_ms = new_interval_ms;
+                                audio_processing_interval = tokio::time::interval(tokio::time::Duration::from_millis(new_interval_ms as u64));
+                                info!("🔄 Updated processing interval to {}ms based on active streams", new_interval_ms);
+                            }
+                        },
                         None => break, // Channel closed
                     }
                 }
-                
-                // Process audio continuously  
+
+                // Process audio continuously
                 _ = audio_processing_interval.tick() => {
                     self.process_audio().await;
                 }
             }
         }
     }
-    
+
     async fn handle_command(&mut self, command: AudioCommand) {
         match command {
             AudioCommand::AddInputStream { device_id, device, config, target_sample_rate, response_tx } => {
@@ -428,8 +473,13 @@ impl IsolatedAudioManager {
                 let result = self.handle_remove_input_stream(device_id);
                 let _ = response_tx.send(Ok(result));
             }
-            AudioCommand::AddOutputStream { device_id, device, config, response_tx } => {
-                let result = self.handle_add_output_stream(device_id, device, config).await;
+            AudioCommand::AddCPALOutputStream { device_id, device, config, response_tx } => {
+                let result = self.handle_add_cpal_output_stream(device_id, device, config).await;
+                let _ = response_tx.send(result);
+            }
+            #[cfg(target_os = "macos")]
+            AudioCommand::AddCoreAudioOutputStream { device_id, coreaudio_device, response_tx } => {
+                let result = self.handle_add_coreaudio_output_stream(device_id, coreaudio_device).await;
                 let _ = response_tx.send(result);
             }
             AudioCommand::UpdateEffects { device_id, effects, response_tx } => {
@@ -450,20 +500,46 @@ impl IsolatedAudioManager {
             }
         }
     }
-    
+
     /// Continuous audio processing: mix inputs and distribute to outputs
     async fn process_audio(&mut self) {
+        // Debug: Log the processing attempt
+        use std::sync::{LazyLock, Mutex as StdMutex};
+        static DEBUG_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
+        if let Ok(mut count) = DEBUG_COUNT.lock() {
+            *count += 1;
+            if *count <= 10 || *count % 1000 == 0 {
+                info!("🔧 PROCESS_AUDIO [{}]: Called with {} inputs, {} outputs",
+                    count, self.input_streams.len(), self.output_streams.len());
+            }
+        }
+
         if self.input_streams.is_empty() || self.output_streams.is_empty() {
+            // Debug: Log why we're returning early
+            if self.input_streams.is_empty() && self.output_streams.is_empty() {
+                // Only log this occasionally to avoid spam
+                use std::sync::{LazyLock, Mutex as StdMutex};
+                static EMPTY_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
+                if let Ok(mut count) = EMPTY_COUNT.lock() {
+                    *count += 1;
+                    if *count % 5000 == 1 { // Log every 5 seconds at 1kHz
+                        info!("⚠️ PROCESS_AUDIO: No streams - inputs: {}, outputs: {}",
+                            self.input_streams.len(), self.output_streams.len());
+                    }
+                }
+            }
             return; // Nothing to process
         }
-        
+
         // Collect samples from all input streams
         let mut mixed_samples = Vec::<f32>::new();
         let mut active_inputs = 0;
-        
+
         for (device_id, input_stream) in &mut self.input_streams {
             let samples = input_stream.get_samples();
-            if !samples.is_empty() {
+            if samples.is_empty() {
+continue;
+            }
                 // Debug log for first few audio processing cycles (before moving samples)
                 let peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
                 use std::sync::{LazyLock, Mutex as StdMutex};
@@ -471,11 +547,11 @@ impl IsolatedAudioManager {
                 if let Ok(mut count) = PROCESS_COUNT.lock() {
                     *count += 1;
                     if *count <= 10 || *count % 1000 == 0 {
-                        info!("🎵 AUDIO_PROCESSING [{}]: Input '{}' provided {} samples, peak: {:.4}", 
+                        info!("🎵 AUDIO_PROCESSING [{}]: Input '{}' provided {} samples, peak: {:.4}",
                             count, device_id, samples.len(), peak);
                     }
                 }
-                
+
                 if mixed_samples.is_empty() {
                     // First input stream - initialize the mix buffer
                     mixed_samples = samples;
@@ -485,7 +561,7 @@ impl IsolatedAudioManager {
                     if samples.len() > mixed_samples.len() {
                         mixed_samples.resize(samples.len(), 0.0);
                     }
-                    
+
                     for (i, &sample) in samples.iter().enumerate() {
                         if i < mixed_samples.len() {
                             mixed_samples[i] += sample;
@@ -493,9 +569,9 @@ impl IsolatedAudioManager {
                     }
                 }
                 active_inputs += 1;
-            }
+
         }
-        
+
         if !mixed_samples.is_empty() && active_inputs > 0 {
             // Normalize by number of active inputs to prevent clipping
             if active_inputs > 1 {
@@ -504,11 +580,11 @@ impl IsolatedAudioManager {
                     *sample *= scale;
                 }
             }
-            
+
             // Send mixed audio to all output streams
             for (device_id, output_stream) in &self.output_streams {
                 output_stream.send_samples(&mixed_samples);
-                
+
                 // Debug log for output distribution
                 use std::sync::{LazyLock, Mutex as StdMutex};
                 static OUTPUT_COUNT: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> =
@@ -518,12 +594,12 @@ impl IsolatedAudioManager {
                     *count += 1;
                     if *count <= 10 || *count % 1000 == 0 {
                         let peak = mixed_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                        info!("🔊 AUDIO_OUTPUT [{}]: Sent {} samples to '{}', peak: {:.4}", 
+                        info!("🔊 AUDIO_OUTPUT [{}]: Sent {} samples to '{}', peak: {:.4}",
                             count, mixed_samples.len(), device_id, peak);
                     }
                 }
             }
-            
+
             self.metrics.total_samples_processed += mixed_samples.len() as u64;
         }
     }
@@ -531,22 +607,22 @@ impl IsolatedAudioManager {
     async fn handle_add_input_stream(&mut self, device_id: String, device: cpal::Device, config: cpal::StreamConfig, target_sample_rate: u32) -> Result<()> {
         // Create AudioInputStream with RTRB Producer/Consumer pair
         let mut input_stream = AudioInputStream::new(device_id.clone(), device.name().unwrap_or_default(), target_sample_rate)?;
-        
+
         // Extract the producer for the CPAL callback (consumer stays with input_stream)
         // We need to create a new RTRB pair because we can't split the existing one
         let buffer_capacity = (target_sample_rate as usize * 2) / 10; // 100ms of stereo samples
         let buffer_capacity = buffer_capacity.max(4096).min(16384);
         let (producer, consumer) = rtrb::RingBuffer::<f32>::new(buffer_capacity);
-        
+
         // Replace the consumer in input_stream with our new one
         input_stream.audio_buffer_consumer = consumer;
-        
+
         // Store the input stream (with consumer) in our owned collection
         self.input_streams.insert(device_id.clone(), input_stream);
-        
+
         // Set up the actual CPAL audio stream with the producer
         self.stream_manager.add_input_stream(device_id.clone(), device, config, producer, target_sample_rate)?;
-        
+
         self.metrics.input_streams = self.input_streams.len();
         Ok(())
     }
@@ -558,13 +634,46 @@ impl IsolatedAudioManager {
         removed
     }
 
-    async fn handle_add_output_stream(&mut self, device_id: String, device: cpal::Device, config: cpal::StreamConfig) -> Result<()> {
+    async fn handle_add_cpal_output_stream(&mut self, device_id: String, device: cpal::Device, config: cpal::StreamConfig) -> Result<()> {
+        info!("🔊 Creating CPAL output stream for device '{}' with config: {}Hz, {} channels", device_id, config.sample_rate.0, config.channels);
+
         let (output_stream, spmc_reader) = AudioOutputStream::new(device_id.clone(), device.name().unwrap_or_default(), config.sample_rate.0);
-        
+
         self.output_streams.insert(device_id.clone(), output_stream);
-        self.stream_manager.add_output_stream(device_id, device, config, spmc_reader)?;
-        
+
+        // Use unified method with AudioDeviceHandle
+        let device_handle = crate::audio::types::AudioDeviceHandle::Cpal(device);
+        self.stream_manager.add_output_stream(device_id.clone(), device_handle, spmc_reader)?;
+
         self.metrics.output_streams = self.output_streams.len();
+        info!("✅ CPAL output stream created and started for device '{}'", device_id);
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn handle_add_coreaudio_output_stream(&mut self, device_id: String, coreaudio_device: crate::audio::types::CoreAudioDevice) -> Result<()> {
+        info!("🔊 Creating CoreAudio output stream for device '{}' (ID: {})", device_id, coreaudio_device.device_id);
+
+        // **NEW QUEUE ARCHITECTURE**: Create output stream with SPMC queue integration
+        let (output_stream, spmc_reader) = AudioOutputStream::new(
+            device_id.clone(),
+            coreaudio_device.name.clone(),
+            coreaudio_device.sample_rate
+        );
+
+        // Store the output stream
+        self.output_streams.insert(device_id.clone(), output_stream);
+
+        // **QUEUE INTEGRATION**: Use unified StreamManager method with CoreAudio device handle
+        let device_handle = crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device);
+        self.stream_manager.add_output_stream(
+            device_id.clone(),
+            device_handle,
+            spmc_reader
+        )?;
+
+        self.metrics.output_streams = self.output_streams.len();
+        info!("✅ CoreAudio output stream created and started for device '{}' via queue architecture", device_id);
         Ok(())
     }
 
@@ -583,7 +692,7 @@ impl IsolatedAudioManager {
 
     fn get_vu_levels(&mut self) -> HashMap<String, f32> {
         let mut levels = HashMap::new();
-        
+
         // Get samples from each input stream and calculate VU levels
         for (device_id, input_stream) in &mut self.input_streams {
             let samples = input_stream.get_samples();
@@ -592,11 +701,11 @@ impl IsolatedAudioManager {
                 let rms = (samples.iter().map(|&s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
                 let db_level = if rms > 0.0 { 20.0 * rms.log10() } else { -60.0 };
                 levels.insert(device_id.clone(), db_level);
-                
+
                 self.metrics.total_samples_processed += samples.len() as u64;
             }
         }
-        
+
         levels
     }
 
@@ -625,6 +734,8 @@ impl StreamManager {
     pub fn new() -> Self {
         Self {
             streams: HashMap::new(),
+            #[cfg(target_os = "macos")]
+            coreaudio_streams: HashMap::new(),
         }
     }
 
@@ -639,23 +750,23 @@ impl StreamManager {
     ) -> Result<()> {
         use cpal::traits::{DeviceTrait, StreamTrait};
         use cpal::SampleFormat;
-        
+
         // Get device's default format to determine sample format
         let supported_config = device.default_input_config().map_err(|e| anyhow::anyhow!("Failed to get default input config: {}", e))?;
         let sample_format = supported_config.sample_format();
         let channels = config.channels as usize;
         let sample_rate = config.sample_rate.0;
-        
-        info!("🎤 Creating input stream for device '{}' with config: {}Hz, {} channels, format: {:?}", 
+
+        info!("🎤 Creating input stream for device '{}' with config: {}Hz, {} channels, format: {:?}",
             device_id, sample_rate, channels, sample_format);
-        
+
         // Move producer into the callback closure (owned, not shared)
         let mut producer = producer;
-        let device_id_for_f32_callback = device_id.clone(); 
+        let device_id_for_f32_callback = device_id.clone();
         let device_id_for_f32_error = device_id.clone();
         let device_id_for_i16_callback = device_id.clone();
         let device_id_for_i16_error = device_id.clone();
-        
+
         // Create the audio stream with appropriate callback based on sample format
         let stream = match sample_format {
             SampleFormat::F32 => {
@@ -665,7 +776,7 @@ impl StreamManager {
                         // RTRB: Lock-free audio capture directly from hardware callback
                         let mut samples_written = 0;
                         let mut samples_dropped = 0;
-                        
+
                         for &sample in data.iter() {
                             match producer.push(sample) {
                                 Ok(()) => samples_written += 1,
@@ -675,7 +786,7 @@ impl StreamManager {
                                 }
                             }
                         }
-                        
+
                         // Debug logging for audio capture
                         use std::sync::{LazyLock, Mutex as StdMutex};
                         static CAPTURE_COUNT: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> =
@@ -706,7 +817,7 @@ impl StreamManager {
                         // Convert i16 to f32 and push to RTRB
                         let mut samples_written = 0;
                         let mut samples_dropped = 0;
-                        
+
                         for &sample in data.iter() {
                             // Convert i16 to f32 (-1.0 to 1.0 range)
                             let f32_sample = sample as f32 / 32768.0;
@@ -715,7 +826,7 @@ impl StreamManager {
                                 Err(_) => samples_dropped += 1,
                             }
                         }
-                        
+
                         // Debug logging for audio capture
                         use std::sync::{LazyLock, Mutex as StdMutex};
                         static CAPTURE_COUNT_I16: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> =
@@ -742,17 +853,17 @@ impl StreamManager {
                 return Err(anyhow::anyhow!("Unsupported sample format: {:?}", sample_format));
             }
         };
-        
+
         // Start the stream
         stream.play()?;
-        
+
         // Store the stream
         self.streams.insert(device_id.clone(), stream);
-        
+
         info!("✅ Input stream created and started for device '{}'", device_id);
         Ok(())
     }
-    
+
     // LEGACY FUNCTIONS DISABLED: These contained RTRB Send+Sync issues - replaced by command channel
 
     pub fn add_input_stream_with_error_handling(
@@ -768,51 +879,92 @@ impl StreamManager {
         println!("STUB: add_input_stream_with_error_handling called for device: {}", device_id);
         Ok(())
     }
-    
+
     #[cfg(feature = "disabled")]
     // ALL LEGACY FUNCTIONS WITH RTRB CALLBACKS DISABLED DUE TO Send+Sync ISSUES
     pub fn legacy_functions_disabled() {
         // This section contains all the legacy functions with RTRB Send+Sync issues
         // They are disabled until the command channel architecture is fully implemented
     }
-    
-    /// Remove a stream by device ID  
+
+    /// Remove a stream by device ID
     pub fn remove_stream(&mut self, device_id: &str) -> bool {
+        let mut removed = false;
+
+        // Try to remove CPAL stream first
         if let Some(stream) = self.streams.remove(device_id) {
-            println!("Stopping and removing stream for device: {}", device_id);
+            println!("Stopping and removing CPAL stream for device: {}", device_id);
             drop(stream);
-            true
-        } else {
-            println!("Stream not found for removal: {}", device_id);
-            false
+            removed = true;
         }
+
+        // Try to remove CoreAudio stream on macOS
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(mut coreaudio_stream) = self.coreaudio_streams.remove(device_id) {
+                println!("Stopping and removing CoreAudio stream for device: {}", device_id);
+                // Explicitly stop the CoreAudio stream before dropping
+                if let Err(e) = coreaudio_stream.stop() {
+                    eprintln!("Warning: Failed to stop CoreAudio stream {}: {}", device_id, e);
+                }
+                drop(coreaudio_stream);
+                removed = true;
+            }
+        }
+
+        if !removed {
+            println!("Stream not found for removal: {}", device_id);
+        }
+
+        removed
     }
 
-    /// Add output stream with SPMC Reader for lock-free audio playback
+    /// Add output stream with SPMC Reader for lock-free audio playback (supports both CPAL and CoreAudio)
     pub fn add_output_stream(
         &mut self,
         device_id: String,
+        device_handle: crate::audio::types::AudioDeviceHandle,
+        spmc_reader: spmcq::Reader<f32>,
+    ) -> Result<()> {
+        // Handle both CPAL and CoreAudio devices through unified queue architecture
+        match device_handle {
+            crate::audio::types::AudioDeviceHandle::Cpal(device) => {
+                self.add_cpal_output_stream(device_id, device, spmc_reader)
+            }
+            #[cfg(target_os = "macos")]
+            crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => {
+                self.add_coreaudio_output_stream(device_id, coreaudio_device, spmc_reader)
+            }
+            #[cfg(not(target_os = "macos"))]
+            _ => Err(anyhow::anyhow!("Unsupported device type for this platform")),
+        }
+    }
+
+    /// Add CPAL output stream with SPMC Reader for lock-free audio playback
+    fn add_cpal_output_stream(
+        &mut self,
+        device_id: String,
         device: cpal::Device,
-        config: cpal::StreamConfig,
         mut spmc_reader: spmcq::Reader<f32>,
     ) -> Result<()> {
         use cpal::traits::{DeviceTrait, StreamTrait};
         use cpal::SampleFormat;
-        
+
         // Get device's default format to determine sample format
         let supported_config = device.default_output_config().map_err(|e| anyhow::anyhow!("Failed to get default output config: {}", e))?;
         let sample_format = supported_config.sample_format();
+        let config = supported_config.config();
         let channels = config.channels as usize;
         let sample_rate = config.sample_rate.0;
-        
-        info!("🔊 Creating output stream for device '{}' with config: {}Hz, {} channels, format: {:?}", 
+
+        info!("🔊 Creating CPAL output stream for device '{}' with config: {}Hz, {} channels, format: {:?}",
             device_id, sample_rate, channels, sample_format);
-        
+
         let device_id_for_f32_out_callback = device_id.clone();
-        let device_id_for_f32_out_error = device_id.clone(); 
+        let device_id_for_f32_out_error = device_id.clone();
         let device_id_for_i16_out_callback = device_id.clone();
         let device_id_for_i16_out_error = device_id.clone();
-        
+
         // Create the output stream with appropriate callback based on sample format
         let stream = match sample_format {
             SampleFormat::F32 => {
@@ -822,7 +974,7 @@ impl StreamManager {
                         // SPMC: Lock-free audio playback directly from hardware callback
                         let mut samples_read = 0;
                         let mut silence_filled = 0;
-                        
+
                         // Fill the output buffer from SPMC queue
                         for output_sample in data.iter_mut() {
                             match spmc_reader.read() {
@@ -842,7 +994,7 @@ impl StreamManager {
                                 }
                             }
                         }
-                        
+
                         // Debug logging for audio playback
                         use std::sync::{LazyLock, Mutex as StdMutex};
                         static PLAYBACK_COUNT: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> =
@@ -873,7 +1025,7 @@ impl StreamManager {
                         // Read f32 samples from SPMC and convert to i16
                         let mut samples_read = 0;
                         let mut silence_filled = 0;
-                        
+
                         for output_sample in data.iter_mut() {
                             match spmc_reader.read() {
                                 spmcq::ReadResult::Ok(audio_sample) => {
@@ -893,7 +1045,7 @@ impl StreamManager {
                                 }
                             }
                         }
-                        
+
                         // Debug logging for i16 playback
                         use std::sync::{LazyLock, Mutex as StdMutex};
                         static PLAYBACK_COUNT_I16: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> =
@@ -920,14 +1072,49 @@ impl StreamManager {
                 return Err(anyhow::anyhow!("Unsupported sample format: {:?}", sample_format));
             }
         };
-        
+
         // Start the stream
         stream.play()?;
-        
+
         // Store the stream
         self.streams.insert(device_id.clone(), stream);
-        
-        info!("✅ Output stream created and started for device '{}'", device_id);
+
+        info!("✅ CPAL output stream created and started for device '{}'", device_id);
+        Ok(())
+    }
+
+    /// Add CoreAudio output stream with SPMC Reader integration
+    #[cfg(target_os = "macos")]
+    fn add_coreaudio_output_stream(
+        &mut self,
+        device_id: String,
+        coreaudio_device: crate::audio::types::CoreAudioDevice,
+        spmc_reader: spmcq::Reader<f32>,
+    ) -> Result<()> {
+        info!("🔊 Creating CoreAudio output stream for device '{}' (ID: {})", device_id, coreaudio_device.device_id);
+
+        // **SPMC INTEGRATION**: Create CoreAudio stream with SPMC reader
+        // Extract values from CoreAudioDevice and use new constructor
+        let mut coreaudio_stream = crate::audio::devices::CoreAudioOutputStream::new_with_spmc_reader(
+            coreaudio_device.device_id, // AudioDeviceID (u32)
+            coreaudio_device.name.clone(), // String
+            coreaudio_device.sample_rate, // u32
+            2, // channels: u16 (stereo)
+            spmc_reader, // **SPMC READER INTEGRATION**
+        )?;
+
+        // **SPMC READER NOW INTEGRATED**: Stream created with SPMC reader for real audio data
+
+        // Start the CoreAudio stream
+        coreaudio_stream.start()?;
+
+        // **CRITICAL FIX**: Store the CoreAudio stream to prevent it from being dropped
+        self.coreaudio_streams.insert(device_id.clone(), coreaudio_stream);
+
+        info!("🎵 CoreAudio stream started with SPMC queue integration for device '{}'", device_id);
+        info!("🔒 CoreAudio stream stored in StreamManager to prevent premature cleanup");
+
+        info!("✅ CoreAudio output stream created and started for device '{}' via queue architecture", device_id);
         Ok(())
     }
 }
