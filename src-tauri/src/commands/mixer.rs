@@ -4,6 +4,8 @@ use crate::{
 };
 use tauri::State;
 use tracing::error;
+use cpal::traits::DeviceTrait;
+use std::sync::Arc;
 
 // Virtual mixer commands
 #[tauri::command]
@@ -18,7 +20,16 @@ pub async fn create_mixer(
     );
 
     // Create the mixer with enhanced error handling
-    let mut mixer = match VirtualMixer::new(config).await {
+    let device_manager = {
+        let guard = audio_state.device_manager.lock().await;
+        // Create a new AudioDeviceManager instead of trying to clone the Arc<Mutex<>>
+        Arc::new(crate::audio::devices::AudioDeviceManager::new().map_err(|e| e.to_string())?)
+    };
+    let mut mixer = match VirtualMixer::new_with_device_manager(
+        config, 
+        device_manager, 
+        audio_state.audio_command_tx.clone()
+    ).await {
         Ok(mixer) => {
             println!("✅ Mixer structure created successfully");
             mixer
@@ -77,16 +88,60 @@ pub async fn add_mixer_channel(
     audio_state: State<'_, AudioState>,
     channel: AudioChannel,
 ) -> Result<(), String> {
-    let mut mixer_guard = audio_state.mixer.lock().await;
-    if let Some(ref mut mixer) = *mixer_guard {
-        mixer
-            .add_channel(channel)
-            .await
-            .map_err(|e| e.to_string())?;
-    } else {
-        return Err("No mixer created".to_string());
+    // NEW ARCHITECTURE: Use message passing instead of direct Arc access
+    
+    // Extract device information from the channel
+    let device_id = channel.input_device_id.clone()
+        .ok_or_else(|| "No input device ID specified in channel".to_string())?;
+    
+    // Get the actual CPAL device and config using the device manager
+    let device_manager = audio_state.device_manager.lock().await;
+    let device_handle = device_manager.find_audio_device(&device_id, true).await
+        .map_err(|e| format!("Failed to find input device {}: {}", device_id, e))?;
+    
+    let device = match device_handle {
+        crate::audio::types::AudioDeviceHandle::Cpal(cpal_device) => cpal_device,
+        #[cfg(target_os = "macos")]
+        _ => return Err("Only CPAL devices supported for input streams".to_string()),
+        #[cfg(not(target_os = "macos"))]
+        _ => return Err("Unknown device handle type".to_string()),
+    };
+    
+    // Get the default input config for this device
+    let config = device.default_input_config()
+        .map_err(|e| format!("Failed to get device config: {}", e))?
+        .config();
+    
+    let target_sample_rate = config.sample_rate.0;
+    
+    // Send command to isolated audio thread using the command channel
+    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+    
+    let command = crate::audio::mixer::stream_management::AudioCommand::AddInputStream {
+        device_id: device_id.clone(),
+        device,
+        config,
+        target_sample_rate,
+        response_tx,
+    };
+    
+    // Send command to isolated audio thread
+    if let Err(_) = audio_state.audio_command_tx.send(command).await {
+        return Err("Audio system not available".to_string());
     }
-    Ok(())
+    
+    // Wait for response from isolated audio thread
+    match response_rx.await {
+        Ok(Ok(())) => {
+            tracing::info!("✅ Successfully added mixer channel: {}", device_id);
+            Ok(())
+        }
+        Ok(Err(e)) => {
+            tracing::error!("❌ Failed to add mixer channel: {}", e);
+            Err(e.to_string())
+        }
+        Err(_) => Err("Audio system communication failed".to_string()),
+    }
 }
 
 #[tauri::command]

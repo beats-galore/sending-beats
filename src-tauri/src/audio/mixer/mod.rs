@@ -37,13 +37,9 @@ pub use timing_synchronization::{AudioClock, TimingMetrics, TimingSync};
 pub use stream_management::StreamInfo;
 
 // Re-export mixer core types
-pub use mixer_core::{ClockInfo, HealthCheckResult, VirtualMixerHandle};
+pub use mixer_core::VirtualMixerHandle;
 
 // Re-export stream management types for easier access
 pub use stream_management::{AudioInputStream, AudioOutputStream};
 
-// Re-export stream manager functions
-pub use stream_management::get_stream_manager;
-
-// Re-export stream management types
-pub use stream_management::{StreamCommand, StreamManager};
+// Legacy stream manager exports removed - using IsolatedAudioManager with AudioCommand instead

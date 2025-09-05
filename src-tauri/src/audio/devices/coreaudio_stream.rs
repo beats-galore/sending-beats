@@ -40,6 +40,13 @@ use tracing::warn;
 /// - Atomic pointer swapping for callback context management
 /// - Input buffer access through Arc<Mutex<Vec<f32>>> for thread safety
 
+/// Context struct for CoreAudio render callbacks - contains both buffer and SPMC reader
+#[cfg(target_os = "macos")]
+struct AudioCallbackContext {
+    buffer: Arc<Mutex<Vec<f32>>>,
+    spmc_reader: Option<Arc<Mutex<spmcq::Reader<f32>>>>,
+}
+
 /// CoreAudio output stream implementation for direct hardware access
 /// Implements actual Audio Unit streaming with render callbacks
 #[cfg(target_os = "macos")]
@@ -51,7 +58,10 @@ pub struct CoreAudioOutputStream {
     pub input_buffer: Arc<Mutex<Vec<f32>>>,
     pub is_running: Arc<Mutex<bool>>,
     audio_unit: Option<AudioUnit>,
-    callback_buffer: Arc<AtomicPtr<Arc<Mutex<Vec<f32>>>>>,
+    // **NEW CONTEXT ARCHITECTURE**: Context with both buffer and SPMC reader
+    callback_context: Arc<AtomicPtr<AudioCallbackContext>>,
+    // **SPMC INTEGRATION**: Reader for lock-free audio data from processing pipeline
+    spmc_reader: Option<Arc<Mutex<spmcq::Reader<f32>>>>,
 }
 
 // Manual Debug implementation to handle the AudioUnit pointer
@@ -66,8 +76,8 @@ impl std::fmt::Debug for CoreAudioOutputStream {
             .field("is_running", &self.is_running)
             .field("audio_unit", &self.audio_unit.is_some())
             .field(
-                "callback_buffer",
-                &(!self.callback_buffer.load(Ordering::Acquire).is_null()),
+                "callback_context",
+                &(!self.callback_context.load(Ordering::Acquire).is_null()),
             )
             .finish()
     }
@@ -101,7 +111,37 @@ impl CoreAudioOutputStream {
             input_buffer,
             is_running,
             audio_unit: None,
-            callback_buffer: Arc::new(AtomicPtr::new(ptr::null_mut())),
+            callback_context: Arc::new(AtomicPtr::new(ptr::null_mut())),
+            spmc_reader: None, // No SPMC reader for legacy constructor
+        })
+    }
+
+    /// Create CoreAudio output stream with SPMC reader for lock-free audio processing
+    pub fn new_with_spmc_reader(
+        device_id: AudioDeviceID,
+        device_name: String,
+        sample_rate: u32,
+        channels: u16,
+        spmc_reader: spmcq::Reader<f32>,
+    ) -> Result<Self> {
+        println!(
+            "Creating CoreAudio output stream with SPMC reader for device: {} (ID: {}, SR: {}, CH: {})",
+            device_name, device_id, sample_rate, channels
+        );
+
+        let input_buffer = Arc::new(Mutex::new(Vec::new()));
+        let is_running = Arc::new(Mutex::new(false));
+
+        Ok(Self {
+            device_id,
+            device_name,
+            sample_rate,
+            channels,
+            input_buffer,
+            is_running,
+            audio_unit: None,
+            callback_context: Arc::new(AtomicPtr::new(ptr::null_mut())),
+            spmc_reader: Some(Arc::new(Mutex::new(spmc_reader))), // **SPMC INTEGRATION**
         })
     }
 
@@ -196,13 +236,16 @@ impl CoreAudioOutputStream {
             return Err(anyhow::anyhow!("Failed to set stream format: {}", status));
         }
 
-        // Step 6: Set up render callback with safer pointer management
-        let input_buffer_clone = self.input_buffer.clone();
-        let boxed_buffer = Box::new(input_buffer_clone);
-        let buffer_ptr = Box::into_raw(boxed_buffer);
+        // Step 6: Set up render callback with new AudioCallbackContext
+        let context = AudioCallbackContext {
+            buffer: self.input_buffer.clone(),
+            spmc_reader: self.spmc_reader.clone(),
+        };
+        let boxed_context = Box::new(context);
+        let context_ptr = Box::into_raw(boxed_context);
 
         // Store the pointer atomically for thread-safe access and cleanup
-        let old_ptr = self.callback_buffer.swap(buffer_ptr, Ordering::Release);
+        let old_ptr = self.callback_context.swap(context_ptr, Ordering::Release);
 
         // Clean up any previous pointer
         if !old_ptr.is_null() {
@@ -211,9 +254,14 @@ impl CoreAudioOutputStream {
             }
         }
 
+        // **SPMC INTEGRATION**: Use appropriate callback based on whether SPMC reader is available
         let callback = AURenderCallbackStruct {
-            inputProc: Some(render_callback),
-            inputProcRefCon: buffer_ptr as *mut c_void,
+            inputProc: if self.spmc_reader.is_some() { 
+                Some(spmc_render_callback) // **NEW**: Use SPMC callback for real audio
+            } else { 
+                Some(render_callback) // **FALLBACK**: Use original callback  
+            },
+            inputProcRefCon: context_ptr as *mut c_void,
         };
 
         let status = unsafe {
@@ -321,34 +369,20 @@ impl CoreAudioOutputStream {
         std::thread::sleep(std::time::Duration::from_millis(50));
         println!("🔴 STOP: Wait complete");
 
-        println!("🔴 STOP: Swapping callback buffer pointer...");
-        let buffer_ptr = self
-            .callback_buffer
+        println!("🔴 STOP: Swapping callback context pointer...");
+        let context_ptr = self
+            .callback_context
             .swap(ptr::null_mut(), Ordering::Release);
-        println!("🔴 STOP: Buffer pointer swapped, checking if null...");
+        println!("🔴 STOP: Context pointer swapped, checking if null...");
 
-        if !buffer_ptr.is_null() {
-            println!("🔴 STOP: Buffer pointer not null, checking reference count...");
-            // Additional safety check: verify the Arc is safe to drop
+        if !context_ptr.is_null() {
+            println!("🔴 STOP: Context pointer not null, deallocating...");
             unsafe {
-                // Check reference count before dropping
-                let arc_ptr = buffer_ptr as *const Arc<Mutex<Vec<f32>>>;
-                let strong_count = Arc::strong_count(&*arc_ptr);
-                println!("🔴 STOP: Buffer reference count: {}", strong_count);
-
-                if strong_count == 1 {
-                    println!("🔴 STOP: Safe to deallocate buffer (only reference)");
-                    let _ = Box::from_raw(buffer_ptr);
-                    println!("🔴 STOP: Buffer deallocated successfully");
-                } else {
-                    println!(
-                        "🔴 STOP: NOT deallocating buffer - {} references still exist",
-                        strong_count
-                    );
-                }
+                let _ = Box::from_raw(context_ptr);
+                println!("🔴 STOP: Context deallocated successfully");
             }
         } else {
-            println!("🔴 STOP: Buffer pointer was null (already cleaned up)");
+            println!("🔴 STOP: Context pointer was null (already cleaned up)");
         }
 
         println!("🔴 STOP: ✅ ALL CLEANUP COMPLETE for: {}", self.device_name);
@@ -502,6 +536,95 @@ fn fill_buffers_with_silence(buffer_list: &mut AudioBufferList, _frames_needed: 
             }
         }
     }
+}
+
+/// SPMC render callback function for CoreAudio Audio Unit with lock-free queue reading
+/// This callback reads directly from the SPMC queue for real-time audio output
+#[cfg(target_os = "macos")]
+extern "C" fn spmc_render_callback(
+    _in_ref_con: *mut c_void,
+    _io_action_flags: *mut AudioUnitRenderActionFlags,
+    _in_time_stamp: *const AudioTimeStamp,
+    _in_bus_number: u32,
+    in_number_frames: u32,
+    io_data: *mut AudioBufferList,
+) -> OSStatus {
+    // Safety checks to prevent crashes
+    if _in_ref_con.is_null() || io_data.is_null() || in_number_frames == 0 {
+        return -1;
+    }
+
+    let result = std::panic::catch_unwind(|| {
+        // Convert context back to AudioCallbackContext
+        let context_ptr = _in_ref_con as *mut AudioCallbackContext;
+        if context_ptr.is_null() {
+            return -1;
+        }
+
+        let context = unsafe { &*context_ptr };
+        let buffer_list = unsafe { &mut *io_data };
+        let frames_needed = in_number_frames as usize;
+
+        // Try to read from SPMC queue if available
+        if let Some(ref spmc_reader_arc) = context.spmc_reader {
+            if let Ok(mut spmc_reader) = spmc_reader_arc.try_lock() {
+                // Fill audio buffers from SPMC queue
+                if buffer_list.mNumberBuffers > 0 {
+                    let audio_buffer = unsafe { &mut *buffer_list.mBuffers.as_mut_ptr() };
+                    let output_data = audio_buffer.mData as *mut f32;
+
+                    if !output_data.is_null() && audio_buffer.mDataByteSize > 0 {
+                        let total_samples = (audio_buffer.mDataByteSize as usize) / std::mem::size_of::<f32>();
+                        let samples_to_fill = total_samples.min(frames_needed * 2); // 2 channels
+
+                        let mut samples_read = 0;
+                        let mut silence_filled = 0;
+
+                        // Read samples from SPMC queue
+                        for i in 0..samples_to_fill {
+                            match spmc_reader.read() {
+                                spmcq::ReadResult::Ok(sample) => {
+                                    unsafe { *output_data.add(i) = sample };
+                                    samples_read += 1;
+                                }
+                                spmcq::ReadResult::Dropout(sample) => {
+                                    // Got sample but missed some data
+                                    unsafe { *output_data.add(i) = sample };
+                                    samples_read += 1;
+                                }
+                                spmcq::ReadResult::Empty => {
+                                    // No data available, fill with silence
+                                    unsafe { *output_data.add(i) = 0.0 };
+                                    silence_filled += 1;
+                                }
+                            }
+                        }
+
+                        // **DEBUG**: Log audio playback periodically
+                        static mut SPMC_PLAYBACK_COUNT: u64 = 0;
+                        unsafe {
+                            SPMC_PLAYBACK_COUNT += 1;
+                            if SPMC_PLAYBACK_COUNT % 100 == 0 || SPMC_PLAYBACK_COUNT < 10 {
+                                let peak = (0..samples_to_fill)
+                                    .map(|i| unsafe { *output_data.add(i) }.abs())
+                                    .fold(0.0f32, f32::max);
+                                println!("🎵 SPMC_COREAUDIO [{}]: Playing {} samples (call #{}), read: {}, silence: {}, peak: {:.4}",
+                                    "CoreAudio", samples_to_fill, SPMC_PLAYBACK_COUNT, samples_read, silence_filled, peak);
+                            }
+                        }
+                        
+                        return 0; // Success
+                    }
+                }
+            }
+        }
+
+        // Fallback to silence if SPMC reading fails
+        fill_buffers_with_silence(buffer_list, frames_needed);
+        0
+    });
+
+    result.unwrap_or(-1)
 }
 
 #[cfg(target_os = "macos")]

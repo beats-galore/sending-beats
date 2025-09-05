@@ -1,5 +1,6 @@
 use crate::{AudioDeviceInfo, AudioState};
 use tauri::State;
+use cpal::traits::DeviceTrait;
 
 #[tauri::command]
 pub async fn enumerate_audio_devices(
@@ -67,7 +68,7 @@ pub async fn report_device_error(
 ) -> Result<(), String> {
     let mixer_guard = audio_state.mixer.lock().await;
     if let Some(ref mixer) = *mixer_guard {
-        mixer.report_device_error(&device_id, error).await;
+        mixer.audio_device_manager.report_device_error(&device_id, error).await;
         Ok(())
     } else {
         Err("No mixer created".to_string())
@@ -299,27 +300,50 @@ pub async fn add_output_device(
     gain: Option<f32>,
     is_monitor: Option<bool>,
 ) -> Result<(), String> {
-    let mixer_guard = audio_state.mixer.lock().await;
-    if let Some(ref mixer) = *mixer_guard {
-        // Create output device configuration
-        let output_device = crate::audio::types::OutputDevice {
-            device_id: device_id.clone(),
-            device_name,
-            gain: gain.unwrap_or(1.0),
-            enabled: true,
-            is_monitor: is_monitor.unwrap_or(false),
-        };
-
-        // Add the output device directly through the mixer
-        mixer
-            .add_output_device(output_device)
-            .await
-            .map_err(|e| e.to_string())?;
-        println!("✅ Added output device via Tauri command: {}", device_id);
-    } else {
-        return Err("No mixer created".to_string());
+    // NEW ARCHITECTURE: Use command queue instead of direct mixer access
+    
+    // Get the actual CPAL device using the device manager
+    let device_manager = audio_state.device_manager.lock().await;
+    let device_handle = device_manager.find_audio_device(&device_id, false).await
+        .map_err(|e| format!("Failed to find output device {}: {}", device_id, e))?;
+    
+    let device = match device_handle {
+        crate::audio::types::AudioDeviceHandle::Cpal(cpal_device) => cpal_device,
+        #[cfg(target_os = "macos")]
+        _ => return Err("Only CPAL devices supported for output streams".to_string()),
+        #[cfg(not(target_os = "macos"))]
+        _ => return Err("Unknown device handle type".to_string()),
+    };
+    
+    // Get the default output config for this device
+    let config = device.default_output_config()
+        .map_err(|e| format!("Failed to get device config: {}", e))?
+        .config();
+    
+    // Send AddOutputStream command to isolated audio thread
+    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+    
+    let command = crate::audio::mixer::stream_management::AudioCommand::AddCPALOutputStream {
+        device_id: device_id.clone(),
+        device,
+        config,
+        response_tx,
+    };
+    
+    // Send command to isolated audio thread
+    if let Err(_) = audio_state.audio_command_tx.send(command).await {
+        return Err("Audio system not available".to_string());
     }
-    Ok(())
+    
+    // Wait for response from isolated audio thread
+    match response_rx.await {
+        Ok(Ok(())) => {
+            println!("✅ Added output device via command queue: {}", device_id);
+            Ok(())
+        }
+        Ok(Err(e)) => Err(format!("Failed to add output device: {}", e)),
+        Err(_) => Err("Audio system did not respond".to_string()),
+    }
 }
 
 #[tauri::command]
