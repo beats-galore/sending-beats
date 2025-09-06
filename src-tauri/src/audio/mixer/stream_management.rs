@@ -1189,32 +1189,40 @@ impl StreamManager {
                 device.build_output_stream(
                     &config,
                     move |data: &mut [f32], _info: &cpal::OutputCallbackInfo| {
-                        // SPMC: Lock-free audio playback directly from hardware callback
+                        // **SAMPLE ACCUMULATION STRATEGY**: Wait until we have enough samples for complete output
+                        let mut temp_samples = Vec::with_capacity(data.len());
                         let mut samples_read = 0;
-                        let mut silence_filled = 0;
-
-                        // **PROPER BUFFER FILL**: Always fill complete output buffer to prevent artifacts
-                        for output_sample in data.iter_mut() {
+                        let mut underrun = false;
+                        
+                        // First, try to read ALL requested samples into temporary buffer
+                        for _ in 0..data.len() {
                             match spmc_reader.read() {
                                 spmcq::ReadResult::Ok(audio_sample) => {
-                                    *output_sample = audio_sample;
+                                    temp_samples.push(audio_sample);
                                     samples_read += 1;
                                 }
                                 spmcq::ReadResult::Dropout(audio_sample) => {
                                     // Got data but missed some samples, still use the audio
-                                    *output_sample = audio_sample;
+                                    temp_samples.push(audio_sample);
                                     samples_read += 1;
                                 }
                                 spmcq::ReadResult::Empty => {
-                                    // **REQUIRED SILENCE FILL**: Hardware needs complete buffer filled
-                                    *output_sample = 0.0;
-                                    silence_filled += 1;
+                                    // **ACCUMULATION**: Not enough samples available, wait for more
+                                    underrun = true;
+                                    break;
                                 }
                             }
                         }
+                        
+                        // Only fill output buffer if we got ALL requested samples
+                        if !underrun && samples_read == data.len() {
+                            // Copy complete audio data to output buffer
+                            data.copy_from_slice(&temp_samples);
+                        }
+                        // If underrun: leave output buffer unmodified, hardware will repeat last buffer
 
-                        // **TRUE EVENT-DRIVEN**: Notify async processing thread that output needs more data
-                        if silence_filled > 0 {
+                        // **TRUE EVENT-DRIVEN**: Notify async processing thread when we need more samples
+                        if underrun {
                             f32_output_notifier.notify_one();
                         }
 
@@ -1230,9 +1238,10 @@ impl StreamManager {
                             if *count % 100 == 0 || (*count < 10) {
                                 let peak = data.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
                                 let rms = (data.iter().map(|&s| s * s).sum::<f32>() / data.len() as f32).sqrt();
-                                let notify_status = if silence_filled > 0 { " ⚡DEMANDED" } else { "" };
-                                println!("🎵 SPMC_PLAYBACK [{}]: Playing {} samples (call #{}), read: {}, silence: {}, peak: {:.4}, rms: {:.4}{}",
-                                    device_id_for_f32_out_callback, data.len(), count, samples_read, silence_filled, peak, rms, notify_status);
+                                let status = if underrun { " ⏳ACCUMULATING" } else { " ✅COMPLETE" };
+                                let provided = if underrun { 0 } else { samples_read };
+                                println!("🎵 SPMC_PLAYBACK [{}]: Requested {} samples (call #{}), provided: {}, available: {}, peak: {:.4}, rms: {:.4}{}",
+                                    device_id_for_f32_out_callback, data.len(), count, provided, samples_read, peak, rms, status);
                             }
                         }
                     },
@@ -1246,33 +1255,42 @@ impl StreamManager {
                 device.build_output_stream(
                     &config,
                     move |data: &mut [i16], _info: &cpal::OutputCallbackInfo| {
-                        // Read f32 samples from SPMC and convert to i16
+                        // **SAMPLE ACCUMULATION STRATEGY**: Wait until we have enough samples for complete output
+                        let mut temp_samples = Vec::with_capacity(data.len());
                         let mut samples_read = 0;
-                        let mut silence_filled = 0;
-
-                        // **PROPER BUFFER FILL**: Always fill complete output buffer to prevent artifacts
-                        for output_sample in data.iter_mut() {
+                        let mut underrun = false;
+                        
+                        // First, try to read ALL requested samples into temporary buffer
+                        for _ in 0..data.len() {
                             match spmc_reader.read() {
                                 spmcq::ReadResult::Ok(audio_sample) => {
-                                    // Convert f32 to i16
-                                    *output_sample = (audio_sample.clamp(-1.0, 1.0) * 32767.0) as i16;
+                                    temp_samples.push(audio_sample);
                                     samples_read += 1;
                                 }
                                 spmcq::ReadResult::Dropout(audio_sample) => {
                                     // Got data but missed some samples, still use the audio
-                                    *output_sample = (audio_sample.clamp(-1.0, 1.0) * 32767.0) as i16;
+                                    temp_samples.push(audio_sample);
                                     samples_read += 1;
                                 }
                                 spmcq::ReadResult::Empty => {
-                                    // **REQUIRED SILENCE FILL**: Hardware needs complete buffer filled
-                                    *output_sample = 0;
-                                    silence_filled += 1;
+                                    // **ACCUMULATION**: Not enough samples available, wait for more
+                                    underrun = true;
+                                    break;
                                 }
                             }
                         }
+                        
+                        // Only fill output buffer if we got ALL requested samples
+                        if !underrun && samples_read == data.len() {
+                            // Convert f32 samples to i16 and copy to output buffer
+                            for (i, &f32_sample) in temp_samples.iter().enumerate() {
+                                data[i] = (f32_sample.clamp(-1.0, 1.0) * 32767.0) as i16;
+                            }
+                        }
+                        // If underrun: leave output buffer unmodified, hardware will repeat last buffer
 
-                        // **TRUE EVENT-DRIVEN**: Notify async processing thread that output needs more data
-                        if silence_filled > 0 {
+                        // **TRUE EVENT-DRIVEN**: Notify async processing thread when we need more samples
+                        if underrun {
                             i16_output_notifier.notify_one();
                         }
 
@@ -1287,9 +1305,10 @@ impl StreamManager {
 
                             if *count % 100 == 0 || (*count < 10) {
                                 let peak = data.iter().map(|&s| (s as f32 / 32767.0).abs()).fold(0.0f32, f32::max);
-                                let notify_status = if silence_filled > 0 { " ⚡DEMANDED" } else { "" };
-                                println!("🎵 SPMC_PLAYBACK_I16 [{}]: Playing {} samples (call #{}), read: {}, silence: {}, peak: {:.4}{}",
-                                    device_id_for_i16_out_callback, data.len(), count, samples_read, silence_filled, peak, notify_status);
+                                let status = if underrun { " ⏳ACCUMULATING" } else { " ✅COMPLETE" };
+                                let provided = if underrun { 0 } else { samples_read };
+                                println!("🎵 SPMC_PLAYBACK_I16 [{}]: Requested {} samples (call #{}), provided: {}, available: {}, peak: {:.4}{}",
+                                    device_id_for_i16_out_callback, data.len(), count, provided, samples_read, peak, status);
                             }
                         }
                     },

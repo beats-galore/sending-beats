@@ -719,7 +719,7 @@ impl RecordingPresets {
                 mp3: Some(Mp3Settings { bitrate: 192 }),
                 flac: None,
             },
-            sample_rate: 44100,
+            sample_rate: 48000,
             channels: 2,
             bit_depth: 16,
             ..Default::default()
@@ -756,7 +756,7 @@ impl RecordingPresets {
             auto_stop_on_silence: true,
             silence_threshold_db: -45.0,
             silence_duration_sec: 3.0,
-            sample_rate: 44100,
+            sample_rate: 48000,
             channels: 1, // Mono for podcasts
             bit_depth: 16,
             ..Default::default()
@@ -816,7 +816,7 @@ impl RecordingPresets {
             },
             filename_template: "Voice_{timestamp}_{title}".to_string(),
             metadata,
-            sample_rate: 44100,
+            sample_rate: 48000,
             channels: 1, // Mono for voice
             bit_depth: 16,
             auto_stop_on_silence: true,
@@ -891,7 +891,7 @@ impl MetadataPresets {
         metadata
     }
 
-    /// Music track metadata template  
+    /// Music track metadata template
     pub fn music_track() -> RecordingMetadata {
         let mut metadata = RecordingMetadata::default();
         metadata.track_number = Some(1);

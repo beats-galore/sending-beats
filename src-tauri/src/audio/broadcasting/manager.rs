@@ -17,7 +17,7 @@ use crate::audio::{create_streaming_bridge, AudioStreamingBridge, VirtualMixer};
 ///
 /// This service manages the complete audio streaming pipeline:
 /// 1. Captures real-time audio from the virtual mixer
-/// 2. Encodes audio to MP3/AAC format  
+/// 2. Encodes audio to MP3/AAC format
 /// 3. Streams to Icecast server using SOURCE protocol
 /// 4. Handles reconnection and error recovery
 /// 5. Provides streaming statistics and status

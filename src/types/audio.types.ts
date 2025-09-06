@@ -80,7 +80,7 @@ export const AUDIO_CONSTANTS = {
   MAX_GAIN_DB: 12,
   MIN_PAN: -1,
   MAX_PAN: 1,
-  DEFAULT_SAMPLE_RATE: 44100,
+  DEFAULT_SAMPLE_RATE: 48000,
   DEFAULT_BUFFER_SIZE: 512,
   VU_UPDATE_INTERVAL: 100, // ms
 } as const;
@@ -94,7 +94,7 @@ export type RecordingMetadata = {
   genre?: string;
   comment?: string;
   year?: number;
-  
+
   // Extended fields
   album_artist?: string;
   composer?: string;
@@ -105,17 +105,17 @@ export type RecordingMetadata = {
   copyright?: string;
   bpm?: number;
   isrc?: string;
-  
+
   // Technical fields (auto-populated)
   encoder?: string;
   encoding_date?: string;
   sample_rate?: number;
   bitrate?: number;
   duration_seconds?: number;
-  
+
   // Artwork
   artwork?: AlbumArtwork;
-  
+
   // Custom fields
   custom_tags?: Record<string, string>;
 };
@@ -127,28 +127,28 @@ export type AlbumArtwork = {
   picture_type: ArtworkType;
 };
 
-export type ArtworkType = 
-  | "Other"
-  | "FileIcon"
-  | "OtherFileIcon"
-  | "CoverFront"
-  | "CoverBack"
-  | "LeafletPage"
-  | "Media"
-  | "LeadArtist"
-  | "Artist"
-  | "Conductor"
-  | "Band"
-  | "Composer"
-  | "Lyricist"
-  | "RecordingLocation"
-  | "DuringRecording"
-  | "DuringPerformance"
-  | "MovieScreenCapture"
-  | "BrightColourFish"
-  | "Illustration"
-  | "BandArtistLogotype"
-  | "PublisherStudioLogotype";
+export type ArtworkType =
+  | 'Other'
+  | 'FileIcon'
+  | 'OtherFileIcon'
+  | 'CoverFront'
+  | 'CoverBack'
+  | 'LeafletPage'
+  | 'Media'
+  | 'LeadArtist'
+  | 'Artist'
+  | 'Conductor'
+  | 'Band'
+  | 'Composer'
+  | 'Lyricist'
+  | 'RecordingLocation'
+  | 'DuringRecording'
+  | 'DuringPerformance'
+  | 'MovieScreenCapture'
+  | 'BrightColourFish'
+  | 'Illustration'
+  | 'BandArtistLogotype'
+  | 'PublisherStudioLogotype';
 
 export type RecordingFormat = {
   mp3?: { bitrate: number };
@@ -163,7 +163,7 @@ export type RecordingConfig = {
   output_directory: string;
   filename_template: string;
   metadata: RecordingMetadata;
-  
+
   // Advanced options
   auto_stop_on_silence: boolean;
   silence_threshold_db: number;
@@ -171,7 +171,7 @@ export type RecordingConfig = {
   max_duration_minutes?: number;
   max_file_size_mb?: number;
   split_on_interval_minutes?: number;
-  
+
   // Quality settings
   sample_rate: number;
   channels: number;
@@ -195,7 +195,7 @@ export type RecordingSession = {
 export type RecordingStatus = {
   is_recording: boolean;
   is_paused: boolean;
-  current_session?: RecordingSession;  // Fixed to match backend serialization
+  current_session?: RecordingSession; // Fixed to match backend serialization
   active_writers_count: number;
   available_space_gb: number;
   total_recordings: number;

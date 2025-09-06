@@ -73,7 +73,7 @@ pub struct VirtualMixer {
     // Audio stream management (NEW ARCHITECTURE: Command-based)
     pub audio_device_manager: Arc<AudioDeviceManager>,
     pub audio_command_tx: tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>, // Command channel to isolated audio thread
-    
+
     // Track active streams for UI purposes (no direct stream storage)
     pub active_input_devices: Arc<Mutex<std::collections::HashSet<String>>>,
     pub active_output_devices: Arc<Mutex<std::collections::HashSet<String>>>,
@@ -356,7 +356,7 @@ impl MixerConfigUtils {
     /// Create configuration for high stability/compatibility
     pub fn stable_config() -> MixerConfig {
         MixerConfig {
-            sample_rate: 44100, // CD quality
+            sample_rate: 48000, // CD quality
             buffer_size: 1024,  // Higher stability
             channels: vec![],   // Empty channels list
             master_gain: 1.0,
