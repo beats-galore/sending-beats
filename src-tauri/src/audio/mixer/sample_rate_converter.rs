@@ -181,6 +181,10 @@ impl CubicSRC {
         a0 * t * t * t + a1 * t * t + a2 * t + a3
     }
 
+    pub fn ratio(&self) -> f32 {
+        self.ratio
+    }
+
     pub fn conversion_needed(&self) -> bool {
         (self.ratio - 1.0).abs() > 0.001
     }

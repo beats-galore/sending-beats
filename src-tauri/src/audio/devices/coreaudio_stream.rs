@@ -577,28 +577,103 @@ extern "C" fn spmc_render_callback(
                         let total_samples = (audio_buffer.mDataByteSize as usize) / std::mem::size_of::<f32>();
                         let samples_to_fill = total_samples.min(frames_needed * 2); // 2 channels
 
-                        let mut samples_read = 0;
-                        let mut silence_filled = 0;
-
-                        // Read samples from SPMC queue
-                        for i in 0..samples_to_fill {
+                        // **DYNAMIC SAMPLE RATE CONVERSION**: CoreAudio version
+                        use crate::audio::mixer::sample_rate_converter::LinearSRC;
+                        use std::cell::RefCell;
+                        thread_local! {
+                            static SRC: RefCell<Option<LinearSRC>> = RefCell::new(None);
+                        }
+                        
+                        // Collect all available samples from SPMC queue
+                        let mut input_samples = Vec::new();
+                        loop {
                             match spmc_reader.read() {
                                 spmcq::ReadResult::Ok(sample) => {
-                                    unsafe { *output_data.add(i) = sample };
-                                    samples_read += 1;
+                                    input_samples.push(sample);
+                                    // Prevent unbounded reads
+                                    if input_samples.len() >= 4096 {
+                                        break;
+                                    }
                                 }
                                 spmcq::ReadResult::Dropout(sample) => {
-                                    // Got sample but missed some data
-                                    unsafe { *output_data.add(i) = sample };
-                                    samples_read += 1;
+                                    input_samples.push(sample);
+                                    if input_samples.len() >= 4096 {
+                                        break;
+                                    }
                                 }
                                 spmcq::ReadResult::Empty => {
-                                    // No data available, fill with silence
-                                    unsafe { *output_data.add(i) = 0.0 };
-                                    silence_filled += 1;
+                                    break;
                                 }
                             }
                         }
+                        
+                        let (samples_read, silence_filled) = if !input_samples.is_empty() {
+                            // Dynamic SRC initialization - detect sample rate from input samples
+                            let converted_samples = SRC.with(|src_cell| {
+                                let mut src_opt = src_cell.borrow_mut();
+                                
+                                // Estimate input sample rate based on sample count ratios
+                                let estimated_input_rate = {
+                                    let common_rates = [8000.0, 11025.0, 16000.0, 22050.0, 44100.0, 48000.0, 88200.0, 96000.0];
+                                    
+                                    // Heuristic: ratio of output samples needed vs input samples available
+                                    let ratio_hint = samples_to_fill as f32 / input_samples.len() as f32;
+                                    // Assume reasonable output rate for CoreAudio (usually 48kHz)
+                                    let estimated_output_rate = 48000.0;
+                                    let estimated_input_rate = estimated_output_rate / ratio_hint;
+                                    
+                                    // Find closest common sample rate
+                                    common_rates.iter()
+                                        .min_by(|&a, &b| {
+                                            (a - estimated_input_rate).abs().partial_cmp(&(b - estimated_input_rate).abs()).unwrap()
+                                        })
+                                        .copied()
+                                        .unwrap_or(44100.0)
+                                };
+                                
+                                // Reinitialize SRC if rate changed significantly
+                                let needs_new_src = if let Some(ref src) = *src_opt {
+                                    (src.ratio() - (48000.0 / estimated_input_rate)).abs() > 0.01
+                                } else {
+                                    true
+                                };
+                                
+                                if needs_new_src {
+                                    *src_opt = Some(LinearSRC::new(estimated_input_rate, 48000.0));
+                                }
+                                
+                                if let Some(ref mut src) = *src_opt {
+                                    let result = src.convert(&input_samples, samples_to_fill);
+                                    // Debug log SRC usage occasionally
+                                    static mut SRC_DEBUG_COUNT: u64 = 0;
+                                    unsafe {
+                                        SRC_DEBUG_COUNT += 1;
+                                        if SRC_DEBUG_COUNT % 200 == 0 {
+                                            println!("🔄 SRC_CONVERTED [{}→{}]: {} input samples → {} output samples (ratio: {:.3})", 
+                                                estimated_input_rate, 48000.0, input_samples.len(), result.len(), src.ratio());
+                                        }
+                                    }
+                                    result
+                                } else {
+                                    vec![0.0; samples_to_fill]
+                                }
+                            });
+                            
+                            // Copy converted samples to output buffer
+                            for (i, &sample) in converted_samples.iter().enumerate() {
+                                if i < samples_to_fill {
+                                    unsafe { *output_data.add(i) = sample };
+                                }
+                            }
+                            
+                            (converted_samples.len().min(samples_to_fill), 0)
+                        } else {
+                            // No input samples available - fill with silence
+                            for i in 0..samples_to_fill {
+                                unsafe { *output_data.add(i) = 0.0 };
+                            }
+                            (0, samples_to_fill)
+                        };
 
                         // **DEBUG**: Log audio playback periodically
                         static mut SPMC_PLAYBACK_COUNT: u64 = 0;
