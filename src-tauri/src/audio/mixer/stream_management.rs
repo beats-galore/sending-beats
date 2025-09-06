@@ -13,6 +13,7 @@ use tracing::{error, info, warn};
 
 use super::types::VirtualMixer;
 use super::stream_operations::calculate_target_latency_ms;
+use super::sample_rate_converter::LinearSRC;
 use crate::audio::effects::{AudioEffectsChain, EQBand};
 use crate::audio::types::AudioChannel;
 use tokio::sync::{Mutex, mpsc, oneshot, Notify};
@@ -324,6 +325,8 @@ pub struct AudioOutputStream {
     pub buffer_capacity_samples: usize,
     // TRUE EVENT-DRIVEN: Notification for when output streams need data
     pub output_demand_notifier: Arc<Notify>,
+    // Track input sample rate for dynamic conversion
+    pub input_sample_rate: Arc<Mutex<f32>>,
     // Stream is handled separately to avoid Send/Sync issues
 }
 
@@ -366,6 +369,8 @@ impl AudioOutputStream {
             buffer_capacity_samples: buffer_capacity,
             // TRUE EVENT-DRIVEN: Initialize output demand notification system
             output_demand_notifier: Arc::new(Notify::new()),
+            // Initialize with default 48kHz input rate, will be updated when mixed audio arrives
+            input_sample_rate: Arc::new(Mutex::new(48000.0)),
         };
 
         (output_stream, reader)
@@ -376,7 +381,12 @@ impl AudioOutputStream {
         &self.device_id
     }
 
-    pub fn send_samples(&self, samples: &[f32]) {
+    pub fn send_samples(&self, samples: &[f32], input_sample_rate: f32) {
+        // Update the input sample rate for dynamic conversion
+        if let Ok(mut rate) = self.input_sample_rate.try_lock() {
+            *rate = input_sample_rate;
+        }
+        
         match self.spmc_writer.try_lock() {
             Ok(mut writer) => {
             // Push samples to SPMC queue - all consumers will receive them
@@ -706,6 +716,7 @@ impl IsolatedAudioManager {
         // Collect samples from all input streams
         let mut mixed_samples = Vec::<f32>::new();
         let mut active_inputs = 0;
+        let mut mixed_sample_rate = 48000.0; // Default, will be set to first active input's rate
 
         for (device_id, input_stream) in &mut self.input_streams {
             let samples = input_stream.get_samples();
@@ -725,8 +736,9 @@ continue;
                 }
 
                 if mixed_samples.is_empty() {
-                    // First input stream - initialize the mix buffer
+                    // First input stream - initialize the mix buffer and set sample rate
                     mixed_samples = samples;
+                    mixed_sample_rate = input_stream.sample_rate as f32;
                 } else {
                     // Mix additional streams by adding samples
                     // Handle different lengths by extending if needed
@@ -768,7 +780,7 @@ continue;
             } else {
                 // Send mixed audio to all output streams
                 for (device_id, output_stream) in &self.output_streams {
-                    output_stream.send_samples(&mixed_samples);
+                    output_stream.send_samples(&mixed_samples, mixed_sample_rate);
 
                     // Debug log for output distribution
                     use std::sync::{LazyLock, Mutex as StdMutex};
@@ -1182,6 +1194,10 @@ impl StreamManager {
         // Clone notifier for callback closures
         let f32_output_notifier = output_notifier.clone();
         let i16_output_notifier = output_notifier.clone();
+        
+        // Clone sample rate info for callbacks
+        let f32_output_sample_rate = sample_rate as f32;
+        let i16_output_sample_rate = sample_rate as f32;
 
         // Create the output stream with appropriate callback based on sample format
         let stream = match sample_format {
@@ -1189,40 +1205,94 @@ impl StreamManager {
                 device.build_output_stream(
                     &config,
                     move |data: &mut [f32], _info: &cpal::OutputCallbackInfo| {
-                        // **SAMPLE ACCUMULATION STRATEGY**: Wait until we have enough samples for complete output
-                        let mut temp_samples = Vec::with_capacity(data.len());
-                        let mut samples_read = 0;
-                        let mut underrun = false;
+                        // **DYNAMIC SAMPLE RATE CONVERSION**: Convert available input samples to exact output buffer size
+                        use std::cell::RefCell;
+                        thread_local! {
+                            static SRC: RefCell<Option<LinearSRC>> = RefCell::new(None);
+                        }
                         
-                        // First, try to read ALL requested samples into temporary buffer
-                        for _ in 0..data.len() {
+                        // Collect all available samples from SPMC queue
+                        let mut input_samples = Vec::new();
+                        loop {
                             match spmc_reader.read() {
-                                spmcq::ReadResult::Ok(audio_sample) => {
-                                    temp_samples.push(audio_sample);
-                                    samples_read += 1;
+                                spmcq::ReadResult::Ok(sample) => {
+                                    input_samples.push(sample);
+                                    // Prevent unbounded reads by limiting to reasonable chunk size
+                                    if input_samples.len() >= 4096 {
+                                        break;
+                                    }
                                 }
-                                spmcq::ReadResult::Dropout(audio_sample) => {
+                                spmcq::ReadResult::Dropout(sample) => {
                                     // Got data but missed some samples, still use the audio
-                                    temp_samples.push(audio_sample);
-                                    samples_read += 1;
+                                    input_samples.push(sample);
+                                    if input_samples.len() >= 4096 {
+                                        break;
+                                    }
                                 }
                                 spmcq::ReadResult::Empty => {
-                                    // **ACCUMULATION**: Not enough samples available, wait for more
-                                    underrun = true;
+                                    // No more samples available
                                     break;
                                 }
                             }
                         }
                         
-                        // Only fill output buffer if we got ALL requested samples
-                        if !underrun && samples_read == data.len() {
-                            // Copy complete audio data to output buffer
-                            data.copy_from_slice(&temp_samples);
+                        if !input_samples.is_empty() {
+                            // Dynamic SRC initialization - detect sample rate from input samples
+                            let converted_samples = SRC.with(|src_cell| {
+                                let mut src_opt = src_cell.borrow_mut();
+                                
+                                // Estimate input sample rate based on sample count and time
+                                // This is a heuristic approach since we can't easily pass rate info to callbacks
+                                let estimated_input_rate = {
+                                    // Most common audio sample rates
+                                    let common_rates = [8000.0, 11025.0, 16000.0, 22050.0, 44100.0, 48000.0, 88200.0, 96000.0];
+                                    
+                                    // Use heuristic: if we have ~1024 samples and output wants ~1114,
+                                    // that suggests 44.1kHz input to 48kHz output (1024 * 48000/44100 ≈ 1114)
+                                    let ratio_hint = data.len() as f32 / input_samples.len() as f32;
+                                    let estimated_output_rate = f32_output_sample_rate;
+                                    let estimated_input_rate = estimated_output_rate / ratio_hint;
+                                    
+                                    // Find the closest common sample rate
+                                    common_rates.iter()
+                                        .min_by(|&a, &b| {
+                                            (a - estimated_input_rate).abs().partial_cmp(&(b - estimated_input_rate).abs()).unwrap()
+                                        })
+                                        .copied()
+                                        .unwrap_or(44100.0)
+                                };
+                                
+                                // Reinitialize SRC if rate changed significantly
+                                let needs_new_src = if let Some(ref src) = *src_opt {
+                                    (src.ratio() - (f32_output_sample_rate / estimated_input_rate)).abs() > 0.01
+                                } else {
+                                    true
+                                };
+                                
+                                if needs_new_src {
+                                    *src_opt = Some(LinearSRC::new(estimated_input_rate, f32_output_sample_rate));
+                                }
+                                
+                                if let Some(ref mut src) = *src_opt {
+                                    src.convert(&input_samples, data.len())
+                                } else {
+                                    vec![0.0; data.len()]
+                                }
+                            });
+                            
+                            // Copy converted samples to output buffer
+                            for (i, &sample) in converted_samples.iter().enumerate() {
+                                if i < data.len() {
+                                    data[i] = sample;
+                                }
+                            }
+                        } else {
+                            // No input samples available - fill with silence
+                            data.fill(0.0);
                         }
-                        // If underrun: leave output buffer unmodified, hardware will repeat last buffer
 
                         // **TRUE EVENT-DRIVEN**: Notify async processing thread when we need more samples
-                        if underrun {
+                        if input_samples.is_empty() {
                             f32_output_notifier.notify_one();
                         }
 
@@ -1238,10 +1308,9 @@ impl StreamManager {
                             if *count % 100 == 0 || (*count < 10) {
                                 let peak = data.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
                                 let rms = (data.iter().map(|&s| s * s).sum::<f32>() / data.len() as f32).sqrt();
-                                let status = if underrun { " ⏳ACCUMULATING" } else { " ✅COMPLETE" };
-                                let provided = if underrun { 0 } else { samples_read };
-                                println!("🎵 SPMC_PLAYBACK [{}]: Requested {} samples (call #{}), provided: {}, available: {}, peak: {:.4}, rms: {:.4}{}",
-                                    device_id_for_f32_out_callback, data.len(), count, provided, samples_read, peak, rms, status);
+                                let status = if input_samples.is_empty() { " ⏳SRC_UNDERRUN" } else { " ✅SRC_CONVERTED" };
+                                println!("🎵 SPMC_PLAYBACK [{}]: Requested {} samples (call #{}), input: {}, peak: {:.4}, rms: {:.4}{}",
+                                    device_id_for_f32_out_callback, data.len(), count, input_samples.len(), peak, rms, status);
                             }
                         }
                     },
@@ -1255,42 +1324,93 @@ impl StreamManager {
                 device.build_output_stream(
                     &config,
                     move |data: &mut [i16], _info: &cpal::OutputCallbackInfo| {
-                        // **SAMPLE ACCUMULATION STRATEGY**: Wait until we have enough samples for complete output
-                        let mut temp_samples = Vec::with_capacity(data.len());
-                        let mut samples_read = 0;
-                        let mut underrun = false;
+                        // **DYNAMIC SAMPLE RATE CONVERSION**: Convert available input samples to exact output buffer size
+                        use std::cell::RefCell;
+                        thread_local! {
+                            static SRC: RefCell<Option<LinearSRC>> = RefCell::new(None);
+                        }
                         
-                        // First, try to read ALL requested samples into temporary buffer
-                        for _ in 0..data.len() {
+                        // Collect all available samples from SPMC queue
+                        let mut input_samples = Vec::new();
+                        loop {
                             match spmc_reader.read() {
-                                spmcq::ReadResult::Ok(audio_sample) => {
-                                    temp_samples.push(audio_sample);
-                                    samples_read += 1;
+                                spmcq::ReadResult::Ok(sample) => {
+                                    input_samples.push(sample);
+                                    // Prevent unbounded reads by limiting to reasonable chunk size
+                                    if input_samples.len() >= 4096 {
+                                        break;
+                                    }
                                 }
-                                spmcq::ReadResult::Dropout(audio_sample) => {
+                                spmcq::ReadResult::Dropout(sample) => {
                                     // Got data but missed some samples, still use the audio
-                                    temp_samples.push(audio_sample);
-                                    samples_read += 1;
+                                    input_samples.push(sample);
+                                    if input_samples.len() >= 4096 {
+                                        break;
+                                    }
                                 }
                                 spmcq::ReadResult::Empty => {
-                                    // **ACCUMULATION**: Not enough samples available, wait for more
-                                    underrun = true;
+                                    // No more samples available
                                     break;
                                 }
                             }
                         }
                         
-                        // Only fill output buffer if we got ALL requested samples
-                        if !underrun && samples_read == data.len() {
+                        if !input_samples.is_empty() {
+                            // Dynamic SRC initialization - detect sample rate from input samples
+                            let converted_samples = SRC.with(|src_cell| {
+                                let mut src_opt = src_cell.borrow_mut();
+                                
+                                // Estimate input sample rate based on sample count and time
+                                let estimated_input_rate = {
+                                    // Most common audio sample rates
+                                    let common_rates = [8000.0, 11025.0, 16000.0, 22050.0, 44100.0, 48000.0, 88200.0, 96000.0];
+                                    
+                                    // Use heuristic: if we have ~1024 samples and output wants ~1114,
+                                    // that suggests 44.1kHz input to 48kHz output (1024 * 48000/44100 ≈ 1114)
+                                    let ratio_hint = data.len() as f32 / input_samples.len() as f32;
+                                    let estimated_output_rate = i16_output_sample_rate;
+                                    let estimated_input_rate = estimated_output_rate / ratio_hint;
+                                    
+                                    // Find the closest common sample rate
+                                    common_rates.iter()
+                                        .min_by(|&a, &b| {
+                                            (a - estimated_input_rate).abs().partial_cmp(&(b - estimated_input_rate).abs()).unwrap()
+                                        })
+                                        .copied()
+                                        .unwrap_or(44100.0)
+                                };
+                                
+                                // Reinitialize SRC if rate changed significantly
+                                let needs_new_src = if let Some(ref src) = *src_opt {
+                                    (src.ratio() - (i16_output_sample_rate / estimated_input_rate)).abs() > 0.01
+                                } else {
+                                    true
+                                };
+                                
+                                if needs_new_src {
+                                    *src_opt = Some(LinearSRC::new(estimated_input_rate, i16_output_sample_rate));
+                                }
+                                
+                                if let Some(ref mut src) = *src_opt {
+                                    src.convert(&input_samples, data.len())
+                                } else {
+                                    vec![0.0; data.len()]
+                                }
+                            });
+                            
                             // Convert f32 samples to i16 and copy to output buffer
-                            for (i, &f32_sample) in temp_samples.iter().enumerate() {
-                                data[i] = (f32_sample.clamp(-1.0, 1.0) * 32767.0) as i16;
+                            for (i, &f32_sample) in converted_samples.iter().enumerate() {
+                                if i < data.len() {
+                                    data[i] = (f32_sample.clamp(-1.0, 1.0) * 32767.0) as i16;
+                                }
                             }
+                        } else {
+                            // No input samples available - fill with silence
+                            data.fill(0);
                         }
-                        // If underrun: leave output buffer unmodified, hardware will repeat last buffer
 
                         // **TRUE EVENT-DRIVEN**: Notify async processing thread when we need more samples
-                        if underrun {
+                        if input_samples.is_empty() {
                             i16_output_notifier.notify_one();
                         }
 
@@ -1305,10 +1425,9 @@ impl StreamManager {
 
                             if *count % 100 == 0 || (*count < 10) {
                                 let peak = data.iter().map(|&s| (s as f32 / 32767.0).abs()).fold(0.0f32, f32::max);
-                                let status = if underrun { " ⏳ACCUMULATING" } else { " ✅COMPLETE" };
-                                let provided = if underrun { 0 } else { samples_read };
-                                println!("🎵 SPMC_PLAYBACK_I16 [{}]: Requested {} samples (call #{}), provided: {}, available: {}, peak: {:.4}{}",
-                                    device_id_for_i16_out_callback, data.len(), count, provided, samples_read, peak, status);
+                                let status = if input_samples.is_empty() { " ⏳SRC_UNDERRUN" } else { " ✅SRC_CONVERTED" };
+                                println!("🎵 SPMC_PLAYBACK_I16 [{}]: Requested {} samples (call #{}), input: {}, peak: {:.4}{}",
+                                    device_id_for_i16_out_callback, data.len(), count, input_samples.len(), peak, status);
                             }
                         }
                     },

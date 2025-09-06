@@ -15,6 +15,7 @@
 pub mod audio_processing;
 pub mod command_processing;
 pub mod mixer_core;
+pub mod sample_rate_converter;
 pub mod stream_management;
 pub mod stream_operations;
 pub mod timing_synchronization;
