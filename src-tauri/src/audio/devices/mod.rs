@@ -24,8 +24,6 @@ pub mod monitor;
 pub mod coreaudio_stream;
 
 // CoreAudio input stream as alternative to CPAL (not a full replacement)
-#[cfg(target_os = "macos")]
-pub mod coreaudio_usage_example;
 
 // Re-export main public API
 pub use device_manager::AudioDeviceManager;

@@ -916,9 +916,15 @@ impl CoreAudioInputStream {
             return Err(anyhow::anyhow!("Failed to set input stream format: {}", status));
         }
 
-        // Step 7: Set up input callback with AudioInputCallbackContext
+        // Step 7: Set up input callback with AudioInputCallbackContext  
+        let rtrb_producer_arc = self.rtrb_producer.take().unwrap();
+        let rtrb_producer = Arc::try_unwrap(rtrb_producer_arc)
+            .map_err(|_| anyhow::anyhow!("Failed to extract RTRB producer from Arc"))?
+            .into_inner()
+            .map_err(|_| anyhow::anyhow!("Failed to extract RTRB producer from Mutex"))?;
+        
         let context = AudioInputCallbackContext {
-            rtrb_producer: self.rtrb_producer.take().unwrap(), // Move producer ownership to callback context, just like CPAL
+            rtrb_producer, // Move extracted producer ownership to callback context, just like CPAL
             input_notifier: self.input_notifier.clone(),
             device_name: self.device_name.clone(),
             audio_unit,

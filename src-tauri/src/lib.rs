@@ -258,6 +258,10 @@ pub fn run() {
             remove_output_device,
             update_output_device,
             get_output_devices,
+            // CoreAudio specific commands  
+            enumerate_coreaudio_devices,
+            get_device_type_info,
+            is_coreaudio_device,
             // Audio effects commands
             update_channel_eq,
             update_channel_compressor,

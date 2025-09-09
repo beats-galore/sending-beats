@@ -424,3 +424,49 @@ pub async fn get_output_devices(
         Err("No mixer created".to_string())
     }
 }
+
+// CoreAudio specific commands
+#[tauri::command]
+pub async fn enumerate_coreaudio_devices(
+    audio_state: State<'_, AudioState>,
+) -> Result<Vec<AudioDeviceInfo>, String> {
+    let device_manager = audio_state.device_manager.lock().await;
+    let all_devices = device_manager
+        .enumerate_devices()
+        .await
+        .map_err(|e| e.to_string())?;
+    
+    // Filter to only CoreAudio devices
+    let coreaudio_devices: Vec<AudioDeviceInfo> = all_devices
+        .into_iter()
+        .filter(|device| device.host_api == "CoreAudio (Direct)")
+        .collect();
+    
+    Ok(coreaudio_devices)
+}
+
+#[tauri::command]
+pub async fn get_device_type_info(
+    audio_state: State<'_, AudioState>,
+    device_id: String,
+) -> Result<Option<String>, String> {
+    let device_manager = audio_state.device_manager.lock().await;
+    if let Some(device_info) = device_manager.get_device(&device_id).await {
+        Ok(Some(device_info.host_api))
+    } else {
+        Ok(None)
+    }
+}
+
+#[tauri::command]
+pub async fn is_coreaudio_device(
+    audio_state: State<'_, AudioState>,
+    device_id: String,
+) -> Result<bool, String> {
+    let device_manager = audio_state.device_manager.lock().await;
+    if let Some(device_info) = device_manager.get_device(&device_id).await {
+        Ok(device_info.host_api == "CoreAudio (Direct)")
+    } else {
+        Ok(false)
+    }
+}

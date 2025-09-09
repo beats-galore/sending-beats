@@ -216,20 +216,25 @@ impl VirtualMixer {
         // Increased from 50ms to 200ms to ensure complete resource cleanup
         tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
 
-        // **CRASH FIX**: Find the actual cpal device with enhanced error handling and fallback
+        // **DEVICE DISCOVERY**: Find device (CPAL or CoreAudio) with enhanced error handling and fallback
         println!(
-            "🔍 CRASH DEBUG MIXER: About to find cpal device for: {}",
+            "🔍 DEVICE DISCOVERY: Looking for input device: {}",
             device_id
         );
-        let cpal_device = match self
+        let device_handle = match self
             .audio_device_manager
-            .find_cpal_device(device_id, true)
+            .find_audio_device(device_id, true)
             .await
         {
             Ok(device) => {
                 println!(
-                    "✅ CRASH DEBUG MIXER: Successfully found cpal device for: {}",
-                    device_id
+                    "✅ DEVICE DISCOVERY: Successfully found device for: {} (type: {})",
+                    device_id,
+                    match &device {
+                        crate::audio::types::AudioDeviceHandle::Cpal(_) => "CPAL",
+                        #[cfg(target_os = "macos")]
+                        crate::audio::types::AudioDeviceHandle::CoreAudio(_) => "CoreAudio",
+                    }
                 );
                 device
             }
@@ -245,7 +250,7 @@ impl VirtualMixer {
                 // Try one more time after refresh
                 match self
                     .audio_device_manager
-                    .find_cpal_device(device_id, true)
+                    .find_audio_device(device_id, true)
                     .await
                 {
                     Ok(device) => {
@@ -263,6 +268,22 @@ impl VirtualMixer {
             }
         };
 
+        // Handle different device types
+        match device_handle {
+            crate::audio::types::AudioDeviceHandle::Cpal(cpal_device) => {
+                info!("🎤 Using CPAL input stream for device: {}", device_id);
+                return self.add_cpal_input_stream(device_id, cpal_device).await;
+            }
+            #[cfg(target_os = "macos")]
+            crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => {
+                info!("🎤 Using CoreAudio input stream for device: {}", device_id);
+                return self.add_coreaudio_input_stream(device_id, coreaudio_device).await;
+            }
+        }
+    }
+
+    /// Add CPAL input stream (extracted from main method)
+    async fn add_cpal_input_stream(&self, device_id: &str, cpal_device: cpal::Device) -> Result<()> {
         let device_name = cpal_device.name().unwrap_or_else(|_| device_id.to_string());
         info!("Found CPAL device: {}", device_name);
 
@@ -390,6 +411,114 @@ impl VirtualMixer {
                     );
                 }
 
+                Ok(())
+            }
+            Err(e) => {
+                // Remove from active input devices if stream creation failed
+                let mut active_devices = self.active_input_devices.lock().await;
+                active_devices.remove(device_id);
+                Err(e)
+            }
+        }
+    }
+
+    /// Add CoreAudio input stream (CoreAudio device type)
+    #[cfg(target_os = "macos")]
+    async fn add_coreaudio_input_stream(
+        &self,
+        device_id: &str,
+        coreaudio_device: crate::audio::types::CoreAudioDevice,
+    ) -> Result<()> {
+        info!(
+            "🎤 Creating CoreAudio input stream for device: {} (ID: {})",
+            coreaudio_device.name, coreaudio_device.device_id
+        );
+
+        // Check if stream already exists and remove it first
+        {
+            let input_devices = self.active_input_devices.lock().await;
+            if input_devices.contains(device_id) {
+                warn!(
+                    "CoreAudio device {} already has an active input stream, removing first",
+                    device_id
+                );
+                drop(input_devices);
+                if let Err(e) = self.remove_input_stream(device_id).await {
+                    warn!("Failed to remove existing CoreAudio stream for {}: {}", device_id, e);
+                }
+            }
+        }
+
+        // Allow cleanup time before creating new stream
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+        // Add to streams collection first
+        {
+            let mut streams = self.active_input_devices.lock().await;
+            streams.insert(device_id.to_string());
+        }
+
+        // Create RTRB ring buffer for lock-free audio capture
+        let (producer, consumer) = rtrb::RingBuffer::<f32>::new(8192);
+        let input_notifier = Arc::new(tokio::sync::Notify::new());
+        
+        // Store consumer for mixer to read audio samples from
+        // TODO: Store consumer in mixer's input streams collection
+        
+        // Create CoreAudio input stream using command channel architecture
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+
+        info!(
+            "🔍 Sending CoreAudio input stream creation command to isolated audio thread for device: {}",
+            device_id
+        );
+
+        let command = crate::audio::mixer::stream_management::AudioCommand::AddCoreAudioInputStreamAlternative {
+            device_id: device_id.to_string(),
+            coreaudio_device_id: coreaudio_device.device_id,
+            device_name: coreaudio_device.name.clone(),
+            sample_rate: coreaudio_device.sample_rate,
+            channels: coreaudio_device.channels,
+            producer,
+            input_notifier,
+            response_tx,
+        };
+
+        if let Err(e) = self.audio_command_tx.send(command).await {
+            error!(
+                "❌ Failed to send CoreAudio command to audio thread: {}",
+                e
+            );
+            // Remove from active devices on failure
+            let mut active_devices = self.active_input_devices.lock().await;
+            active_devices.remove(device_id);
+            
+            return Err(anyhow::anyhow!(
+                "Failed to send CoreAudio stream creation command: {}",
+                e
+            ));
+        }
+
+        info!("✅ Successfully sent CoreAudio command to audio thread");
+
+        // Wait for the response from the isolated audio thread
+        let result = response_rx
+            .await
+            .context("Failed to receive CoreAudio stream creation response")?;
+
+        // Initialize device health tracking
+        if let Some(device_info) = self.audio_device_manager.get_device(device_id).await {
+            self.audio_device_manager
+                .initialize_device_health(&device_info)
+                .await;
+        }
+
+        match result {
+            Ok(()) => {
+                info!(
+                    "✅ Successfully started CoreAudio input stream for: {} (ID: {})",
+                    coreaudio_device.name, coreaudio_device.device_id
+                );
                 Ok(())
             }
             Err(e) => {
