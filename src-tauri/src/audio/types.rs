@@ -146,7 +146,7 @@ pub struct MixerConfig {
 impl Default for MixerConfig {
     fn default() -> Self {
         Self {
-            sample_rate: 48000,
+            sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
             buffer_size: 512, // Ultra-low latency: ~10.7ms at 48kHz
             channels: vec![],
             master_gain: 1.0,
@@ -179,7 +179,7 @@ impl Default for AudioMetrics {
             buffer_underruns: 0,
             buffer_overruns: 0,
             latency_ms: 0.0,
-            sample_rate: 48000,
+            sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
             active_channels: 0,
             samples_processed: 0,
             last_process_time: std::time::Instant::now(),
@@ -218,7 +218,7 @@ impl AudioConfigFactory {
     /// Create configuration optimized for ultra-low latency DJing
     pub fn create_dj_config() -> MixerConfig {
         MixerConfig {
-            sample_rate: 48000,
+            sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
             buffer_size: 256, // ~5.3ms latency at 48kHz
             channels: vec![
                 AudioChannel {
@@ -251,7 +251,7 @@ impl AudioConfigFactory {
     /// Create configuration optimized for streaming/recording
     pub fn create_streaming_config() -> MixerConfig {
         MixerConfig {
-            sample_rate: 48000,
+            sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
             buffer_size: 1024, // ~21.3ms latency - acceptable for streaming
             channels: vec![
                 AudioChannel {

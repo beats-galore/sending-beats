@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
-
+use crate::types::SUPPORTED_INPUT_SAMPLE_RATES_HZ;
 use super::coreaudio_integration::CoreAudioIntegration;
 use crate::audio::types::AudioDeviceInfo;
 
@@ -427,7 +427,7 @@ impl DeviceEnumerator {
                     let max_sample_rate = config.max_sample_rate().0;
 
                     // Add common sample rates within the supported range
-                    for &rate in &[44100, 48000, 88200, 96000, 192000] {
+                    for &rate in &SUPPORTED_INPUT_SAMPLE_RATES_HZ {
                         if rate >= min_sample_rate && rate <= max_sample_rate {
                             if !supported_sample_rates.contains(&rate) {
                                 supported_sample_rates.push(rate);
@@ -450,7 +450,7 @@ impl DeviceEnumerator {
                     let max_sample_rate = config.max_sample_rate().0;
 
                     // Add common sample rates within the supported range
-                    for &rate in &[44100, 48000, 88200, 96000, 192000] {
+                    for &rate in &SUPPORTED_INPUT_SAMPLE_RATES_HZ {
                         if rate >= min_sample_rate && rate <= max_sample_rate {
                             if !supported_sample_rates.contains(&rate) {
                                 supported_sample_rates.push(rate);

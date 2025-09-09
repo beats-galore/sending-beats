@@ -17,7 +17,7 @@ use crate::audio::{create_streaming_bridge, AudioStreamingBridge, VirtualMixer};
 ///
 /// This service manages the complete audio streaming pipeline:
 /// 1. Captures real-time audio from the virtual mixer
-/// 2. Encodes audio to MP3/AAC format  
+/// 2. Encodes audio to MP3/AAC format
 /// 3. Streams to Icecast server using SOURCE protocol
 /// 4. Handles reconnection and error recovery
 /// 5. Provides streaming statistics and status
@@ -454,7 +454,7 @@ impl StreamingService {
         // Adjust sample rate based on bitrate for optimal quality
         config.audio_format.sample_rate = match bitrate {
             96 | 128 => 44100, // Lower bitrates work fine with 44.1kHz
-            _ => 48000,        // Higher bitrates benefit from 48kHz
+            _ => crate::types::DEFAULT_SAMPLE_RATE,        // Higher bitrates benefit from 48kHz
         };
 
         Ok(config)

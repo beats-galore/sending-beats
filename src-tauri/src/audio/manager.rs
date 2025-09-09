@@ -253,7 +253,7 @@ impl ApplicationAudioManager {
         *self.permission_granted.read().await
     }
 
-    /// Register virtual stream synchronously BEFORE capture starts  
+    /// Register virtual stream synchronously BEFORE capture starts
     async fn register_virtual_input_stream_sync(
         &self,
         virtual_device_id: String,
@@ -266,21 +266,18 @@ impl ApplicationAudioManager {
         );
 
         // Create the AudioInputStream immediately and register it
-        let audio_input_stream =
-            Arc::new(crate::audio::mixer::stream_management::AudioInputStream {
-                device_id: virtual_device_id.clone(),
-                device_name: channel_name.clone(),
-                sample_rate: 48000,
-                channels: 2,
-                audio_buffer: bridge_buffer.clone(),
-                effects_chain: Arc::new(tokio::sync::Mutex::new(
-                    crate::audio::effects::AudioEffectsChain::new(48000),
-                )),
-                adaptive_chunk_size: 480, // 10ms at 48kHz
-            });
+        {
+            let _audio_input_stream =
+                Arc::new(crate::audio::mixer::stream_management::AudioInputStream::new(
+                    virtual_device_id.clone(),
+                    channel_name.clone(),
+                    crate::types::DEFAULT_SAMPLE_RATE,
+                )?);
+            // Drop before await to avoid Send+Sync issues
+        }
 
-        // Store in global registry IMMEDIATELY
-        self.add_to_global_mixer_sync(virtual_device_id.clone(), audio_input_stream)
+        // Store in global registry IMMEDIATELY (STUBBED for command channel architecture)
+        self.add_to_global_mixer_sync(virtual_device_id.clone(), ())
             .await?;
 
         info!(
@@ -290,29 +287,19 @@ impl ApplicationAudioManager {
         Ok(())
     }
 
-    /// Synchronously add virtual stream to global mixer registry
+    /// Synchronously add virtual stream to global mixer registry (STUBBED for command channel architecture)
     async fn add_to_global_mixer_sync(
         &self,
         device_id: String,
-        audio_input_stream: Arc<crate::audio::mixer::stream_management::AudioInputStream>,
+        _audio_input_stream_placeholder: (), // Stubbed out for command channel architecture
     ) -> Result<()> {
         info!(
-            "🔗 SYNC: Adding virtual stream {} to global mixer registry",
+            "🔗 SYNC: [STUBBED] Adding virtual stream {} to global mixer registry (command channel architecture)",
             device_id
         );
 
-        // Use centralized registry function
-        let registry = get_virtual_input_registry();
-        if let Ok(mut reg) = registry.lock() {
-            reg.insert(device_id.clone(), audio_input_stream);
-            info!(
-                "✅ SYNC: Registered virtual stream {} in global registry (total: {})",
-                device_id,
-                reg.len()
-            );
-        } else {
-            return Err(anyhow::anyhow!("Failed to lock virtual input registry"));
-        }
+        // TODO: Implement command channel integration for virtual streams
+        warn!("STUBBED: add_to_global_mixer_sync - implement command channel communication");
 
         Ok(())
     }
@@ -357,7 +344,7 @@ impl ApplicationAudioManager {
                     buffer.extend_from_slice(&audio_samples);
 
                     // Prevent buffer overflow - same logic as regular input streams
-                    let max_buffer_size = 48000; // 1 second at 48kHz
+                    let max_buffer_size = crate::types::DEFAULT_SAMPLE_RATE as usize; // 1 second at 48kHz
                     if buffer.len() > max_buffer_size * 2 {
                         let keep_size = max_buffer_size;
                         let buffer_len = buffer.len();
@@ -367,7 +354,7 @@ impl ApplicationAudioManager {
 
                     // Log periodically
                     if sample_count % 4800 == 0 || (peak_level > 0.01 && sample_count % 1000 == 0) {
-                        info!("🌉 BRIDGE [{}]: {} samples bridged to mixer, peak: {:.4}, rms: {:.4}, buffer: {} samples", 
+                        info!("🌉 BRIDGE [{}]: {} samples bridged to mixer, peak: {:.4}, rms: {:.4}, buffer: {} samples",
                             virtual_device_id_for_task, audio_samples.len(), peak_level, rms_level, buffer.len());
                     }
                 } else {
@@ -441,37 +428,23 @@ impl ApplicationAudioManager {
         };
     }
 
-    /// Get a virtual input stream from the ApplicationAudioManager registry
-    pub async fn get_virtual_input_stream(&self, device_id: &str) -> Option<Arc<AudioInputStream>> {
+    /// Get a virtual input stream from the ApplicationAudioManager registry (STUBBED for command channel architecture)
+    pub async fn get_virtual_input_stream(&self, device_id: &str) -> Option<()> {
         info!(
-            "🔍 Looking up virtual input stream for device: {}",
+            "🔍 [STUBBED] Looking up virtual input stream for device: {} (command channel architecture)",
             device_id
         );
 
-        let virtual_streams = crate::audio::ApplicationAudioManager::get_virtual_input_streams();
-        if let Some(stream) = virtual_streams.get(device_id) {
-            info!("✅ Found virtual input stream for device: {}", device_id);
-            Some(stream.clone())
-        } else {
-            info!(
-                "❌ No virtual input stream found for device: {} (available: {:?})",
-                device_id,
-                virtual_streams.keys().collect::<Vec<_>>()
-            );
-            None
-        }
+        // TODO: Implement command channel lookup for virtual streams
+        warn!("STUBBED: get_virtual_input_stream - implement command channel communication");
+        None
     }
 
-    /// Get all registered virtual input streams (for mixer integration)
-    pub fn get_virtual_input_streams(
-    ) -> HashMap<String, Arc<crate::audio::mixer::stream_management::AudioInputStream>> {
-        // Use centralized registry function
-        let registry = get_virtual_input_registry();
-        if let Ok(reg) = registry.lock() {
-            reg.clone()
-        } else {
-            HashMap::new()
-        }
+    /// Get all registered virtual input streams (STUBBED for command channel architecture)
+    pub fn get_virtual_input_streams() -> HashMap<String, ()> {
+        // STUBBED: Return empty HashMap for command channel architecture
+        warn!("STUBBED: get_virtual_input_streams - implement command channel communication");
+        HashMap::new()
     }
 
     /// Check if permissions are currently granted

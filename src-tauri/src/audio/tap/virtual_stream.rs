@@ -178,7 +178,7 @@ impl ApplicationAudioInputBridge {
                     sync_buffer.extend_from_slice(&samples);
 
                     // Prevent buffer overflow - same logic as regular input streams
-                    let max_buffer_size = 48000; // 1 second at 48kHz
+                    let max_buffer_size = crate::types::DEFAULT_SAMPLE_RATE as usize; // 1 second at 48kHz
                     if sync_buffer.len() > max_buffer_size * 2 {
                         let keep_size = max_buffer_size;
                         let buffer_len = sync_buffer.len();
@@ -293,21 +293,12 @@ impl ApplicationAudioInputBridge {
     }
 }
 
-/// Registry for virtual input streams to ensure mixer can find registered streams  
-pub fn get_virtual_input_registry() -> &'static StdMutex<
-    std::collections::HashMap<
-        String,
-        Arc<crate::audio::mixer::stream_management::AudioInputStream>,
-    >,
-> {
+/// Registry for virtual input streams - changed to HashSet to avoid RTRB Send+Sync issues
+pub fn get_virtual_input_registry() -> &'static StdMutex<std::collections::HashSet<String>> {
     use std::sync::LazyLock;
+    // Changed to HashSet<String> to avoid RTRB Send+Sync issues
     static VIRTUAL_INPUT_REGISTRY: LazyLock<
-        StdMutex<
-            std::collections::HashMap<
-                String,
-                Arc<crate::audio::mixer::stream_management::AudioInputStream>,
-            >,
-        >,
-    > = LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
+        StdMutex<std::collections::HashSet<String>>,
+    > = LazyLock::new(|| StdMutex::new(std::collections::HashSet::new()));
     &VIRTUAL_INPUT_REGISTRY
 }

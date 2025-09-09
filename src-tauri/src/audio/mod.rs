@@ -32,8 +32,7 @@ pub use effects::{
 };
 
 pub use mixer::{
-    get_stream_manager, AudioInputStream, AudioOutputStream, StreamCommand, VirtualMixer,
-    VirtualMixerHandle,
+    AudioInputStream, AudioOutputStream, VirtualMixer, VirtualMixerHandle,
 };
 
 pub use crate::db::{

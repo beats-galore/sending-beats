@@ -70,12 +70,12 @@ pub struct VirtualMixer {
     // **CRITICAL FIX**: Shared configuration for real-time updates
     pub shared_config: Arc<std::sync::Mutex<MixerConfig>>,
 
-    // Audio stream management
+    // Audio stream management (NEW ARCHITECTURE: Command-based)
     pub audio_device_manager: Arc<AudioDeviceManager>,
-    pub input_streams: Arc<Mutex<HashMap<String, Arc<AudioInputStream>>>>,
-    pub output_stream: Arc<Mutex<Option<Arc<AudioOutputStream>>>>, // Legacy single output
-    pub output_streams: Arc<Mutex<HashMap<String, Arc<AudioOutputStream>>>>, // Multiple outputs
-    // Track active output streams by device ID for cleanup (no direct stream storage due to Send/Sync)
+    pub audio_command_tx: tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>, // Command channel to isolated audio thread
+
+    // Track active streams for UI purposes (no direct stream storage)
+    pub active_input_devices: Arc<Mutex<std::collections::HashSet<String>>>,
     pub active_output_devices: Arc<Mutex<std::collections::HashSet<String>>>,
 
     #[cfg(target_os = "macos")]
@@ -87,13 +87,15 @@ impl VirtualMixer {
     /// Create a new virtual mixer with default device manager
     pub async fn new(config: MixerConfig) -> anyhow::Result<Self> {
         let device_manager = Arc::new(AudioDeviceManager::new()?);
-        Self::new_with_device_manager(config, device_manager).await
+        let (audio_command_tx, _audio_command_rx) = tokio::sync::mpsc::channel(100);
+        Self::new_with_device_manager(config, device_manager, audio_command_tx).await
     }
 
-    /// Create a new virtual mixer with provided device manager
+    /// Create a new virtual mixer with provided device manager and audio command channel
     pub async fn new_with_device_manager(
         config: MixerConfig,
         device_manager: Arc<AudioDeviceManager>,
+        audio_command_tx: tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>,
     ) -> anyhow::Result<Self> {
         // Validate configuration
         super::validation::validate_config(&config)?;
@@ -123,9 +125,8 @@ impl VirtualMixer {
             timing_metrics: Arc::new(Mutex::new(TimingMetrics::new())),
             shared_config: Arc::new(std::sync::Mutex::new(config)),
             audio_device_manager: device_manager,
-            input_streams: Arc::new(Mutex::new(HashMap::new())),
-            output_stream: Arc::new(Mutex::new(None)),
-            output_streams: Arc::new(Mutex::new(HashMap::new())),
+            audio_command_tx,
+            active_input_devices: Arc::new(Mutex::new(std::collections::HashSet::new())),
             active_output_devices: Arc::new(Mutex::new(std::collections::HashSet::new())),
 
             #[cfg(target_os = "macos")]
@@ -228,51 +229,16 @@ impl VirtualMixer {
         self.config.channels.iter_mut().find(|c| c.id == channel_id)
     }
 
-    /// Add output device
+    /// Add output device (using command channel architecture)
     pub async fn add_output_device(
         &self,
         output_device: crate::audio::types::OutputDevice,
     ) -> anyhow::Result<()> {
-        use cpal::traits::{DeviceTrait, HostTrait};
-
-        let device_manager = AudioDeviceManager::new()?;
-        let devices = device_manager.enumerate_devices().await?;
-
-        // Find the device
-        let device_info = devices
-            .iter()
-            .find(|d| d.id == output_device.device_id && d.is_output)
-            .ok_or_else(|| {
-                anyhow::anyhow!("Output device not found: {}", output_device.device_id)
-            })?;
-
-        // **CRASH PREVENTION**: Use device manager's safe device finding instead of direct CPAL calls
-        let device_handle = device_manager
-            .find_audio_device(&output_device.device_id, false)
-            .await?;
-        let device = match device_handle {
-            AudioDeviceHandle::Cpal(cpal_device) => cpal_device,
-            #[cfg(target_os = "macos")]
-            AudioDeviceHandle::CoreAudio(_) => {
-                return Err(anyhow::anyhow!("CoreAudio device handles not supported in add_output_device - use CPAL fallback"));
-            }
-            #[cfg(not(target_os = "macos"))]
-            _ => {
-                return Err(anyhow::anyhow!("Unknown device handle type"));
-            }
-        };
-
-        let output_stream = Arc::new(AudioOutputStream::new(
-            output_device.device_id.clone(),
-            device_info.name.clone(),
-            self.config.sample_rate,
-        )?);
-
-        // Add to output streams collection
-        self.output_streams
+        // Update active output devices tracking
+        self.active_output_devices
             .lock()
             .await
-            .insert(output_device.device_id.clone(), output_stream.clone());
+            .insert(output_device.device_id.clone());
 
         // Update config to include this output device
         {
@@ -287,12 +253,15 @@ impl VirtualMixer {
         Ok(())
     }
 
-    /// Remove an output device from the mixer
+    /// Remove an output device from the mixer (using command channel architecture)
     pub async fn remove_output_device(&self, device_id: &str) -> anyhow::Result<()> {
-        // Remove from output streams collection
-        let removed = self.output_streams.lock().await.remove(device_id);
+        // Remove from active output devices tracking
+        let removed = self.active_output_devices
+            .lock()
+            .await
+            .remove(device_id);
 
-        if removed.is_some() {
+        if removed {
             // Update config to remove this output device
             {
                 let mut config_guard = self.shared_config.lock().unwrap();
@@ -359,7 +328,7 @@ impl MixerConfigUtils {
     /// Get default mixer configuration for the platform
     pub fn default_config() -> MixerConfig {
         MixerConfig {
-            sample_rate: 48000, // Professional standard
+            sample_rate: crate::types::DEFAULT_SAMPLE_RATE, // Professional standard
             buffer_size: 512,   // Balance of latency and stability
             channels: vec![],   // Empty channels list
             master_gain: 1.0,
@@ -373,7 +342,7 @@ impl MixerConfigUtils {
     /// Create optimized configuration for low latency
     pub fn low_latency_config() -> MixerConfig {
         MixerConfig {
-            sample_rate: 48000,
+            sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
             buffer_size: 128, // Lower latency
             channels: vec![], // Empty channels list
             master_gain: 1.0,
@@ -387,7 +356,7 @@ impl MixerConfigUtils {
     /// Create configuration for high stability/compatibility
     pub fn stable_config() -> MixerConfig {
         MixerConfig {
-            sample_rate: 44100, // CD quality
+            sample_rate: crate::types::DEFAULT_SAMPLE_RATE, // CD quality
             buffer_size: 1024,  // Higher stability
             channels: vec![],   // Empty channels list
             master_gain: 1.0,

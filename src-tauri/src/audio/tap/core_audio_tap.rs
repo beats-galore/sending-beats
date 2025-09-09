@@ -424,7 +424,7 @@ impl ApplicationAudioTap {
         );
 
         // Get the tap device properties using Core Audio APIs
-        let sample_rate = unsafe { self.get_tap_sample_rate(tap_object_id).unwrap_or(48000.0) };
+        let sample_rate = unsafe { self.get_tap_sample_rate(tap_object_id).unwrap_or(crate::types::DEFAULT_SAMPLE_RATE as f64) };
 
         let channels = unsafe { self.get_tap_channel_count(tap_object_id).unwrap_or(2) };
 
@@ -533,15 +533,15 @@ impl ApplicationAudioTap {
                      let rms_level = (data.iter().map(|&s| s * s).sum::<f32>() / data.len() as f32).sqrt();
 
                      // Convert to Vec<f32> and handle sample rate conversion if needed
-                     let audio_samples = if tap_sample_rate != 48000 {
+                     let audio_samples = if tap_sample_rate != crate::types::DEFAULT_SAMPLE_RATE {
                          // Simple linear interpolation resampling for non-48kHz audio
-                         Self::resample_audio(data, tap_sample_rate, 48000)
+                         Self::resample_audio(data, tap_sample_rate, crate::types::DEFAULT_SAMPLE_RATE)
                      } else {
                          data.to_vec()
                      };
 
                      if callback_count % 100 == 0 || (peak_level > 0.01 && callback_count % 50 == 0) {
-                         info!("🔊 TAP AUDIO [{}] Device: '{}' | Callback #{}: {} samples, peak: {:.4}, rms: {:.4}", 
+                         info!("🔊 TAP AUDIO [{}] Device: '{}' | Callback #{}: {} samples, peak: {:.4}, rms: {:.4}",
                              process_name, device_name, callback_count, data.len(), peak_level, rms_level);
                     }
 
@@ -576,9 +576,9 @@ impl ApplicationAudioTap {
                             })
                             .collect();
 
-                        let audio_samples = if tap_sample_rate != 48000 {
+                        let audio_samples = if tap_sample_rate != crate::types::DEFAULT_SAMPLE_RATE {
                             // Simple linear interpolation resampling for non-48kHz audio
-                            Self::resample_audio(&f32_samples, tap_sample_rate, 48000)
+                            Self::resample_audio(&f32_samples, tap_sample_rate, crate::types::DEFAULT_SAMPLE_RATE)
                         } else {
                             f32_samples
                         };
@@ -1000,7 +1000,7 @@ impl ApplicationAudioTap {
         Ok(uuid_string)
     }
 
-    /// Create CoreFoundation dictionary for aggregate device configuration  
+    /// Create CoreFoundation dictionary for aggregate device configuration
     #[cfg(target_os = "macos")]
     fn create_aggregate_device_dictionary(
         &self,

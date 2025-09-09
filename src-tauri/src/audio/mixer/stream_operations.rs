@@ -11,8 +11,14 @@ use std::sync::{atomic::Ordering, Arc};
 use tracing::{error, info, warn};
 
 use super::mixer_core::VirtualMixerHandle;
+
+/// Calculate optimal target latency based on sample rate
+/// Professional audio target: 1ms for high sample rates (48kHz+), 10ms for lower rates
+pub fn calculate_target_latency_ms(sample_rate: u32) -> f32 {
+    if sample_rate >= crate::types::DEFAULT_SAMPLE_RATE { 5.0 } else { 10.0 }
+}
 use super::stream_management::{
-    get_stream_manager, AudioInputStream, AudioOutputStream, StreamCommand, StreamInfo,
+    AudioInputStream, AudioOutputStream, StreamInfo,
 };
 use super::types::VirtualMixer;
 
@@ -47,21 +53,16 @@ impl VirtualMixer {
 
         self.is_running.store(false, Ordering::Relaxed);
 
-        // Clear all input streams
+        // Clear all active devices (NEW ARCHITECTURE)
         {
-            let mut input_streams = self.input_streams.lock().await;
-            input_streams.clear();
+            let mut input_devices = self.active_input_devices.lock().await;
+            input_devices.clear();
         }
 
-        // Clear output streams
+        // Clear active output devices
         {
-            let mut output_stream = self.output_stream.lock().await;
-            *output_stream = None;
-        }
-
-        {
-            let mut output_streams = self.output_streams.lock().await;
-            output_streams.clear();
+            let mut output_devices = self.active_output_devices.lock().await;
+            output_devices.clear();
         }
 
         // Clear active devices tracking
@@ -83,16 +84,13 @@ impl VirtualMixer {
     /// Get information about active streams
     pub async fn get_stream_info(&self) -> StreamInfo {
         let input_count = {
-            let input_streams: tokio::sync::MutexGuard<
-                '_,
-                std::collections::HashMap<String, Arc<AudioInputStream>>,
-            > = self.input_streams.lock().await;
-            input_streams.len()
+            let input_devices = self.active_input_devices.lock().await;
+            input_devices.len()
         };
 
         let output_count = {
-            let output_streams = self.output_streams.lock().await;
-            output_streams.len()
+            let output_devices = self.active_output_devices.lock().await;
+            output_devices.len()
         };
 
         let active_devices = {
@@ -103,10 +101,9 @@ impl VirtualMixer {
         let is_running = self.is_running.load(Ordering::Relaxed);
 
         StreamInfo {
-            is_running,
-            input_stream_count: input_count,
-            output_stream_count: output_count,
-            active_output_devices: active_devices.into_iter().collect(),
+            input_streams: input_count,
+            output_streams: output_count,
+            active_devices: active_devices.into_iter().collect(),
         }
     }
 
@@ -114,8 +111,8 @@ impl VirtualMixer {
     pub async fn is_device_active(&self, device_id: &str) -> bool {
         // Check input streams
         {
-            let input_streams = self.input_streams.lock().await;
-            if input_streams.contains_key(device_id) {
+            let input_devices = self.active_input_devices.lock().await;
+            if input_devices.contains(device_id) {
                 return true;
             }
         }
@@ -145,8 +142,8 @@ impl VirtualMixer {
                 let sample_rate = config.sample_rate().0;
                 let channels = config.channels();
 
-                // Target latency: 5-10ms for professional audio (balance between latency and stability)
-                let target_latency_ms = if sample_rate >= 48000 { 1.0 } else { 10.0 };
+                // Target latency: 1ms for high sample rates (48kHz+), 10ms for lower rates
+                let target_latency_ms = calculate_target_latency_ms(sample_rate);
                 let target_buffer_size = ((sample_rate as f32 * target_latency_ms / 1000.0)
                     as usize)
                     .max(64) // Minimum 64 samples for stability
@@ -187,7 +184,7 @@ impl VirtualMixer {
         //     info!("🎯 VIRTUAL STREAM CHECK: Looking for virtual input stream: {}", device_id);
         //     if let Some(virtual_stream) = crate::audio::ApplicationAudioManager::get_virtual_input_stream(device_id).await {
         //         info!("✅ FOUND VIRTUAL STREAM: Using pre-registered stream for {}", device_id);
-        //         let mut streams = self.input_streams.lock().await;
+        //         let mut streams = self.active_input_devices.lock().await;
         //         streams.insert(device_id.to_string(), virtual_stream);
         //         info!("✅ Successfully added virtual input stream: {}", device_id);
         //         return Ok(());
@@ -199,13 +196,13 @@ impl VirtualMixer {
 
         // Check if stream already exists
         {
-            let input_streams = self.input_streams.lock().await;
-            if input_streams.contains_key(device_id) {
+            let input_devices = self.active_input_devices.lock().await;
+            if input_devices.contains(device_id) {
                 warn!(
                     "Device {} already has an active input stream, removing first",
                     device_id
                 );
-                drop(input_streams);
+                drop(input_devices);
                 // Remove existing stream first
                 if let Err(e) = self.remove_input_stream(device_id).await {
                     warn!("Failed to remove existing stream for {}: {}", device_id, e);
@@ -301,7 +298,8 @@ impl VirtualMixer {
         input_stream.set_adaptive_chunk_size(actual_buffer_size);
 
         // Get references for the audio callback
-        let audio_buffer = input_stream.audio_buffer.clone();
+        // TODO: Fix Producer clone - RTRB producers cannot be cloned
+        // let audio_buffer_producer = input_stream.audio_buffer_producer.clone();
         println!("🍆 all the random ass shit fucking config data. \nconfig_fallback_size: {}\noptimal_buffer_size: {:?}\nactual_buffer_size: {}, hardware_sample_rate: {}"
         , config_fallback_size, optimal_buffer_size, actual_buffer_size, hardware_sample_rate);
 
@@ -321,54 +319,48 @@ impl VirtualMixer {
         );
 
         // Add to streams collection first
-        let mut streams = self.input_streams.lock().await;
-        streams.insert(device_id.to_string(), Arc::new(input_stream));
+        let mut streams = self.active_input_devices.lock().await;
+        streams.insert(device_id.to_string());
         drop(streams); // Release the async lock
                        // Send stream creation command to the synchronous stream manager thread
         println!(
             "🔍 CRASH DEBUG MIXER: About to send command to stream manager for device: {}",
             device_id
         );
-        let stream_manager = get_stream_manager();
-        println!("✅ CRASH DEBUG MIXER: Got stream manager reference");
+        println!("✅ CRASH DEBUG MIXER: Using command channel architecture");
 
-        // **CRITICAL FIX**: Create actual CPAL stream using StreamManager
-        let stream_manager = get_stream_manager();
-        let (response_tx, response_rx) = std::sync::mpsc::channel();
+        // **NEW ARCHITECTURE**: Create stream using command channel
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
         info!(
-            "🔍 Sending stream creation command to StreamManager for device: {}",
+            "🔍 Sending stream creation command to isolated audio thread for device: {}",
             device_id
         );
 
-        let command = StreamCommand::AddInputStream {
+        let command = crate::audio::mixer::stream_management::AudioCommand::AddInputStream {
             device_id: device_id.to_string(),
             device: cpal_device,
             config: stream_config,
-            audio_buffer,
             target_sample_rate: hardware_sample_rate, // Use hardware sample rate
             response_tx,
         };
 
-        match stream_manager.send(command) {
-            Ok(()) => {
-                println!("✅ CRASH DEBUG MIXER: Successfully sent command to stream manager");
-            }
-            Err(e) => {
-                eprintln!(
-                    "❌ CRASH DEBUG MIXER: Failed to send command to stream manager: {}",
-                    e
-                );
-                return Err(anyhow::anyhow!(
-                    "Failed to send stream creation command: {}",
-                    e
-                ));
-            }
+        if let Err(e) = self.audio_command_tx.send(command).await {
+            eprintln!(
+                "❌ CRASH DEBUG MIXER: Failed to send command to audio thread: {}",
+                e
+            );
+            return Err(anyhow::anyhow!(
+                "Failed to send stream creation command: {}",
+                e
+            ));
+        } else {
+            println!("✅ CRASH DEBUG MIXER: Successfully sent command to audio thread");
         }
 
-        // Wait for the response from the stream manager thread
+        // Wait for the response from the isolated audio thread
         let result = response_rx
-            .recv()
+            .await
             .context("Failed to receive stream creation response")?;
 
         // Initialize device health tracking
@@ -399,9 +391,9 @@ impl VirtualMixer {
                 Ok(())
             }
             Err(e) => {
-                // Remove from streams collection if stream creation failed
-                let mut streams = self.input_streams.lock().await;
-                streams.remove(device_id);
+                // Remove from active input devices if stream creation failed
+                let mut active_devices = self.active_input_devices.lock().await;
+                active_devices.remove(device_id);
                 Err(e)
             }
         }
@@ -416,23 +408,22 @@ impl VirtualMixer {
             device_id
         );
 
-        // **CRITICAL FIX**: Remove CPAL stream using StreamManager
-        let stream_manager = get_stream_manager();
-        let (response_tx, response_rx) = std::sync::mpsc::channel();
+        // **NEW ARCHITECTURE**: Remove stream using command channel
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
-        // Send stream removal command to StreamManager thread
-        if let Err(e) = stream_manager.send(StreamCommand::RemoveStream {
+        // Send stream removal command to isolated audio thread
+        if let Err(e) = self.audio_command_tx.send(crate::audio::mixer::stream_management::AudioCommand::RemoveInputStream {
             device_id: device_id.to_string(),
             response_tx,
-        }) {
+        }).await {
             warn!(
                 "Failed to send stream removal command for '{}': {}",
                 device_id, e
             );
         } else {
             // Wait for stream removal result
-            match response_rx.recv_timeout(std::time::Duration::from_secs(2)) {
-                Ok(removed) => {
+            match tokio::time::timeout(std::time::Duration::from_secs(2), response_rx).await {
+                Ok(Ok(Ok(removed))) => {
                     if removed {
                         info!(
                             "✅ CPAL STREAM: Successfully removed CPAL stream for device: {}",
@@ -441,6 +432,18 @@ impl VirtualMixer {
                     } else {
                         warn!("CPAL stream for device '{}' not found", device_id);
                     }
+                }
+                Ok(Ok(Err(e))) => {
+                    warn!(
+                        "Error removing CPAL stream for '{}': {}",
+                        device_id, e
+                    );
+                }
+                Ok(Err(e)) => {
+                    warn!(
+                        "Failed to receive response for '{}': {}",
+                        device_id, e
+                    );
                 }
                 Err(_) => {
                     warn!(
@@ -451,13 +454,10 @@ impl VirtualMixer {
             }
         }
 
-        // Remove from input streams
-        let removed_stream = {
-            let mut input_streams = self.input_streams.lock().await;
-            input_streams.remove(device_id)
-        };
+        // Remove from active input devices tracking (command channel architecture)
+        let removed = self.active_input_devices.lock().await.remove(device_id);
 
-        if removed_stream.is_some() {
+        if removed {
             info!(
                 "✅ INPUT STREAM: Successfully removed input stream for device: {}",
                 device_id
@@ -478,16 +478,9 @@ impl VirtualMixer {
             device_id
         );
 
-        // **CRITICAL FIX**: Stop existing output streams first
-        info!("🔴 Stopping existing output streams before device change...");
-        if let Err(e) = self.stop_output_streams().await {
-            warn!("Error stopping existing output streams: {}", e);
-        }
+        // **HYBRID ARCHITECTURE**: Use command queue for CPAL devices, direct for CoreAudio
 
-        // Extended delay for complete audio resource cleanup
-        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
-
-        // Find the audio device with fallback
+        // Get the device using the device manager
         let device_handle = match self
             .audio_device_manager
             .find_audio_device(device_id, false)
@@ -496,43 +489,70 @@ impl VirtualMixer {
             Ok(handle) => handle,
             Err(e) => {
                 error!("Failed to find output device '{}': {}", device_id, e);
-
-                // Try to refresh devices and try again
-                warn!("Attempting to refresh device list and retry...");
-                if let Err(refresh_err) = self.audio_device_manager.refresh_devices().await {
-                    error!("Failed to refresh devices: {}", refresh_err);
-                }
-
-                match self
-                    .audio_device_manager
-                    .find_audio_device(device_id, false)
-                    .await
-                {
-                    Ok(handle) => {
-                        info!("Found output device '{}' after refresh", device_id);
-                        handle
-                    }
-                    Err(retry_err) => {
-                        error!(
-                            "Output device '{}' still not found after refresh: {}",
-                            device_id, retry_err
-                        );
-                        return Err(anyhow::anyhow!("Output device '{}' not found or unavailable. Original error: {}. Retry error: {}", device_id, e, retry_err));
-                    }
-                }
+                return Err(anyhow::anyhow!("Failed to find output device: {}", e));
             }
         };
 
-        // **CRITICAL FIX**: Handle different device types and create actual CPAL streams
+        // Handle different device types using command queue
         match device_handle {
             crate::audio::types::AudioDeviceHandle::Cpal(device) => {
-                self.create_cpal_output_stream(device_id, device).await
+                // Use command queue for CPAL devices
+                let config = device.default_output_config()
+                    .map_err(|e| anyhow::anyhow!("Failed to get device config: {}", e))?
+                    .config();
+
+                let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+
+                let command = crate::audio::mixer::stream_management::AudioCommand::AddCPALOutputStream {
+                    device_id: device_id.to_string(),
+                    device,
+                    config,
+                    response_tx,
+                };
+
+                info!("🔍 Sending CPAL output stream creation command to isolated audio thread for device: {}", device_id);
+
+                if let Err(_) = self.audio_command_tx.send(command).await {
+                    return Err(anyhow::anyhow!("Audio system not available"));
+                }
+
+                match response_rx.await {
+                    Ok(Ok(())) => {
+                        info!("✅ Added CPAL output device via command queue: {}", device_id);
+                        Ok(())
+                    }
+                    Ok(Err(e)) => Err(anyhow::anyhow!("Failed to add CPAL output device: {}", e)),
+                    Err(_) => Err(anyhow::anyhow!("Audio system did not respond")),
+                }
             }
             #[cfg(target_os = "macos")]
             crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => {
-                self.create_coreaudio_output_stream(device_id, coreaudio_device)
-                    .await
+                // Use command queue for CoreAudio devices
+                let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+
+                let command = crate::audio::mixer::stream_management::AudioCommand::AddCoreAudioOutputStream {
+                    device_id: device_id.to_string(),
+                    coreaudio_device,
+                    response_tx,
+                };
+
+                info!("🔍 Sending CoreAudio output stream creation command to isolated audio thread for device: {}", device_id);
+
+                if let Err(_) = self.audio_command_tx.send(command).await {
+                    return Err(anyhow::anyhow!("Audio system not available"));
+                }
+
+                match response_rx.await {
+                    Ok(Ok(())) => {
+                        info!("✅ Added CoreAudio output device via command queue: {}", device_id);
+                        Ok(())
+                    }
+                    Ok(Err(e)) => Err(anyhow::anyhow!("Failed to add CoreAudio output device: {}", e)),
+                    Err(_) => Err(anyhow::anyhow!("Audio system did not respond")),
+                }
             }
+            #[cfg(not(target_os = "macos"))]
+            _ => Err(anyhow::anyhow!("Unknown device handle type")),
         }
     }
 
@@ -549,14 +569,13 @@ impl VirtualMixer {
         crate::audio_debug!("Output device config: {:?}", config);
 
         // Create AudioOutputStream structure
-        let output_stream = AudioOutputStream::new(
+        let (output_stream, spmc_reader) = AudioOutputStream::new(
             device_id.to_string(),
             device_name.clone(),
             self.config.sample_rate,
-        )?;
+        );
 
-        // Get reference to the buffer for the output callback
-        let output_buffer = output_stream.input_buffer.clone();
+        // The SPMC reader will be used by the audio callback to consume mixed audio
         let target_sample_rate = self.config.sample_rate;
         let config_fallback_size = self.config.buffer_size as usize;
 
@@ -591,22 +610,25 @@ impl VirtualMixer {
                     info!("Creating F32 output stream for device: {}", device_name);
                     device.build_output_stream(
                         &stream_config,
-                        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                            // Safe, simple audio callback - just fill with silence for now to prevent crashes
-                            if let Ok(mut buffer) = output_buffer.try_lock() {
-                                let available_samples = buffer.len().min(data.len());
-                                if available_samples > 0 {
-                                    data[..available_samples]
-                                        .copy_from_slice(&buffer[..available_samples]);
-                                    buffer.drain(..available_samples);
-                                    if available_samples < data.len() {
-                                        data[available_samples..].fill(0.0);
+                        {
+                            let mut reader = spmc_reader.clone();
+                            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                                // Fill output buffer with audio from SPMC queue
+                                for sample in data.iter_mut() {
+                                    match reader.read() {
+                                        spmcq::ReadResult::Ok(audio_sample) => {
+                                            *sample = audio_sample;
+                                        }
+                                        spmcq::ReadResult::Dropout(audio_sample) => {
+                                            // Got data but missed some, still use the sample
+                                            *sample = audio_sample;
+                                        }
+                                        spmcq::ReadResult::Empty => {
+                                            // No data available, fill with silence
+                                            *sample = 0.0;
+                                        }
                                     }
-                                } else {
-                                    data.fill(0.0);
                                 }
-                            } else {
-                                data.fill(0.0);
                             }
                         },
                         |err| error!("Output stream error: {}", err),
@@ -625,22 +647,25 @@ impl VirtualMixer {
                             sample_rate: config.sample_rate(),
                             buffer_size: optimal_buffer_size,
                         },
-                        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                            // Simple silence output for stability
-                            if let Ok(mut buffer) = output_buffer.try_lock() {
-                                let available_samples = buffer.len().min(data.len());
-                                if available_samples > 0 {
-                                    data[..available_samples]
-                                        .copy_from_slice(&buffer[..available_samples]);
-                                    buffer.drain(..available_samples);
-                                    if available_samples < data.len() {
-                                        data[available_samples..].fill(0.0);
+                        {
+                            let mut reader = spmc_reader.clone();
+                            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                                // Fill output buffer with audio from SPMC queue
+                                for sample in data.iter_mut() {
+                                    match reader.read() {
+                                        spmcq::ReadResult::Ok(audio_sample) => {
+                                            *sample = audio_sample;
+                                        }
+                                        spmcq::ReadResult::Dropout(audio_sample) => {
+                                            // Got data but missed some, still use the sample
+                                            *sample = audio_sample;
+                                        }
+                                        spmcq::ReadResult::Empty => {
+                                            // No data available, fill with silence
+                                            *sample = 0.0;
+                                        }
                                     }
-                                } else {
-                                    data.fill(0.0);
                                 }
-                            } else {
-                                data.fill(0.0);
                             }
                         },
                         |err| error!("Output stream error: {}", err),
@@ -682,8 +707,8 @@ impl VirtualMixer {
         }
 
         // Store our wrapper
-        let mut stream_guard = self.output_stream.lock().await;
-        *stream_guard = Some(Arc::new(output_stream));
+        let mut stream_guard = self.active_output_devices.lock().await;
+        stream_guard.insert(device_id.to_string());
 
         info!(
             "Successfully created real cpal output stream: {}",
@@ -693,146 +718,6 @@ impl VirtualMixer {
         Ok(())
     }
 
-    /// refactor appears to have completely fucking reimplemented this logic, see old impl above
-    // async fn create_cpal_output_stream(&self, device_id: &str, device: cpal::Device) -> Result<()> {
-    //     let device_name = device.name().unwrap_or_else(|_| device_id.to_string());
-    //     info!("Found CPAL output device: {}", device_name);
-
-    //     // Get the default output config for this device
-    //     let config = device
-    //         .default_output_config()
-    //         .context("Failed to get default output config")?;
-
-    //     info!("Output device config: {:?}", config);
-
-    //     // Create AudioOutputStream structure
-    //     let output_stream = AudioOutputStream::new(
-    //         device_id.to_string(),
-    //         device_name.clone(),
-    //         self.config.sample_rate,
-    //     )?;
-
-    //     // Get reference to the buffer for the output callback
-    //     let output_buffer = output_stream.input_buffer.clone();
-    //     let target_sample_rate = self.config.sample_rate;
-    //     let buffer_size = self.config.buffer_size as usize;
-    //     let optimal_buffer_size = self.calculate_optimal_buffer_size(&device, &config, buffer_size).await?;
-    //     // Create stream config for output using hardware sample rate
-    //     let stream_config = cpal::StreamConfig {
-    //         channels: 2,                       // Force stereo output
-    //         sample_rate: SampleRate(target_sample_rate), // Use hardware sample rate, not mixer sample rate
-    //         buffer_size: optimal_buffer_size,
-    //     };
-
-    //     info!(
-    //         "Using output stream config: channels={}, sample_rate={}, buffer_size={}",
-    //         stream_config.channels, stream_config.sample_rate.0, buffer_size
-    //     );
-
-    //     // **CRITICAL FIX**: Create actual CPAL stream with audio callback
-    //     info!(
-    //         "Building CPAL output stream with format: {:?}",
-    //         config.sample_format()
-    //     );
-
-    //     // Send stream creation command to StreamManager
-    //     let stream_manager = get_stream_manager();
-    //     let (response_tx, response_rx) = std::sync::mpsc::channel();
-
-    //     stream_manager
-    //         .send(StreamCommand::AddOutputStream {
-    //             device_id: device_id.to_string(),
-    //             device,
-    //             config: stream_config,
-    //             audio_buffer: output_buffer.clone(),
-    //             response_tx,
-    //         })
-    //         .with_context(|| "Failed to send output stream creation command")?;
-
-    //     // Wait for stream creation result
-    //     match response_rx.recv_timeout(std::time::Duration::from_secs(5)) {
-    //         Ok(Ok(())) => {
-    //             info!(
-    //                 "✅ CPAL OUTPUT STREAM: Successfully created CPAL output stream for device: {}",
-    //                 device_id
-    //             );
-    //         }
-    //         Ok(Err(e)) => {
-    //             return Err(anyhow::anyhow!(
-    //                 "Failed to create CPAL output stream for '{}': {}",
-    //                 device_id,
-    //                 e
-    //             ));
-    //         }
-    //         Err(_) => {
-    //             return Err(anyhow::anyhow!(
-    //                 "Timeout waiting for CPAL output stream creation for '{}'",
-    //                 device_id
-    //             ));
-    //         }
-    //     }
-
-    //     // Initialize device health tracking
-    //     if let Some(device_info) = self.audio_device_manager.get_device(device_id).await {
-    //         let info = device_info;
-    //         self.audio_device_manager
-    //             .initialize_device_health(&info)
-    //             .await;
-    //     }
-
-    //     // Store the stream
-    //     {
-    //         let mut output_stream_guard = self.output_stream.lock().await;
-    //         *output_stream_guard = Some(Arc::new(output_stream));
-    //     }
-
-    //     // Track active device
-    //     {
-    //         let mut active_devices = self.active_output_devices.lock().await;
-    //         active_devices.insert(device_id.to_string());
-    //     }
-
-    //     // **CRITICAL FIX**: Add to config.output_devices (missing from modularization)
-    //     // Get device info first (before acquiring config lock to avoid Send trait issue)
-    //     let device_info = self.audio_device_manager.get_device(device_id).await;
-    //     let device_name = device_info
-    //         .as_ref()
-    //         .map(|info| info.name.clone())
-    //         .unwrap_or_else(|| device_id.to_string());
-
-    //     // Then acquire config lock and update
-    //     {
-    //         let mut config_guard = self.shared_config.lock().unwrap();
-
-    //         // Create OutputDevice entry
-    //         let output_device = crate::audio::types::OutputDevice {
-    //             device_id: device_id.to_string(),
-    //             device_name,
-    //             enabled: true,
-    //             gain: 1.0,
-    //             is_monitor: false,
-    //         };
-
-    //         // Remove any existing entry for this device
-    //         config_guard
-    //             .output_devices
-    //             .retain(|d| d.device_id != device_id);
-
-    //         // Add the new entry
-    //         config_guard.output_devices.push(output_device);
-
-    //         info!(
-    //             "✅ ADDED TO CONFIG: Device '{}' added to config.output_devices",
-    //             device_id
-    //         );
-    //     }
-
-    //     info!(
-    //         "✅ OUTPUT STREAM: Successfully set output stream with CPAL integration for device: {}",
-    //         device_id
-    //     );
-    //     Ok(())
-    // }
 
     /// Create CoreAudio output stream for direct hardware access
     #[cfg(target_os = "macos")]
@@ -875,15 +760,15 @@ impl VirtualMixer {
         *coreaudio_guard = Some(coreaudio_stream);
 
         // Create AudioOutputStream structure for compatibility
-        let output_stream = AudioOutputStream::new(
+        let (output_stream, _spmc_reader) = AudioOutputStream::new(
             device_id.to_string(),
             coreaudio_device.name.clone(),
             self.config.sample_rate, // Use hardware sample rate instead of mixer sample rate
-        )?;
+        );
 
         // Store our wrapper
-        let mut stream_guard = self.output_stream.lock().await;
-        *stream_guard = Some(Arc::new(output_stream));
+        let mut stream_guard = self.active_output_devices.lock().await;
+        stream_guard.insert(device_id.to_string());
 
         info!(
             "✅ Real CoreAudio output stream created and started for: {}",
@@ -921,13 +806,13 @@ impl VirtualMixer {
 
         // Clear output stream
         {
-            let mut output_stream_guard = self.output_stream.lock().await;
-            *output_stream_guard = None;
+            let mut output_stream_guard = self.active_output_devices.lock().await;
+            output_stream_guard.clear();
         }
 
         // Clear output streams collection
         {
-            let mut output_streams_guard = self.output_streams.lock().await;
+            let mut output_streams_guard = self.active_output_devices.lock().await;
             output_streams_guard.clear();
         }
 
@@ -940,26 +825,24 @@ impl VirtualMixer {
     async fn get_actual_hardware_sample_rate(&self) -> u32 {
         // Check active input streams first - they reflect actual hardware capture rates
         {
-            let input_streams = self.input_streams.lock().await;
-            if let Some((_device_id, stream)) = input_streams.iter().next() {
+            let input_devices = self.active_input_devices.lock().await;
+            if let Some(device_id) = input_devices.iter().next() {
                 info!(
-                    "🔧 SAMPLE RATE FIX: Using hardware input rate {} Hz from active stream",
-                    stream.sample_rate
+                    "🔧 SAMPLE RATE FIX: Found active input device: {}",
+                    device_id
                 );
-                return stream.sample_rate;
+                return crate::types::DEFAULT_SAMPLE_RATE; // Default hardware sample rate
             }
         }
 
         // Fallback to output stream rate if no input streams
         {
-            let output_stream_guard = self.output_stream.lock().await;
-            if let Some(stream) = output_stream_guard.as_ref() {
-                info!(
-                    "🔧 SAMPLE RATE FIX: Using hardware output rate {} Hz from active stream",
-                    stream.sample_rate
-                );
-                return stream.sample_rate;
-            }
+            let output_stream_guard = self.active_output_devices.lock().await;
+            // TODO: Get actual sample rate from device via command channel
+            // For now, skip output stream sample rate check - needs proper implementation
+            // if let Some(device_id) = output_stream_guard.iter().next() {
+            //     // Send command to audio thread to get actual device sample rate
+            // }
         }
 
         // Last resort: use mixer configured rate (should rarely happen)
@@ -989,13 +872,11 @@ impl VirtualMixer {
         let timing_metrics = self.timing_metrics.clone();
         let buffer_size = self.config.buffer_size;
         let mixer_handle = VirtualMixerHandle {
-            input_streams: self.input_streams.clone(),
-            output_stream: self.output_stream.clone(),
-            output_streams: self.output_streams.clone(), // Add multiple outputs support
+            audio_command_tx: self.audio_command_tx.clone(),
             #[cfg(target_os = "macos")]
             coreaudio_stream: self.coreaudio_stream.clone(),
             channel_levels: self.channel_levels.clone(),
-            config: self.shared_config.clone(),
+            config: Arc::new(std::sync::Mutex::new(self.config.clone())),
         };
 
         // **CRITICAL FIX**: Use dedicated high-priority thread for real-time audio processing
@@ -1035,8 +916,8 @@ impl VirtualMixer {
             // This fixes sample rate mismatch issues that cause timing drift and audio artifacts
             // let actual_hardware_sample_rate = {
             //     let mixer_self = &mixer_handle;
-            //     let input_streams = mixer_self.input_streams.lock().await;
-            //     if let Some((_device_id, stream)) = input_streams.iter().next() {
+            //     let input_devices = mixer_self.input_devices.lock().await;
+            //     if let Some((_device_id, stream)) = input_devices.iter().next() {
             //         stream.sample_rate
             //     } else {
             //         mixer_configured_sample_rate

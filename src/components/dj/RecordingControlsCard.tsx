@@ -31,6 +31,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { memo, useState, useCallback, useEffect } from 'react';
 
 import { useRecording } from '../../hooks/use-recording';
+import { DEFAULT_SAMPLE_RATE_HZ } from '../../utils';
 
 import { MetadataForm } from './MetadataForm';
 
@@ -145,7 +146,7 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(({ disable
     auto_stop_on_silence: false,
     silence_threshold_db: -60.0,
     silence_duration_sec: 5.0,
-    sample_rate: 48000,
+    sample_rate: DEFAULT_SAMPLE_RATE_HZ,
     channels: 2,
     bit_depth: 16, // Changed to 16-bit for better QuickTime compatibility
   });
@@ -201,7 +202,7 @@ export const RecordingControlsCard = memo<RecordingControlsCardProps>(({ disable
         max_duration_minutes: quickConfig.max_duration_minutes,
         max_file_size_mb: quickConfig.max_file_size_mb,
         split_on_interval_minutes: quickConfig.split_on_interval_minutes,
-        sample_rate: quickConfig.sample_rate ?? 48000,
+        sample_rate: quickConfig.sample_rate ?? DEFAULT_SAMPLE_RATE_HZ,
         channels: quickConfig.channels ?? 2,
         bit_depth: quickConfig.bit_depth ?? 16, // Use 16-bit for QuickTime/iTunes compatibility
       };
