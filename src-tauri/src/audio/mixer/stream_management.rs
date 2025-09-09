@@ -565,10 +565,6 @@ impl IsolatedAudioManager {
         info!("🎵 Isolated audio manager started - lock-free RTRB architecture");
 
         // **TRUE EVENT-DRIVEN PROCESSING**: Use async notifications instead of polling
-        // Keep a fallback timer for output servicing to prevent starvation
-        let mut last_calculated_interval_ms = self.calculate_processing_interval_ms();
-        let mut output_safety_interval = tokio::time::interval(tokio::time::Duration::from_millis((last_calculated_interval_ms * 2.0) as u64)); // 2x slower fallback
-
         info!("🚀 TRUE EVENT-DRIVEN: Starting async notification-driven audio processing");
 
         loop {
@@ -578,14 +574,6 @@ impl IsolatedAudioManager {
                     match command {
                         Some(cmd) => {
                             self.handle_command(cmd).await;
-
-                            // Update fallback timer when streams change
-                            let new_interval_ms = self.calculate_processing_interval_ms();
-                            if (new_interval_ms - last_calculated_interval_ms).abs() > 0.1 {
-                                last_calculated_interval_ms = new_interval_ms;
-                                output_safety_interval = tokio::time::interval(tokio::time::Duration::from_millis((new_interval_ms * 2.0) as u64));
-                                info!("🔄 Updated fallback safety interval to {}ms based on active streams", new_interval_ms * 2.0);
-                            }
                         },
                         None => break, // Channel closed
                     }
@@ -1072,28 +1060,7 @@ impl StreamManager {
         Ok(())
     }
 
-    // LEGACY FUNCTIONS DISABLED: These contained RTRB Send+Sync issues - replaced by command channel
 
-    pub fn add_input_stream_with_error_handling(
-        &mut self,
-        device_id: String,
-        device: cpal::Device,
-        config: cpal::StreamConfig,
-        audio_buffer: Arc<Producer<f32>>, // RTRB Producer for audio callback (lock-free!)
-        target_sample_rate: u32,
-        device_manager: Option<std::sync::Weak<crate::audio::devices::AudioDeviceManager>>,
-    ) -> Result<()> {
-        // STUB: Legacy function disabled due to RTRB Send+Sync issues
-        println!("STUB: add_input_stream_with_error_handling called for device: {}", device_id);
-        Ok(())
-    }
-
-    #[cfg(feature = "disabled")]
-    // ALL LEGACY FUNCTIONS WITH RTRB CALLBACKS DISABLED DUE TO Send+Sync ISSUES
-    pub fn legacy_functions_disabled() {
-        // This section contains all the legacy functions with RTRB Send+Sync issues
-        // They are disabled until the command channel architecture is fully implemented
-    }
 
     /// Remove a stream by device ID
     pub fn remove_stream(&mut self, device_id: &str) -> bool {
