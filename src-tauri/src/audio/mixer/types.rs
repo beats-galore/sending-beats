@@ -72,7 +72,8 @@ pub struct VirtualMixer {
 
     // Audio stream management (NEW ARCHITECTURE: Command-based)
     pub audio_device_manager: Arc<AudioDeviceManager>,
-    pub audio_command_tx: tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>, // Command channel to isolated audio thread
+    pub audio_command_tx:
+        tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>, // Command channel to isolated audio thread
 
     // Track active streams for UI purposes (no direct stream storage)
     pub active_input_devices: Arc<Mutex<std::collections::HashSet<String>>>,
@@ -95,7 +96,9 @@ impl VirtualMixer {
     pub async fn new_with_device_manager(
         config: MixerConfig,
         device_manager: Arc<AudioDeviceManager>,
-        audio_command_tx: tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>,
+        audio_command_tx: tokio::sync::mpsc::Sender<
+            crate::audio::mixer::stream_management::AudioCommand,
+        >,
     ) -> anyhow::Result<Self> {
         // Validate configuration
         super::validation::validate_config(&config)?;
@@ -256,10 +259,7 @@ impl VirtualMixer {
     /// Remove an output device from the mixer (using command channel architecture)
     pub async fn remove_output_device(&self, device_id: &str) -> anyhow::Result<()> {
         // Remove from active output devices tracking
-        let removed = self.active_output_devices
-            .lock()
-            .await
-            .remove(device_id);
+        let removed = self.active_output_devices.lock().await.remove(device_id);
 
         if removed {
             // Update config to remove this output device
@@ -329,8 +329,8 @@ impl MixerConfigUtils {
     pub fn default_config() -> MixerConfig {
         MixerConfig {
             sample_rate: crate::types::DEFAULT_SAMPLE_RATE, // Professional standard
-            buffer_size: 512,   // Balance of latency and stability
-            channels: vec![],   // Empty channels list
+            buffer_size: 512,                               // Balance of latency and stability
+            channels: vec![],                               // Empty channels list
             master_gain: 1.0,
             master_output_device_id: None,
             monitor_output_device_id: None,
@@ -357,8 +357,8 @@ impl MixerConfigUtils {
     pub fn stable_config() -> MixerConfig {
         MixerConfig {
             sample_rate: crate::types::DEFAULT_SAMPLE_RATE, // CD quality
-            buffer_size: 1024,  // Higher stability
-            channels: vec![],   // Empty channels list
+            buffer_size: 1024,                              // Higher stability
+            channels: vec![],                               // Empty channels list
             master_gain: 1.0,
             master_output_device_id: None,
             monitor_output_device_id: None,

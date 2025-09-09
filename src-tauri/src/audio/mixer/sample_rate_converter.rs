@@ -1,12 +1,14 @@
+use r8brain_rs::{PrecisionProfile, Resampler as R8BrainResampler};
+use rubato::{
+    Resampler as RubatoResampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType,
+    WindowFunction,
+};
 /// Sample Rate Converter for Dynamic Audio Buffer Conversion
 ///
 /// Handles real-time sample rate conversion between input and output devices
 /// Supports both upsampling (interpolation) and downsampling (decimation)
 /// Optimized for low-latency audio processing in callback contexts
-
 use std::collections::VecDeque;
-use rubato::{SincFixedIn, SincInterpolationType, SincInterpolationParameters, WindowFunction, Resampler as RubatoResampler};
-use r8brain_rs::{PrecisionProfile, Resampler as R8BrainResampler};
 
 /// Linear interpolation-based sample rate converter
 /// Suitable for real-time audio processing with minimal CPU overhead
@@ -227,28 +229,35 @@ impl RubatoSRC {
     }
 
     /// Create a new resampler with specified maximum input frame size
-    pub fn with_max_frames(input_rate: f32, output_rate: f32, max_input_frames: usize) -> Result<Self, String> {
+    pub fn with_max_frames(
+        input_rate: f32,
+        output_rate: f32,
+        max_input_frames: usize,
+    ) -> Result<Self, String> {
         // Configure high-quality sinc interpolation parameters
         let params = SincInterpolationParameters {
-            sinc_len: 256,           // High-quality sinc filter length
-            f_cutoff: 0.95,          // Conservative cutoff to prevent aliasing
-            interpolation: SincInterpolationType::Linear,  // Linear interpolation between sinc samples
-            oversampling_factor: 256,  // High oversampling for quality
-            window: WindowFunction::BlackmanHarris2,  // Excellent side-lobe suppression
+            sinc_len: 256,                                // High-quality sinc filter length
+            f_cutoff: 0.95,                               // Conservative cutoff to prevent aliasing
+            interpolation: SincInterpolationType::Linear, // Linear interpolation between sinc samples
+            oversampling_factor: 256,                     // High oversampling for quality
+            window: WindowFunction::BlackmanHarris2,      // Excellent side-lobe suppression
         };
 
         // Create Rubato's fixed-input-size resampler
         let resampler = SincFixedIn::new(
-            output_rate as f64 / input_rate as f64,  // Conversion ratio
-            2.0,  // Maximum ratio change (for future dynamic adjustment)
+            output_rate as f64 / input_rate as f64, // Conversion ratio
+            2.0, // Maximum ratio change (for future dynamic adjustment)
             params,
-            max_input_frames,  // Fixed input chunk size
-            1,    // Number of channels (mono - we process each channel separately)
-        ).map_err(|e| format!("Failed to create Rubato resampler: {}", e))?;
+            max_input_frames, // Fixed input chunk size
+            1,                // Number of channels (mono - we process each channel separately)
+        )
+        .map_err(|e| format!("Failed to create Rubato resampler: {}", e))?;
 
         // Pre-allocate buffers for zero-allocation processing
-        let input_buffer = vec![vec![0.0; max_input_frames]; 1];  // 1 channel
-        let max_output_frames = ((max_input_frames as f64 * output_rate as f64 / input_rate as f64).ceil() as usize) + 64; // Extra headroom
+        let input_buffer = vec![vec![0.0; max_input_frames]; 1]; // 1 channel
+        let max_output_frames = ((max_input_frames as f64 * output_rate as f64 / input_rate as f64)
+            .ceil() as usize)
+            + 64; // Extra headroom
         let output_buffer = vec![vec![0.0; max_output_frames]; 1];
 
         Ok(Self {
@@ -290,7 +299,10 @@ impl RubatoSRC {
         }
 
         // Perform high-quality resampling
-        match self.resampler.process_into_buffer(&self.input_buffer, &mut self.output_buffer, None) {
+        match self
+            .resampler
+            .process_into_buffer(&self.input_buffer, &mut self.output_buffer, None)
+        {
             Ok((_input_frames_used, output_frames_generated)) => {
                 // Extract the exact number of samples requested
                 let mut result = Vec::with_capacity(output_size);
@@ -381,14 +393,18 @@ impl R8BrainSRC {
     }
 
     /// Create resampler with specific maximum input size
-    pub fn with_max_input_size(input_rate: f32, output_rate: f32, max_input_size: usize) -> Result<Self, String> {
+    pub fn with_max_input_size(
+        input_rate: f32,
+        output_rate: f32,
+        max_input_size: usize,
+    ) -> Result<Self, String> {
         // Create r8brain professional resampler with broadcast-quality settings
         let resampler = R8BrainResampler::new(
-            input_rate as f64,           // Source sample rate
-            output_rate as f64,          // Destination sample rate
-            max_input_size,              // Max input length per process() call
-            2.0,                         // Required transition band (professional quality)
-            PrecisionProfile::Bits24     // 24-bit precision for broadcast quality
+            input_rate as f64,        // Source sample rate
+            output_rate as f64,       // Destination sample rate
+            max_input_size,           // Max input length per process() call
+            2.0,                      // Required transition band (professional quality)
+            PrecisionProfile::Bits24, // 24-bit precision for broadcast quality
         );
 
         // Calculate maximum possible output size for buffer pre-allocation
@@ -428,7 +444,11 @@ impl R8BrainSRC {
         let input_len = input_samples.len().min(self.max_input_size);
 
         // Convert f32 input to f64 for r8brain processing
-        let input_f64: Vec<f64> = input_samples.iter().take(input_len).map(|&x| x as f64).collect();
+        let input_f64: Vec<f64> = input_samples
+            .iter()
+            .take(input_len)
+            .map(|&x| x as f64)
+            .collect();
 
         // Process with r8brain professional resampler
         // Note: r8brain may need multiple calls before yielding output (this is normal)
@@ -492,5 +512,4 @@ pub mod utils {
     pub fn rates_match(rate1: f32, rate2: f32) -> bool {
         (rate1 - rate2).abs() < 1.0 // 1 Hz tolerance
     }
-
 }

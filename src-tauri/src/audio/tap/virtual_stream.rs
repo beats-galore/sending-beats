@@ -297,8 +297,7 @@ impl ApplicationAudioInputBridge {
 pub fn get_virtual_input_registry() -> &'static StdMutex<std::collections::HashSet<String>> {
     use std::sync::LazyLock;
     // Changed to HashSet<String> to avoid RTRB Send+Sync issues
-    static VIRTUAL_INPUT_REGISTRY: LazyLock<
-        StdMutex<std::collections::HashSet<String>>,
-    > = LazyLock::new(|| StdMutex::new(std::collections::HashSet::new()));
+    static VIRTUAL_INPUT_REGISTRY: LazyLock<StdMutex<std::collections::HashSet<String>>> =
+        LazyLock::new(|| StdMutex::new(std::collections::HashSet::new()));
     &VIRTUAL_INPUT_REGISTRY
 }

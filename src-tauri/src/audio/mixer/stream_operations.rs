@@ -15,11 +15,13 @@ use super::mixer_core::VirtualMixerHandle;
 /// Calculate optimal target latency based on sample rate
 /// Professional audio target: 1ms for high sample rates (48kHz+), 10ms for lower rates
 pub fn calculate_target_latency_ms(sample_rate: u32) -> f32 {
-    if sample_rate >= crate::types::DEFAULT_SAMPLE_RATE { 5.0 } else { 10.0 }
+    if sample_rate >= crate::types::DEFAULT_SAMPLE_RATE {
+        5.0
+    } else {
+        10.0
+    }
 }
-use super::stream_management::{
-    AudioInputStream, AudioOutputStream, StreamInfo,
-};
+use super::stream_management::{AudioInputStream, AudioOutputStream, StreamInfo};
 use super::types::VirtualMixer;
 
 impl VirtualMixer {
@@ -412,10 +414,16 @@ impl VirtualMixer {
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
         // Send stream removal command to isolated audio thread
-        if let Err(e) = self.audio_command_tx.send(crate::audio::mixer::stream_management::AudioCommand::RemoveInputStream {
-            device_id: device_id.to_string(),
-            response_tx,
-        }).await {
+        if let Err(e) = self
+            .audio_command_tx
+            .send(
+                crate::audio::mixer::stream_management::AudioCommand::RemoveInputStream {
+                    device_id: device_id.to_string(),
+                    response_tx,
+                },
+            )
+            .await
+        {
             warn!(
                 "Failed to send stream removal command for '{}': {}",
                 device_id, e
@@ -434,16 +442,10 @@ impl VirtualMixer {
                     }
                 }
                 Ok(Ok(Err(e))) => {
-                    warn!(
-                        "Error removing CPAL stream for '{}': {}",
-                        device_id, e
-                    );
+                    warn!("Error removing CPAL stream for '{}': {}", device_id, e);
                 }
                 Ok(Err(e)) => {
-                    warn!(
-                        "Failed to receive response for '{}': {}",
-                        device_id, e
-                    );
+                    warn!("Failed to receive response for '{}': {}", device_id, e);
                 }
                 Err(_) => {
                     warn!(
@@ -497,18 +499,20 @@ impl VirtualMixer {
         match device_handle {
             crate::audio::types::AudioDeviceHandle::Cpal(device) => {
                 // Use command queue for CPAL devices
-                let config = device.default_output_config()
+                let config = device
+                    .default_output_config()
                     .map_err(|e| anyhow::anyhow!("Failed to get device config: {}", e))?
                     .config();
 
                 let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
-                let command = crate::audio::mixer::stream_management::AudioCommand::AddCPALOutputStream {
-                    device_id: device_id.to_string(),
-                    device,
-                    config,
-                    response_tx,
-                };
+                let command =
+                    crate::audio::mixer::stream_management::AudioCommand::AddCPALOutputStream {
+                        device_id: device_id.to_string(),
+                        device,
+                        config,
+                        response_tx,
+                    };
 
                 info!("🔍 Sending CPAL output stream creation command to isolated audio thread for device: {}", device_id);
 
@@ -518,7 +522,10 @@ impl VirtualMixer {
 
                 match response_rx.await {
                     Ok(Ok(())) => {
-                        info!("✅ Added CPAL output device via command queue: {}", device_id);
+                        info!(
+                            "✅ Added CPAL output device via command queue: {}",
+                            device_id
+                        );
                         Ok(())
                     }
                     Ok(Err(e)) => Err(anyhow::anyhow!("Failed to add CPAL output device: {}", e)),
@@ -544,10 +551,16 @@ impl VirtualMixer {
 
                 match response_rx.await {
                     Ok(Ok(())) => {
-                        info!("✅ Added CoreAudio output device via command queue: {}", device_id);
+                        info!(
+                            "✅ Added CoreAudio output device via command queue: {}",
+                            device_id
+                        );
                         Ok(())
                     }
-                    Ok(Err(e)) => Err(anyhow::anyhow!("Failed to add CoreAudio output device: {}", e)),
+                    Ok(Err(e)) => Err(anyhow::anyhow!(
+                        "Failed to add CoreAudio output device: {}",
+                        e
+                    )),
                     Err(_) => Err(anyhow::anyhow!("Audio system did not respond")),
                 }
             }
@@ -717,7 +730,6 @@ impl VirtualMixer {
 
         Ok(())
     }
-
 
     /// Create CoreAudio output stream for direct hardware access
     #[cfg(target_os = "macos")]

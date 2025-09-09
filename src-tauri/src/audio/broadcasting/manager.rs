@@ -453,8 +453,8 @@ impl StreamingService {
 
         // Adjust sample rate based on bitrate for optimal quality
         config.audio_format.sample_rate = match bitrate {
-            96 | 128 => 44100, // Lower bitrates work fine with 44.1kHz
-            _ => crate::types::DEFAULT_SAMPLE_RATE,        // Higher bitrates benefit from 48kHz
+            96 | 128 => 44100,                      // Lower bitrates work fine with 44.1kHz
+            _ => crate::types::DEFAULT_SAMPLE_RATE, // Higher bitrates benefit from 48kHz
         };
 
         Ok(config)

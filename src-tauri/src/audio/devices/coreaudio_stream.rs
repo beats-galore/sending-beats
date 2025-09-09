@@ -1,3 +1,4 @@
+use crate::types::{COMMON_SAMPLE_RATES_HZ, DEFAULT_SAMPLE_RATE};
 #[cfg(target_os = "macos")]
 use anyhow::Result;
 use coreaudio_sys::{
@@ -12,7 +13,6 @@ use coreaudio_sys::{
     AudioTimeStamp, AudioUnit, AudioUnitInitialize, AudioUnitRenderActionFlags,
     AudioUnitSetProperty, AudioUnitUninitialize, OSStatus,
 };
-use crate::types::{COMMON_SAMPLE_RATES_HZ, DEFAULT_SAMPLE_RATE};
 use std::os::raw::c_void;
 use std::ptr;
 use std::sync::{
@@ -575,7 +575,8 @@ extern "C" fn spmc_render_callback(
                     let output_data = audio_buffer.mData as *mut f32;
 
                     if !output_data.is_null() && audio_buffer.mDataByteSize > 0 {
-                        let total_samples = (audio_buffer.mDataByteSize as usize) / std::mem::size_of::<f32>();
+                        let total_samples =
+                            (audio_buffer.mDataByteSize as usize) / std::mem::size_of::<f32>();
                         let samples_to_fill = total_samples.min(frames_needed * 2); // 2 channels
 
                         // **PROFESSIONAL BROADCAST QUALITY**: CoreAudio with R8Brain transparent resampling
@@ -615,18 +616,21 @@ extern "C" fn spmc_render_callback(
 
                                 // Estimate input sample rate based on sample count ratios
                                 let estimated_input_rate = {
-
-
                                     // Heuristic: ratio of output samples needed vs input samples available
-                                    let ratio_hint = samples_to_fill as f32 / input_samples.len() as f32;
+                                    let ratio_hint =
+                                        samples_to_fill as f32 / input_samples.len() as f32;
                                     // Assume reasonable output rate for CoreAudio (usually 48kHz)
                                     let estimated_output_rate = DEFAULT_SAMPLE_RATE as f32;
                                     let estimated_input_rate = estimated_output_rate / ratio_hint;
 
                                     // Find closest common sample rate
-                                    COMMON_SAMPLE_RATES_HZ.iter()
+                                    COMMON_SAMPLE_RATES_HZ
+                                        .iter()
                                         .min_by(|&a, &b| {
-                                            (a - estimated_input_rate).abs().partial_cmp(&(b - estimated_input_rate).abs()).unwrap()
+                                            (a - estimated_input_rate)
+                                                .abs()
+                                                .partial_cmp(&(b - estimated_input_rate).abs())
+                                                .unwrap()
                                         })
                                         .copied()
                                         .unwrap_or(DEFAULT_SAMPLE_RATE as f32)
@@ -634,13 +638,20 @@ extern "C" fn spmc_render_callback(
 
                                 // Reinitialize SRC if rate changed significantly
                                 let needs_new_src = if let Some(ref src) = *src_opt {
-                                    (src.ratio() - (crate::types::DEFAULT_SAMPLE_RATE as f32 / estimated_input_rate)).abs() > 0.01
+                                    (src.ratio()
+                                        - (crate::types::DEFAULT_SAMPLE_RATE as f32
+                                            / estimated_input_rate))
+                                        .abs()
+                                        > 0.01
                                 } else {
                                     true
                                 };
 
                                 if needs_new_src {
-                                    match R8BrainSRC::new(estimated_input_rate, DEFAULT_SAMPLE_RATE as f32) {
+                                    match R8BrainSRC::new(
+                                        estimated_input_rate,
+                                        DEFAULT_SAMPLE_RATE as f32,
+                                    ) {
                                         Ok(src) => *src_opt = Some(src),
                                         Err(_) => *src_opt = None, // Fallback to silence if SRC creation fails
                                     }

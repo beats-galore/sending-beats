@@ -5,6 +5,9 @@
 // It provides device information extraction, name cleaning, and availability
 // filtering.
 
+use super::coreaudio_integration::CoreAudioIntegration;
+use crate::audio::types::AudioDeviceInfo;
+use crate::types::SUPPORTED_INPUT_SAMPLE_RATES_HZ;
 use anyhow::Result;
 use cpal::traits::{DeviceTrait, HostTrait};
 use cpal::{Device, Host};
@@ -12,9 +15,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
-use crate::types::SUPPORTED_INPUT_SAMPLE_RATES_HZ;
-use super::coreaudio_integration::CoreAudioIntegration;
-use crate::audio::types::AudioDeviceInfo;
 
 /// Device enumeration system with crash protection
 pub struct DeviceEnumerator {

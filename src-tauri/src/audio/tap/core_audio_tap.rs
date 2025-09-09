@@ -424,7 +424,10 @@ impl ApplicationAudioTap {
         );
 
         // Get the tap device properties using Core Audio APIs
-        let sample_rate = unsafe { self.get_tap_sample_rate(tap_object_id).unwrap_or(crate::types::DEFAULT_SAMPLE_RATE as f64) };
+        let sample_rate = unsafe {
+            self.get_tap_sample_rate(tap_object_id)
+                .unwrap_or(crate::types::DEFAULT_SAMPLE_RATE as f64)
+        };
 
         let channels = unsafe { self.get_tap_channel_count(tap_object_id).unwrap_or(2) };
 
@@ -576,9 +579,14 @@ impl ApplicationAudioTap {
                             })
                             .collect();
 
-                        let audio_samples = if tap_sample_rate != crate::types::DEFAULT_SAMPLE_RATE {
+                        let audio_samples = if tap_sample_rate != crate::types::DEFAULT_SAMPLE_RATE
+                        {
                             // Simple linear interpolation resampling for non-48kHz audio
-                            Self::resample_audio(&f32_samples, tap_sample_rate, crate::types::DEFAULT_SAMPLE_RATE)
+                            Self::resample_audio(
+                                &f32_samples,
+                                tap_sample_rate,
+                                crate::types::DEFAULT_SAMPLE_RATE,
+                            )
                         } else {
                             f32_samples
                         };

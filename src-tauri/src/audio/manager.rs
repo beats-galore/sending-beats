@@ -267,12 +267,13 @@ impl ApplicationAudioManager {
 
         // Create the AudioInputStream immediately and register it
         {
-            let _audio_input_stream =
-                Arc::new(crate::audio::mixer::stream_management::AudioInputStream::new(
+            let _audio_input_stream = Arc::new(
+                crate::audio::mixer::stream_management::AudioInputStream::new(
                     virtual_device_id.clone(),
                     channel_name.clone(),
                     crate::types::DEFAULT_SAMPLE_RATE,
-                )?);
+                )?,
+            );
             // Drop before await to avoid Send+Sync issues
         }
 
