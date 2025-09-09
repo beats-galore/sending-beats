@@ -179,30 +179,30 @@ impl AudioInputStream {
 
         // Debug: Log when we're reading samples
         use std::sync::{LazyLock, Mutex as StdMutex};
-        static GET_SAMPLES_COUNT: LazyLock<
-            StdMutex<std::collections::HashMap<String, u64>>,
-        > = LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
+        // static GET_SAMPLES_COUNT: LazyLock<
+        //     StdMutex<std::collections::HashMap<String, u64>>,
+        // > = LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
 
-        if let Ok(mut count_map) = GET_SAMPLES_COUNT.lock() {
-            let count = count_map.entry(self.device_id.clone()).or_insert(0);
-            *count += 1;
+        // if let Ok(mut count_map) = GET_SAMPLES_COUNT.lock() {
+        //     let count = count_map.entry(self.device_id.clone()).or_insert(0);
+        //     *count += 1;
 
-            if sample_count > 0 {
-                if *count % 100 == 0 || (*count < 10) {
-                    let peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                    let rms = (samples.iter().map(|&s| s * s).sum::<f32>()
-                        / samples.len() as f32)
-                        .sqrt();
-                    println!("📖 RTRB_GET_SAMPLES [{}]: Retrieved {} samples (call #{}), available: {}, peak: {:.4}, rms: {:.4}",
-                        self.device_id, sample_count, count, available_samples, peak, rms);
-                }
-            } else if *count % 500 == 0 {
-                println!(
-                    "📪 RTRB_GET_SAMPLES [{}]: Empty ring buffer (call #{})",
-                    self.device_id, count
-                );
-            }
-        }
+        //     if sample_count > 0 {
+        //         if *count % 100 == 0 || (*count < 10) {
+        //             let peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+        //             let rms = (samples.iter().map(|&s| s * s).sum::<f32>()
+        //                 / samples.len() as f32)
+        //                 .sqrt();
+        //             println!("📖 RTRB_GET_SAMPLES [{}]: Retrieved {} samples (call #{}), available: {}, peak: {:.4}, rms: {:.4}",
+        //                 self.device_id, sample_count, count, available_samples, peak, rms);
+        //         }
+        //     } else if *count % 500 == 0 {
+        //         println!(
+        //             "📪 RTRB_GET_SAMPLES [{}]: Empty ring buffer (call #{})",
+        //             self.device_id, count
+        //         );
+        //     }
+        // }
 
         samples
     }
@@ -250,23 +250,23 @@ impl AudioInputStream {
         }
 
         // Debug: Log processing activity
-        use std::sync::{LazyLock, Mutex as StdMutex};
-        static PROCESS_COUNT: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> =
-            LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
+        // use std::sync::{LazyLock, Mutex as StdMutex};
+        // static PROCESS_COUNT: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> =
+        //     LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
 
-        if let Ok(mut count_map) = PROCESS_COUNT.lock() {
-            let count = count_map.entry(self.device_id.clone()).or_insert(0);
-            *count += 1;
+        // if let Ok(mut count_map) = PROCESS_COUNT.lock() {
+        //     let count = count_map.entry(self.device_id.clone()).or_insert(0);
+        //     *count += 1;
 
-            if original_sample_count > 0 {
-                let original_peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+        //     if original_sample_count > 0 {
+        //         let original_peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
 
-                if *count % 100 == 0 || (*count < 10) {
-                    crate::audio_debug!("⚙️  RTRB_PROCESS_WITH_EFFECTS [{}]: Processing {} samples (call #{}), available: {}, peak: {:.4}, channel: {}",
-                    self.device_id, original_sample_count, count, available_samples, original_peak, channel.name);
-                }
-            }
-        }
+        //         if *count % 100 == 0 || (*count < 10) {
+        //             crate::audio_debug!("⚙️  RTRB_PROCESS_WITH_EFFECTS [{}]: Processing {} samples (call #{}), available: {}, peak: {:.4}, channel: {}",
+        //             self.device_id, original_sample_count, count, available_samples, original_peak, channel.name);
+        //         }
+        //     }
+        // }
 
         // Apply effects if enabled
         if channel.effects_enabled && !samples.is_empty() {
@@ -595,27 +595,27 @@ impl IsolatedAudioManager {
                 _ = self.global_input_notifier.notified() => {
                     // DEBUG: Track that we received the notification
                     use std::sync::{LazyLock, Mutex as StdMutex};
-                    static INPUT_NOTIFY_RECEIVED: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
-                    if let Ok(mut count) = INPUT_NOTIFY_RECEIVED.lock() {
-                        *count += 1;
-                        if *count <= 10 || *count % 100 == 0 {
-                            info!("🔔 INPUT_NOTIFICATION_RECEIVED [{}]: Async loop got notified!", count);
-                        }
-                    }
+                    // static INPUT_NOTIFY_RECEIVED: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
+                    // if let Ok(mut count) = INPUT_NOTIFY_RECEIVED.lock() {
+                    //     *count += 1;
+                    //     if *count <= 10 || *count % 100 == 0 {
+                    //         info!("🔔 INPUT_NOTIFICATION_RECEIVED [{}]: Async loop got notified!", count);
+                    //     }
+                    // }
 
                     // **ALWAYS CONSUME**: Always drain input buffers to prevent overflow
                     // Process even without outputs (dummy sink behavior)
                     self.process_audio().await;
 
-                    // Track event-driven processing
-                    static INPUT_EVENT_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
-                    if let Ok(mut count) = INPUT_EVENT_COUNT.lock() {
-                        *count += 1;
-                        if *count <= 5 || *count % 100 == 0 {
-                            let output_status = if self.output_streams.is_empty() { "DUMMY_SINK" } else { "REAL_OUTPUT" };
-                            info!("⚡ INPUT_EVENT [{}]: Processed audio on input data notification ({})", count, output_status);
-                        }
-                    }
+                    // // Track event-driven processing
+                    // static INPUT_EVENT_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
+                    // if let Ok(mut count) = INPUT_EVENT_COUNT.lock() {
+                    //     *count += 1;
+                    //     if *count <= 5 || *count % 100 == 0 {
+                    //         let output_status = if self.output_streams.is_empty() { "DUMMY_SINK" } else { "REAL_OUTPUT" };
+                    //         info!("⚡ INPUT_EVENT [{}]: Processed audio on input data notification ({})", count, output_status);
+                    //     }
+                    // }
                 }
 
                 // **TRUE EVENT-DRIVEN**: Process when output demand notification arrives
@@ -625,14 +625,14 @@ impl IsolatedAudioManager {
                         self.process_audio().await;
 
                         // Track event-driven processing
-                        use std::sync::{LazyLock, Mutex as StdMutex};
-                        static OUTPUT_EVENT_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
-                        if let Ok(mut count) = OUTPUT_EVENT_COUNT.lock() {
-                            *count += 1;
-                            if *count <= 5 || *count % 1000 == 0 {
-                                info!("⚡ OUTPUT_EVENT [{}]: Processed audio on output demand notification", count);
-                            }
-                        }
+                        // use std::sync::{LazyLock, Mutex as StdMutex};
+                        // static OUTPUT_EVENT_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
+                        // if let Ok(mut count) = OUTPUT_EVENT_COUNT.lock() {
+                        //     *count += 1;
+                        //     if *count <= 5 || *count % 1000 == 0 {
+                        //         info!("⚡ OUTPUT_EVENT [{}]: Processed audio on output demand notification", count);
+                        //     }
+                        // }
                     }
                 }
 
@@ -683,14 +683,14 @@ impl IsolatedAudioManager {
     async fn process_audio(&mut self) {
         // Debug: Log the processing attempt
         use std::sync::{LazyLock, Mutex as StdMutex};
-        static DEBUG_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
-        if let Ok(mut count) = DEBUG_COUNT.lock() {
-            *count += 1;
-            if *count <= 10 || *count % 1000 == 0 {
-                info!("🔧 PROCESS_AUDIO [{}]: Called with {} inputs, {} outputs",
-                    count, self.input_streams.len(), self.output_streams.len());
-            }
-        }
+        // static DEBUG_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
+        // if let Ok(mut count) = DEBUG_COUNT.lock() {
+        //     *count += 1;
+        //     if *count <= 10 || *count % 1000 == 0 {
+        //         info!("🔧 PROCESS_AUDIO [{}]: Called with {} inputs, {} outputs",
+        //             count, self.input_streams.len(), self.output_streams.len());
+        //     }
+        // }
 
         if self.input_streams.is_empty() {
             // Only skip if no inputs - we'll drain inputs even without outputs
@@ -705,19 +705,19 @@ impl IsolatedAudioManager {
         for (device_id, input_stream) in &mut self.input_streams {
             let samples = input_stream.get_samples();
             if samples.is_empty() {
-continue;
+                continue;
             }
                 // Debug log for first few audio processing cycles (before moving samples)
                 let peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
                 use std::sync::{LazyLock, Mutex as StdMutex};
-                static PROCESS_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
-                if let Ok(mut count) = PROCESS_COUNT.lock() {
-                    *count += 1;
-                    if *count <= 10 || *count % 1000 == 0 {
-                        info!("🎵 AUDIO_PROCESSING [{}]: Input '{}' provided {} samples, peak: {:.4}",
-                            count, device_id, samples.len(), peak);
-                    }
-                }
+                // static PROCESS_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
+                // if let Ok(mut count) = PROCESS_COUNT.lock() {
+                //     *count += 1;
+                //     if *count <= 10 || *count % 1000 == 0 {
+                //         info!("🎵 AUDIO_PROCESSING [{}]: Input '{}' provided {} samples, peak: {:.4}",
+                //             count, device_id, samples.len(), peak);
+                //     }
+                // }
 
                 if mixed_samples.is_empty() {
                     // First input stream - initialize the mix buffer and set sample rate
@@ -751,34 +751,33 @@ continue;
 
             if self.output_streams.is_empty() {
                 // **DUMMY SINK**: Consume input samples even without outputs to prevent overflow
-                use std::sync::{LazyLock, Mutex as StdMutex};
-                static DUMMY_SINK_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
-                if let Ok(mut count) = DUMMY_SINK_COUNT.lock() {
-                    *count += 1;
-                    if *count <= 5 || *count % 1000 == 0 {
-                        let peak = mixed_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                        info!("🗑️ DUMMY_SINK [{}]: Drained {} samples (no outputs), peak: {:.4}",
-                            count, mixed_samples.len(), peak);
-                    }
-                }
-            } else {
+                // use std::sync::{LazyLock, Mutex as StdMutex};
+                // static DUMMY_SINK_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
+                // if let Ok(mut count) = DUMMY_SINK_COUNT.lock() {
+                //     *count += 1;
+                //     if *count <= 5 || *count % 1000 == 0 {
+                //         let peak = mixed_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                //         info!("🗑️ DUMMY_SINK [{}]: Drained {} samples (no outputs), peak: {:.4}",
+                //             count, mixed_samples.len(), peak);
+                //     }
+                } else {
                 // Send mixed audio to all output streams
                 for (device_id, output_stream) in &self.output_streams {
                     output_stream.send_samples(&mixed_samples, mixed_sample_rate);
 
                     // Debug log for output distribution
-                    use std::sync::{LazyLock, Mutex as StdMutex};
-                    static OUTPUT_COUNT: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> =
-                        LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
-                    if let Ok(mut count_map) = OUTPUT_COUNT.lock() {
-                        let count = count_map.entry(device_id.clone()).or_insert(0);
-                        *count += 1;
-                        if *count <= 10 || *count % 1000 == 0 {
-                            let peak = mixed_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                            info!("🔊 AUDIO_OUTPUT [{}]: Sent {} samples to '{}', peak: {:.4}",
-                                count, mixed_samples.len(), device_id, peak);
-                        }
-                    }
+                    // use std::sync::{LazyLock, Mutex as StdMutex};
+                    // static OUTPUT_COUNT: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> =
+                    //     LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
+                    // if let Ok(mut count_map) = OUTPUT_COUNT.lock() {
+                    //     let count = count_map.entry(device_id.clone()).or_insert(0);
+                    //     *count += 1;
+                    //     if *count <= 10 || *count % 1000 == 0 {
+                    //         let peak = mixed_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                    //         info!("🔊 AUDIO_OUTPUT [{}]: Sent {} samples to '{}', peak: {:.4}",
+                    //             count, mixed_samples.len(), device_id, peak);
+                    //     }
+                    // }
                 }
             }
 
@@ -984,31 +983,31 @@ impl StreamManager {
                         f32_notifier.notify_one();
 
                         // DEBUG: Track notification sends
-                        use std::sync::{LazyLock, Mutex as StdMutex};
-                        static NOTIFY_SEND_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
-                        if let Ok(mut count) = NOTIFY_SEND_COUNT.lock() {
-                            *count += 1;
-                            if *count % 100 == 0 || *count <= 5 {
-                                println!("🚨 F32_NOTIFICATION_SENT [{}]: Hardware callback sent notification (wrote: {}, dropped: {})",
-                                    count, samples_written, samples_dropped);
-                            }
-                        }
+                        // use std::sync::{LazyLock, Mutex as StdMutex};
+                        // static NOTIFY_SEND_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
+                        // if let Ok(mut count) = NOTIFY_SEND_COUNT.lock() {
+                        //     *count += 1;
+                        //     if *count % 100 == 0 || *count <= 5 {
+                        //         println!("🚨 F32_NOTIFICATION_SENT [{}]: Hardware callback sent notification (wrote: {}, dropped: {})",
+                        //             count, samples_written, samples_dropped);
+                        //     }
+                        // }
 
                         // Debug logging for audio capture
-                        static CAPTURE_COUNT: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> =
-                            LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
+                        // static CAPTURE_COUNT: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> =
+                        //     LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
 
-                        if let Ok(mut count_map) = CAPTURE_COUNT.lock() {
-                            let count = count_map.entry(device_id_for_f32_callback.clone()).or_insert(0);
-                            *count += 1;
+                        // if let Ok(mut count_map) = CAPTURE_COUNT.lock() {
+                        //     let count = count_map.entry(device_id_for_f32_callback.clone()).or_insert(0);
+                        //     *count += 1;
 
-                            if *count % 100 == 0 || (*count < 10) {
-                                let peak = data.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                                let rms = (data.iter().map(|&s| s * s).sum::<f32>() / data.len() as f32).sqrt();
-                                println!("🎵 RTRB_CAPTURE [{}]: Captured {} samples (call #{}), wrote: {}, dropped: {}, peak: {:.4}, rms: {:.4} ⚡NOTIFIED",
-                                    device_id_for_f32_callback, data.len(), count, samples_written, samples_dropped, peak, rms);
-                            }
-                        }
+                        //     if *count % 100 == 0 || (*count < 10) {
+                        //         let peak = data.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                        //         let rms = (data.iter().map(|&s| s * s).sum::<f32>() / data.len() as f32).sqrt();
+                        //         println!("🎵 RTRB_CAPTURE [{}]: Captured {} samples (call #{}), wrote: {}, dropped: {}, peak: {:.4}, rms: {:.4} ⚡NOTIFIED",
+                        //             device_id_for_f32_callback, data.len(), count, samples_written, samples_dropped, peak, rms);
+                        //     }
+                        // }
                     },
                     move |err| {
                         error!("❌ Input stream error for device '{}': {}", device_id_for_f32_error, err);
@@ -1037,20 +1036,20 @@ impl StreamManager {
                         i16_notifier.notify_one();
 
                         // Debug logging for audio capture
-                        use std::sync::{LazyLock, Mutex as StdMutex};
-                        static CAPTURE_COUNT_I16: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> =
-                            LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
+                        // use std::sync::{LazyLock, Mutex as StdMutex};
+                        // static CAPTURE_COUNT_I16: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> =
+                        //     LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
 
-                        if let Ok(mut count_map) = CAPTURE_COUNT_I16.lock() {
-                            let count = count_map.entry(device_id_for_i16_callback.clone()).or_insert(0);
-                            *count += 1;
+                        // if let Ok(mut count_map) = CAPTURE_COUNT_I16.lock() {
+                        //     let count = count_map.entry(device_id_for_i16_callback.clone()).or_insert(0);
+                        //     *count += 1;
 
-                            if *count % 100 == 0 || (*count < 10) {
-                                let peak = data.iter().map(|&s| (s as f32 / 32768.0).abs()).fold(0.0f32, f32::max);
-                                println!("🎵 RTRB_CAPTURE_I16 [{}]: Captured {} samples (call #{}), wrote: {}, dropped: {}, peak: {:.4} ⚡NOTIFIED",
-                                    device_id_for_i16_callback, data.len(), count, samples_written, samples_dropped, peak);
-                            }
-                        }
+                        //     if *count % 100 == 0 || (*count < 10) {
+                        //         let peak = data.iter().map(|&s| (s as f32 / 32768.0).abs()).fold(0.0f32, f32::max);
+                        //         println!("🎵 RTRB_CAPTURE_I16 [{}]: Captured {} samples (call #{}), wrote: {}, dropped: {}, peak: {:.4} ⚡NOTIFIED",
+                        //             device_id_for_i16_callback, data.len(), count, samples_written, samples_dropped, peak);
+                        //     }
+                        // }
                     },
                     move |err| {
                         error!("❌ Input stream error for device '{}': {}", device_id_for_i16_error, err);
@@ -1281,22 +1280,22 @@ impl StreamManager {
                         }
 
                         // Debug logging for audio playback
-                        use std::sync::{LazyLock, Mutex as StdMutex};
-                        static PLAYBACK_COUNT: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> =
-                            LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
+                        // use std::sync::{LazyLock, Mutex as StdMutex};
+                        // static PLAYBACK_COUNT: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> =
+                        //     LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
 
-                        if let Ok(mut count_map) = PLAYBACK_COUNT.lock() {
-                            let count = count_map.entry(device_id_for_f32_out_callback.clone()).or_insert(0);
-                            *count += 1;
+                        // if let Ok(mut count_map) = PLAYBACK_COUNT.lock() {
+                        //     let count = count_map.entry(device_id_for_f32_out_callback.clone()).or_insert(0);
+                        //     *count += 1;
 
-                            if *count % 100 == 0 || (*count < 10) {
-                                let peak = data.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                                let rms = (data.iter().map(|&s| s * s).sum::<f32>() / data.len() as f32).sqrt();
-                                let status = if input_samples.is_empty() { " ⏳SRC_UNDERRUN" } else { " ✅SRC_CONVERTED" };
-                                println!("🎵 SPMC_PLAYBACK [{}]: Requested {} samples (call #{}), input: {}, peak: {:.4}, rms: {:.4}{}",
-                                    device_id_for_f32_out_callback, data.len(), count, input_samples.len(), peak, rms, status);
-                            }
-                        }
+                        //     if *count % 100 == 0 || (*count < 10) {
+                        //         let peak = data.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                        //         let rms = (data.iter().map(|&s| s * s).sum::<f32>() / data.len() as f32).sqrt();
+                        //         let status = if input_samples.is_empty() { " ⏳SRC_UNDERRUN" } else { " ✅SRC_CONVERTED" };
+                        //         println!("🎵 SPMC_PLAYBACK [{}]: Requested {} samples (call #{}), input: {}, peak: {:.4}, rms: {:.4}{}",
+                        //             device_id_for_f32_out_callback, data.len(), count, input_samples.len(), peak, rms, status);
+                        //     }
+                        // }
                     },
                     move |err| {
                         error!("❌ Output stream error for device '{}': {}", device_id_for_f32_out_error, err);
@@ -1399,21 +1398,21 @@ impl StreamManager {
                         }
 
                         // Debug logging for i16 playback
-                        use std::sync::{LazyLock, Mutex as StdMutex};
-                        static PLAYBACK_COUNT_I16: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> =
-                            LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
+                        // use std::sync::{LazyLock, Mutex as StdMutex};
+                        // static PLAYBACK_COUNT_I16: LazyLock<StdMutex<std::collections::HashMap<String, u64>>> =
+                        //     LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
 
-                        if let Ok(mut count_map) = PLAYBACK_COUNT_I16.lock() {
-                            let count = count_map.entry(device_id_for_i16_out_callback.clone()).or_insert(0);
-                            *count += 1;
+                        // if let Ok(mut count_map) = PLAYBACK_COUNT_I16.lock() {
+                        //     let count = count_map.entry(device_id_for_i16_out_callback.clone()).or_insert(0);
+                        //     *count += 1;
 
-                            if *count % 100 == 0 || (*count < 10) {
-                                let peak = data.iter().map(|&s| (s as f32 / 32767.0).abs()).fold(0.0f32, f32::max);
-                                let status = if input_samples.is_empty() { " ⏳SRC_UNDERRUN" } else { " ✅SRC_CONVERTED" };
-                                println!("🎵 SPMC_PLAYBACK_I16 [{}]: Requested {} samples (call #{}), input: {}, peak: {:.4}{}",
-                                    device_id_for_i16_out_callback, data.len(), count, input_samples.len(), peak, status);
-                            }
-                        }
+                        //     if *count % 100 == 0 || (*count < 10) {
+                        //         let peak = data.iter().map(|&s| (s as f32 / 32767.0).abs()).fold(0.0f32, f32::max);
+                        //         let status = if input_samples.is_empty() { " ⏳SRC_UNDERRUN" } else { " ✅SRC_CONVERTED" };
+                        //         println!("🎵 SPMC_PLAYBACK_I16 [{}]: Requested {} samples (call #{}), input: {}, peak: {:.4}{}",
+                        //             device_id_for_i16_out_callback, data.len(), count, input_samples.len(), peak, status);
+                        //     }
+                        // }
                     },
                     move |err| {
                         error!("❌ Output stream error for device '{}': {}", device_id_for_i16_out_error, err);

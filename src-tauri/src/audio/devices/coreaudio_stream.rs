@@ -649,14 +649,14 @@ extern "C" fn spmc_render_callback(
                                 if let Some(ref mut src) = *src_opt {
                                     let result = src.convert(&input_samples, samples_to_fill);
                                     // Debug log SRC usage occasionally
-                                    static mut SRC_DEBUG_COUNT: u64 = 0;
-                                    unsafe {
-                                        SRC_DEBUG_COUNT += 1;
-                                        if SRC_DEBUG_COUNT % 200 == 0 {
-                                            println!("🎯 R8BRAIN_SRC [{}→{}]: {} input samples → {} output samples (ratio: {:.3}) [BROADCAST QUALITY]",
-                                                estimated_input_rate, DEFAULT_SAMPLE_RATE, input_samples.len(), result.len(), src.ratio());
-                                        }
-                                    }
+                                    // static mut SRC_DEBUG_COUNT: u64 = 0;
+                                    // unsafe {
+                                    //     SRC_DEBUG_COUNT += 1;
+                                    //     if SRC_DEBUG_COUNT % 200 == 0 {
+                                    //         println!("🎯 R8BRAIN_SRC [{}→{}]: {} input samples → {} output samples (ratio: {:.3}) [BROADCAST QUALITY]",
+                                    //             estimated_input_rate, DEFAULT_SAMPLE_RATE, input_samples.len(), result.len(), src.ratio());
+                                    //     }
+                                    // }
                                     result
                                 } else {
                                     vec![0.0; samples_to_fill]
