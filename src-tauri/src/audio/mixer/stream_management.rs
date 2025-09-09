@@ -48,6 +48,16 @@ pub enum AudioCommand {
         coreaudio_device: crate::audio::types::CoreAudioDevice,
         response_tx: oneshot::Sender<Result<()>>,
     },
+    #[cfg(target_os = "macos")]
+    AddCoreAudioInputStream {
+        device_id: String,
+        coreaudio_device_id: coreaudio_sys::AudioDeviceID,
+        device_name: String,
+        sample_rate: u32,
+        producer: Producer<f32>,
+        input_notifier: Arc<Notify>,
+        response_tx: oneshot::Sender<Result<()>>,
+    },
     UpdateEffects {
         device_id: String,
         effects: AudioEffectsChain,
@@ -439,6 +449,8 @@ pub struct StreamManager {
     streams: HashMap<String, cpal::Stream>,
     #[cfg(target_os = "macos")]
     coreaudio_streams: HashMap<String, crate::audio::devices::CoreAudioOutputStream>,
+    #[cfg(target_os = "macos")]
+    coreaudio_input_streams: HashMap<String, crate::audio::devices::CoreAudioInputStream>,
 }
 
 impl std::fmt::Debug for StreamManager {
@@ -689,6 +701,28 @@ impl IsolatedAudioManager {
                     .await;
                 let _ = response_tx.send(result);
             }
+            #[cfg(target_os = "macos")]
+            AudioCommand::AddCoreAudioInputStream {
+                device_id,
+                coreaudio_device_id,
+                device_name,
+                sample_rate,
+                producer,
+                input_notifier,
+                response_tx,
+            } => {
+                let result = self
+                    .handle_add_coreaudio_input_stream(
+                        device_id,
+                        coreaudio_device_id,
+                        device_name,
+                        sample_rate,
+                        producer,
+                        input_notifier,
+                    )
+                    .await;
+                let _ = response_tx.send(result);
+            }
             AudioCommand::UpdateEffects {
                 device_id,
                 effects,
@@ -861,6 +895,39 @@ impl IsolatedAudioManager {
         Ok(())
     }
 
+    #[cfg(target_os = "macos")]
+    async fn handle_add_coreaudio_input_stream(
+        &mut self,
+        device_id: String,
+        coreaudio_device_id: coreaudio_sys::AudioDeviceID,
+        device_name: String,
+        sample_rate: u32,
+        producer: Producer<f32>,
+        input_notifier: Arc<Notify>,
+    ) -> Result<()> {
+        info!(
+            "🎤 Adding CoreAudio input stream for device '{}' (CoreAudio ID: {})",
+            device_id, coreaudio_device_id
+        );
+
+        // Use StreamManager to create and start the CoreAudio input stream
+        self.stream_manager.add_coreaudio_input_stream(
+            device_id.clone(),
+            coreaudio_device_id,
+            device_name,
+            sample_rate,
+            producer,
+            input_notifier,
+        )?;
+
+        self.metrics.input_streams = self.input_streams.len();
+        info!(
+            "✅ CoreAudio input stream added and started for device '{}'",
+            device_id
+        );
+        Ok(())
+    }
+
     fn handle_remove_input_stream(&mut self, device_id: String) -> bool {
         let removed = self.input_streams.remove(&device_id).is_some();
         self.stream_manager.remove_stream(&device_id);
@@ -1018,10 +1085,12 @@ impl StreamManager {
             streams: HashMap::new(),
             #[cfg(target_os = "macos")]
             coreaudio_streams: HashMap::new(),
+            #[cfg(target_os = "macos")]
+            coreaudio_input_streams: HashMap::new(),
         }
     }
 
-    /// Add input stream with RTRB Producer for lock-free audio capture
+    /// Add CPAL input stream with RTRB Producer for lock-free audio capture
     pub fn add_input_stream(
         &mut self,
         device_id: String,
@@ -1183,6 +1252,47 @@ impl StreamManager {
         Ok(())
     }
 
+    /// Add CoreAudio input stream with RTRB Producer for lock-free audio capture
+    #[cfg(target_os = "macos")]
+    pub fn add_coreaudio_input_stream(
+        &mut self,
+        device_id: String,
+        coreaudio_device_id: coreaudio_sys::AudioDeviceID,
+        device_name: String,
+        sample_rate: u32,
+        producer: Producer<f32>, // Owned RTRB Producer for lock-free audio capture
+        input_notifier: Arc<Notify>, // Notification channel for event-driven processing
+    ) -> Result<()> {
+        info!(
+            "🎤 Creating CoreAudio input stream for device '{}' (CoreAudio ID: {}, SR: {}Hz)",
+            device_id, coreaudio_device_id, sample_rate
+        );
+
+        // Create CoreAudio input stream with RTRB producer integration
+        let mut coreaudio_input_stream =
+            crate::audio::devices::CoreAudioInputStream::new_with_rtrb_producer(
+                coreaudio_device_id,
+                device_name.clone(),
+                sample_rate,
+                2, // Stereo channels
+                producer,
+                input_notifier,
+            )?;
+
+        // Start the CoreAudio input stream
+        coreaudio_input_stream.start()?;
+
+        // Store the CoreAudio input stream to prevent it from being dropped
+        self.coreaudio_input_streams
+            .insert(device_id.clone(), coreaudio_input_stream);
+
+        info!(
+            "✅ CoreAudio input stream created and started for device '{}'",
+            device_id
+        );
+        Ok(())
+    }
+
     /// Remove a stream by device ID
     pub fn remove_stream(&mut self, device_id: &str) -> bool {
         let mut removed = false;
@@ -1197,22 +1307,42 @@ impl StreamManager {
             removed = true;
         }
 
-        // Try to remove CoreAudio stream on macOS
+        // Try to remove CoreAudio output stream on macOS
         #[cfg(target_os = "macos")]
         {
             if let Some(mut coreaudio_stream) = self.coreaudio_streams.remove(device_id) {
                 println!(
-                    "Stopping and removing CoreAudio stream for device: {}",
+                    "Stopping and removing CoreAudio output stream for device: {}",
                     device_id
                 );
                 // Explicitly stop the CoreAudio stream before dropping
                 if let Err(e) = coreaudio_stream.stop() {
                     eprintln!(
-                        "Warning: Failed to stop CoreAudio stream {}: {}",
+                        "Warning: Failed to stop CoreAudio output stream {}: {}",
                         device_id, e
                     );
                 }
                 drop(coreaudio_stream);
+                removed = true;
+            }
+        }
+
+        // Try to remove CoreAudio input stream on macOS
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(mut coreaudio_input_stream) = self.coreaudio_input_streams.remove(device_id) {
+                println!(
+                    "Stopping and removing CoreAudio input stream for device: {}",
+                    device_id
+                );
+                // Explicitly stop the CoreAudio input stream before dropping
+                if let Err(e) = coreaudio_input_stream.stop() {
+                    eprintln!(
+                        "Warning: Failed to stop CoreAudio input stream {}: {}",
+                        device_id, e
+                    );
+                }
+                drop(coreaudio_input_stream);
                 removed = true;
             }
         }

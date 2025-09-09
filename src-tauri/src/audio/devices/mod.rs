@@ -23,6 +23,15 @@ pub mod monitor;
 #[cfg(target_os = "macos")]
 pub mod coreaudio_stream;
 
+#[cfg(target_os = "macos")]
+pub mod coreaudio_manager;
+
+#[cfg(target_os = "macos")]
+pub mod coreaudio_converter;
+
+#[cfg(target_os = "macos")]
+pub mod coreaudio_notifications;
+
 // Re-export main public API
 pub use device_manager::AudioDeviceManager;
 
@@ -38,6 +47,23 @@ pub use monitor::{
     stop_device_monitoring, DeviceMonitor, DeviceMonitorConfig, DeviceMonitorStats,
 };
 
-// Re-export existing CoreAudio stream (preserved for backward compatibility)
+// Re-export existing CoreAudio streams (preserved for backward compatibility)
 #[cfg(target_os = "macos")]
-pub use coreaudio_stream::CoreAudioOutputStream;
+pub use coreaudio_stream::{CoreAudioInputStream, CoreAudioOutputStream};
+
+// Re-export comprehensive CoreAudio manager (CPAL replacement)
+#[cfg(target_os = "macos")]
+pub use coreaudio_manager::{CoreAudioDeviceInfo, CoreAudioManager, CoreAudioStreamConfig};
+
+// Re-export CoreAudio format converters
+#[cfg(target_os = "macos")]
+pub use coreaudio_converter::{
+    CoreAudioChannelConverter, CoreAudioFormatConverter, CoreAudioSampleRateConverter,
+    CoreAudioUnifiedConverter,
+};
+
+// Re-export CoreAudio device change notifications
+#[cfg(target_os = "macos")]
+pub use coreaudio_notifications::{
+    CoreAudioDeviceNotifier, DeviceChangeEvent, DeviceChangeListener,
+};
