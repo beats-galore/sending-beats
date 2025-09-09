@@ -23,14 +23,9 @@ pub mod monitor;
 #[cfg(target_os = "macos")]
 pub mod coreaudio_stream;
 
+// CoreAudio input stream as alternative to CPAL (not a full replacement)
 #[cfg(target_os = "macos")]
-pub mod coreaudio_manager;
-
-#[cfg(target_os = "macos")]
-pub mod coreaudio_converter;
-
-#[cfg(target_os = "macos")]
-pub mod coreaudio_notifications;
+pub mod coreaudio_usage_example;
 
 // Re-export main public API
 pub use device_manager::AudioDeviceManager;
@@ -51,19 +46,4 @@ pub use monitor::{
 #[cfg(target_os = "macos")]
 pub use coreaudio_stream::{CoreAudioInputStream, CoreAudioOutputStream};
 
-// Re-export comprehensive CoreAudio manager (CPAL replacement)
-#[cfg(target_os = "macos")]
-pub use coreaudio_manager::{CoreAudioDeviceInfo, CoreAudioManager, CoreAudioStreamConfig};
-
-// Re-export CoreAudio format converters
-#[cfg(target_os = "macos")]
-pub use coreaudio_converter::{
-    CoreAudioChannelConverter, CoreAudioFormatConverter, CoreAudioSampleRateConverter,
-    CoreAudioUnifiedConverter,
-};
-
-// Re-export CoreAudio device change notifications
-#[cfg(target_os = "macos")]
-pub use coreaudio_notifications::{
-    CoreAudioDeviceNotifier, DeviceChangeEvent, DeviceChangeListener,
-};
+// CoreAudio input streams work as CPAL alternatives, using existing audio pipeline

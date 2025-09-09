@@ -48,10 +48,10 @@ struct AudioCallbackContext {
     spmc_reader: Option<Arc<Mutex<spmcq::Reader<f32>>>>,
 }
 
-/// Context struct for CoreAudio input callbacks - contains RTRB producer for lock-free audio capture
+/// Context struct for CoreAudio input callbacks - matches CPAL architecture exactly
 #[cfg(target_os = "macos")]
 struct AudioInputCallbackContext {
-    rtrb_producer: Option<Arc<Mutex<rtrb::Producer<f32>>>>,
+    rtrb_producer: rtrb::Producer<f32>, // Owned producer, not Arc<Mutex<>> like CPAL
     input_notifier: Arc<tokio::sync::Notify>,
     device_name: String,
     audio_unit: AudioUnit, // Store AudioUnit for AudioUnitRender calls
@@ -918,7 +918,7 @@ impl CoreAudioInputStream {
 
         // Step 7: Set up input callback with AudioInputCallbackContext
         let context = AudioInputCallbackContext {
-            rtrb_producer: self.rtrb_producer.clone(),
+            rtrb_producer: self.rtrb_producer.take().unwrap(), // Move producer ownership to callback context, just like CPAL
             input_notifier: self.input_notifier.clone(),
             device_name: self.device_name.clone(),
             audio_unit,
@@ -1086,7 +1086,7 @@ extern "C" fn coreaudio_input_callback(
 
     // Catch any panic and return error instead of crashing
     let result = std::panic::catch_unwind(|| {
-        // Convert the reference back to our context
+        // Convert the reference back to our context (mutable for producer access)
         let context_ptr = in_ref_con as *mut AudioInputCallbackContext;
 
         // Double-check pointer validity
@@ -1094,81 +1094,73 @@ extern "C" fn coreaudio_input_callback(
             return -1;
         }
 
-        let context = unsafe { &*context_ptr };
+        let context = unsafe { &mut *context_ptr };
         let frames_needed = in_number_frames as usize;
+        let total_samples = frames_needed * context.channels as usize;
+        
+        // Create AudioBufferList for capturing input audio
+        let mut audio_data = vec![0.0f32; total_samples];
+        let mut audio_buffer_list = AudioBufferList {
+            mNumberBuffers: 1,
+            mBuffers: [coreaudio_sys::AudioBuffer {
+                mNumberChannels: context.channels as u32,
+                mDataByteSize: (total_samples * std::mem::size_of::<f32>()) as u32,
+                mData: audio_data.as_mut_ptr() as *mut c_void,
+            }],
+        };
 
-        // **REAL COREAUDIO CAPTURE**: Pull audio from CoreAudio hardware and push to RTRB ring buffer
-        if let Some(ref rtrb_producer_arc) = context.rtrb_producer {
-            if let Ok(mut producer) = rtrb_producer_arc.try_lock() {
-                let total_samples = frames_needed * context.channels as usize;
-                
-                // Create AudioBufferList for capturing input audio
-                let mut audio_data = vec![0.0f32; total_samples];
-                let mut audio_buffer_list = AudioBufferList {
-                    mNumberBuffers: 1,
-                    mBuffers: [coreaudio_sys::AudioBuffer {
-                        mNumberChannels: context.channels as u32,
-                        mDataByteSize: (total_samples * std::mem::size_of::<f32>()) as u32,
-                        mData: audio_data.as_mut_ptr() as *mut c_void,
-                    }],
-                };
+        // **CRITICAL**: AudioUnitRender pulls REAL audio from input device
+        let mut render_flags: AudioUnitRenderActionFlags = 0;
+        let render_status = unsafe {
+            AudioUnitRender(
+                context.audio_unit,
+                &mut render_flags,
+                in_time_stamp,
+                in_bus_number, // Input bus number from callback
+                in_number_frames,
+                &mut audio_buffer_list as *mut AudioBufferList,
+            )
+        };
 
-                // **CRITICAL**: AudioUnitRender pulls REAL audio from input device
-                let mut render_flags: AudioUnitRenderActionFlags = 0;
-                let render_status = unsafe {
-                    AudioUnitRender(
-                        context.audio_unit,
-                        &mut render_flags,
-                        in_time_stamp,
-                        in_bus_number, // Input bus number from callback
-                        in_number_frames,
-                        &mut audio_buffer_list as *mut AudioBufferList,
-                    )
-                };
+        let samples = if render_status == 0 {
+            // SUCCESS: Got real audio from hardware
+            audio_data
+        } else {
+            // FALLBACK: AudioUnitRender failed, use silence to prevent audio dropouts
+            println!("⚠️ AudioUnitRender failed with status {}, using silence", render_status);
+            vec![0.0f32; total_samples]
+        };
 
-                let samples = if render_status == 0 {
-                    // SUCCESS: Got real audio from hardware
-                    audio_data
-                } else {
-                    // FALLBACK: AudioUnitRender failed, use silence to prevent audio dropouts
-                    println!("⚠️ AudioUnitRender failed with status {}, using silence", render_status);
-                    vec![0.0f32; total_samples]
-                };
+        // **EXACTLY MATCH CPAL**: Push captured samples to RTRB ring buffer (identical to CPAL f32 callback)
+        let mut samples_written = 0;
+        let mut samples_dropped = 0;
 
-                // Push captured samples to RTRB ring buffer
-                let mut samples_written = 0;
-                let mut samples_dropped = 0;
-
-                for &sample in samples.iter() {
-                    match producer.push(sample) {
-                        Ok(()) => samples_written += 1,
-                        Err(_) => {
-                            samples_dropped += 1;
-                            // Ring buffer full - skip this sample (prevents blocking)
-                        }
-                    }
+        for &sample in samples.iter() {
+            match context.rtrb_producer.push(sample) {
+                Ok(()) => samples_written += 1,
+                Err(_) => {
+                    samples_dropped += 1;
+                    // Ring buffer full - skip this sample (prevents blocking)
                 }
-
-                // **EVENT-DRIVEN NOTIFICATION**: Always notify async processing thread when hardware callback runs
-                context.input_notifier.notify_one();
-
-                // Debug logging for audio capture
-                static mut INPUT_CAPTURE_COUNT: u64 = 0;
-                unsafe {
-                    INPUT_CAPTURE_COUNT += 1;
-                    if INPUT_CAPTURE_COUNT % 100 == 0 || INPUT_CAPTURE_COUNT < 10 {
-                        let peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                        let rms = (samples.iter().map(|&s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
-                        println!("🎤 COREAUDIO_INPUT [{}]: Captured {} frames ({}), wrote: {}, dropped: {}, peak: {:.4}, rms: {:.4} ⚡NOTIFIED",
-                            context.device_name, frames_needed, INPUT_CAPTURE_COUNT, samples_written, samples_dropped, peak, rms);
-                    }
-                }
-
-                return 0; // Success
             }
         }
 
-        0 // Success even if we couldn't process
+        // **TRUE EVENT-DRIVEN**: Always notify async processing thread when hardware callback runs (EXACTLY like CPAL)
+        context.input_notifier.notify_one();
+
+        // Debug logging for audio capture (same pattern as CPAL)
+        static mut INPUT_CAPTURE_COUNT: u64 = 0;
+        unsafe {
+            INPUT_CAPTURE_COUNT += 1;
+            if INPUT_CAPTURE_COUNT % 100 == 0 || INPUT_CAPTURE_COUNT < 10 {
+                let peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                let rms = (samples.iter().map(|&s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
+                println!("🎤 COREAUDIO_INPUT [{}]: Captured {} frames ({}), wrote: {}, dropped: {}, peak: {:.4}, rms: {:.4} ⚡NOTIFIED",
+                    context.device_name, frames_needed, INPUT_CAPTURE_COUNT, samples_written, samples_dropped, peak, rms);
+            }
+        }
+
+        0 // Success
     });
 
     // If panic occurred, return error code

@@ -49,11 +49,12 @@ pub enum AudioCommand {
         response_tx: oneshot::Sender<Result<()>>,
     },
     #[cfg(target_os = "macos")]
-    AddCoreAudioInputStream {
+    AddCoreAudioInputStreamAlternative {
         device_id: String,
         coreaudio_device_id: coreaudio_sys::AudioDeviceID,
         device_name: String,
         sample_rate: u32,
+        channels: u16,
         producer: Producer<f32>,
         input_notifier: Arc<Notify>,
         response_tx: oneshot::Sender<Result<()>>,
@@ -702,21 +703,23 @@ impl IsolatedAudioManager {
                 let _ = response_tx.send(result);
             }
             #[cfg(target_os = "macos")]
-            AudioCommand::AddCoreAudioInputStream {
+            AudioCommand::AddCoreAudioInputStreamAlternative {
                 device_id,
                 coreaudio_device_id,
                 device_name,
                 sample_rate,
+                channels,
                 producer,
                 input_notifier,
                 response_tx,
             } => {
                 let result = self
-                    .handle_add_coreaudio_input_stream(
+                    .handle_add_coreaudio_input_stream_alternative(
                         device_id,
                         coreaudio_device_id,
                         device_name,
                         sample_rate,
+                        channels,
                         producer,
                         input_notifier,
                     )
@@ -896,33 +899,35 @@ impl IsolatedAudioManager {
     }
 
     #[cfg(target_os = "macos")]
-    async fn handle_add_coreaudio_input_stream(
+    async fn handle_add_coreaudio_input_stream_alternative(
         &mut self,
         device_id: String,
         coreaudio_device_id: coreaudio_sys::AudioDeviceID,
         device_name: String,
         sample_rate: u32,
+        channels: u16,
         producer: Producer<f32>,
         input_notifier: Arc<Notify>,
     ) -> Result<()> {
         info!(
-            "🎤 Adding CoreAudio input stream for device '{}' (CoreAudio ID: {})",
+            "🎤 Adding CoreAudio input stream (CPAL alternative) for device '{}' (CoreAudio ID: {})",
             device_id, coreaudio_device_id
         );
 
-        // Use StreamManager to create and start the CoreAudio input stream
-        self.stream_manager.add_coreaudio_input_stream(
+        // Use StreamManager to create and start the CoreAudio input stream as CPAL alternative
+        self.stream_manager.add_coreaudio_input_stream_alternative(
             device_id.clone(),
             coreaudio_device_id,
             device_name,
             sample_rate,
+            channels,
             producer,
             input_notifier,
         )?;
 
         self.metrics.input_streams = self.input_streams.len();
         info!(
-            "✅ CoreAudio input stream added and started for device '{}'",
+            "✅ CoreAudio input stream (CPAL alternative) added and started for device '{}'",
             device_id
         );
         Ok(())
@@ -1252,29 +1257,30 @@ impl StreamManager {
         Ok(())
     }
 
-    /// Add CoreAudio input stream with RTRB Producer for lock-free audio capture
+    /// Add CoreAudio input stream as alternative to CPAL (same interface, different backend)
     #[cfg(target_os = "macos")]
-    pub fn add_coreaudio_input_stream(
+    pub fn add_coreaudio_input_stream_alternative(
         &mut self,
         device_id: String,
         coreaudio_device_id: coreaudio_sys::AudioDeviceID,
         device_name: String,
         sample_rate: u32,
-        producer: Producer<f32>, // Owned RTRB Producer for lock-free audio capture
-        input_notifier: Arc<Notify>, // Notification channel for event-driven processing
+        channels: u16,
+        producer: Producer<f32>, // Owned RTRB Producer (exactly like CPAL)
+        input_notifier: Arc<Notify>, // Event notification (exactly like CPAL)
     ) -> Result<()> {
         info!(
-            "🎤 Creating CoreAudio input stream for device '{}' (CoreAudio ID: {}, SR: {}Hz)",
-            device_id, coreaudio_device_id, sample_rate
+            "🎤 Creating CoreAudio input stream (CPAL alternative) for device '{}' (ID: {}, SR: {}Hz, CH: {})",
+            device_id, coreaudio_device_id, sample_rate, channels
         );
 
-        // Create CoreAudio input stream with RTRB producer integration
+        // Create CoreAudio input stream with RTRB producer integration (mirrors CPAL exactly)
         let mut coreaudio_input_stream =
             crate::audio::devices::CoreAudioInputStream::new_with_rtrb_producer(
                 coreaudio_device_id,
                 device_name.clone(),
                 sample_rate,
-                2, // Stereo channels
+                channels,
                 producer,
                 input_notifier,
             )?;
@@ -1287,7 +1293,7 @@ impl StreamManager {
             .insert(device_id.clone(), coreaudio_input_stream);
 
         info!(
-            "✅ CoreAudio input stream created and started for device '{}'",
+            "✅ CoreAudio input stream (CPAL alternative) created and started for device '{}'",
             device_id
         );
         Ok(())
