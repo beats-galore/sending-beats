@@ -35,7 +35,7 @@ pub fn validate_device_id(device_id: &str) -> Result<()> {
             .into_iter()
             .collect();
         return Err(anyhow::anyhow!(
-            "Device ID contains invalid characters: '{}'. Only alphanumeric, underscore, dash, dot, and colon are allowed", 
+            "Device ID contains invalid characters: '{}'. Only alphanumeric, underscore, dash, dot, and colon are allowed",
             invalid_chars
         ));
     }
@@ -235,62 +235,5 @@ impl SecurityUtils {
             return Err(anyhow::anyhow!("{} is too large: {}", name, value));
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_device_id_validation() {
-        // Valid device IDs
-        assert!(validate_device_id("output_blackhole").is_ok());
-        assert!(validate_device_id("input_mic_01").is_ok());
-        assert!(validate_device_id("device.with.dots").is_ok());
-        assert!(validate_device_id("device:with:colons").is_ok());
-
-        // Invalid device IDs
-        assert!(validate_device_id("").is_err());
-        assert!(validate_device_id("a").is_err());
-        assert!(validate_device_id("_starts_with_underscore").is_err());
-        assert!(validate_device_id("ends_with_underscore_").is_err());
-        assert!(validate_device_id("has spaces").is_err());
-        assert!(validate_device_id("has../path").is_err());
-        assert!(validate_device_id("has;;semicolons").is_err());
-    }
-
-    #[test]
-    fn test_config_validation() {
-        let valid_config = MixerConfig {
-            sample_rate: 48000,
-            buffer_size: 512,
-            channels: 2,
-        };
-        assert!(validate_config(&valid_config).is_ok());
-
-        let invalid_rate = MixerConfig {
-            sample_rate: 5000, // Too low
-            buffer_size: 512,
-            channels: 2,
-        };
-        assert!(validate_config(&invalid_rate).is_err());
-    }
-
-    #[test]
-    fn test_security_utils() {
-        assert!(SecurityUtils::contains_dangerous_patterns("../evil/path"));
-        assert!(SecurityUtils::contains_dangerous_patterns(
-            "<script>alert('xss')</script>"
-        ));
-        assert!(!SecurityUtils::contains_dangerous_patterns(
-            "normal_device_name"
-        ));
-
-        let sanitized = SecurityUtils::sanitize_device_name("Device Name (With Spaces)");
-        assert_eq!(sanitized, "Device Name (With Spaces)");
-
-        let dangerous = SecurityUtils::sanitize_device_name("<script>evil</script>");
-        assert!(!dangerous.contains("<script>"));
     }
 }

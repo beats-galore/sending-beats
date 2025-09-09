@@ -12,6 +12,7 @@ use coreaudio_sys::{
     AudioTimeStamp, AudioUnit, AudioUnitInitialize, AudioUnitRenderActionFlags,
     AudioUnitSetProperty, AudioUnitUninitialize, OSStatus,
 };
+use crate::types::{COMMON_SAMPLE_RATES_HZ, DEFAULT_SAMPLE_RATE};
 use std::os::raw::c_void;
 use std::ptr;
 use std::sync::{
@@ -256,10 +257,10 @@ impl CoreAudioOutputStream {
 
         // **SPMC INTEGRATION**: Use appropriate callback based on whether SPMC reader is available
         let callback = AURenderCallbackStruct {
-            inputProc: if self.spmc_reader.is_some() { 
+            inputProc: if self.spmc_reader.is_some() {
                 Some(spmc_render_callback) // **NEW**: Use SPMC callback for real audio
-            } else { 
-                Some(render_callback) // **FALLBACK**: Use original callback  
+            } else {
+                Some(render_callback) // **FALLBACK**: Use original callback
             },
             inputProcRefCon: context_ptr as *mut c_void,
         };
@@ -583,7 +584,7 @@ extern "C" fn spmc_render_callback(
                         thread_local! {
                             static SRC: RefCell<Option<R8BrainSRC>> = RefCell::new(None);
                         }
-                        
+
                         // Collect all available samples from SPMC queue
                         let mut input_samples = Vec::new();
                         loop {
@@ -606,71 +607,69 @@ extern "C" fn spmc_render_callback(
                                 }
                             }
                         }
-                        
+
                         let (samples_read, silence_filled) = if !input_samples.is_empty() {
-                            // **BYPASS TEST**: Skip sample rate conversion to isolate frequency response issues
-                            let converted_samples = {
-                                // Estimate input sample rate for logging
+                            // Dynamic SRC initialization - detect sample rate from input samples
+                            let converted_samples = SRC.with(|src_cell| {
+                                let mut src_opt = src_cell.borrow_mut();
+
+                                // Estimate input sample rate based on sample count ratios
                                 let estimated_input_rate = {
-                                    let common_rates = [8000.0, 11025.0, 16000.0, 22050.0, 44100.0, 48000.0, 88200.0, 96000.0];
-                                    
+
+
+                                    // Heuristic: ratio of output samples needed vs input samples available
                                     let ratio_hint = samples_to_fill as f32 / input_samples.len() as f32;
-                                    let estimated_output_rate = 48000.0;
+                                    // Assume reasonable output rate for CoreAudio (usually 48kHz)
+                                    let estimated_output_rate = DEFAULT_SAMPLE_RATE as f32;
                                     let estimated_input_rate = estimated_output_rate / ratio_hint;
-                                    
-                                    common_rates.iter()
+
+                                    // Find closest common sample rate
+                                    COMMON_SAMPLE_RATES_HZ.iter()
                                         .min_by(|&a, &b| {
                                             (a - estimated_input_rate).abs().partial_cmp(&(b - estimated_input_rate).abs()).unwrap()
                                         })
                                         .copied()
-                                        .unwrap_or(44100.0)
+                                        .unwrap_or(DEFAULT_SAMPLE_RATE as f32)
                                 };
-                                
-                                // **TESTING BYPASS**: Direct copy without any filtering to test if SRC causes bass loss
-                                static mut BYPASS_COUNT: u64 = 0;
-                                unsafe {
-                                    BYPASS_COUNT += 1;
-                                    if BYPASS_COUNT % 200 == 0 {
-                                        println!("🔄 BYPASS MODE [Est {}Hz→48kHz]: Direct copy {} input → {} output samples (NO FILTERING)", 
-                                            estimated_input_rate, input_samples.len(), samples_to_fill);
+
+                                // Reinitialize SRC if rate changed significantly
+                                let needs_new_src = if let Some(ref src) = *src_opt {
+                                    (src.ratio() - (crate::types::DEFAULT_SAMPLE_RATE as f32 / estimated_input_rate)).abs() > 0.01
+                                } else {
+                                    true
+                                };
+
+                                if needs_new_src {
+                                    match R8BrainSRC::new(estimated_input_rate, DEFAULT_SAMPLE_RATE as f32) {
+                                        Ok(src) => *src_opt = Some(src),
+                                        Err(_) => *src_opt = None, // Fallback to silence if SRC creation fails
                                     }
                                 }
-                                
-                                // Simple direct copy/repeat without any frequency domain processing
-                                let mut result = Vec::with_capacity(samples_to_fill);
-                                let input_len = input_samples.len();
-                                
-                                if input_len == samples_to_fill {
-                                    // Exact match - direct copy
-                                    result.extend_from_slice(&input_samples);
-                                } else if input_len > samples_to_fill {
-                                    // Downsample by taking every nth sample
-                                    for i in 0..samples_to_fill {
-                                        let input_idx = (i * input_len) / samples_to_fill;
-                                        result.push(input_samples[input_idx]);
-                                    }
-                                } else {
-                                    // Upsample by repeating samples
-                                    for i in 0..samples_to_fill {
-                                        let input_idx = (i * input_len) / samples_to_fill;
-                                        if input_idx < input_len {
-                                            result.push(input_samples[input_idx]);
-                                        } else {
-                                            result.push(0.0);
+
+                                if let Some(ref mut src) = *src_opt {
+                                    let result = src.convert(&input_samples, samples_to_fill);
+                                    // Debug log SRC usage occasionally
+                                    static mut SRC_DEBUG_COUNT: u64 = 0;
+                                    unsafe {
+                                        SRC_DEBUG_COUNT += 1;
+                                        if SRC_DEBUG_COUNT % 200 == 0 {
+                                            println!("🎯 R8BRAIN_SRC [{}→{}]: {} input samples → {} output samples (ratio: {:.3}) [BROADCAST QUALITY]",
+                                                estimated_input_rate, DEFAULT_SAMPLE_RATE, input_samples.len(), result.len(), src.ratio());
                                         }
                                     }
+                                    result
+                                } else {
+                                    vec![0.0; samples_to_fill]
                                 }
-                                
-                                result
-                            };
-                            
+                            });
+
                             // Copy converted samples to output buffer
                             for (i, &sample) in converted_samples.iter().enumerate() {
                                 if i < samples_to_fill {
                                     unsafe { *output_data.add(i) = sample };
                                 }
                             }
-                            
+
                             (converted_samples.len().min(samples_to_fill), 0)
                         } else {
                             // No input samples available - fill with silence
@@ -692,7 +691,7 @@ extern "C" fn spmc_render_callback(
                                     "CoreAudio", samples_to_fill, SPMC_PLAYBACK_COUNT, samples_read, silence_filled, peak);
                             }
                         }
-                        
+
                         return 0; // Success
                     }
                 }

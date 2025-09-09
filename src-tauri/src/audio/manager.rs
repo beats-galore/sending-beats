@@ -253,7 +253,7 @@ impl ApplicationAudioManager {
         *self.permission_granted.read().await
     }
 
-    /// Register virtual stream synchronously BEFORE capture starts  
+    /// Register virtual stream synchronously BEFORE capture starts
     async fn register_virtual_input_stream_sync(
         &self,
         virtual_device_id: String,
@@ -271,7 +271,7 @@ impl ApplicationAudioManager {
                 Arc::new(crate::audio::mixer::stream_management::AudioInputStream::new(
                     virtual_device_id.clone(),
                     channel_name.clone(),
-                    48000,
+                    crate::types::DEFAULT_SAMPLE_RATE,
                 )?);
             // Drop before await to avoid Send+Sync issues
         }
@@ -297,10 +297,10 @@ impl ApplicationAudioManager {
             "🔗 SYNC: [STUBBED] Adding virtual stream {} to global mixer registry (command channel architecture)",
             device_id
         );
-        
+
         // TODO: Implement command channel integration for virtual streams
         warn!("STUBBED: add_to_global_mixer_sync - implement command channel communication");
-        
+
         Ok(())
     }
 
@@ -344,7 +344,7 @@ impl ApplicationAudioManager {
                     buffer.extend_from_slice(&audio_samples);
 
                     // Prevent buffer overflow - same logic as regular input streams
-                    let max_buffer_size = 48000; // 1 second at 48kHz
+                    let max_buffer_size = crate::types::DEFAULT_SAMPLE_RATE as usize; // 1 second at 48kHz
                     if buffer.len() > max_buffer_size * 2 {
                         let keep_size = max_buffer_size;
                         let buffer_len = buffer.len();
@@ -354,7 +354,7 @@ impl ApplicationAudioManager {
 
                     // Log periodically
                     if sample_count % 4800 == 0 || (peak_level > 0.01 && sample_count % 1000 == 0) {
-                        info!("🌉 BRIDGE [{}]: {} samples bridged to mixer, peak: {:.4}, rms: {:.4}, buffer: {} samples", 
+                        info!("🌉 BRIDGE [{}]: {} samples bridged to mixer, peak: {:.4}, rms: {:.4}, buffer: {} samples",
                             virtual_device_id_for_task, audio_samples.len(), peak_level, rms_level, buffer.len());
                     }
                 } else {
@@ -434,13 +434,13 @@ impl ApplicationAudioManager {
             "🔍 [STUBBED] Looking up virtual input stream for device: {} (command channel architecture)",
             device_id
         );
-        
+
         // TODO: Implement command channel lookup for virtual streams
         warn!("STUBBED: get_virtual_input_stream - implement command channel communication");
         None
     }
 
-    /// Get all registered virtual input streams (STUBBED for command channel architecture)  
+    /// Get all registered virtual input streams (STUBBED for command channel architecture)
     pub fn get_virtual_input_streams() -> HashMap<String, ()> {
         // STUBBED: Return empty HashMap for command channel architecture
         warn!("STUBBED: get_virtual_input_streams - implement command channel communication");

@@ -21,7 +21,7 @@ impl Default for FilePlayerConfig {
     fn default() -> Self {
         Self {
             name: "Media Player".to_string(),
-            sample_rate: 48000,
+            sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
             channels: 2,
             auto_play_next: true,
             volume: 1.0,
@@ -105,7 +105,7 @@ impl FilePlayerManager {
                     is_input: true,
                     is_output: false,
                     is_default: false,
-                    supported_sample_rates: vec![48000, 44100], // Common rates
+                    supported_sample_rates: crate::types::SUPPORTED_SAMPLE_RATES_HZ.to_vec(), // Common rates
                     supported_channels: vec![2],                // Stereo
                     host_api: "file_player".to_string(),
                 }

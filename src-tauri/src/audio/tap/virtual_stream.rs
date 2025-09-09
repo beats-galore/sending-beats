@@ -178,7 +178,7 @@ impl ApplicationAudioInputBridge {
                     sync_buffer.extend_from_slice(&samples);
 
                     // Prevent buffer overflow - same logic as regular input streams
-                    let max_buffer_size = 48000; // 1 second at 48kHz
+                    let max_buffer_size = crate::types::DEFAULT_SAMPLE_RATE as usize; // 1 second at 48kHz
                     if sync_buffer.len() > max_buffer_size * 2 {
                         let keep_size = max_buffer_size;
                         let buffer_len = sync_buffer.len();

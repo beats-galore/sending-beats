@@ -1,4 +1,5 @@
 use super::icecast_source::{AudioCodec, AudioFormat};
+use crate::types::DEFAULT_SAMPLE_RATE;
 
 #[derive(Debug, Clone)]
 pub struct StreamingServiceConfig {
@@ -45,7 +46,7 @@ impl Default for StreamingServiceConfig {
             stream_url: "https://sendinbeats.com".to_string(),
             is_public: true,
             audio_format: AudioFormat {
-                sample_rate: 48000,
+                sample_rate: DEFAULT_SAMPLE_RATE,
                 channels: 2,
                 bitrate: 192,
                 codec: AudioCodec::Mp3,

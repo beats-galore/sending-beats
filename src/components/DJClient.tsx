@@ -1,10 +1,22 @@
 // Professional DJ Streaming Client - Modernized with Mantine
-import { Box, Stack, Group, Text, Title, Alert, Grid, LoadingOverlay, Badge, ScrollArea } from '@mantine/core';
+import {
+  Box,
+  Stack,
+  Group,
+  Text,
+  Title,
+  Alert,
+  Grid,
+  LoadingOverlay,
+  Badge,
+  ScrollArea,
+} from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { IconAlertCircle, IconWifi, IconWifiOff } from '@tabler/icons-react';
 import { memo, useState, useRef, useEffect, useCallback } from 'react';
 
 import { useStreamingStatus, useStreamingControls } from '../hooks';
+import { DEFAULT_SAMPLE_RATE_HZ, type SampleRate } from '../utils/constants';
 
 import {
   StreamStatusCard,
@@ -33,7 +45,7 @@ type StreamConfig = {
   username: string;
   password: string;
   bitrate: number;
-  sample_rate: number;
+  sample_rate: SampleRate;
   channels: number;
 };
 
@@ -63,7 +75,7 @@ const useStyles = createStyles((theme) => ({
     display: 'flex',
     flexDirection: 'column',
   },
-  
+
   scrollContent: {
     flex: 1,
     paddingRight: theme.spacing.sm,
@@ -91,8 +103,8 @@ const DJClient = memo(() => {
   const [selectedDevice, setSelectedDevice] = useState<string>('');
   const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([]);
   const [streamSettings, setStreamSettings] = useState<StreamSettings>({
-    bitrate: streamingStatus?.bitrate_info.current_bitrate || 192,
-    sampleRate: 48000,
+    bitrate: streamingStatus?.bitrate_info.current_bitrate ?? 192,
+    sampleRate: DEFAULT_SAMPLE_RATE_HZ,
     channels: 2,
   });
 
@@ -103,7 +115,7 @@ const DJClient = memo(() => {
     username: 'source',
     password: '',
     bitrate: 192,
-    sample_rate: 48000,
+    sample_rate: DEFAULT_SAMPLE_RATE_HZ,
     channels: 2,
   });
   const [metadata, setMetadata] = useState({
@@ -427,83 +439,82 @@ const DJClient = memo(() => {
               </Alert>
             )}
 
-          <StreamStatusCard
-            streamStatus={
-              legacyStreamStatus || {
-                is_connected: isConnected,
-                is_streaming: isStreaming,
-                current_listeners: 0,
-                peak_listeners: 0,
-                stream_duration: streamingStatus?.uptime_seconds || 0,
-                bitrate: streamingStatus?.bitrate_info.current_bitrate || 0,
-                error_message: error || undefined,
+            <StreamStatusCard
+              streamStatus={
+                legacyStreamStatus || {
+                  is_connected: isConnected,
+                  is_streaming: isStreaming,
+                  current_listeners: 0,
+                  peak_listeners: 0,
+                  stream_duration: streamingStatus?.uptime_seconds || 0,
+                  bitrate: streamingStatus?.bitrate_info.current_bitrate || 0,
+                  error_message: error || undefined,
+                }
               }
-            }
-          />
-
-          {/* New Advanced Diagnostics */}
-          {streamingStatus && (
-            <StreamDiagnosticsCard
-              connectionDiagnostics={streamingStatus.connection_diagnostics}
-              bitrateInfo={streamingStatus.bitrate_info}
-              audioStats={streamingStatus.audio_stats}
             />
-          )}
 
-          {/* Variable Bitrate Configuration */}
-          {streamingStatus && (
-            <VariableBitrateCard
-              bitrateInfo={streamingStatus.bitrate_info}
-              onVariableBitrateChange={handleVariableBitrateChange}
-              disabled={!isConnected}
+            {/* New Advanced Diagnostics */}
+            {streamingStatus && (
+              <StreamDiagnosticsCard
+                connectionDiagnostics={streamingStatus.connection_diagnostics}
+                bitrateInfo={streamingStatus.bitrate_info}
+                audioStats={streamingStatus.audio_stats}
+              />
+            )}
+
+            {/* Variable Bitrate Configuration */}
+            {streamingStatus && (
+              <VariableBitrateCard
+                bitrateInfo={streamingStatus.bitrate_info}
+                onVariableBitrateChange={handleVariableBitrateChange}
+                disabled={!isConnected}
+              />
+            )}
+
+            <Grid>
+              {/* Stream Configuration */}
+              <Grid.Col span={{ base: 12, md: 6 }}>
+                <StreamConfigurationCard
+                  streamConfig={streamConfig}
+                  streamSettings={streamSettings}
+                  availableBitrates={availableBitrates}
+                  isConnected={isConnected}
+                  isConnecting={isConnecting}
+                  onConfigChange={setStreamConfig}
+                  onSettingsChange={(settings) => {
+                    setStreamSettings(settings);
+                    if (settings.bitrate !== streamSettings.bitrate) {
+                      handleBitrateChange(settings.bitrate);
+                    }
+                  }}
+                  onConnect={connectToStream}
+                  onDisconnect={disconnectFromStream}
+                />
+              </Grid.Col>
+
+              {/* Audio Controls */}
+              <Grid.Col span={{ base: 12, md: 6 }}>
+                <AudioControlsCard
+                  audioDevices={audioDevices}
+                  selectedDevice={selectedDevice}
+                  audioLevel={audioLevel}
+                  isConnected={isConnected}
+                  isStreaming={isStreaming}
+                  isRefreshingDevices={isRefreshingDevices}
+                  onDeviceChange={setSelectedDevice}
+                  onRefreshDevices={getAudioDevices}
+                  onStartStreaming={startStreaming}
+                  onStopStreaming={stopStreaming}
+                />
+              </Grid.Col>
+            </Grid>
+
+            {/* Metadata Section */}
+            <MetadataCard
+              metadata={metadata}
+              onMetadataChange={setMetadata}
+              onUpdateMetadata={updateMetadata}
             />
-          )}
-
-          <Grid>
-            {/* Stream Configuration */}
-            <Grid.Col span={{ base: 12, md: 6 }}>
-              <StreamConfigurationCard
-                streamConfig={streamConfig}
-                streamSettings={streamSettings}
-                availableBitrates={availableBitrates}
-                isConnected={isConnected}
-                isConnecting={isConnecting}
-                onConfigChange={setStreamConfig}
-                onSettingsChange={(settings) => {
-                  setStreamSettings(settings);
-                  if (settings.bitrate !== streamSettings.bitrate) {
-                    handleBitrateChange(settings.bitrate);
-                  }
-                }}
-                onConnect={connectToStream}
-                onDisconnect={disconnectFromStream}
-              />
-            </Grid.Col>
-
-            {/* Audio Controls */}
-            <Grid.Col span={{ base: 12, md: 6 }}>
-              <AudioControlsCard
-                audioDevices={audioDevices}
-                selectedDevice={selectedDevice}
-                audioLevel={audioLevel}
-                isConnected={isConnected}
-                isStreaming={isStreaming}
-                isRefreshingDevices={isRefreshingDevices}
-                onDeviceChange={setSelectedDevice}
-                onRefreshDevices={getAudioDevices}
-                onStartStreaming={startStreaming}
-                onStopStreaming={stopStreaming}
-              />
-            </Grid.Col>
-          </Grid>
-
-          {/* Metadata Section */}
-          <MetadataCard
-            metadata={metadata}
-            onMetadataChange={setMetadata}
-            onUpdateMetadata={updateMetadata}
-          />
-
           </Stack>
         </ScrollArea>
       </Box>

@@ -37,7 +37,7 @@ pub async fn initialize_icecast_streaming(
         stream_url: "https://sendinbeats.com".to_string(),
         is_public: true,
         audio_format: AudioFormat {
-            sample_rate: 48000,
+            sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
             channels: 2,
             bitrate,
             codec: AudioCodec::Mp3,

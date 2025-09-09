@@ -1,3 +1,5 @@
+import { DEFAULT_SAMPLE_RATE_HZ } from '../utils';
+
 // Core audio types for the Sendin Beats application
 export type AudioDeviceInfo = {
   id: string;
@@ -80,7 +82,7 @@ export const AUDIO_CONSTANTS = {
   MAX_GAIN_DB: 12,
   MIN_PAN: -1,
   MAX_PAN: 1,
-  DEFAULT_SAMPLE_RATE: 48000,
+  DEFAULT_SAMPLE_RATE: DEFAULT_SAMPLE_RATE_HZ,
   DEFAULT_BUFFER_SIZE: 512,
   VU_UPDATE_INTERVAL: 100, // ms
 } as const;

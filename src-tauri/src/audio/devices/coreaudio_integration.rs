@@ -208,7 +208,7 @@ impl CoreAudioIntegration {
                 is_input: true,
                 is_output: false,
                 is_default: is_default_input,
-                supported_sample_rates: vec![48000, 44100], // Prioritize 48kHz to match system default
+                supported_sample_rates: crate::types::SUPPORTED_SAMPLE_RATES_HZ.to_vec(), // Prioritize 48kHz to match system default
                 supported_channels: vec![2],                // Assume stereo
                 host_api: "CoreAudio (Direct)".to_string(),
             });
@@ -228,7 +228,7 @@ impl CoreAudioIntegration {
                 is_input: false,
                 is_output: true,
                 is_default: is_default_output,
-                supported_sample_rates: vec![48000, 44100], // Prioritize 48kHz to match system default
+                supported_sample_rates: crate::types::SUPPORTED_SAMPLE_RATES_HZ.to_vec(), // Prioritize 48kHz to match system default
                 supported_channels: vec![2],                // Assume stereo
                 host_api: "CoreAudio (Direct)".to_string(),
             });
@@ -429,7 +429,7 @@ impl CoreAudioIntegration {
                 Ok(AudioDeviceHandle::CoreAudio(CoreAudioDevice {
                     device_id,
                     name: device_info.name.clone(),
-                    sample_rate: 48000, // Match system default (was 44100)
+                    sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
                     channels: 2,        // Default stereo
                     stream: None,       // Stream will be created when needed
                 }))

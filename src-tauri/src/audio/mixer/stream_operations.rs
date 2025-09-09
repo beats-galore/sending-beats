@@ -15,7 +15,7 @@ use super::mixer_core::VirtualMixerHandle;
 /// Calculate optimal target latency based on sample rate
 /// Professional audio target: 1ms for high sample rates (48kHz+), 10ms for lower rates
 pub fn calculate_target_latency_ms(sample_rate: u32) -> f32 {
-    if sample_rate >= 48000 { 5.0 } else { 10.0 }
+    if sample_rate >= crate::types::DEFAULT_SAMPLE_RATE { 5.0 } else { 10.0 }
 }
 use super::stream_management::{
     AudioInputStream, AudioOutputStream, StreamInfo,
@@ -831,7 +831,7 @@ impl VirtualMixer {
                     "🔧 SAMPLE RATE FIX: Found active input device: {}",
                     device_id
                 );
-                return 48000; // Default hardware sample rate
+                return crate::types::DEFAULT_SAMPLE_RATE; // Default hardware sample rate
             }
         }
 

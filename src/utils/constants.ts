@@ -1,10 +1,15 @@
 // Application constants for the mixer interface
 
+export const SampleRate = [44100, 48000, 88200, 96000] as const;
+export type SampleRate = (typeof SampleRate)[number];
+
+export const DEFAULT_SAMPLE_RATE_HZ: SampleRate = 48000;
+
 // Audio processing constants
 export const AUDIO = {
   // Sample rates
-  SAMPLE_RATES: [44100, 48000, 88200, 96000] as const,
-  DEFAULT_SAMPLE_RATE: 48000,
+  SAMPLE_RATES: SampleRate,
+  DEFAULT_SAMPLE_RATE: DEFAULT_SAMPLE_RATE_HZ,
 
   // Buffer sizes
   BUFFER_SIZES: [128, 256, 512, 1024, 2048] as const,

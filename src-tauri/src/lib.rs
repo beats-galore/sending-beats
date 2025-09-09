@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod db;
 pub mod log;
+pub mod types;
 
 #[cfg(target_os = "macos")]
 pub mod permissions;
@@ -151,7 +152,7 @@ pub fn run() {
 
         // Create command channel for isolated audio thread communication
         let (audio_command_tx, audio_command_rx) = tokio::sync::mpsc::channel::<crate::audio::mixer::stream_management::AudioCommand>(100);
-        
+
         // Start IsolatedAudioManager in a dedicated thread with its own runtime
         // This avoids Send+Sync issues with CPAL streams on macOS
         std::thread::spawn(move || {
@@ -163,14 +164,14 @@ pub fn run() {
                     return;
                 }
             };
-            
+
             rt.block_on(async move {
                 tracing::info!("🎵 Starting IsolatedAudioManager in dedicated thread");
                 let mut isolated_audio_manager = crate::audio::mixer::stream_management::IsolatedAudioManager::new(audio_command_rx);
                 isolated_audio_manager.run().await;
             });
         });
-        
+
         tracing::info!("🎵 IsolatedAudioManager started in dedicated thread");
 
         AudioState {

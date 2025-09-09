@@ -389,7 +389,7 @@ impl Default for RecordingConfig {
             max_duration_minutes: None,
             max_file_size_mb: None,
             split_on_interval_minutes: None,
-            sample_rate: 48000,
+            sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
             channels: 2,
             bit_depth: 24,
         }
@@ -703,7 +703,7 @@ impl RecordingPresets {
                 mp3: None,
                 flac: None,
             },
-            sample_rate: 48000,
+            sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
             channels: 2,
             bit_depth: 24,
             ..Default::default()
@@ -719,7 +719,7 @@ impl RecordingPresets {
                 mp3: Some(Mp3Settings { bitrate: 192 }),
                 flac: None,
             },
-            sample_rate: 48000,
+            sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
             channels: 2,
             bit_depth: 16,
             ..Default::default()
@@ -737,7 +737,7 @@ impl RecordingPresets {
                     compression_level: 5,
                 }),
             },
-            sample_rate: 48000,
+            sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
             channels: 2,
             bit_depth: 24,
             ..Default::default()
@@ -756,7 +756,7 @@ impl RecordingPresets {
             auto_stop_on_silence: true,
             silence_threshold_db: -45.0,
             silence_duration_sec: 3.0,
-            sample_rate: 48000,
+            sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
             channels: 1, // Mono for podcasts
             bit_depth: 16,
             ..Default::default()
@@ -794,7 +794,7 @@ impl RecordingPresets {
             },
             filename_template: "DJ_Mix_{timestamp}_{title}".to_string(),
             metadata,
-            sample_rate: 48000,
+            sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
             channels: 2,
             bit_depth: 24,
             ..Default::default()
@@ -816,7 +816,7 @@ impl RecordingPresets {
             },
             filename_template: "Voice_{timestamp}_{title}".to_string(),
             metadata,
-            sample_rate: 48000,
+            sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
             channels: 1, // Mono for voice
             bit_depth: 16,
             auto_stop_on_silence: true,
@@ -843,7 +843,7 @@ impl RecordingPresets {
             },
             filename_template: "Live_{timestamp}_{artist}_{title}".to_string(),
             metadata,
-            sample_rate: 48000,
+            sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
             channels: 2,
             bit_depth: 24,
             max_duration_minutes: Some(180), // 3 hours max

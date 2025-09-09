@@ -375,7 +375,7 @@ impl AudioFilePlayer {
         }
 
         // Initialize resampler if needed
-        let input_sample_rate = track_info_cloned.codec_params.sample_rate.unwrap_or(48000);
+        let input_sample_rate = track_info_cloned.codec_params.sample_rate.unwrap_or(crate::types::DEFAULT_SAMPLE_RATE);
         let input_channels = track_info_cloned.codec_params.channels.unwrap().count();
 
         if input_sample_rate != self.sample_rate || input_channels != self.channels as usize {

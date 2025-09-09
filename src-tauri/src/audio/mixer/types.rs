@@ -328,7 +328,7 @@ impl MixerConfigUtils {
     /// Get default mixer configuration for the platform
     pub fn default_config() -> MixerConfig {
         MixerConfig {
-            sample_rate: 48000, // Professional standard
+            sample_rate: crate::types::DEFAULT_SAMPLE_RATE, // Professional standard
             buffer_size: 512,   // Balance of latency and stability
             channels: vec![],   // Empty channels list
             master_gain: 1.0,
@@ -342,7 +342,7 @@ impl MixerConfigUtils {
     /// Create optimized configuration for low latency
     pub fn low_latency_config() -> MixerConfig {
         MixerConfig {
-            sample_rate: 48000,
+            sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
             buffer_size: 128, // Lower latency
             channels: vec![], // Empty channels list
             master_gain: 1.0,
@@ -356,7 +356,7 @@ impl MixerConfigUtils {
     /// Create configuration for high stability/compatibility
     pub fn stable_config() -> MixerConfig {
         MixerConfig {
-            sample_rate: 48000, // CD quality
+            sample_rate: crate::types::DEFAULT_SAMPLE_RATE, // CD quality
             buffer_size: 1024,  // Higher stability
             channels: vec![],   // Empty channels list
             master_gain: 1.0,

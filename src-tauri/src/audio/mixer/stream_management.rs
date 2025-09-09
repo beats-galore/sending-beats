@@ -128,7 +128,7 @@ impl AudioInputStream {
         } else {
             // Fallback: Use a reasonable default instead of hardcoded 5ms
             // Calculate based on sample rate for low latency
-            let fallback_latency_ms = if self.sample_rate >= 48000 {
+            let fallback_latency_ms = if self.sample_rate >= crate::types::DEFAULT_SAMPLE_RATE {
                 5.0 // 5ms for high sample rates
             } else {
                 10.0 // 10ms for lower sample rates
@@ -370,7 +370,7 @@ impl AudioOutputStream {
             // TRUE EVENT-DRIVEN: Initialize output demand notification system
             output_demand_notifier: Arc::new(Notify::new()),
             // Initialize with default 48kHz input rate, will be updated when mixed audio arrives
-            input_sample_rate: Arc::new(Mutex::new(48000.0)),
+            input_sample_rate: Arc::new(Mutex::new(crate::types::DEFAULT_SAMPLE_RATE as f32)),
         };
 
         (output_stream, reader)
@@ -386,7 +386,7 @@ impl AudioOutputStream {
         if let Ok(mut rate) = self.input_sample_rate.try_lock() {
             *rate = input_sample_rate;
         }
-        
+
         match self.spmc_writer.try_lock() {
             Ok(mut writer) => {
             // Push samples to SPMC queue - all consumers will receive them
@@ -636,23 +636,7 @@ impl IsolatedAudioManager {
                     }
                 }
 
-                // **SAFETY NET**: Fallback timer for output continuity (much slower - 1 second)
-                // _ = output_safety_interval.tick() => {
-                //     if !self.input_streams.is_empty() && !self.output_streams.is_empty() {
-                //         // **FALLBACK PROCESSING**: Ensure output streams don't starve
-                //         self.process_audio().await;
 
-                //         // Track fallback processing
-                //         use std::sync::{LazyLock, Mutex as StdMutex};
-                //         static FALLBACK_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
-                //         if let Ok(mut count) = FALLBACK_COUNT.lock() {
-                //             *count += 1;
-                //             if *count <= 5 || *count % 10 == 0 {
-                //                 info!("🛡️ SAFETY_NET [{}]: Fallback processing to prevent output starvation", count);
-                //             }
-                //         }
-                //     }
-                // }
             }
         }
     }
@@ -716,7 +700,7 @@ impl IsolatedAudioManager {
         // Collect samples from all input streams
         let mut mixed_samples = Vec::<f32>::new();
         let mut active_inputs = 0;
-        let mut mixed_sample_rate = 48000.0; // Default, will be set to first active input's rate
+        let mut mixed_sample_rate = crate::types::DEFAULT_SAMPLE_RATE as f32; // Default, will be set to first active input's rate
 
         for (device_id, input_stream) in &mut self.input_streams {
             let samples = input_stream.get_samples();
@@ -1194,7 +1178,7 @@ impl StreamManager {
         // Clone notifier for callback closures
         let f32_output_notifier = output_notifier.clone();
         let i16_output_notifier = output_notifier.clone();
-        
+
         // Clone sample rate info for callbacks
         let f32_output_sample_rate = sample_rate as f32;
         let i16_output_sample_rate = sample_rate as f32;
@@ -1210,7 +1194,7 @@ impl StreamManager {
                         thread_local! {
                             static SRC: RefCell<Option<LinearSRC>> = RefCell::new(None);
                         }
-                        
+
                         // Collect all available samples from SPMC queue
                         let mut input_samples = Vec::new();
                         loop {
@@ -1235,24 +1219,24 @@ impl StreamManager {
                                 }
                             }
                         }
-                        
+
                         if !input_samples.is_empty() {
                             // Dynamic SRC initialization - detect sample rate from input samples
                             let converted_samples = SRC.with(|src_cell| {
                                 let mut src_opt = src_cell.borrow_mut();
-                                
+
                                 // Estimate input sample rate based on sample count and time
                                 // This is a heuristic approach since we can't easily pass rate info to callbacks
                                 let estimated_input_rate = {
                                     // Most common audio sample rates
-                                    let common_rates = [8000.0, 11025.0, 16000.0, 22050.0, 44100.0, 48000.0, 88200.0, 96000.0];
-                                    
+                                    let common_rates = crate::types::COMMON_SAMPLE_RATES_HZ;
+
                                     // Use heuristic: if we have ~1024 samples and output wants ~1114,
                                     // that suggests 44.1kHz input to 48kHz output (1024 * 48000/44100 ≈ 1114)
                                     let ratio_hint = data.len() as f32 / input_samples.len() as f32;
                                     let estimated_output_rate = f32_output_sample_rate;
                                     let estimated_input_rate = estimated_output_rate / ratio_hint;
-                                    
+
                                     // Find the closest common sample rate
                                     common_rates.iter()
                                         .min_by(|&a, &b| {
@@ -1261,25 +1245,25 @@ impl StreamManager {
                                         .copied()
                                         .unwrap_or(44100.0)
                                 };
-                                
+
                                 // Reinitialize SRC if rate changed significantly
                                 let needs_new_src = if let Some(ref src) = *src_opt {
                                     (src.ratio() - (f32_output_sample_rate / estimated_input_rate)).abs() > 0.01
                                 } else {
                                     true
                                 };
-                                
+
                                 if needs_new_src {
                                     *src_opt = Some(LinearSRC::new(estimated_input_rate, f32_output_sample_rate));
                                 }
-                                
+
                                 if let Some(ref mut src) = *src_opt {
                                     src.convert(&input_samples, data.len())
                                 } else {
                                     vec![0.0; data.len()]
                                 }
                             });
-                            
+
                             // Copy converted samples to output buffer
                             for (i, &sample) in converted_samples.iter().enumerate() {
                                 if i < data.len() {
@@ -1329,7 +1313,7 @@ impl StreamManager {
                         thread_local! {
                             static SRC: RefCell<Option<LinearSRC>> = RefCell::new(None);
                         }
-                        
+
                         // Collect all available samples from SPMC queue
                         let mut input_samples = Vec::new();
                         loop {
@@ -1354,23 +1338,23 @@ impl StreamManager {
                                 }
                             }
                         }
-                        
+
                         if !input_samples.is_empty() {
                             // Dynamic SRC initialization - detect sample rate from input samples
                             let converted_samples = SRC.with(|src_cell| {
                                 let mut src_opt = src_cell.borrow_mut();
-                                
+
                                 // Estimate input sample rate based on sample count and time
                                 let estimated_input_rate = {
                                     // Most common audio sample rates
-                                    let common_rates = [8000.0, 11025.0, 16000.0, 22050.0, 44100.0, 48000.0, 88200.0, 96000.0];
-                                    
+                                    let common_rates = crate::types::COMMON_SAMPLE_RATES_HZ;
+
                                     // Use heuristic: if we have ~1024 samples and output wants ~1114,
                                     // that suggests 44.1kHz input to 48kHz output (1024 * 48000/44100 ≈ 1114)
                                     let ratio_hint = data.len() as f32 / input_samples.len() as f32;
                                     let estimated_output_rate = i16_output_sample_rate;
                                     let estimated_input_rate = estimated_output_rate / ratio_hint;
-                                    
+
                                     // Find the closest common sample rate
                                     common_rates.iter()
                                         .min_by(|&a, &b| {
@@ -1379,25 +1363,25 @@ impl StreamManager {
                                         .copied()
                                         .unwrap_or(44100.0)
                                 };
-                                
+
                                 // Reinitialize SRC if rate changed significantly
                                 let needs_new_src = if let Some(ref src) = *src_opt {
                                     (src.ratio() - (i16_output_sample_rate / estimated_input_rate)).abs() > 0.01
                                 } else {
                                     true
                                 };
-                                
+
                                 if needs_new_src {
                                     *src_opt = Some(LinearSRC::new(estimated_input_rate, i16_output_sample_rate));
                                 }
-                                
+
                                 if let Some(ref mut src) = *src_opt {
                                     src.convert(&input_samples, data.len())
                                 } else {
                                     vec![0.0; data.len()]
                                 }
                             });
-                            
+
                             // Convert f32 samples to i16 and copy to output buffer
                             for (i, &f32_sample) in converted_samples.iter().enumerate() {
                                 if i < data.len() {
