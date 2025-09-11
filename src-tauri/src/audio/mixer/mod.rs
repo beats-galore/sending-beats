@@ -14,7 +14,6 @@
 // Core modules for mixer functionality
 pub mod audio_processing;
 pub mod command_processing;
-pub mod mixer_core;
 pub mod sample_rate_converter;
 pub mod stream_management;
 pub mod stream_operations;
@@ -37,8 +36,6 @@ pub use timing_synchronization::{AudioClock, TimingMetrics, TimingSync};
 // Re-export stream management types
 pub use stream_management::StreamInfo;
 
-// Re-export mixer core types
-pub use mixer_core::VirtualMixerHandle;
 
 // Re-export stream management types for easier access
 pub use stream_management::{AudioInputStream, AudioOutputStream};

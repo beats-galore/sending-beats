@@ -41,16 +41,8 @@ pub async fn create_mixer(
         }
     };
 
-    // **CRASH FIX**: Start the mixer with better error handling
-    match mixer.start().await {
-        Ok(()) => {
-            println!("✅ Mixer started successfully (always-running mode)");
-        }
-        Err(e) => {
-            error!("Failed to start mixer: {}", e);
-            return Err(format!("Failed to start mixer: {}", e));
-        }
-    }
+    // **STREAMLINED ARCHITECTURE**: No need to start mixer - IsolatedAudioManager handles all audio processing
+    println!("✅ Mixer created successfully (always-running via IsolatedAudioManager)");
 
     // Store the initialized mixer
     *audio_state.mixer.lock().await = Some(mixer);
@@ -122,7 +114,6 @@ pub async fn add_mixer_channel(
                 device_id: device_id.clone(),
                 coreaudio_device_id: coreaudio_device.device_id,
                 device_name: coreaudio_device.name,
-                sample_rate: coreaudio_device.sample_rate,
                 channels: coreaudio_device.channels,
                 producer,
                 input_notifier,

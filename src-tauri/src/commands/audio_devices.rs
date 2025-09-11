@@ -99,36 +99,83 @@ pub async fn safe_switch_input_device(
             old_device_id, new_device_id
         );
 
+        // **STREAMLINED ARCHITECTURE**: Use direct AudioCommands instead of VirtualMixer methods
+        
         // Remove old device if specified
         if let Some(old_id) = old_device_id {
             if !old_id.trim().is_empty() {
-                println!("🗑️ Removing old input device: {}", old_id);
-                if let Err(e) = mixer.remove_input_stream(&old_id).await {
-                    eprintln!(
-                        "Warning: Failed to remove old input device {}: {}",
-                        old_id, e
-                    );
-                    // Continue anyway - don't fail the entire operation
+                println!("🗑️ Removing old input device via AudioCommand: {}", old_id);
+                
+                let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+                let command = crate::audio::mixer::stream_management::AudioCommand::RemoveInputStream {
+                    device_id: old_id.clone(),
+                    response_tx,
+                };
+
+                if let Err(_) = audio_state.audio_command_tx.send(command).await {
+                    eprintln!("Warning: Audio system not available for removing {}", old_id);
+                } else {
+                    match response_rx.await {
+                        Ok(Ok(_)) => println!("✅ Removed old input device: {}", old_id),
+                        Ok(Err(e)) => eprintln!("Warning: Failed to remove old input device {}: {}", old_id, e),
+                        Err(_) => eprintln!("Warning: Audio system did not respond for removing {}", old_id),
+                    }
                 }
+                
                 // **CRASH FIX**: Add delay to allow cleanup
                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             }
         }
 
         // **CRASH FIX**: Add new device with better error handling
-        println!("➕ Adding new input device: {}", new_device_id);
-        match mixer.add_input_stream(&new_device_id).await {
-            Ok(()) => {
-                println!(
-                    "✅ Successfully switched input device to: {}",
-                    new_device_id
-                );
+        println!("➕ Adding new input device via AudioCommand: {}", new_device_id);
+        
+        // Get device handle using device manager
+        let device_manager = audio_state.device_manager.lock().await;
+        let device_handle = device_manager
+            .find_audio_device(&new_device_id, true) // true = input device
+            .await
+            .map_err(|e| format!("Failed to find input device {}: {}", new_device_id, e))?;
+
+        // Create command based on device type
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        
+        let command = match device_handle {
+            #[cfg(target_os = "macos")]
+            crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => {
+                let buffer_capacity = 8192;
+                let (producer, _consumer) = rtrb::RingBuffer::<f32>::new(buffer_capacity);
+                
+                crate::audio::mixer::stream_management::AudioCommand::AddCoreAudioInputStreamAlternative {
+                    device_id: new_device_id.clone(),
+                    coreaudio_device_id: coreaudio_device.device_id,
+                    device_name: coreaudio_device.name.clone(),
+                    channels: 2,
+                    producer,
+                    input_notifier: std::sync::Arc::new(tokio::sync::Notify::new()),
+                    response_tx,
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            _ => return Err("Unsupported device type for this platform".to_string()),
+        };
+
+        // Send command to isolated audio thread
+        if let Err(_) = audio_state.audio_command_tx.send(command).await {
+            return Err("Audio system not available".to_string());
+        }
+
+        // Wait for response from isolated audio thread
+        match response_rx.await {
+            Ok(Ok(())) => {
+                println!("✅ Successfully switched input device to: {}", new_device_id);
                 Ok(())
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 eprintln!("❌ Failed to add input stream for {}: {}", new_device_id, e);
                 Err(format!("Failed to add input device: {}", e))
             }
+            Err(_) => Err("Audio system did not respond".to_string()),
         }
     } else {
         eprintln!("❌ Cannot switch input device: No mixer has been created yet");
@@ -153,22 +200,47 @@ pub async fn safe_switch_output_device(
     if let Some(ref mixer) = *mixer_guard {
         println!("🔊 Switching output device to: {}", new_device_id);
 
-        // **CRASH FIX**: Better error handling and logging
-        match mixer.set_output_stream(&new_device_id).await {
-            Ok(()) => {
-                println!(
-                    "✅ Successfully switched output device to: {}",
-                    new_device_id
-                );
+        // **STREAMLINED ARCHITECTURE**: Use direct AudioCommand instead of VirtualMixer method
+        
+        // Get device handle using device manager
+        let device_manager = audio_state.device_manager.lock().await;
+        let device_handle = device_manager
+            .find_audio_device(&new_device_id, false) // false = output device
+            .await
+            .map_err(|e| format!("Failed to find output device {}: {}", new_device_id, e))?;
+
+        // Create command based on device type
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+        
+        let command = match device_handle {
+            #[cfg(target_os = "macos")]
+            crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => {
+                crate::audio::mixer::stream_management::AudioCommand::AddCoreAudioOutputStream {
+                    device_id: new_device_id.clone(),
+                    coreaudio_device,
+                    response_tx,
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            _ => return Err("Unsupported device type for this platform".to_string()),
+        };
+
+        // Send command to isolated audio thread
+        if let Err(_) = audio_state.audio_command_tx.send(command).await {
+            return Err("Audio system not available".to_string());
+        }
+
+        // Wait for response from isolated audio thread
+        match response_rx.await {
+            Ok(Ok(())) => {
+                println!("✅ Successfully switched output device to: {}", new_device_id);
                 Ok(())
             }
-            Err(e) => {
-                eprintln!(
-                    "❌ Failed to set output stream for {}: {}",
-                    new_device_id, e
-                );
+            Ok(Err(e)) => {
+                eprintln!("❌ Failed to set output stream for {}: {}", new_device_id, e);
                 Err(format!("Failed to set output device: {}", e))
             }
+            Err(_) => Err("Audio system did not respond".to_string()),
         }
     } else {
         eprintln!("❌ Cannot switch output device: No mixer has been created yet");

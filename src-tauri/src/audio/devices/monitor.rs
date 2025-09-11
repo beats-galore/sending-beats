@@ -418,13 +418,8 @@ impl DeviceMonitor {
     async fn recover_device_stream(mixer: &Arc<VirtualMixer>, device_id: &str) -> Result<()> {
         debug!("🔄 Recovering stream for device: {}", device_id);
 
-        // Remove failed stream
-        if let Err(e) = mixer.remove_input_stream(device_id).await {
-            debug!(
-                "⚠️ Failed to remove old stream for {}: {} (may not exist)",
-                device_id, e
-            );
-        }
+        // **STREAMLINED ARCHITECTURE**: Device stream recovery now handled by IsolatedAudioManager
+        debug!("⚠️ DEVICE RECOVERY: Stream recovery now managed by IsolatedAudioManager, not VirtualMixer");
 
         // Wait a moment for cleanup
         tokio::time::sleep(Duration::from_millis(500)).await;
