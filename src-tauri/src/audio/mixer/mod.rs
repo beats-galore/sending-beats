@@ -22,8 +22,8 @@ pub mod timing_synchronization;
 pub mod types;
 pub mod validation;
 
-// Existing transformer module (preserved)
-pub mod transformer;
+// Existing transformer module (preserved) - COMMENTED OUT: Module not found
+// pub mod transformer;
 
 // Re-export main public API
 pub use types::{MixerConfigUtils, VirtualMixer};

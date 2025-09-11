@@ -83,9 +83,6 @@ impl DeviceEnumerator {
         Ok(all_devices)
     }
 
-
-
-
     /// Clean up device names for better display
     fn clean_device_name(&self, name: &str) -> String {
         // Clean up common device name patterns
@@ -119,7 +116,6 @@ impl DeviceEnumerator {
     pub fn get_devices_cache(&self) -> &Arc<Mutex<HashMap<String, AudioDeviceInfo>>> {
         &self.devices_cache
     }
-
 
     /// Get CoreAudio integration reference
     pub fn get_coreaudio(&self) -> &CoreAudioIntegration {

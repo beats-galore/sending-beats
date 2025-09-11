@@ -2,16 +2,19 @@ use crate::types::{COMMON_SAMPLE_RATES_HZ, DEFAULT_SAMPLE_RATE};
 #[cfg(target_os = "macos")]
 use anyhow::Result;
 use coreaudio_sys::{
-    kAudioDevicePropertyNominalSampleRate, kAudioDevicePropertyStreamFormat, kAudioFormatFlagIsFloat, kAudioFormatFlagIsNonInterleaved, kAudioFormatFlagIsPacked,
-    kAudioFormatLinearPCM, kAudioObjectPropertyElementMaster, kAudioObjectPropertyScopeInput, kAudioOutputUnitProperty_CurrentDevice,
-    kAudioOutputUnitProperty_EnableIO, kAudioOutputUnitProperty_SetInputCallback, kAudioUnitManufacturer_Apple,
+    kAudioDevicePropertyNominalSampleRate, kAudioDevicePropertyStreamFormat,
+    kAudioFormatFlagIsFloat, kAudioFormatFlagIsNonInterleaved, kAudioFormatFlagIsPacked,
+    kAudioFormatLinearPCM, kAudioObjectPropertyElementMaster, kAudioObjectPropertyScopeInput,
+    kAudioOutputUnitProperty_CurrentDevice, kAudioOutputUnitProperty_EnableIO,
+    kAudioOutputUnitProperty_SetInputCallback, kAudioUnitManufacturer_Apple,
     kAudioUnitProperty_SetRenderCallback, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Global,
     kAudioUnitScope_Input, kAudioUnitScope_Output, kAudioUnitSubType_HALOutput,
     kAudioUnitType_Output, AURenderCallbackStruct, AudioBufferList, AudioComponentDescription,
     AudioComponentFindNext, AudioComponentInstanceDispose, AudioComponentInstanceNew,
-    AudioDeviceID, AudioObjectGetPropertyData, AudioObjectPropertyAddress, AudioOutputUnitStart, AudioOutputUnitStop, AudioStreamBasicDescription,
-    AudioTimeStamp, AudioUnit, AudioUnitGetProperty, AudioUnitInitialize, AudioUnitRenderActionFlags,
-    AudioUnitSetProperty, AudioUnitUninitialize, AudioUnitRender, OSStatus,
+    AudioDeviceID, AudioObjectGetPropertyData, AudioObjectPropertyAddress, AudioOutputUnitStart,
+    AudioOutputUnitStop, AudioStreamBasicDescription, AudioTimeStamp, AudioUnit,
+    AudioUnitGetProperty, AudioUnitInitialize, AudioUnitRender, AudioUnitRenderActionFlags,
+    AudioUnitSetProperty, AudioUnitUninitialize, OSStatus,
 };
 use std::os::raw::c_void;
 use std::ptr;
@@ -598,7 +601,9 @@ extern "C" fn spmc_render_callback(
                                     input_samples.push(sample);
                                     // Prevent unbounded reads
                                     if input_samples.len() >= 4096 {
-                                        println!("samples greater than 4096, breaking processing loop");
+                                        println!(
+                                            "samples greater than 4096, breaking processing loop"
+                                        );
                                         break;
                                     }
                                 }
@@ -780,8 +785,8 @@ impl CoreAudioInputStream {
             AudioUnitSetProperty(
                 audio_unit,
                 kAudioOutputUnitProperty_EnableIO,
-                kAudioUnitScope_Input,  // INPUT scope for input streams
-                1,  // Input bus is 1, not 0
+                kAudioUnitScope_Input, // INPUT scope for input streams
+                1,                     // Input bus is 1, not 0
                 &enable_input as *const _ as *const c_void,
                 std::mem::size_of::<u32>() as u32,
             )
@@ -797,8 +802,8 @@ impl CoreAudioInputStream {
             AudioUnitSetProperty(
                 audio_unit,
                 kAudioOutputUnitProperty_EnableIO,
-                kAudioUnitScope_Output,  // Disable output
-                0,  // Output bus is 0
+                kAudioUnitScope_Output, // Disable output
+                0,                      // Output bus is 0
                 &disable_output as *const _ as *const c_void,
                 std::mem::size_of::<u32>() as u32,
             )
@@ -821,7 +826,10 @@ impl CoreAudioInputStream {
         };
         if status != 0 {
             unsafe { AudioComponentInstanceDispose(audio_unit) };
-            return Err(anyhow::anyhow!("Failed to set current input device: {}", status));
+            return Err(anyhow::anyhow!(
+                "Failed to set current input device: {}",
+                status
+            ));
         }
 
         // Step 6: Get the device's native format and use it instead of forcing our own
@@ -844,12 +852,19 @@ impl CoreAudioInputStream {
         };
         if status != 0 {
             unsafe { AudioComponentInstanceDispose(audio_unit) };
-            return Err(anyhow::anyhow!("Failed to get device native format: {}", status));
+            return Err(anyhow::anyhow!(
+                "Failed to get device native format: {}",
+                status
+            ));
         }
 
-        println!("🔍 DEVICE NATIVE FORMAT: SR: {}, Channels: {}, Format: 0x{:x}, Flags: 0x{:x}",
-            device_format.mSampleRate, device_format.mChannelsPerFrame,
-            device_format.mFormatID, device_format.mFormatFlags);
+        println!(
+            "🔍 DEVICE NATIVE FORMAT: SR: {}, Channels: {}, Format: 0x{:x}, Flags: 0x{:x}",
+            device_format.mSampleRate,
+            device_format.mChannelsPerFrame,
+            device_format.mFormatID,
+            device_format.mFormatFlags
+        );
 
         // Only set format on OUTPUT scope of input unit (data coming FROM the device)
         // Use the device's native format to avoid -10865 errors
@@ -857,15 +872,18 @@ impl CoreAudioInputStream {
             AudioUnitSetProperty(
                 audio_unit,
                 kAudioUnitProperty_StreamFormat,
-                kAudioUnitScope_Output,  // Output scope for data FROM input
-                1,  // Input bus is 1
+                kAudioUnitScope_Output, // Output scope for data FROM input
+                1,                      // Input bus is 1
                 &device_format as *const _ as *const c_void,
                 std::mem::size_of::<AudioStreamBasicDescription>() as u32,
             )
         };
         if status != 0 {
             unsafe { AudioComponentInstanceDispose(audio_unit) };
-            return Err(anyhow::anyhow!("Failed to set output stream format for input unit: {}", status));
+            return Err(anyhow::anyhow!(
+                "Failed to set output stream format for input unit: {}",
+                status
+            ));
         }
 
         // Step 6.5: Add debugging to verify AudioUnit state before callback setup
@@ -883,9 +901,13 @@ impl CoreAudioInputStream {
             )
         };
         if status == 0 {
-            println!("🔍 DEBUG INPUT FORMAT: SR: {}, Channels: {}, Format: 0x{:x}, Flags: 0x{:x}",
-                actual_input_format.mSampleRate, actual_input_format.mChannelsPerFrame,
-                actual_input_format.mFormatID, actual_input_format.mFormatFlags);
+            println!(
+                "🔍 DEBUG INPUT FORMAT: SR: {}, Channels: {}, Format: 0x{:x}, Flags: 0x{:x}",
+                actual_input_format.mSampleRate,
+                actual_input_format.mChannelsPerFrame,
+                actual_input_format.mFormatID,
+                actual_input_format.mFormatFlags
+            );
         } else {
             println!("⚠️ Failed to get input format: {}", status);
         }
@@ -903,9 +925,13 @@ impl CoreAudioInputStream {
             )
         };
         if status == 0 {
-            println!("🔍 DEBUG OUTPUT FORMAT: SR: {}, Channels: {}, Format: 0x{:x}, Flags: 0x{:x}",
-                actual_output_format.mSampleRate, actual_output_format.mChannelsPerFrame,
-                actual_output_format.mFormatID, actual_output_format.mFormatFlags);
+            println!(
+                "🔍 DEBUG OUTPUT FORMAT: SR: {}, Channels: {}, Format: 0x{:x}, Flags: 0x{:x}",
+                actual_output_format.mSampleRate,
+                actual_output_format.mChannelsPerFrame,
+                actual_output_format.mFormatID,
+                actual_output_format.mFormatFlags
+            );
         } else {
             println!("⚠️ Failed to get output format: {}", status);
         }
@@ -928,9 +954,15 @@ impl CoreAudioInputStream {
             )
         };
         if status == 0 {
-            println!("🔍 DEBUG DEVICE SAMPLE RATE: {} Hz (requested: {} Hz)", device_sample_rate, self.sample_rate);
+            println!(
+                "🔍 DEBUG DEVICE SAMPLE RATE: {} Hz (requested: {} Hz)",
+                device_sample_rate, self.sample_rate
+            );
             if (device_sample_rate - self.sample_rate as f64).abs() > 1.0 {
-                println!("⚠️ SAMPLE RATE MISMATCH: Device={} Hz, Requested={} Hz", device_sample_rate, self.sample_rate);
+                println!(
+                    "⚠️ SAMPLE RATE MISMATCH: Device={} Hz, Requested={} Hz",
+                    device_sample_rate, self.sample_rate
+                );
             }
         } else {
             println!("⚠️ Failed to get device sample rate: {}", status);
@@ -974,16 +1006,19 @@ impl CoreAudioInputStream {
         let status = unsafe {
             AudioUnitSetProperty(
                 audio_unit,
-                kAudioOutputUnitProperty_SetInputCallback,  // Use input callback property for input units
-                kAudioUnitScope_Global,  // Global scope for input callbacks
-                0,  // Element 0 for input callbacks
+                kAudioOutputUnitProperty_SetInputCallback, // Use input callback property for input units
+                kAudioUnitScope_Global,                    // Global scope for input callbacks
+                0,                                         // Element 0 for input callbacks
                 &callback as *const _ as *const c_void,
                 std::mem::size_of::<AURenderCallbackStruct>() as u32,
             )
         };
         if status != 0 {
             unsafe { AudioComponentInstanceDispose(audio_unit) };
-            return Err(anyhow::anyhow!("Failed to set input render callback: {}", status));
+            return Err(anyhow::anyhow!(
+                "Failed to set input render callback: {}",
+                status
+            ));
         }
 
         // Step 8: Initialize the Audio Unit
@@ -1003,7 +1038,10 @@ impl CoreAudioInputStream {
                 AudioUnitUninitialize(audio_unit);
                 AudioComponentInstanceDispose(audio_unit);
             }
-            return Err(anyhow::anyhow!("Failed to start input Audio Unit: {}", status));
+            return Err(anyhow::anyhow!(
+                "Failed to start input Audio Unit: {}",
+                status
+            ));
         }
 
         // Store the Audio Unit and mark as running
@@ -1087,7 +1125,10 @@ impl CoreAudioInputStream {
             println!("🔴 STOP INPUT: Context pointer was null (already cleaned up)");
         }
 
-        println!("🔴 STOP INPUT: ✅ ALL CLEANUP COMPLETE for: {}", self.device_name);
+        println!(
+            "🔴 STOP INPUT: ✅ ALL CLEANUP COMPLETE for: {}",
+            self.device_name
+        );
         Ok(())
     }
 
@@ -1105,9 +1146,8 @@ extern "C" fn coreaudio_input_callback(
     in_time_stamp: *const AudioTimeStamp,
     in_bus_number: u32,
     in_number_frames: u32,
-    io_data: *mut AudioBufferList,  // USED for render callbacks - AudioUnit provides data here
+    io_data: *mut AudioBufferList, // USED for render callbacks - AudioUnit provides data here
 ) -> OSStatus {
-
     // Comprehensive safety checks to prevent crashes
     if in_ref_con.is_null() || in_number_frames == 0 {
         return -1; // Invalid parameters
@@ -1190,7 +1230,8 @@ extern "C" fn coreaudio_input_callback(
             INPUT_CAPTURE_COUNT += 1;
             if INPUT_CAPTURE_COUNT % 100 == 0 || INPUT_CAPTURE_COUNT < 10 {
                 let peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                let rms = (samples.iter().map(|&s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
+                let rms =
+                    (samples.iter().map(|&s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
                 println!("🎤 COREAUDIO_INPUT [{}]: Captured {} frames ({}), wrote: {}, dropped: {}, peak: {:.4}, rms: {:.4} ⚡NOTIFIED",
                     context.device_name, frames_needed, INPUT_CAPTURE_COUNT, samples_written, samples_dropped, peak, rms);
             }

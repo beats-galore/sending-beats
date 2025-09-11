@@ -426,13 +426,13 @@ pub async fn enumerate_coreaudio_devices(
         .enumerate_devices()
         .await
         .map_err(|e| e.to_string())?;
-    
+
     // Filter to only CoreAudio devices
     let coreaudio_devices: Vec<AudioDeviceInfo> = all_devices
         .into_iter()
         .filter(|device| device.host_api == "CoreAudio (Direct)")
         .collect();
-    
+
     Ok(coreaudio_devices)
 }
 

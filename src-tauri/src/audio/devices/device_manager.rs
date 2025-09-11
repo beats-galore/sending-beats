@@ -135,9 +135,10 @@ impl AudioDeviceManager {
             }
         }
 
-        Err(anyhow::anyhow!("Device not found after refresh: {}", device_id))
-
-
+        Err(anyhow::anyhow!(
+            "Device not found after refresh: {}",
+            device_id
+        ))
     }
 
     /// Initialize device health tracking for a device

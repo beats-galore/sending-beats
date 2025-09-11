@@ -128,8 +128,6 @@ impl VirtualMixer {
         false
     }
 
-
-
     /// Add an input stream for the specified device
     pub async fn add_input_stream(&self, device_id: &str) -> Result<()> {
         super::validation::validate_device_id(device_id)?;
@@ -230,11 +228,12 @@ impl VirtualMixer {
             #[cfg(target_os = "macos")]
             crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => {
                 info!("🎤 Using CoreAudio input stream for device: {}", device_id);
-                return self.add_coreaudio_input_stream(device_id, coreaudio_device).await;
+                return self
+                    .add_coreaudio_input_stream(device_id, coreaudio_device)
+                    .await;
             }
         }
     }
-
 
     /// Add CoreAudio input stream (CoreAudio device type)
     #[cfg(target_os = "macos")]
@@ -258,7 +257,10 @@ impl VirtualMixer {
                 );
                 drop(input_devices);
                 if let Err(e) = self.remove_input_stream(device_id).await {
-                    warn!("Failed to remove existing CoreAudio stream for {}: {}", device_id, e);
+                    warn!(
+                        "Failed to remove existing CoreAudio stream for {}: {}",
+                        device_id, e
+                    );
                 }
             }
         }
@@ -299,10 +301,7 @@ impl VirtualMixer {
         };
 
         if let Err(e) = self.audio_command_tx.send(command).await {
-            error!(
-                "❌ Failed to send CoreAudio command to audio thread: {}",
-                e
-            );
+            error!("❌ Failed to send CoreAudio command to audio thread: {}", e);
             // Remove from active devices on failure
             let mut active_devices = self.active_input_devices.lock().await;
             active_devices.remove(device_id);

@@ -258,7 +258,7 @@ pub fn run() {
             remove_output_device,
             update_output_device,
             get_output_devices,
-            // CoreAudio specific commands  
+            // CoreAudio specific commands
             enumerate_coreaudio_devices,
             get_device_type_info,
             is_coreaudio_device,
