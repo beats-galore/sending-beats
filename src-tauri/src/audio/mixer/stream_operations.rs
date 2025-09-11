@@ -9,16 +9,6 @@ use std::sync::{atomic::Ordering, Arc};
 use tracing::{error, info, warn};
 
 use super::mixer_core::VirtualMixerHandle;
-
-/// Calculate optimal target latency based on sample rate
-/// Professional audio target: 1ms for high sample rates (48kHz+), 10ms for lower rates
-pub fn calculate_target_latency_ms(sample_rate: u32) -> f32 {
-    if sample_rate >= crate::types::DEFAULT_SAMPLE_RATE {
-        5.0
-    } else {
-        10.0
-    }
-}
 use super::stream_management::{AudioInputStream, AudioOutputStream, StreamInfo};
 use super::types::VirtualMixer;
 
@@ -79,53 +69,6 @@ impl VirtualMixer {
 
         info!("✅ MIXER STOPPED: Virtual mixer stopped successfully");
         Ok(())
-    }
-
-    /// Get information about active streams
-    pub async fn get_stream_info(&self) -> StreamInfo {
-        let input_count = {
-            let input_devices = self.active_input_devices.lock().await;
-            input_devices.len()
-        };
-
-        let output_count = {
-            let output_devices = self.active_output_devices.lock().await;
-            output_devices.len()
-        };
-
-        let active_devices = {
-            let active_devices = self.active_output_devices.lock().await;
-            active_devices.clone()
-        };
-
-        let is_running = self.is_running.load(Ordering::Relaxed);
-
-        StreamInfo {
-            input_streams: input_count,
-            output_streams: output_count,
-            active_devices: active_devices.into_iter().collect(),
-        }
-    }
-
-    /// Check if a specific device is currently active
-    pub async fn is_device_active(&self, device_id: &str) -> bool {
-        // Check input streams
-        {
-            let input_devices = self.active_input_devices.lock().await;
-            if input_devices.contains(device_id) {
-                return true;
-            }
-        }
-
-        // Check output streams
-        {
-            let active_devices = self.active_output_devices.lock().await;
-            if active_devices.contains(device_id) {
-                return true;
-            }
-        }
-
-        false
     }
 
     /// Add an input stream for the specified device
@@ -293,7 +236,6 @@ impl VirtualMixer {
             device_id: device_id.to_string(),
             coreaudio_device_id: coreaudio_device.device_id,
             device_name: coreaudio_device.name.clone(),
-            sample_rate: coreaudio_device.sample_rate,
             channels: coreaudio_device.channels,
             producer,
             input_notifier,
@@ -474,107 +416,6 @@ impl VirtualMixer {
             #[cfg(not(target_os = "macos"))]
             _ => Err(anyhow::anyhow!("Unknown device handle type")),
         }
-    }
-
-    /// Create CoreAudio output stream for direct hardware access
-    #[cfg(target_os = "macos")]
-    async fn create_coreaudio_output_stream(
-        &self,
-        device_id: &str,
-        coreaudio_device: crate::audio::types::CoreAudioDevice,
-    ) -> Result<()> {
-        info!(
-            "Creating CoreAudio output stream for device: {} (ID: {})",
-            coreaudio_device.name, coreaudio_device.device_id
-        );
-
-        // **AUDIO QUALITY FIX**: Use hardware sample rate to match input processing
-        info!("🔧 COREAUDIO SAMPLE RATE FIX: Hardware {} Hz, using hardware rate to match input processing",
-              coreaudio_device.sample_rate);
-
-        // Create the actual CoreAudio stream
-        let mut coreaudio_stream =
-            crate::audio::devices::coreaudio_stream::CoreAudioOutputStream::new(
-                coreaudio_device.device_id,
-                coreaudio_device.name.clone(),
-                self.config.sample_rate, // Use hardware sample rate instead of mixer sample rate
-                coreaudio_device.channels,
-            )?;
-
-        // Start the CoreAudio stream
-        match coreaudio_stream.start() {
-            Ok(()) => {
-                info!("Successfully started CoreAudio stream");
-            }
-            Err(e) => {
-                error!("Failed to start CoreAudio stream: {}", e);
-                return Err(anyhow::anyhow!("Failed to start CoreAudio stream: {}", e));
-            }
-        }
-
-        // Store the CoreAudio stream in the mixer to keep it alive
-        let mut coreaudio_guard = self.coreaudio_stream.lock().await;
-        *coreaudio_guard = Some(coreaudio_stream);
-
-        // Create AudioOutputStream structure for compatibility
-        let (output_stream, _spmc_reader) = AudioOutputStream::new(
-            device_id.to_string(),
-            coreaudio_device.name.clone(),
-            self.config.sample_rate, // Use hardware sample rate instead of mixer sample rate
-        );
-
-        // Store our wrapper
-        let mut stream_guard = self.active_output_devices.lock().await;
-        stream_guard.insert(device_id.to_string());
-
-        info!(
-            "✅ Real CoreAudio output stream created and started for: {}",
-            device_id
-        );
-
-        Ok(())
-    }
-
-    /// Stop all output streams safely
-    async fn stop_output_streams(&self) -> Result<()> {
-        info!("Stopping all output streams...");
-
-        // Stop CoreAudio stream if active
-        #[cfg(target_os = "macos")]
-        {
-            let mut coreaudio_guard = self.coreaudio_stream.lock().await;
-            if let Some(mut stream) = coreaudio_guard.take() {
-                info!("Stopping CoreAudio stream...");
-                if let Err(e) = stream.stop() {
-                    warn!("Error stopping CoreAudio stream: {}", e);
-                }
-            }
-        }
-
-        // Clear tracked active output devices
-        let mut active_devices_guard = self.active_output_devices.lock().await;
-        if !active_devices_guard.is_empty() {
-            info!(
-                "Clearing {} active output devices",
-                active_devices_guard.len()
-            );
-            active_devices_guard.clear();
-        }
-
-        // Clear output stream
-        {
-            let mut output_stream_guard = self.active_output_devices.lock().await;
-            output_stream_guard.clear();
-        }
-
-        // Clear output streams collection
-        {
-            let mut output_streams_guard = self.active_output_devices.lock().await;
-            output_streams_guard.clear();
-        }
-
-        info!("✅ All output streams stopped and cleared");
-        Ok(())
     }
 
     /// Get the actual hardware sample rate from active audio streams

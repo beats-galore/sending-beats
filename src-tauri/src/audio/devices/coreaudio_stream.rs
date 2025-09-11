@@ -18,6 +18,35 @@ use coreaudio_sys::{
 };
 use std::os::raw::c_void;
 use std::ptr;
+
+/// Get the native sample rate of a CoreAudio device
+pub fn get_device_native_sample_rate(device_id: AudioDeviceID) -> Result<u32> {
+    let mut device_sample_rate: f64 = 0.0;
+    let mut size = std::mem::size_of::<f64>() as u32;
+    
+    let status = unsafe {
+        AudioObjectGetPropertyData(
+            device_id,
+            &AudioObjectPropertyAddress {
+                mSelector: kAudioDevicePropertyNominalSampleRate,
+                mScope: kAudioObjectPropertyScopeInput,
+                mElement: kAudioObjectPropertyElementMaster,
+            },
+            0,
+            std::ptr::null(),
+            &mut size,
+            &mut device_sample_rate as *mut _ as *mut c_void,
+        )
+    };
+
+    if status == 0 {
+        let native_rate = device_sample_rate as u32;
+        println!("🔍 DETECTED NATIVE RATE: Device {} running at {} Hz", device_id, native_rate);
+        Ok(native_rate)
+    } else {
+        Err(anyhow::anyhow!("Failed to get native sample rate for device {}: status {}", device_id, status))
+    }
+}
 use std::sync::{
     atomic::{AtomicPtr, Ordering},
     Arc, Mutex,
@@ -135,13 +164,15 @@ impl CoreAudioOutputStream {
     pub fn new_with_spmc_reader(
         device_id: AudioDeviceID,
         device_name: String,
-        sample_rate: u32,
         channels: u16,
         spmc_reader: spmcq::Reader<f32>,
     ) -> Result<Self> {
+        // **ADAPTIVE AUDIO**: Detect device's native sample rate instead of imposing our own
+        let native_sample_rate = get_device_native_sample_rate(device_id)?;
+        
         println!(
-            "Creating CoreAudio output stream with SPMC reader for device: {} (ID: {}, SR: {}, CH: {})",
-            device_name, device_id, sample_rate, channels
+            "🔊 Creating CoreAudio output stream with SPMC reader for device: {} (ID: {}, NATIVE SR: {}, CH: {})",
+            device_name, device_id, native_sample_rate, channels
         );
 
         let input_buffer = Arc::new(Mutex::new(Vec::new()));
@@ -150,7 +181,7 @@ impl CoreAudioOutputStream {
         Ok(Self {
             device_id,
             device_name,
-            sample_rate,
+            sample_rate: native_sample_rate, // **ADAPTIVE**: Use detected native rate
             channels,
             input_buffer,
             is_running,
@@ -619,27 +650,17 @@ extern "C" fn spmc_render_callback(
                             }
                         }
 
-                        let (samples_read, silence_filled) = if !input_samples.is_empty() {
-                            // SIMPLIFIED: Direct pass-through without sample rate conversion
-                            // Copy input samples directly to output buffer (no resampling)
+                        let samples_read = if !input_samples.is_empty() {
+                            // Direct pass-through - copy available samples only
                             let samples_to_copy = input_samples.len().min(samples_to_fill);
 
                             for i in 0..samples_to_copy {
                                 unsafe { *output_data.add(i) = input_samples[i] };
                             }
 
-                            // Fill remaining with silence if we don't have enough samples
-                            for i in samples_to_copy..samples_to_fill {
-                                unsafe { *output_data.add(i) = 0.0 };
-                            }
-
-                            (samples_to_copy, samples_to_fill - samples_to_copy)
+                            samples_to_copy
                         } else {
-                            // No input samples available - fill with silence
-                            for i in 0..samples_to_fill {
-                                unsafe { *output_data.add(i) = 0.0 };
-                            }
-                            (0, samples_to_fill)
+                            0
                         };
 
                         // **DEBUG**: Log audio playback periodically
@@ -650,8 +671,8 @@ extern "C" fn spmc_render_callback(
                                 let peak = (0..samples_to_fill)
                                     .map(|i| unsafe { *output_data.add(i) }.abs())
                                     .fold(0.0f32, f32::max);
-                                println!("🎵 SPMC_COREAUDIO [{}]: Playing {} samples (call #{}), read: {}, silence: {}, peak: {:.4}",
-                                    "CoreAudio", samples_to_fill, SPMC_PLAYBACK_COUNT, samples_read, silence_filled, peak);
+                                println!("🎵 SPMC_COREAUDIO [{}]: Playing {} samples (call #{}), read: {}, peak: {:.4})",
+                                    "CoreAudio", samples_to_fill, SPMC_PLAYBACK_COUNT, samples_read, peak);
                             }
                         }
 
@@ -723,14 +744,16 @@ impl CoreAudioInputStream {
     pub fn new_with_rtrb_producer(
         device_id: AudioDeviceID,
         device_name: String,
-        sample_rate: u32,
         channels: u16,
         rtrb_producer: rtrb::Producer<f32>,
         input_notifier: Arc<tokio::sync::Notify>,
     ) -> Result<Self> {
+        // **ADAPTIVE AUDIO**: Detect device's native sample rate instead of imposing our own
+        let native_sample_rate = get_device_native_sample_rate(device_id)?;
+        
         println!(
-            "🎤 Creating CoreAudio input stream for device: {} (ID: {}, SR: {}, CH: {})",
-            device_name, device_id, sample_rate, channels
+            "🎤 Creating CoreAudio input stream for device: {} (ID: {}, NATIVE SR: {}, CH: {})",
+            device_name, device_id, native_sample_rate, channels
         );
 
         let is_running = Arc::new(Mutex::new(false));
@@ -739,7 +762,7 @@ impl CoreAudioInputStream {
         Ok(Self {
             device_id,
             device_name,
-            sample_rate,
+            sample_rate: native_sample_rate, // **ADAPTIVE**: Use detected native rate
             channels,
             is_running,
             audio_unit: None,

@@ -5,7 +5,6 @@ use std::sync::Arc;
 use tracing::{error, info, warn};
 
 use super::super::sample_rate_converter::LinearSRC;
-use super::super::stream_operations::calculate_target_latency_ms;
 use super::super::types::VirtualMixer;
 use crate::audio::effects::{AudioEffectsChain, EQBand};
 use crate::audio::types::AudioChannel;

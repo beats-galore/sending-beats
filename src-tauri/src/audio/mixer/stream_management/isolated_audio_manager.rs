@@ -5,7 +5,6 @@ use std::sync::Arc;
 use tracing::{error, info, warn};
 
 use super::super::sample_rate_converter::LinearSRC;
-use super::super::stream_operations::calculate_target_latency_ms;
 use super::super::types::VirtualMixer;
 use crate::audio::effects::{AudioEffectsChain, EQBand};
 use crate::audio::types::AudioChannel;
@@ -37,7 +36,6 @@ pub enum AudioCommand {
         device_id: String,
         coreaudio_device_id: coreaudio_sys::AudioDeviceID,
         device_name: String,
-        sample_rate: u32,
         channels: u16,
         producer: Producer<f32>,
         input_notifier: Arc<Notify>,
@@ -199,7 +197,6 @@ impl IsolatedAudioManager {
                 device_id,
                 coreaudio_device_id,
                 device_name,
-                sample_rate,
                 channels,
                 producer,
                 input_notifier,
@@ -210,7 +207,6 @@ impl IsolatedAudioManager {
                         device_id,
                         coreaudio_device_id,
                         device_name,
-                        sample_rate,
                         channels,
                         producer,
                         input_notifier,
@@ -276,7 +272,7 @@ impl IsolatedAudioManager {
             let mut default_channel_config = crate::audio::types::AudioChannel::default();
             default_channel_config.name = format!("Channel for {}", device_id);
             default_channel_config.input_device_id = Some(device_id.clone());
-            default_channel_config.effects_enabled = true; // **CRITICAL**: Enable effects processing
+            default_channel_config.effects_enabled = false; // **TEMPORARY**: Disable effects to test raw audio levels
 
             // **EFFECTS FIX**: Use process_with_effects instead of raw get_samples
             let samples = input_stream.process_with_effects(&default_channel_config);
@@ -349,7 +345,6 @@ impl IsolatedAudioManager {
         device_id: String,
         coreaudio_device_id: coreaudio_sys::AudioDeviceID,
         device_name: String,
-        sample_rate: u32,
         channels: u16,
         producer: Producer<f32>,
         input_notifier: Arc<Notify>,
@@ -361,11 +356,13 @@ impl IsolatedAudioManager {
 
         // **CRITICAL FIX**: Create AudioInputStream wrapper to match CPAL architecture
         // This allows get_samples_for_device() to find CoreAudio streams in input_streams
+        // **ADAPTIVE**: Detect device native sample rate for AudioInputStream and buffer calculations
+        let native_sample_rate = crate::audio::devices::coreaudio_stream::get_device_native_sample_rate(coreaudio_device_id)?;
         let mut input_stream =
-            AudioInputStream::new(device_id.clone(), device_name.clone(), sample_rate)?;
+            AudioInputStream::new(device_id.clone(), device_name.clone(), native_sample_rate)?;
 
         // Create new RTRB pair - consumer goes to AudioInputStream, producer goes to CoreAudio callback
-        let buffer_capacity = (sample_rate as usize * 2) / 10; // 100ms of stereo samples
+        let buffer_capacity = (native_sample_rate as usize * 2) / 10; // 100ms of stereo samples
         let buffer_capacity = buffer_capacity.max(4096).min(16384);
         let (coreaudio_producer, audio_input_consumer) =
             rtrb::RingBuffer::<f32>::new(buffer_capacity);
@@ -377,11 +374,11 @@ impl IsolatedAudioManager {
         self.input_streams.insert(device_id.clone(), input_stream);
 
         // Use StreamManager to create and start the CoreAudio input stream as CPAL alternative
+        // **ADAPTIVE AUDIO**: No longer pass sample_rate - it will be detected from device
         self.stream_manager.add_coreaudio_input_stream_alternative(
             device_id.clone(),
             coreaudio_device_id,
             device_name,
-            sample_rate,
             channels,
             coreaudio_producer, // Use new producer that connects to AudioInputStream consumer
             self.global_input_notifier.clone(), // CRITICAL FIX: Use global notifier like CPAL
@@ -638,31 +635,24 @@ impl IsolatedAudioManager {
         }
         // Single channels: NO normalization - preserve full dynamics
 
-        // **AUDIO QUALITY FIX**: Professional master gain instead of aggressive reduction
-        let master_gain = 0.9f32; // Professional level
-
-        // Only apply master gain reduction if signal is actually hot
+        // **AUDIO LEVEL FIX**: Only apply gain reduction when actually needed
         let pre_master_peak = reusable_output_buffer
             .iter()
             .map(|&s| s.abs())
             .fold(0.0f32, f32::max);
 
-        if pre_master_peak > 0.95 {
-            // Signal is very hot, apply conservative gain
-            let conservative_gain = 0.8f32;
+        // Only apply gain reduction if signal is approaching clipping (> 0.9)
+        if pre_master_peak > 0.9 {
+            let safety_gain = 0.85f32; // Prevent clipping with safety margin
             for sample in reusable_output_buffer.iter_mut() {
-                *sample *= conservative_gain;
+                *sample *= safety_gain;
             }
             println!(
-                "🔧 MASTER LIMITER: Hot signal {:.3}, applied {:.2} gain",
-                pre_master_peak, conservative_gain
+                "🔧 CLIPPING PROTECTION: Hot signal {:.3}, applied {:.2} safety gain",
+                pre_master_peak, safety_gain
             );
-        } else {
-            // Normal signal levels, apply professional master gain
-            for sample in reusable_output_buffer.iter_mut() {
-                *sample *= master_gain;
-            }
         }
+        // Otherwise: NO gain reduction - preserve original signal levels
 
         reusable_output_buffer
     }

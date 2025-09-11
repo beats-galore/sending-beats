@@ -5,7 +5,6 @@ use std::sync::Arc;
 use tracing::{error, info, warn};
 
 use super::super::sample_rate_converter::LinearSRC;
-use super::super::stream_operations::calculate_target_latency_ms;
 use super::super::types::VirtualMixer;
 use crate::audio::effects::{AudioEffectsChain, EQBand};
 use crate::audio::types::AudioChannel;
@@ -76,22 +75,21 @@ impl StreamManager {
         device_id: String,
         coreaudio_device_id: coreaudio_sys::AudioDeviceID,
         device_name: String,
-        sample_rate: u32,
         channels: u16,
         producer: Producer<f32>, // Owned RTRB Producer (exactly like CPAL)
         input_notifier: Arc<Notify>, // Event notification (exactly like CPAL)
     ) -> Result<()> {
         info!(
-          "🎤 Creating CoreAudio input stream (CPAL alternative) for device '{}' (ID: {}, SR: {}Hz, CH: {})",
-          device_id, coreaudio_device_id, sample_rate, channels
+          "🎤 Creating CoreAudio input stream (CPAL alternative) for device '{}' (ID: {}, CH: {})",
+          device_id, coreaudio_device_id, channels
       );
 
         // Create CoreAudio input stream with RTRB producer integration (mirrors CPAL exactly)
+        // **ADAPTIVE AUDIO**: No longer pass sample_rate - it will be detected from device
         let mut coreaudio_input_stream =
             crate::audio::devices::CoreAudioInputStream::new_with_rtrb_producer(
                 coreaudio_device_id,
                 device_name.clone(),
-                sample_rate,
                 channels,
                 producer, // Use producer provided by IsolatedAudioManager
                 input_notifier,
@@ -201,11 +199,11 @@ impl StreamManager {
 
         // **SPMC INTEGRATION**: Create CoreAudio stream with SPMC reader
         // Extract values from CoreAudioDevice and use new constructor
+        // **ADAPTIVE AUDIO**: No longer pass sample_rate - it will be detected from device
         let mut coreaudio_stream =
             crate::audio::devices::CoreAudioOutputStream::new_with_spmc_reader(
                 coreaudio_device.device_id,    // AudioDeviceID (u32)
                 coreaudio_device.name.clone(), // String
-                coreaudio_device.sample_rate,  // u32
                 2,                             // channels: u16 (stereo)
                 spmc_reader,                   // **SPMC READER INTEGRATION**
             )?;
