@@ -45,8 +45,8 @@ pub use broadcasting::{
 };
 
 pub use devices::{
-    get_device_monitor, get_device_monitoring_stats, initialize_device_monitoring,
-    stop_device_monitoring, AudioDeviceManager, DeviceMonitor, DeviceMonitorConfig,
+    get_device_monitor, get_device_monitoring_stats,
+   AudioDeviceManager, DeviceMonitor, DeviceMonitorConfig,
     DeviceMonitorStats,
 };
 

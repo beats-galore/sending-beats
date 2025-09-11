@@ -100,12 +100,12 @@ pub async fn safe_switch_input_device(
         );
 
         // **STREAMLINED ARCHITECTURE**: Use direct AudioCommands instead of VirtualMixer methods
-        
+
         // Remove old device if specified
         if let Some(old_id) = old_device_id {
             if !old_id.trim().is_empty() {
                 println!("🗑️ Removing old input device via AudioCommand: {}", old_id);
-                
+
                 let (response_tx, response_rx) = tokio::sync::oneshot::channel();
                 let command = crate::audio::mixer::stream_management::AudioCommand::RemoveInputStream {
                     device_id: old_id.clone(),
@@ -121,7 +121,7 @@ pub async fn safe_switch_input_device(
                         Err(_) => eprintln!("Warning: Audio system did not respond for removing {}", old_id),
                     }
                 }
-                
+
                 // **CRASH FIX**: Add delay to allow cleanup
                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
             }
@@ -129,7 +129,7 @@ pub async fn safe_switch_input_device(
 
         // **CRASH FIX**: Add new device with better error handling
         println!("➕ Adding new input device via AudioCommand: {}", new_device_id);
-        
+
         // Get device handle using device manager
         let device_manager = audio_state.device_manager.lock().await;
         let device_handle = device_manager
@@ -139,13 +139,13 @@ pub async fn safe_switch_input_device(
 
         // Create command based on device type
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-        
+
         let command = match device_handle {
             #[cfg(target_os = "macos")]
             crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => {
                 let buffer_capacity = 8192;
                 let (producer, _consumer) = rtrb::RingBuffer::<f32>::new(buffer_capacity);
-                
+
                 crate::audio::mixer::stream_management::AudioCommand::AddCoreAudioInputStreamAlternative {
                     device_id: new_device_id.clone(),
                     coreaudio_device_id: coreaudio_device.device_id,
@@ -201,7 +201,7 @@ pub async fn safe_switch_output_device(
         println!("🔊 Switching output device to: {}", new_device_id);
 
         // **STREAMLINED ARCHITECTURE**: Use direct AudioCommand instead of VirtualMixer method
-        
+
         // Get device handle using device manager
         let device_manager = audio_state.device_manager.lock().await;
         let device_handle = device_manager
@@ -211,7 +211,7 @@ pub async fn safe_switch_output_device(
 
         // Create command based on device type
         let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-        
+
         let command = match device_handle {
             #[cfg(target_os = "macos")]
             crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => {
@@ -265,7 +265,7 @@ pub async fn add_input_stream(
     // **STREAMLINED ARCHITECTURE**: Bypass VirtualMixer and send command directly to IsolatedAudioManager
     println!("🎤 Adding input stream directly via AudioCommand: {}", device_id);
 
-    // Get device handle using device manager  
+    // Get device handle using device manager
     let device_manager = audio_state.device_manager.lock().await;
     let device_handle = device_manager
         .find_audio_device(&device_id, true) // true = input device
@@ -274,7 +274,7 @@ pub async fn add_input_stream(
 
     // Create command based on device type
     let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-    
+
     let command = match device_handle {
         #[cfg(target_os = "macos")]
         crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => {
@@ -282,7 +282,7 @@ pub async fn add_input_stream(
             // The IsolatedAudioManager will create its own pair internally, but we need to provide one for the command
             let buffer_capacity = 8192; // Default buffer size
             let (producer, _consumer) = rtrb::RingBuffer::<f32>::new(buffer_capacity);
-            
+
             crate::audio::mixer::stream_management::AudioCommand::AddCoreAudioInputStreamAlternative {
                 device_id: device_id.clone(),
                 coreaudio_device_id: coreaudio_device.device_id,
@@ -369,7 +369,7 @@ pub async fn set_output_stream(
 
     // Create command based on device type
     let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-    
+
     let command = match device_handle {
         #[cfg(target_os = "macos")]
         crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => {
@@ -415,21 +415,6 @@ pub async fn start_device_monitoring(audio_state: State<'_, AudioState>) -> Resu
     }
 }
 
-#[tauri::command]
-pub async fn stop_device_monitoring() -> Result<String, String> {
-    use crate::stop_monitoring_impl;
-
-    match stop_monitoring_impl().await {
-        Ok(()) => {
-            println!("✅ Device monitoring stopped");
-            Ok("Device monitoring stopped successfully".to_string())
-        }
-        Err(e) => {
-            eprintln!("❌ Failed to stop device monitoring: {}", e);
-            Err(format!("Failed to stop device monitoring: {}", e))
-        }
-    }
-}
 
 #[tauri::command]
 pub async fn get_device_monitoring_stats() -> Result<Option<crate::DeviceMonitorStats>, String> {

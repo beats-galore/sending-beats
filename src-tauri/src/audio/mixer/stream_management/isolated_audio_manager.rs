@@ -4,7 +4,6 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
-use super::super::sample_rate_converter::LinearSRC;
 use super::super::types::VirtualMixer;
 use crate::audio::effects::{AudioEffectsChain, EQBand};
 use crate::audio::types::AudioChannel;
@@ -63,6 +62,9 @@ pub enum AudioCommand {
 pub struct IsolatedAudioManager {
     input_streams: HashMap<String, AudioInputStream>,
     output_spmc_writers: HashMap<String, Arc<Mutex<Writer<f32>>>>,
+    output_device_sample_rates: HashMap<String, u32>, // Track output device sample rates
+    // Virtual mixer instance with persistent resamplers
+    virtual_mixer: crate::audio::mixer::types::VirtualMixer,
     stream_manager: StreamManager,
     command_rx: mpsc::Receiver<AudioCommand>,
     metrics: AudioMetrics,
@@ -86,10 +88,16 @@ impl IsolatedAudioManager {
 
     /// Check if any output streams need more data (are running low)
 
-    pub fn new(command_rx: mpsc::Receiver<AudioCommand>) -> Self {
-        Self {
+    pub async fn new(command_rx: mpsc::Receiver<AudioCommand>) -> Result<Self, anyhow::Error> {
+        // Create a VirtualMixer instance with default config
+        let mixer_config = crate::audio::types::MixerConfig::default();
+        let virtual_mixer = crate::audio::mixer::types::VirtualMixer::new(mixer_config).await?;
+        
+        Ok(Self {
             input_streams: HashMap::new(),
             output_spmc_writers: HashMap::new(),
+            output_device_sample_rates: HashMap::new(),
+            virtual_mixer,
             stream_manager: StreamManager::new(),
             command_rx,
             metrics: AudioMetrics {
@@ -102,7 +110,7 @@ impl IsolatedAudioManager {
             // TRUE EVENT-DRIVEN: Initialize global notification channels
             global_input_notifier: Arc::new(Notify::new()),
             global_output_notifier: Arc::new(Notify::new()),
-        }
+        })
     }
 
     /// Main processing loop for the isolated audio thread
@@ -263,50 +271,110 @@ impl IsolatedAudioManager {
             return;
         }
 
-        // **PROFESSIONAL MIXING**: Collect samples from all input streams with effects
+        // **SAMPLE RATE CONVERSION PIPELINE**: Step 1 - Collect raw samples and sample rates
         let mut input_samples = Vec::<(String, Vec<f32>)>::new();
+        let mut input_sample_rates = Vec::<(String, u32)>::new();
 
+        // Collect input sample rates
         for (device_id, input_stream) in &mut self.input_streams {
-            // **EFFECTS FIX**: Create default channel config with effects enabled
-            // This ensures effects are applied in IsolatedAudioManager processing
-            let mut default_channel_config = crate::audio::types::AudioChannel::default();
-            default_channel_config.name = format!("Channel for {}", device_id);
-            default_channel_config.input_device_id = Some(device_id.clone());
-            default_channel_config.effects_enabled = false; // **TEMPORARY**: Disable effects to test raw audio levels
-
-            // **EFFECTS FIX**: Use process_with_effects instead of raw get_samples
-            let samples = input_stream.process_with_effects(&default_channel_config);
+            input_sample_rates.push((device_id.clone(), input_stream.sample_rate));
+        }
+        
+        // Determine target mix rate using proper function
+        let target_mix_rate = self.calculate_target_mix_rate(&input_sample_rates);
+        
+        // Continue with sample collection
+        for (device_id, input_stream) in &mut self.input_streams {
+            
+            // Get raw samples (before effects - we'll apply effects after sample rate conversion)
+            let samples = input_stream.get_samples();
             if !samples.is_empty() {
-                // Debug log for first few audio processing cycles
-                let peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-                use std::sync::{LazyLock, Mutex as StdMutex};
-                static PROCESS_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
-                if let Ok(mut count) = PROCESS_COUNT.lock() {
-                    *count += 1;
-                    if *count <= 20 || *count % 1000 == 0 {
-                        println!(
-                            "🎵 AUDIO_PROCESSING [{}]: Input '{}' provided {} samples, peak: {:.4}",
-                            count,
-                            device_id,
-                            samples.len(),
-                            peak
-                        );
-                    }
-                }
-
                 input_samples.push((device_id.clone(), samples));
             }
         }
 
-        // **PROFESSIONAL MIXING**: Use sophisticated mixing logic from VirtualMixer
-        let mixed_samples = crate::audio::mixer::types::VirtualMixer::mix_input_samples(input_samples);
+        if input_samples.is_empty() {
+            return;
+        }
+
+        // **SAMPLE RATE CONVERSION PIPELINE**: Step 2 - Convert all inputs to target mix rate
+        let converted_input_samples = self.virtual_mixer.convert_inputs_to_mix_rate(
+            input_samples,
+            input_sample_rates,
+            target_mix_rate,
+        );
+
+        // **SAMPLE RATE CONVERSION PIPELINE**: Step 3 - Apply effects to rate-converted samples
+        let mut effected_samples = Vec::<(String, Vec<f32>)>::new();
+        
+        for (device_id, samples) in converted_input_samples {
+            if let Some(input_stream) = self.input_streams.get_mut(&device_id) {
+                // **EFFECTS FIX**: Create default channel config with effects enabled
+                let mut default_channel_config = crate::audio::types::AudioChannel::default();
+                default_channel_config.name = format!("Channel for {}", device_id);
+                default_channel_config.input_device_id = Some(device_id.clone());
+                default_channel_config.effects_enabled = false; // **TEMPORARY**: Disable effects to test raw audio levels
+
+                // Apply effects to the rate-converted samples
+                // TODO: We need a way to apply effects to arbitrary sample data, not just from the stream
+                // For now, use the samples as-is after rate conversion
+                let processed_samples = samples; // TODO: Apply effects here
+                
+                if !processed_samples.is_empty() {
+                    // Debug log for first few audio processing cycles
+                    let peak = processed_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                    use std::sync::{LazyLock, Mutex as StdMutex};
+                    static PROCESS_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
+                    if let Ok(mut count) = PROCESS_COUNT.lock() {
+                        *count += 1;
+                        if *count <= 20 || *count % 1000 == 0 {
+                            println!(
+                                "🎵 SRC_AUDIO_PROCESSING [{}]: Input '{}' provided {} samples at {} Hz, peak: {:.4}",
+                                count,
+                                device_id,
+                                processed_samples.len(),
+                                target_mix_rate,
+                                peak
+                            );
+                        }
+                    }
+
+                    effected_samples.push((device_id.clone(), processed_samples));
+                }
+            }
+        }
+
+        // **SAMPLE RATE CONVERSION PIPELINE**: Step 4 - Mix all rate-converted, effected samples
+        let mixed_samples = crate::audio::mixer::types::VirtualMixer::mix_input_samples(effected_samples);
 
         if !mixed_samples.is_empty() {
-            // Send mixed audio to all hardware output streams via SPMC queues
-            for (device_id, spmc_writer) in &self.output_spmc_writers {
+            // **SAMPLE RATE CONVERSION PIPELINE**: Step 5 - Convert mixed audio to each output device's rate
+            // First collect all the output device information to avoid borrowing conflicts
+            let output_device_infos: Vec<(String, u32, Arc<Mutex<Writer<f32>>>)> = self
+                .output_spmc_writers
+                .iter()
+                .map(|(device_id, writer)| {
+                    let output_device_rate = self.output_device_sample_rates
+                        .get(device_id)
+                        .copied()
+                        .unwrap_or(target_mix_rate);
+                    (device_id.clone(), output_device_rate, writer.clone())
+                })
+                .collect();
+
+            // Now process each output device using the collected information
+            for (device_id, output_device_rate, spmc_writer) in output_device_infos {
                 if let Ok(mut writer) = spmc_writer.try_lock() {
-                    // Write samples to SPMC queue for hardware stream to read
-                    for &sample in &mixed_samples {
+                    // **PER-OUTPUT CONVERSION**: Convert mixed samples to this device's actual rate
+                    let device_samples = self.virtual_mixer.convert_output_to_device_rate(
+                        &device_id,
+                        mixed_samples.clone(),
+                        target_mix_rate,
+                        output_device_rate,
+                    );
+
+                    // Write rate-converted samples to SPMC queue for hardware stream to read
+                    for &sample in &device_samples {
                         writer.write(sample);
                     }
 
@@ -319,15 +387,16 @@ impl IsolatedAudioManager {
                         let count = count_map.entry(device_id.clone()).or_insert(0);
                         *count += 1;
                         if *count <= 20 || *count % 1000 == 0 {
-                            let peak = mixed_samples
+                            let peak = device_samples
                                 .iter()
                                 .map(|&s| s.abs())
                                 .fold(0.0f32, f32::max);
                             println!(
-                                "🔊 AUDIO_OUTPUT [{}]: Sent {} samples to '{}', peak: {:.4}",
+                                "🔊 SRC_AUDIO_OUTPUT [{}]: Sent {} samples to '{}' at {} Hz, peak: {:.4}",
                                 count,
-                                mixed_samples.len(),
+                                device_samples.len(),
                                 device_id,
+                                output_device_rate,
                                 peak
                             );
                         }
@@ -410,8 +479,11 @@ impl IsolatedAudioManager {
             device_id, coreaudio_device.device_id
         );
 
-        // Create SPMC queue for this output device
-        let buffer_capacity = (coreaudio_device.sample_rate as usize * 2) / 10; // 100ms of stereo samples
+        // **ADAPTIVE AUDIO**: Detect actual device native sample rate like we do for inputs
+        let native_sample_rate = crate::audio::devices::coreaudio_stream::get_device_native_sample_rate(coreaudio_device.device_id)?;
+
+        // Create SPMC queue for this output device using detected native rate
+        let buffer_capacity = (native_sample_rate as usize * 2) / 10; // 100ms of stereo samples
         let buffer_capacity = buffer_capacity.max(4096).min(16384); // Clamp between 4K-16K samples
 
         let (spmc_reader, spmc_writer) = spmcq::ring_buffer(buffer_capacity);
@@ -421,10 +493,20 @@ impl IsolatedAudioManager {
         self.output_spmc_writers
             .insert(device_id.clone(), spmc_writer);
 
-        // Create the hardware CoreAudio stream with SPMC reader
+        // **SAMPLE RATE TRACKING**: Store the output device's ACTUAL DETECTED sample rate
+        println!("🔧 OUTPUT_DEVICE_RATE: Storing DETECTED {} Hz for output device '{}'", 
+                 native_sample_rate, device_id);
+        self.output_device_sample_rates
+            .insert(device_id.clone(), native_sample_rate);
+
+        // Update the coreaudio_device to use the detected native sample rate
+        let mut corrected_coreaudio_device = coreaudio_device;
+        corrected_coreaudio_device.sample_rate = native_sample_rate;
+
+        // Create the hardware CoreAudio stream with SPMC reader using corrected sample rate
         self.stream_manager.add_coreaudio_output_stream(
             device_id.clone(),
-            coreaudio_device,
+            corrected_coreaudio_device,
             spmc_reader,
             self.global_output_notifier.clone(),
         )?;
@@ -511,6 +593,47 @@ impl IsolatedAudioManager {
         }
     }
 
+    /// Calculate the target mix rate as the highest sample rate among all inputs and outputs
+    fn calculate_target_mix_rate(&self, input_sample_rates: &[(String, u32)]) -> u32 {
+        let mut max_rate = 0u32;
+        
+        // Rate-limited debug logging
+        use std::sync::{LazyLock, Mutex as StdMutex};
+        static DEBUG_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
+        let should_log = if let Ok(mut count) = DEBUG_COUNT.try_lock() {
+            *count += 1;
+            *count <= 3 || *count % 1000 == 0 // Only first 3 times, then every 1000 times
+        } else {
+            false
+        };
+        
+        // Consider all input sample rates
+        for (device_id, rate) in input_sample_rates {
+            if should_log {
+                println!("🎯 INPUT_RATE: Device '{}' at {} Hz", device_id, rate);
+            }
+            max_rate = max_rate.max(*rate);
+        }
+        
+        // Consider all output sample rates
+        for (device_id, rate) in &self.output_device_sample_rates {
+            if should_log {
+                println!("🎯 OUTPUT_RATE: Device '{}' at {} Hz", device_id, rate);
+            }
+            max_rate = max_rate.max(*rate);
+        }
+        
+        let target_rate = if max_rate == 0 {
+            crate::types::DEFAULT_SAMPLE_RATE
+        } else {
+            max_rate
+        };
+        
+        if should_log {
+            println!("🎯 TARGET_MIX_RATE: Calculated {} Hz", target_rate);
+        }
+        target_rate
+    }
 
     /// Get the actual hardware sample rate from active audio streams
     /// This fixes sample rate mismatch issues by using real hardware rates instead of mixer config

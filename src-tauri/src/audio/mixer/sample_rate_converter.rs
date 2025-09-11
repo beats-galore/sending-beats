@@ -10,190 +10,6 @@ use rubato::{
 /// Optimized for low-latency audio processing in callback contexts
 use std::collections::VecDeque;
 
-/// Linear interpolation-based sample rate converter
-/// Suitable for real-time audio processing with minimal CPU overhead
-pub struct LinearSRC {
-    /// Input sample rate (Hz)
-    input_rate: f32,
-    /// Output sample rate (Hz)
-    output_rate: f32,
-    /// Conversion ratio (output_rate / input_rate)
-    ratio: f32,
-    /// Previous input sample for interpolation
-    prev_sample: f32,
-    /// Current fractional position in input stream
-    phase: f32,
-}
-
-impl LinearSRC {
-    /// Create a new sample rate converter
-    ///
-    /// # Arguments
-    /// * `input_rate` - Input sample rate in Hz (e.g., 44100)
-    /// * `output_rate` - Output sample rate in Hz (e.g., 48000)
-    pub fn new(input_rate: f32, output_rate: f32) -> Self {
-        Self {
-            input_rate,
-            output_rate,
-            ratio: output_rate / input_rate,
-            prev_sample: 0.0,
-            phase: 0.0,
-        }
-    }
-
-    /// Convert input samples to output sample rate
-    ///
-    /// # Arguments
-    /// * `input_samples` - Input audio samples at input_rate
-    /// * `output_size` - Exact number of output samples needed
-    ///
-    /// # Returns
-    /// Vector of exactly `output_size` samples at output_rate
-    pub fn convert(&mut self, input_samples: &[f32], output_size: usize) -> Vec<f32> {
-        if input_samples.is_empty() {
-            return vec![0.0; output_size];
-        }
-
-        let mut output = Vec::with_capacity(output_size);
-        let input_len = input_samples.len() as f32;
-
-        // Reset phase for each conversion to maintain timing sync
-        self.phase = 0.0;
-
-        for _ in 0..output_size {
-            // Current integer position in input array
-            let input_index = self.phase.floor() as usize;
-
-            if input_index >= input_samples.len() {
-                // Past end of input, use last sample or extrapolate
-                let last_sample = input_samples.last().copied().unwrap_or(0.0);
-                output.push(last_sample);
-            } else if input_index + 1 >= input_samples.len() {
-                // At last input sample, no interpolation needed
-                output.push(input_samples[input_index]);
-            } else {
-                // Linear interpolation between input_samples[i] and input_samples[i+1]
-                let current_sample = input_samples[input_index];
-                let next_sample = input_samples[input_index + 1];
-                let fraction = self.phase - self.phase.floor();
-
-                let interpolated = current_sample + (next_sample - current_sample) * fraction;
-                output.push(interpolated);
-            }
-
-            // Advance phase by input step size
-            self.phase += 1.0 / self.ratio;
-        }
-
-        // Update previous sample for next conversion
-        self.prev_sample = input_samples.last().copied().unwrap_or(0.0);
-
-        output
-    }
-
-    /// Get conversion ratio (for debugging)
-    pub fn ratio(&self) -> f32 {
-        self.ratio
-    }
-
-    /// Check if conversion is needed (rates are different)
-    pub fn conversion_needed(&self) -> bool {
-        (self.ratio - 1.0).abs() > 0.001 // Allow small tolerance
-    }
-}
-
-/// High-quality cubic interpolation sample rate converter
-/// More CPU intensive but better audio quality for critical applications
-pub struct CubicSRC {
-    input_rate: f32,
-    output_rate: f32,
-    ratio: f32,
-    /// History buffer for cubic interpolation (needs 4 samples)
-    history: VecDeque<f32>,
-    phase: f32,
-}
-
-impl CubicSRC {
-    pub fn new(input_rate: f32, output_rate: f32) -> Self {
-        let mut history = VecDeque::with_capacity(4);
-        // Initialize with zeros
-        for _ in 0..4 {
-            history.push_back(0.0);
-        }
-
-        Self {
-            input_rate,
-            output_rate,
-            ratio: output_rate / input_rate,
-            history,
-            phase: 0.0,
-        }
-    }
-
-    pub fn convert(&mut self, input_samples: &[f32], output_size: usize) -> Vec<f32> {
-        if input_samples.is_empty() {
-            return vec![0.0; output_size];
-        }
-
-        // Add input samples to history buffer
-        for &sample in input_samples {
-            if self.history.len() >= 4 {
-                self.history.pop_front();
-            }
-            self.history.push_back(sample);
-        }
-
-        let mut output = Vec::with_capacity(output_size);
-
-        for _ in 0..output_size {
-            // Cubic interpolation using 4-point window
-            let interpolated = self.cubic_interpolate(self.phase.fract());
-            output.push(interpolated);
-
-            self.phase += 1.0 / self.ratio;
-
-            // Advance history if we've moved past integer positions
-            while self.phase >= 1.0 {
-                self.phase -= 1.0;
-                if self.history.len() >= 4 {
-                    self.history.pop_front();
-                    self.history.push_back(0.0); // Pad with zero if no more input
-                }
-            }
-        }
-
-        output
-    }
-
-    /// Cubic interpolation between 4 points
-    fn cubic_interpolate(&self, t: f32) -> f32 {
-        if self.history.len() < 4 {
-            return 0.0;
-        }
-
-        let y0 = self.history[0];
-        let y1 = self.history[1];
-        let y2 = self.history[2];
-        let y3 = self.history[3];
-
-        // Cubic interpolation formula
-        let a0 = y3 - y2 - y0 + y1;
-        let a1 = y0 - y1 - a0;
-        let a2 = y2 - y0;
-        let a3 = y1;
-
-        a0 * t * t * t + a1 * t * t + a2 * t + a3
-    }
-
-    pub fn ratio(&self) -> f32 {
-        self.ratio
-    }
-
-    pub fn conversion_needed(&self) -> bool {
-        (self.ratio - 1.0).abs() > 0.001
-    }
-}
-
 /// Professional sample rate converter using Rubato's windowed sinc interpolation
 /// Provides broadcast-quality, transparent audio resampling with anti-aliasing
 /// Optimized for real-time audio processing with pre-allocated buffers
@@ -243,22 +59,23 @@ impl RubatoSRC {
             window: WindowFunction::BlackmanHarris2,      // Excellent side-lobe suppression
         };
 
-        // Create Rubato's fixed-input-size resampler
+        // Create Rubato's fixed-input-size resampler  
+        // NOTE: SincFixedIn may expect INPUT/OUTPUT ratio despite documentation
         let resampler = SincFixedIn::new(
-            output_rate as f64 / input_rate as f64, // Conversion ratio
+            input_rate as f64 / output_rate as f64, // Try INPUT/OUTPUT ratio (48000/44100 = 1.088)
             2.0, // Maximum ratio change (for future dynamic adjustment)
             params,
             max_input_frames, // Fixed input chunk size
-            1,                // Number of channels (mono - we process each channel separately)
+            2,                // Number of channels (stereo)
         )
         .map_err(|e| format!("Failed to create Rubato resampler: {}", e))?;
 
         // Pre-allocate buffers for zero-allocation processing
-        let input_buffer = vec![vec![0.0; max_input_frames]; 1]; // 1 channel
+        let input_buffer = vec![vec![0.0; max_input_frames]; 2]; // 2 channels for stereo
         let max_output_frames = ((max_input_frames as f64 * output_rate as f64 / input_rate as f64)
             .ceil() as usize)
             + 64; // Extra headroom
-        let output_buffer = vec![vec![0.0; max_output_frames]; 1];
+        let output_buffer = vec![vec![0.0; max_output_frames]; 2]; // 2 channels for stereo
 
         Ok(Self {
             resampler,
@@ -266,7 +83,7 @@ impl RubatoSRC {
             output_buffer,
             input_rate,
             output_rate,
-            ratio: output_rate / input_rate,
+            ratio: input_rate / output_rate, // Store the ratio we actually used (INPUT/OUTPUT)
             max_input_frames,
         })
     }
@@ -274,8 +91,8 @@ impl RubatoSRC {
     /// Convert input samples to output sample rate with broadcast quality
     ///
     /// # Arguments
-    /// * `input_samples` - Input audio samples at input_rate
-    /// * `output_size` - Desired number of output samples
+    /// * `input_samples` - Input audio samples at input_rate (interleaved stereo)
+    /// * `output_size` - Desired number of output samples (interleaved stereo)
     ///
     /// # Returns
     /// Vector of resampled audio with transparent quality and anti-aliasing
@@ -285,17 +102,30 @@ impl RubatoSRC {
             return vec![0.0; output_size];
         }
 
-        // Ensure input doesn't exceed our buffer capacity
-        let input_len = input_samples.len().min(self.max_input_frames);
+        // Convert interleaved stereo to de-interleaved format for Rubato
+        let input_frames = input_samples.len() / 2; // Each frame has L+R samples
+        let input_frames = input_frames.min(self.max_input_frames);
+        
+        // DEBUG: Track conversion details
+        println!("🔍 RUBATO_DEBUG: Input {} samples → {} frames, ratio {:.4} ({}→{}Hz)", 
+                 input_samples.len(), input_frames, self.ratio, self.input_rate, self.output_rate);
+        
+        if input_frames == 0 {
+            return vec![0.0; output_size];
+        }
 
-        // Copy input samples to resampler buffer
-        self.input_buffer[0][..input_len].copy_from_slice(&input_samples[..input_len]);
-
-        // If input is smaller than buffer, zero-pad the rest
-        if input_len < self.max_input_frames {
-            for sample in &mut self.input_buffer[0][input_len..] {
-                *sample = 0.0;
+        // De-interleave: LRLRLR... -> L...L, R...R
+        for frame in 0..input_frames {
+            if frame * 2 + 1 < input_samples.len() {
+                self.input_buffer[0][frame] = input_samples[frame * 2];     // Left channel
+                self.input_buffer[1][frame] = input_samples[frame * 2 + 1]; // Right channel
             }
+        }
+
+        // Zero-pad the rest of the buffers if needed
+        for frame in input_frames..self.max_input_frames {
+            self.input_buffer[0][frame] = 0.0;
+            self.input_buffer[1][frame] = 0.0;
         }
 
         // Perform high-quality resampling
@@ -304,26 +134,24 @@ impl RubatoSRC {
             .process_into_buffer(&self.input_buffer, &mut self.output_buffer, None)
         {
             Ok((_input_frames_used, output_frames_generated)) => {
-                // Extract the exact number of samples requested
-                let mut result = Vec::with_capacity(output_size);
-                let available_samples = output_frames_generated.min(self.output_buffer[0].len());
+                // Re-interleave the output: L...L, R...R -> LRLRLR...
+                // Return ACTUAL converted samples, not padded to requested size
+                let actual_output_frames = output_frames_generated.min(self.output_buffer[0].len());
+                let mut result = Vec::with_capacity(actual_output_frames * 2);
 
-                for i in 0..output_size {
-                    if i < available_samples {
-                        result.push(self.output_buffer[0][i]);
-                    } else {
-                        // If we need more samples than generated, repeat the last sample or use silence
-                        result.push(if available_samples > 0 {
-                            self.output_buffer[0][available_samples - 1]
-                        } else {
-                            0.0
-                        });
-                    }
+                for frame in 0..actual_output_frames {
+                    result.push(self.output_buffer[0][frame]); // Left
+                    result.push(self.output_buffer[1][frame]); // Right
                 }
+
+                // DEBUG: Track output conversion
+                println!("🔍 RUBATO_DEBUG: {} frames → {} samples ({}→{})", 
+                         actual_output_frames, result.len(), input_frames, actual_output_frames);
 
                 result
             }
-            Err(_) => {
+            Err(e) => {
+                println!("❌ RUBATO_ERROR: Resampling failed: {}", e);
                 // Fallback to silence on processing error
                 vec![0.0; output_size]
             }
@@ -497,6 +325,17 @@ impl R8BrainSRC {
         // r8brain removes latency automatically in pull mode
         // The initial processing latency is compensated internally
         0.0
+    }
+}
+
+impl std::fmt::Debug for RubatoSRC {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RubatoSRC")
+            .field("input_rate", &self.input_rate)
+            .field("output_rate", &self.output_rate)
+            .field("ratio", &self.ratio)
+            .field("max_input_frames", &self.max_input_frames)
+            .finish()
     }
 }
 
