@@ -1,4 +1,3 @@
-use cpal::traits::DeviceTrait;
 use serde::{Deserialize, Serialize};
 
 #[cfg(target_os = "macos")]
@@ -21,7 +20,6 @@ pub struct AudioDeviceInfo {
 
 /// Cross-platform audio device handle
 pub enum AudioDeviceHandle {
-    Cpal(cpal::Device),
     #[cfg(target_os = "macos")]
     CoreAudio(CoreAudioDevice),
 }
@@ -29,13 +27,6 @@ pub enum AudioDeviceHandle {
 impl std::fmt::Debug for AudioDeviceHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AudioDeviceHandle::Cpal(device) => f
-                .debug_struct("AudioDeviceHandle::Cpal")
-                .field(
-                    "name",
-                    &device.name().unwrap_or_else(|_| "Unknown".to_string()),
-                )
-                .finish(),
             #[cfg(target_os = "macos")]
             AudioDeviceHandle::CoreAudio(device) => f
                 .debug_struct("AudioDeviceHandle::CoreAudio")

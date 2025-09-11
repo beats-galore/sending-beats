@@ -36,6 +36,8 @@ impl VirtualMixerHandle {
     ) -> HashMap<String, Vec<f32>> {
         let mut samples = HashMap::new();
 
+        // Debug removed to reduce log spam
+
         // Send GetSamples command to IsolatedAudioManager for each active channel
         for channel in channels {
             if let Some(device_id) = &channel.input_device_id {
@@ -65,17 +67,6 @@ impl VirtualMixerHandle {
         samples
     }
 
-    pub async fn send_to_output(&self, samples: &[f32]) {
-        // STUB: This is a duplicate method - the real implementation is below
-        // TODO: Remove this duplicate and use command channel architecture
-    }
-
-    pub async fn send_to_output_real(&self, _samples: &[f32]) {
-        // STUB: Old method with undefined variables - needs proper implementation
-        // TODO: Implement using command channel architecture
-    }
-
-    // Duplicate method removed - proper implementation elsewhere
 }
 
 impl VirtualMixer {

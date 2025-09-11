@@ -2,15 +2,15 @@ use crate::types::{COMMON_SAMPLE_RATES_HZ, DEFAULT_SAMPLE_RATE};
 #[cfg(target_os = "macos")]
 use anyhow::Result;
 use coreaudio_sys::{
-    kAudioFormatFlagIsFloat, kAudioFormatFlagIsNonInterleaved, kAudioFormatFlagIsPacked,
-    kAudioFormatLinearPCM, kAudioOutputUnitProperty_CurrentDevice,
-    kAudioOutputUnitProperty_EnableIO, kAudioUnitManufacturer_Apple,
+    kAudioDevicePropertyNominalSampleRate, kAudioDevicePropertyStreamFormat, kAudioFormatFlagIsFloat, kAudioFormatFlagIsNonInterleaved, kAudioFormatFlagIsPacked,
+    kAudioFormatLinearPCM, kAudioObjectPropertyElementMaster, kAudioObjectPropertyScopeInput, kAudioOutputUnitProperty_CurrentDevice,
+    kAudioOutputUnitProperty_EnableIO, kAudioOutputUnitProperty_SetInputCallback, kAudioUnitManufacturer_Apple,
     kAudioUnitProperty_SetRenderCallback, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Global,
     kAudioUnitScope_Input, kAudioUnitScope_Output, kAudioUnitSubType_HALOutput,
     kAudioUnitType_Output, AURenderCallbackStruct, AudioBufferList, AudioComponentDescription,
     AudioComponentFindNext, AudioComponentInstanceDispose, AudioComponentInstanceNew,
-    AudioDeviceID, AudioOutputUnitStart, AudioOutputUnitStop, AudioStreamBasicDescription,
-    AudioTimeStamp, AudioUnit, AudioUnitInitialize, AudioUnitRenderActionFlags,
+    AudioDeviceID, AudioObjectGetPropertyData, AudioObjectPropertyAddress, AudioOutputUnitStart, AudioOutputUnitStop, AudioStreamBasicDescription,
+    AudioTimeStamp, AudioUnit, AudioUnitGetProperty, AudioUnitInitialize, AudioUnitRenderActionFlags,
     AudioUnitSetProperty, AudioUnitUninitialize, AudioUnitRender, OSStatus,
 };
 use std::os::raw::c_void;
@@ -590,13 +590,6 @@ extern "C" fn spmc_render_callback(
                             (audio_buffer.mDataByteSize as usize) / std::mem::size_of::<f32>();
                         let samples_to_fill = total_samples.min(frames_needed * 2); // 2 channels
 
-                        // **PROFESSIONAL BROADCAST QUALITY**: CoreAudio with R8Brain transparent resampling
-                        use crate::audio::mixer::sample_rate_converter::R8BrainSRC;
-                        use std::cell::RefCell;
-                        thread_local! {
-                            static SRC: RefCell<Option<R8BrainSRC>> = RefCell::new(None);
-                        }
-
                         // Collect all available samples from SPMC queue
                         let mut input_samples = Vec::new();
                         loop {
@@ -605,6 +598,7 @@ extern "C" fn spmc_render_callback(
                                     input_samples.push(sample);
                                     // Prevent unbounded reads
                                     if input_samples.len() >= 4096 {
+                                        println!("samples greater than 4096, breaking processing loop");
                                         break;
                                     }
                                 }
@@ -621,78 +615,20 @@ extern "C" fn spmc_render_callback(
                         }
 
                         let (samples_read, silence_filled) = if !input_samples.is_empty() {
-                            // Dynamic SRC initialization - detect sample rate from input samples
-                            let converted_samples = SRC.with(|src_cell| {
-                                let mut src_opt = src_cell.borrow_mut();
+                            // SIMPLIFIED: Direct pass-through without sample rate conversion
+                            // Copy input samples directly to output buffer (no resampling)
+                            let samples_to_copy = input_samples.len().min(samples_to_fill);
 
-                                // Estimate input sample rate based on sample count ratios
-                                let estimated_input_rate = {
-                                    // Heuristic: ratio of output samples needed vs input samples available
-                                    let ratio_hint =
-                                        samples_to_fill as f32 / input_samples.len() as f32;
-                                    // Assume reasonable output rate for CoreAudio (usually 48kHz)
-                                    let estimated_output_rate = DEFAULT_SAMPLE_RATE as f32;
-                                    let estimated_input_rate = estimated_output_rate / ratio_hint;
-
-                                    // Find closest common sample rate
-                                    COMMON_SAMPLE_RATES_HZ
-                                        .iter()
-                                        .min_by(|&a, &b| {
-                                            (a - estimated_input_rate)
-                                                .abs()
-                                                .partial_cmp(&(b - estimated_input_rate).abs())
-                                                .unwrap()
-                                        })
-                                        .copied()
-                                        .unwrap_or(DEFAULT_SAMPLE_RATE as f32)
-                                };
-
-                                // Reinitialize SRC if rate changed significantly
-                                let needs_new_src = if let Some(ref src) = *src_opt {
-                                    (src.ratio()
-                                        - (crate::types::DEFAULT_SAMPLE_RATE as f32
-                                            / estimated_input_rate))
-                                        .abs()
-                                        > 0.01
-                                } else {
-                                    true
-                                };
-
-                                if needs_new_src {
-                                    match R8BrainSRC::new(
-                                        estimated_input_rate,
-                                        DEFAULT_SAMPLE_RATE as f32,
-                                    ) {
-                                        Ok(src) => *src_opt = Some(src),
-                                        Err(_) => *src_opt = None, // Fallback to silence if SRC creation fails
-                                    }
-                                }
-
-                                if let Some(ref mut src) = *src_opt {
-                                    let result = src.convert(&input_samples, samples_to_fill);
-                                    // Debug log SRC usage occasionally
-                                    // static mut SRC_DEBUG_COUNT: u64 = 0;
-                                    // unsafe {
-                                    //     SRC_DEBUG_COUNT += 1;
-                                    //     if SRC_DEBUG_COUNT % 200 == 0 {
-                                    //         println!("🎯 R8BRAIN_SRC [{}→{}]: {} input samples → {} output samples (ratio: {:.3}) [BROADCAST QUALITY]",
-                                    //             estimated_input_rate, DEFAULT_SAMPLE_RATE, input_samples.len(), result.len(), src.ratio());
-                                    //     }
-                                    // }
-                                    result
-                                } else {
-                                    vec![0.0; samples_to_fill]
-                                }
-                            });
-
-                            // Copy converted samples to output buffer
-                            for (i, &sample) in converted_samples.iter().enumerate() {
-                                if i < samples_to_fill {
-                                    unsafe { *output_data.add(i) = sample };
-                                }
+                            for i in 0..samples_to_copy {
+                                unsafe { *output_data.add(i) = input_samples[i] };
                             }
 
-                            (converted_samples.len().min(samples_to_fill), 0)
+                            // Fill remaining with silence if we don't have enough samples
+                            for i in samples_to_copy..samples_to_fill {
+                                unsafe { *output_data.add(i) = 0.0 };
+                            }
+
+                            (samples_to_copy, samples_to_fill - samples_to_copy)
                         } else {
                             // No input samples available - fill with silence
                             for i in 0..samples_to_fill {
@@ -888,41 +824,125 @@ impl CoreAudioInputStream {
             return Err(anyhow::anyhow!("Failed to set current input device: {}", status));
         }
 
-        // Step 6: Configure the audio format for INPUT (INTERLEAVED for compatibility)
-        let format = AudioStreamBasicDescription {
-            mSampleRate: self.sample_rate as f64,
-            mFormatID: kAudioFormatLinearPCM,
-            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
-            mBytesPerPacket: (std::mem::size_of::<f32>() * self.channels as usize) as u32, // Interleaved: all channels per packet
-            mFramesPerPacket: 1,
-            mBytesPerFrame: (std::mem::size_of::<f32>() * self.channels as usize) as u32, // Interleaved: all channels per frame
-            mChannelsPerFrame: self.channels as u32,
-            mBitsPerChannel: 32,
-            mReserved: 0,
+        // Step 6: Get the device's native format and use it instead of forcing our own
+        // For HAL input units, we should use the device's native format
+        let mut device_format: AudioStreamBasicDescription = unsafe { std::mem::zeroed() };
+        let mut size = std::mem::size_of::<AudioStreamBasicDescription>() as u32;
+        let status = unsafe {
+            AudioObjectGetPropertyData(
+                self.device_id,
+                &AudioObjectPropertyAddress {
+                    mSelector: kAudioDevicePropertyStreamFormat,
+                    mScope: kAudioObjectPropertyScopeInput,
+                    mElement: kAudioObjectPropertyElementMaster,
+                },
+                0,
+                ptr::null_mut(),
+                &mut size,
+                &mut device_format as *mut _ as *mut c_void,
+            )
         };
+        if status != 0 {
+            unsafe { AudioComponentInstanceDispose(audio_unit) };
+            return Err(anyhow::anyhow!("Failed to get device native format: {}", status));
+        }
 
+        println!("🔍 DEVICE NATIVE FORMAT: SR: {}, Channels: {}, Format: 0x{:x}, Flags: 0x{:x}",
+            device_format.mSampleRate, device_format.mChannelsPerFrame,
+            device_format.mFormatID, device_format.mFormatFlags);
+
+        // Only set format on OUTPUT scope of input unit (data coming FROM the device)
+        // Use the device's native format to avoid -10865 errors
         let status = unsafe {
             AudioUnitSetProperty(
                 audio_unit,
                 kAudioUnitProperty_StreamFormat,
-                kAudioUnitScope_Output,  // Format for OUTPUT of input unit (data coming FROM input)
+                kAudioUnitScope_Output,  // Output scope for data FROM input
                 1,  // Input bus is 1
-                &format as *const _ as *const c_void,
+                &device_format as *const _ as *const c_void,
                 std::mem::size_of::<AudioStreamBasicDescription>() as u32,
             )
         };
         if status != 0 {
             unsafe { AudioComponentInstanceDispose(audio_unit) };
-            return Err(anyhow::anyhow!("Failed to set input stream format: {}", status));
+            return Err(anyhow::anyhow!("Failed to set output stream format for input unit: {}", status));
         }
 
-        // Step 7: Set up input callback with AudioInputCallbackContext  
+        // Step 6.5: Add debugging to verify AudioUnit state before callback setup
+        // Check the actual formats that were set
+        let mut actual_input_format: AudioStreamBasicDescription = unsafe { std::mem::zeroed() };
+        let mut size = std::mem::size_of::<AudioStreamBasicDescription>() as u32;
+        let status = unsafe {
+            AudioUnitGetProperty(
+                audio_unit,
+                kAudioUnitProperty_StreamFormat,
+                kAudioUnitScope_Input,
+                1,
+                &mut actual_input_format as *mut _ as *mut c_void,
+                &mut size,
+            )
+        };
+        if status == 0 {
+            println!("🔍 DEBUG INPUT FORMAT: SR: {}, Channels: {}, Format: 0x{:x}, Flags: 0x{:x}",
+                actual_input_format.mSampleRate, actual_input_format.mChannelsPerFrame,
+                actual_input_format.mFormatID, actual_input_format.mFormatFlags);
+        } else {
+            println!("⚠️ Failed to get input format: {}", status);
+        }
+
+        let mut actual_output_format: AudioStreamBasicDescription = unsafe { std::mem::zeroed() };
+        let mut size = std::mem::size_of::<AudioStreamBasicDescription>() as u32;
+        let status = unsafe {
+            AudioUnitGetProperty(
+                audio_unit,
+                kAudioUnitProperty_StreamFormat,
+                kAudioUnitScope_Output,
+                1,
+                &mut actual_output_format as *mut _ as *mut c_void,
+                &mut size,
+            )
+        };
+        if status == 0 {
+            println!("🔍 DEBUG OUTPUT FORMAT: SR: {}, Channels: {}, Format: 0x{:x}, Flags: 0x{:x}",
+                actual_output_format.mSampleRate, actual_output_format.mChannelsPerFrame,
+                actual_output_format.mFormatID, actual_output_format.mFormatFlags);
+        } else {
+            println!("⚠️ Failed to get output format: {}", status);
+        }
+
+        // Check device sample rate compatibility
+        let mut device_sample_rate: f64 = 0.0;
+        let mut size = std::mem::size_of::<f64>() as u32;
+        let status = unsafe {
+            AudioObjectGetPropertyData(
+                self.device_id,
+                &AudioObjectPropertyAddress {
+                    mSelector: kAudioDevicePropertyNominalSampleRate,
+                    mScope: kAudioObjectPropertyScopeInput,
+                    mElement: kAudioObjectPropertyElementMaster,
+                },
+                0,
+                ptr::null_mut(),
+                &mut size,
+                &mut device_sample_rate as *mut _ as *mut c_void,
+            )
+        };
+        if status == 0 {
+            println!("🔍 DEBUG DEVICE SAMPLE RATE: {} Hz (requested: {} Hz)", device_sample_rate, self.sample_rate);
+            if (device_sample_rate - self.sample_rate as f64).abs() > 1.0 {
+                println!("⚠️ SAMPLE RATE MISMATCH: Device={} Hz, Requested={} Hz", device_sample_rate, self.sample_rate);
+            }
+        } else {
+            println!("⚠️ Failed to get device sample rate: {}", status);
+        }
+
+        // Step 7: Set up input callback with AudioInputCallbackContext
         let rtrb_producer_arc = self.rtrb_producer.take().unwrap();
         let rtrb_producer = Arc::try_unwrap(rtrb_producer_arc)
             .map_err(|_| anyhow::anyhow!("Failed to extract RTRB producer from Arc"))?
             .into_inner()
             .map_err(|_| anyhow::anyhow!("Failed to extract RTRB producer from Mutex"))?;
-        
+
         let context = AudioInputCallbackContext {
             rtrb_producer, // Move extracted producer ownership to callback context, just like CPAL
             input_notifier: self.input_notifier.clone(),
@@ -949,12 +969,14 @@ impl CoreAudioInputStream {
             inputProcRefCon: context_ptr as *mut c_void,
         };
 
+        // **APPLE DOCUMENTED**: Use input callback for HAL input units per TN2091
+        // This notifies when input data is available, then we call AudioUnitRender to get it
         let status = unsafe {
             AudioUnitSetProperty(
                 audio_unit,
-                kAudioUnitProperty_SetRenderCallback,
-                kAudioUnitScope_Output,  // Set callback for output of input unit
-                1,  // Input bus is 1
+                kAudioOutputUnitProperty_SetInputCallback,  // Use input callback property for input units
+                kAudioUnitScope_Global,  // Global scope for input callbacks
+                0,  // Element 0 for input callbacks
                 &callback as *const _ as *const c_void,
                 std::mem::size_of::<AURenderCallbackStruct>() as u32,
             )
@@ -1083,8 +1105,9 @@ extern "C" fn coreaudio_input_callback(
     in_time_stamp: *const AudioTimeStamp,
     in_bus_number: u32,
     in_number_frames: u32,
-    _io_data: *mut AudioBufferList,  // Not used for input callbacks
+    io_data: *mut AudioBufferList,  // USED for render callbacks - AudioUnit provides data here
 ) -> OSStatus {
+
     // Comprehensive safety checks to prevent crashes
     if in_ref_con.is_null() || in_number_frames == 0 {
         return -1; // Invalid parameters
@@ -1103,8 +1126,10 @@ extern "C" fn coreaudio_input_callback(
         let context = unsafe { &mut *context_ptr };
         let frames_needed = in_number_frames as usize;
         let total_samples = frames_needed * context.channels as usize;
-        
-        // Create AudioBufferList for capturing input audio
+
+        // **APPLE TN2091**: Use AudioUnitRender to pull input data from HAL input unit
+
+        // Allocate buffer for the audio data
         let mut audio_data = vec![0.0f32; total_samples];
         let mut audio_buffer_list = AudioBufferList {
             mNumberBuffers: 1,
@@ -1115,14 +1140,14 @@ extern "C" fn coreaudio_input_callback(
             }],
         };
 
-        // **CRITICAL**: AudioUnitRender pulls REAL audio from input device
+        // **FIX for -10863**: Use correct parameters for HAL input AudioUnitRender
         let mut render_flags: AudioUnitRenderActionFlags = 0;
         let render_status = unsafe {
             AudioUnitRender(
                 context.audio_unit,
                 &mut render_flags,
                 in_time_stamp,
-                in_bus_number, // Input bus number from callback
+                1, // **CRITICAL**: Input bus is always 1 for HAL units
                 in_number_frames,
                 &mut audio_buffer_list as *mut AudioBufferList,
             )
@@ -1132,8 +1157,13 @@ extern "C" fn coreaudio_input_callback(
             // SUCCESS: Got real audio from hardware
             audio_data
         } else {
-            // FALLBACK: AudioUnitRender failed, use silence to prevent audio dropouts
-            println!("⚠️ AudioUnitRender failed with status {}, using silence", render_status);
+            // Check for specific errors to understand what's wrong
+            match render_status {
+                -10863 => println!("🔴 AudioUnitRender: kAudioUnitErr_CannotDoInCurrentContext - check format/timing"),
+                -10865 => println!("🔴 AudioUnitRender: kAudioUnitErr_PropertyNotWritable - check configuration"),
+                -10866 => println!("🔴 AudioUnitRender: kAudioUnitErr_CannotDoInCurrentContext - invalid format"),
+                _ => println!("🔴 AudioUnitRender failed with status {}", render_status),
+            }
             vec![0.0f32; total_samples]
         };
 

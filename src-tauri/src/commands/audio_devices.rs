@@ -1,5 +1,4 @@
 use crate::{AudioDeviceInfo, AudioState};
-use cpal::traits::DeviceTrait;
 use tauri::State;
 
 #[tauri::command]
@@ -305,35 +304,27 @@ pub async fn add_output_device(
 ) -> Result<(), String> {
     // NEW ARCHITECTURE: Use command queue instead of direct mixer access
 
-    // Get the actual CPAL device using the device manager
+    // Get the device handle using the device manager
     let device_manager = audio_state.device_manager.lock().await;
     let device_handle = device_manager
         .find_audio_device(&device_id, false)
         .await
         .map_err(|e| format!("Failed to find output device {}: {}", device_id, e))?;
 
-    let device = match device_handle {
-        crate::audio::types::AudioDeviceHandle::Cpal(cpal_device) => cpal_device,
-        #[cfg(target_os = "macos")]
-        _ => return Err("Only CPAL devices supported for output streams".to_string()),
-        #[cfg(not(target_os = "macos"))]
-        _ => return Err("Unknown device handle type".to_string()),
-    };
-
-    // Get the default output config for this device
-    let config = device
-        .default_output_config()
-        .map_err(|e| format!("Failed to get device config: {}", e))?
-        .config();
-
-    // Send AddOutputStream command to isolated audio thread
+    // Send appropriate command based on device type
     let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
-    let command = crate::audio::mixer::stream_management::AudioCommand::AddCPALOutputStream {
-        device_id: device_id.clone(),
-        device,
-        config,
-        response_tx,
+    let command = match device_handle {
+        #[cfg(target_os = "macos")]
+        crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => {
+            crate::audio::mixer::stream_management::AudioCommand::AddCoreAudioOutputStream {
+                device_id: device_id.clone(),
+                coreaudio_device,
+                response_tx,
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        _ => return Err("Unsupported device type for this platform".to_string()),
     };
 
     // Send command to isolated audio thread
