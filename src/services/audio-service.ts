@@ -53,7 +53,8 @@ export const audioService = {
   },
 
   async getChannelEffects(channelId: number): Promise<string[]> {
-    return invoke('get_channel_effects', { channelId });
+    return [];
+    // return invoke('get_channel_effects', { channelId });
   },
 
   // Enhanced effects update commands

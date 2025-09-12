@@ -23,7 +23,7 @@ use std::ptr;
 pub fn get_device_native_sample_rate(device_id: AudioDeviceID) -> Result<u32> {
     let mut device_sample_rate: f64 = 0.0;
     let mut size = std::mem::size_of::<f64>() as u32;
-    
+
     let status = unsafe {
         AudioObjectGetPropertyData(
             device_id,
@@ -41,10 +41,17 @@ pub fn get_device_native_sample_rate(device_id: AudioDeviceID) -> Result<u32> {
 
     if status == 0 {
         let native_rate = device_sample_rate as u32;
-        println!("🔍 DETECTED NATIVE RATE: Device {} running at {} Hz", device_id, native_rate);
+        println!(
+            "🔍 DETECTED NATIVE RATE: Device {} running at {} Hz",
+            device_id, native_rate
+        );
         Ok(native_rate)
     } else {
-        Err(anyhow::anyhow!("Failed to get native sample rate for device {}: status {}", device_id, status))
+        Err(anyhow::anyhow!(
+            "Failed to get native sample rate for device {}: status {}",
+            device_id,
+            status
+        ))
     }
 }
 use std::sync::{
@@ -169,7 +176,7 @@ impl CoreAudioOutputStream {
     ) -> Result<Self> {
         // **ADAPTIVE AUDIO**: Detect device's native sample rate instead of imposing our own
         let native_sample_rate = get_device_native_sample_rate(device_id)?;
-        
+
         println!(
             "🔊 Creating CoreAudio output stream with SPMC reader for device: {} (ID: {}, NATIVE SR: {}, CH: {})",
             device_name, device_id, native_sample_rate, channels
@@ -750,7 +757,7 @@ impl CoreAudioInputStream {
     ) -> Result<Self> {
         // **ADAPTIVE AUDIO**: Detect device's native sample rate instead of imposing our own
         let native_sample_rate = get_device_native_sample_rate(device_id)?;
-        
+
         println!(
             "🎤 Creating CoreAudio input stream for device: {} (ID: {}, NATIVE SR: {}, CH: {})",
             device_name, device_id, native_sample_rate, channels

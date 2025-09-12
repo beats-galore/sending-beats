@@ -15,12 +15,11 @@ pub mod commands;
 
 // Re-export audio types for testing and external use
 pub use audio::{
-    get_device_monitoring_stats as get_monitoring_stats_impl,
-   AudioChannel, AudioConfigFactory,
+    get_device_monitoring_stats as get_monitoring_stats_impl, AudioChannel, AudioConfigFactory,
     AudioDatabase, AudioDeviceInfo, AudioDeviceManager, AudioEventBus, AudioMetrics, ChannelConfig,
     Compressor, DeviceMonitorStats, EQBand, FilePlayerService, Limiter, MasterLevelData,
-    MixerCommand, MixerConfig, OutputRouteConfig, PeakDetector, RmsDetector, ThreeBandEqualizer,
-    VULevelData, VirtualMixer,
+    MixerConfig, OutputRouteConfig, PeakDetector, RmsDetector, ThreeBandEqualizer, VULevelData,
+    VirtualMixer,
 };
 // Re-export application audio types
 pub use audio::tap::{ApplicationAudioError, ProcessInfo, TapStats};
@@ -37,9 +36,9 @@ use commands::audio_effects::*;
 use commands::debug::*;
 use commands::file_player::*;
 use commands::icecast::*;
-use commands::mixer::*;
 use commands::recording::*;
 use commands::streaming::*;
+use commands::mixer::*;
 
 // File player state for managing multiple file players
 use commands::file_player::FilePlayerState;
@@ -174,7 +173,9 @@ pub fn run() {
                 tracing::info!("🎵 Starting IsolatedAudioManager in dedicated thread");
                 match crate::audio::mixer::stream_management::IsolatedAudioManager::new(
                     audio_command_rx,
-                ).await {
+                )
+                .await
+                {
                     Ok(mut isolated_audio_manager) => {
                         isolated_audio_manager.run().await;
                     }
@@ -242,27 +243,11 @@ pub fn run() {
             remove_input_stream,
             set_output_stream,
             start_device_monitoring,
-
             get_device_monitoring_stats,
             // Mixer commands
-            create_mixer,
-            start_mixer,
-            stop_mixer,
-            add_mixer_channel,
-            update_mixer_channel,
-            get_mixer_metrics,
-            get_channel_levels,
-            get_master_levels,
-            send_mixer_command,
-            get_dj_mixer_config,
-            get_streaming_mixer_config,
-            check_audio_capture_permissions,
-            request_audio_capture_permissions,
-            open_system_preferences_privacy,
             add_output_device,
             remove_output_device,
             update_output_device,
-            get_output_devices,
             // CoreAudio specific commands
             enumerate_coreaudio_devices,
             get_device_type_info,
@@ -274,6 +259,7 @@ pub fn run() {
             add_channel_effect,
             remove_channel_effect,
             get_channel_effects,
+            get_dj_mixer_config,
             // Debug commands
             get_recent_vu_levels,
             get_recent_master_levels,

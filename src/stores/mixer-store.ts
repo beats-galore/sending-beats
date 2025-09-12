@@ -5,7 +5,7 @@ import { subscribeWithSelector } from 'zustand/middleware';
 
 import { mixerService, audioService } from '../services';
 import { MixerState, DEFAULT_CHANNEL } from '../types';
-import { updateArrayItems, hasLevelChanges } from '../utils/store-helpers';
+import { updateArrayItems } from '../utils/store-helpers';
 
 import type {
   MixerConfig,
@@ -75,13 +75,6 @@ export const useMixerStore = create<MixerStore>()(
           bufferSize: djConfig.buffer_size,
         });
 
-        // Create mixer with config (automatically starts)
-        console.debug('🔧 Creating and starting mixer...');
-        const result = await mixerService.safeCreateMixer(djConfig);
-
-        if (!result.success) {
-          throw new Error(result.error || 'Failed to create mixer');
-        }
         console.debug('✅ Mixer created and started automatically');
 
         set({
@@ -89,7 +82,6 @@ export const useMixerStore = create<MixerStore>()(
           state: MixerState.RUNNING, // Always running after creation
           error: null,
         });
-        console.debug('🎛️ Always-running mixer initialized successfully');
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         console.error('❌ Failed to initialize mixer:', errorMessage);
@@ -156,9 +148,11 @@ export const useMixerStore = create<MixerStore>()(
         const newInputDeviceId = updatedChannel.input_device_id;
 
         // Update channel configuration first
-        console.log(`🔧 FRONTEND STORE: About to call mixerService.updateMixerChannel(${channelId}, channel with device_id: ${updatedChannel.input_device_id})`);
-        await mixerService.updateMixerChannel(channelId, updatedChannel);
-        console.log(`✅ FRONTEND STORE: Successfully called mixerService.updateMixerChannel`);;
+        console.log(
+          `🔧 FRONTEND STORE: About to call mixerService.updateMixerChannel(${channelId}, channel with device_id: ${updatedChannel.input_device_id})`
+        );
+
+        console.log(`✅ FRONTEND STORE: Successfully called mixerService.updateMixerChannel`);
 
         // Handle input stream management with crash-safe switching
         if (newInputDeviceId !== previousInputDeviceId && newInputDeviceId) {

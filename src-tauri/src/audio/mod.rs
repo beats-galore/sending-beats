@@ -19,8 +19,7 @@ pub mod types;
 
 // Re-export commonly used types for easier imports
 pub use types::{
-    AudioChannel, AudioConfigFactory, AudioDeviceHandle, AudioDeviceInfo, AudioMetrics,
-    MixerCommand, MixerConfig,
+    AudioChannel, AudioConfigFactory, AudioDeviceHandle, AudioDeviceInfo, AudioMetrics, MixerConfig,
 };
 
 #[cfg(target_os = "macos")]
@@ -31,7 +30,7 @@ pub use effects::{
     RmsDetector, SpectrumAnalyzer, ThreeBandEqualizer,
 };
 
-pub use mixer::{AudioInputStream, AudioOutputStream, VirtualMixer};
+pub use mixer::stream_management::VirtualMixer;
 
 pub use crate::db::{
     AudioDatabase, AudioDeviceConfig, AudioEventBus, ChannelConfig, MasterLevelData,
@@ -45,9 +44,8 @@ pub use broadcasting::{
 };
 
 pub use devices::{
-    get_device_monitor, get_device_monitoring_stats,
-   AudioDeviceManager, DeviceMonitor, DeviceMonitorConfig,
-    DeviceMonitorStats,
+    get_device_monitor, get_device_monitoring_stats, AudioDeviceManager, DeviceMonitor,
+    DeviceMonitorConfig, DeviceMonitorStats,
 };
 
 pub use recording::{

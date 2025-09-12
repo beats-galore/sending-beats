@@ -132,7 +132,7 @@ const formatToValue = (format: RecordingFormat): string => {
 
 export const RecordingControlsCard = memo<RecordingControlsCardProps>(({ disabled = false }) => {
   const { classes } = useStyles();
-  const { status, actions, isLoading, error } = useRecording();
+  const { status, actions, error } = useRecording();
 
   // Quick recording config state
   const [quickConfig, setQuickConfig] = useState<Partial<RecordingConfig>>({
