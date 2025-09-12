@@ -9,7 +9,6 @@ use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::{broadcast, Mutex, RwLock};
 use tracing::{error, info, warn};
 
-use super::mixer::stream_management::AudioInputStream;
 use super::tap::process_discovery::ApplicationDiscovery;
 use super::tap::types::{ApplicationAudioError, ProcessInfo, TapStats};
 use super::tap::virtual_stream::get_virtual_input_registry;
@@ -266,25 +265,25 @@ impl ApplicationAudioManager {
         );
 
         // Create the AudioInputStream immediately and register it
-        {
-            let _audio_input_stream = Arc::new(
-                crate::audio::mixer::stream_management::AudioInputStream::new(
-                    virtual_device_id.clone(),
-                    channel_name.clone(),
-                    crate::types::DEFAULT_SAMPLE_RATE,
-                )?,
-            );
-            // Drop before await to avoid Send+Sync issues
-        }
+        // {
+        //     let _audio_input_stream = Arc::new(
+        //         crate::audio::mixer::stream_management::AudioInputStream::new(
+        //             virtual_device_id.clone(),
+        //             channel_name.clone(),
+        //             crate::types::DEFAULT_SAMPLE_RATE,
+        //         )?,
+        //     );
+        //     // Drop before await to avoid Send+Sync issues
+        // }
 
-        // Store in global registry IMMEDIATELY (STUBBED for command channel architecture)
-        self.add_to_global_mixer_sync(virtual_device_id.clone(), ())
-            .await?;
+        // // Store in global registry IMMEDIATELY (STUBBED for command channel architecture)
+        // self.add_to_global_mixer_sync(virtual_device_id.clone(), ())
+        //     .await?;
 
-        info!(
-            "✅ SYNC: Virtual stream {} registered and ready for mixer",
-            virtual_device_id
-        );
+        // info!(
+        //     "✅ SYNC: Virtual stream {} registered and ready for mixer",
+        //     virtual_device_id
+        // );
         Ok(())
     }
 

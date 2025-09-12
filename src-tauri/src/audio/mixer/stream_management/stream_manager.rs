@@ -4,7 +4,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
-use super::super::types::VirtualMixer;
+use super::virtual_mixer::VirtualMixer;
 use crate::audio::effects::{AudioEffectsChain, EQBand};
 use crate::audio::types::AudioChannel;
 use tokio::sync::{mpsc, oneshot, Mutex, Notify};
@@ -69,7 +69,7 @@ impl StreamManager {
 
     /// Add CoreAudio input stream as alternative to CPAL (same interface, different backend)
     #[cfg(target_os = "macos")]
-    pub fn add_coreaudio_input_stream_alternative(
+    pub fn add_coreaudio_input_stream(
         &mut self,
         device_id: String,
         coreaudio_device_id: coreaudio_sys::AudioDeviceID,
@@ -160,27 +160,7 @@ impl StreamManager {
         removed
     }
 
-    /// Add output stream with SPMC Reader for lock-free audio playback (supports CoreAudio)
-    pub fn add_output_stream(
-        &mut self,
-        device_id: String,
-        device_handle: crate::audio::types::AudioDeviceHandle,
-        spmc_reader: spmcq::Reader<f32>,
-        output_notifier: Arc<Notify>, // Notification channel for event-driven processing
-    ) -> Result<()> {
-        match device_handle {
-            #[cfg(target_os = "macos")]
-            crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => self
-                .add_coreaudio_output_stream(
-                    device_id,
-                    coreaudio_device,
-                    spmc_reader,
-                    output_notifier,
-                ),
-            #[cfg(not(target_os = "macos"))]
-            _ => Err(anyhow::anyhow!("Unsupported device type for this platform")),
-        }
-    }
+
 
     /// Add CoreAudio output stream with SPMC Reader integration
     #[cfg(target_os = "macos")]

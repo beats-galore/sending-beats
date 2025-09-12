@@ -3,15 +3,6 @@
 // This module provides comprehensive audio tapping capabilities for capturing
 // audio from specific applications on macOS. It includes process discovery,
 // Core Audio tap integration, virtual stream bridging, and high-level management.
-//
-// ## Module Structure:
-// - `types`: Common types and error definitions
-// - `process_discovery`: Application detection and process management
-// - `core_audio_tap`: Low-level Core Audio tap implementation (macOS only)
-// - `virtual_stream`: Audio stream abstraction and mixer integration
-// - `manager`: High-level orchestration and public API
-
-// Core module declarations
 pub mod process_discovery;
 pub mod types;
 pub mod virtual_stream;

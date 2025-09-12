@@ -38,25 +38,22 @@ pub async fn get_audio_device(
 pub async fn get_device_health(
     audio_state: State<'_, AudioState>,
     device_id: String,
-) -> Result<Option<crate::audio::devices::DeviceHealth>, String> {
-    let mixer_guard = audio_state.mixer.lock().await;
-    if let Some(ref mixer) = *mixer_guard {
-        Ok(mixer.get_device_health_status(&device_id).await)
-    } else {
-        Err("No mixer created".to_string())
-    }
+) -> Result<(), String> {
+    Ok(())
+    // let mixer_guard = audio_state.mixer.lock().await;
+    // if let Some(ref mixer) = *mixer_guard {
+    //     Ok(mixer.get_device_health_status(&device_id).await)
+    // } else {
+    //     Err("No mixer created".to_string())
+    // }
 }
 
 #[tauri::command]
 pub async fn get_all_device_health(
     audio_state: State<'_, AudioState>,
 ) -> Result<std::collections::HashMap<String, crate::audio::devices::DeviceHealth>, String> {
-    let mixer_guard = audio_state.mixer.lock().await;
-    if let Some(ref mixer) = *mixer_guard {
-        Ok(mixer.get_all_device_health_statuses().await)
-    } else {
-        Err("No mixer created".to_string())
-    }
+    // TODO: return fake Hashmap
+    Ok(crate::audio::devices::DeviceHealth::new_healthy("".to_string(), "".to_string()))
 }
 
 #[tauri::command]
@@ -65,16 +62,17 @@ pub async fn report_device_error(
     device_id: String,
     error: String,
 ) -> Result<(), String> {
-    let mixer_guard = audio_state.mixer.lock().await;
-    if let Some(ref mixer) = *mixer_guard {
-        mixer
-            .audio_device_manager
-            .report_device_error(&device_id, error)
-            .await;
-        Ok(())
-    } else {
-        Err("No mixer created".to_string())
-    }
+    Ok(())
+    // let mixer_guard = audio_state.mixer.lock().await;
+    // if let Some(ref mixer) = *mixer_guard {
+    //     mixer
+    //         .audio_device_manager
+    //         .report_device_error(&device_id, error)
+    //         .await;
+    //     Ok(())
+    // } else {
+    //     Err("No mixer created".to_string())
+    // }
 }
 
 // Device switching commands
@@ -477,16 +475,16 @@ pub async fn remove_output_device(
     audio_state: State<'_, crate::AudioState>,
     device_id: String,
 ) -> Result<(), String> {
-    let mixer_guard = audio_state.mixer.lock().await;
-    if let Some(ref mixer) = *mixer_guard {
-        mixer
-            .remove_output_device(&device_id)
-            .await
-            .map_err(|e| e.to_string())?;
-        println!("✅ Removed output device via Tauri command: {}", device_id);
-    } else {
-        return Err("No mixer created".to_string());
-    }
+    // let mixer_guard = audio_state.mixer.lock().await;
+    // if let Some(ref mixer) = *mixer_guard {
+    //     mixer
+    //         .remove_output_device(&device_id)
+    //         .await
+    //         .map_err(|e| e.to_string())?;
+    //     println!("✅ Removed output device via Tauri command: {}", device_id);
+    // } else {
+    //     return Err("No mixer created".to_string());
+    // }
     Ok(())
 }
 
@@ -499,52 +497,39 @@ pub async fn update_output_device(
     enabled: Option<bool>,
     is_monitor: Option<bool>,
 ) -> Result<(), String> {
-    let mixer_guard = audio_state.mixer.lock().await;
-    if let Some(ref mixer) = *mixer_guard {
-        // Get current device configuration
-        let current_config = mixer.get_output_device(&device_id).await;
+    // let mixer_guard = audio_state.mixer.lock().await;
+    // if let Some(ref mixer) = *mixer_guard {
+    //     // Get current device configuration
+    //     let current_config = mixer.get_output_device(&device_id).await;
 
-        if let Some(mut updated_device) = current_config {
-            // Update specified fields
-            if let Some(name) = device_name {
-                updated_device.device_name = name;
-            }
-            if let Some(g) = gain {
-                updated_device.gain = g;
-            }
-            if let Some(e) = enabled {
-                updated_device.enabled = e;
-            }
-            if let Some(m) = is_monitor {
-                updated_device.is_monitor = m;
-            }
+    //     if let Some(mut updated_device) = current_config {
+    //         // Update specified fields
+    //         if let Some(name) = device_name {
+    //             updated_device.device_name = name;
+    //         }
+    //         if let Some(g) = gain {
+    //             updated_device.gain = g;
+    //         }
+    //         if let Some(e) = enabled {
+    //             updated_device.enabled = e;
+    //         }
+    //         if let Some(m) = is_monitor {
+    //             updated_device.is_monitor = m;
+    //         }
 
-            mixer
-                .update_output_device(&device_id, updated_device)
-                .await
-                .map_err(|e| e.to_string())?;
-            println!("✅ Updated output device via Tauri command: {}", device_id);
-        } else {
-            return Err(format!("Output device not found: {}", device_id));
-        }
-    } else {
-        return Err("No mixer created".to_string());
-    }
+    //         mixer
+    //             .update_output_device(&device_id, updated_device)
+    //             .await
+    //             .map_err(|e| e.to_string())?;
+    //         println!("✅ Updated output device via Tauri command: {}", device_id);
+    //     } else {
+    //         return Err(format!("Output device not found: {}", device_id));
+    //     }
+    // } else {
+    //     return Err("No mixer created".to_string());
+    // }
     Ok(())
 }
-
-#[tauri::command]
-pub async fn get_output_devices(
-    audio_state: State<'_, crate::AudioState>,
-) -> Result<Vec<crate::audio::types::OutputDevice>, String> {
-    let mixer_guard = audio_state.mixer.lock().await;
-    if let Some(ref mixer) = *mixer_guard {
-        Ok(mixer.get_output_devices().await)
-    } else {
-        Err("No mixer created".to_string())
-    }
-}
-
 // CoreAudio specific commands
 #[tauri::command]
 pub async fn enumerate_coreaudio_devices(

@@ -37,7 +37,6 @@ use commands::audio_effects::*;
 use commands::debug::*;
 use commands::file_player::*;
 use commands::icecast::*;
-use commands::mixer::*;
 use commands::recording::*;
 use commands::streaming::*;
 
@@ -245,24 +244,10 @@ pub fn run() {
 
             get_device_monitoring_stats,
             // Mixer commands
-            create_mixer,
-            start_mixer,
-            stop_mixer,
-            add_mixer_channel,
-            update_mixer_channel,
-            get_mixer_metrics,
-            get_channel_levels,
-            get_master_levels,
-            send_mixer_command,
-            get_dj_mixer_config,
-            get_streaming_mixer_config,
-            check_audio_capture_permissions,
-            request_audio_capture_permissions,
-            open_system_preferences_privacy,
             add_output_device,
             remove_output_device,
             update_output_device,
-            get_output_devices,
+
             // CoreAudio specific commands
             enumerate_coreaudio_devices,
             get_device_type_info,

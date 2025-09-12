@@ -15,51 +15,52 @@ pub async fn start_recording(
     audio_state: State<'_, AudioState>,
     config: RecordingConfig,
 ) -> Result<String, String> {
-    println!("🎙️ Starting recording with config: {}", config.name);
+    Ok("".to_string())
+    // println!("🎙️ Starting recording with config: {}", config.name);
 
-    // Get audio output receiver from mixer
-    let mixer_guard = audio_state.mixer.lock().await;
-    if let Some(ref mixer) = *mixer_guard {
-        println!("🔄 Mixer found, getting audio output receiver...");
-        let mut audio_rx = mixer.get_audio_output_receiver();
-        println!("🔄 Created broadcast receiver successfully");
+    // // Get audio output receiver from mixer
+    // let mixer_guard = audio_state.mixer.lock().await;
+    // if let Some(ref mixer) = *mixer_guard {
+    //     println!("🔄 Mixer found, getting audio output receiver...");
+    //     let mut audio_rx = mixer.get_audio_output_receiver();
+    //     println!("🔄 Created broadcast receiver successfully");
 
-        // Immediately test the receiver to see if it works
-        match audio_rx.try_recv() {
-            Ok(samples) => println!(
-                "🎵 Receiver is working! Got {} samples immediately",
-                samples.len()
-            ),
-            Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {
-                println!("📭 Receiver connected but empty (good)")
-            }
-            Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
-                println!("❌ Receiver is CLOSED immediately!")
-            }
-            Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
-                println!("⚠️ Receiver lagged immediately by {} messages", n)
-            }
-        }
+    //     // Immediately test the receiver to see if it works
+    //     match audio_rx.try_recv() {
+    //         Ok(samples) => println!(
+    //             "🎵 Receiver is working! Got {} samples immediately",
+    //             samples.len()
+    //         ),
+    //         Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {
+    //             println!("📭 Receiver connected but empty (good)")
+    //         }
+    //         Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
+    //             println!("❌ Receiver is CLOSED immediately!")
+    //         }
+    //         Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
+    //             println!("⚠️ Receiver lagged immediately by {} messages", n)
+    //         }
+    //     }
 
-        println!("🔄 Starting recording service with audio receiver...");
-        match recording_state
-            .service
-            .start_recording(config, audio_rx)
-            .await
-        {
-            Ok(session_id) => {
-                println!("✅ Recording started with session ID: {}", session_id);
-                Ok(session_id)
-            }
-            Err(e) => {
-                eprintln!("❌ Failed to start recording: {}", e);
-                Err(format!("Failed to start recording: {}", e))
-            }
-        }
-    } else {
-        println!("❌ No mixer available - please create mixer first");
-        Err("No mixer available - please create mixer first".to_string())
-    }
+    //     println!("🔄 Starting recording service with audio receiver...");
+    //     match recording_state
+    //         .service
+    //         .start_recording(config, audio_rx)
+    //         .await
+    //     {
+    //         Ok(session_id) => {
+    //             println!("✅ Recording started with session ID: {}", session_id);
+    //             Ok(session_id)
+    //         }
+    //         Err(e) => {
+    //             eprintln!("❌ Failed to start recording: {}", e);
+    //             Err(format!("Failed to start recording: {}", e))
+    //         }
+    //     }
+    // } else {
+    //     println!("❌ No mixer available - please create mixer first");
+    //     Err("No mixer available - please create mixer first".to_string())
+    // }
 }
 
 #[tauri::command]

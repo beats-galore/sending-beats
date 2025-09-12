@@ -84,48 +84,47 @@ impl StreamingService {
     /// Connect to the audio mixer
     pub async fn connect_mixer(&self, mixer: Arc<VirtualMixer>) -> Result<()> {
         info!("🔗 Connecting streaming service to audio mixer...");
+        // // Store mixer reference
+        // *self.mixer.write().await = Some(mixer.clone());
 
-        // Store mixer reference
-        *self.mixer.write().await = Some(mixer.clone());
+        // // Get audio output from mixer
+        // let audio_rx = mixer.create_streaming_audio_receiver().await;
 
-        // Get audio output from mixer
-        let audio_rx = mixer.create_streaming_audio_receiver().await;
+        // // Create audio streaming bridge
+        // let config = self.config.read().await;
+        // if let Some(ref cfg) = *config {
+        //     let stream_config = StreamConfig {
+        //         icecast_url: format!("http://{}:{}", cfg.server_host, cfg.server_port),
+        //         mount_point: cfg.mount_point.clone(),
+        //         username: "source".to_string(),
+        //         password: cfg.password.clone(),
+        //         bitrate: cfg.audio_format.bitrate,
+        //         sample_rate: cfg.audio_format.sample_rate,
+        //         channels: cfg.audio_format.channels,
+        //     };
 
-        // Create audio streaming bridge
-        let config = self.config.read().await;
-        if let Some(ref cfg) = *config {
-            let stream_config = StreamConfig {
-                icecast_url: format!("http://{}:{}", cfg.server_host, cfg.server_port),
-                mount_point: cfg.mount_point.clone(),
-                username: "source".to_string(),
-                password: cfg.password.clone(),
-                bitrate: cfg.audio_format.bitrate,
-                sample_rate: cfg.audio_format.sample_rate,
-                channels: cfg.audio_format.channels,
-            };
+        //     let bridge = create_streaming_bridge(stream_config, audio_rx).await?;
 
-            let bridge = create_streaming_bridge(stream_config, audio_rx).await?;
+        //     // Store stats reference for efficient access
+        //     *self.streaming_stats.lock().await = Some(bridge.stats.clone());
 
-            // Store stats reference for efficient access
-            *self.streaming_stats.lock().await = Some(bridge.stats.clone());
+        //     // Connect audio input to Icecast manager
+        //     if let Some(ref mut icecast_manager) = *self.icecast_manager.lock().await {
+        //         // Create a channel to connect bridge to Icecast manager
+        //         let (encoder_tx, encoder_rx) = tokio::sync::mpsc::channel(512);
+        //         icecast_manager.connect_audio_input(encoder_rx);
 
-            // Connect audio input to Icecast manager
-            if let Some(ref mut icecast_manager) = *self.icecast_manager.lock().await {
-                // Create a channel to connect bridge to Icecast manager
-                let (encoder_tx, encoder_rx) = tokio::sync::mpsc::channel(512);
-                icecast_manager.connect_audio_input(encoder_rx);
+        //         // Spawn encoding task to convert f32 audio to encoded format
+        //         let audio_format = cfg.audio_format.clone();
+        //         tokio::spawn(async move {
+        //             Self::run_audio_encoder(bridge, encoder_tx, audio_format).await;
+        //         });
+        //     }
 
-                // Spawn encoding task to convert f32 audio to encoded format
-                let audio_format = cfg.audio_format.clone();
-                tokio::spawn(async move {
-                    Self::run_audio_encoder(bridge, encoder_tx, audio_format).await;
-                });
-            }
-
-            info!("✅ Streaming service connected to mixer");
-        } else {
-            return Err(anyhow::anyhow!("Streaming service not initialized"));
-        }
+        //     info!("✅ Streaming service connected to mixer");
+        // } else {
+        //     return Err(anyhow::anyhow!("Streaming service not initialized"));
+        // }
 
         Ok(())
     }
@@ -134,38 +133,38 @@ impl StreamingService {
     pub async fn connect_mixer_ref(&self, mixer: &VirtualMixer) -> Result<()> {
         info!("🔗 Connecting streaming service to audio mixer (ref)...");
 
-        // Get audio output from mixer
-        let audio_rx = mixer.create_streaming_audio_receiver().await;
+        // // Get audio output from mixer
+        // let audio_rx = mixer.create_streaming_audio_receiver().await;
 
-        // Create audio streaming bridge
-        let config = self.config.read().await;
-        if let Some(ref cfg) = *config {
-            let stream_config = StreamConfig {
-                icecast_url: format!("http://{}:{}", cfg.server_host, cfg.server_port),
-                mount_point: cfg.mount_point.clone(),
-                username: "source".to_string(),
-                password: cfg.password.clone(),
-                bitrate: cfg.audio_format.bitrate,
-                sample_rate: cfg.audio_format.sample_rate,
-                channels: cfg.audio_format.channels,
-            };
+        // // Create audio streaming bridge
+        // let config = self.config.read().await;
+        // if let Some(ref cfg) = *config {
+        //     let stream_config = StreamConfig {
+        //         icecast_url: format!("http://{}:{}", cfg.server_host, cfg.server_port),
+        //         mount_point: cfg.mount_point.clone(),
+        //         username: "source".to_string(),
+        //         password: cfg.password.clone(),
+        //         bitrate: cfg.audio_format.bitrate,
+        //         sample_rate: cfg.audio_format.sample_rate,
+        //         channels: cfg.audio_format.channels,
+        //     };
 
-            let _bridge = create_streaming_bridge(stream_config, audio_rx).await?;
+        //     let _bridge = create_streaming_bridge(stream_config, audio_rx).await?;
 
-            // Connect audio input to Icecast manager
-            if let Some(ref mut icecast_manager) = *self.icecast_manager.lock().await {
-                // Create a channel to connect bridge to Icecast manager
-                let (_encoder_tx, encoder_rx) = tokio::sync::mpsc::channel(512);
-                icecast_manager.connect_audio_input(encoder_rx);
+        //     // Connect audio input to Icecast manager
+        //     if let Some(ref mut icecast_manager) = *self.icecast_manager.lock().await {
+        //         // Create a channel to connect bridge to Icecast manager
+        //         let (_encoder_tx, encoder_rx) = tokio::sync::mpsc::channel(512);
+        //         icecast_manager.connect_audio_input(encoder_rx);
 
-                // Note: In a full implementation, we'd spawn the audio encoder task here
-                // For now, this creates the connection but doesn't start the encoding pipeline
-            }
+        //         // Note: In a full implementation, we'd spawn the audio encoder task here
+        //         // For now, this creates the connection but doesn't start the encoding pipeline
+        //     }
 
-            info!("✅ Streaming service connected to mixer (ref)");
-        } else {
-            return Err(anyhow::anyhow!("Streaming service not initialized"));
-        }
+        //     info!("✅ Streaming service connected to mixer (ref)");
+        // } else {
+        //     return Err(anyhow::anyhow!("Streaming service not initialized"));
+        // }
 
         Ok(())
     }

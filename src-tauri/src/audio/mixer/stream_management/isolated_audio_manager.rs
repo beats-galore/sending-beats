@@ -4,13 +4,12 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
-use super::super::types::VirtualMixer;
+use super::virtual_mixer::VirtualMixer;
 use crate::audio::effects::{AudioEffectsChain, EQBand};
 use crate::audio::types::AudioChannel;
 use tokio::sync::{mpsc, oneshot, Mutex, Notify};
 
 // Internal stream_management module imports
-use super::audio_input_stream::AudioInputStream;
 use super::stream_manager::{AudioMetrics, StreamManager};
 
 // Lock-free audio buffer imports
@@ -60,11 +59,13 @@ pub enum AudioCommand {
 
 /// Isolated Audio Manager - owns audio streams directly, no Arc sharing!
 pub struct IsolatedAudioManager {
-    input_streams: HashMap<String, AudioInputStream>,
+    // TODO: we removed AudioInputStream, we need to just interface directly with CoreAudioInputStream
+
+
     output_spmc_writers: HashMap<String, Arc<Mutex<Writer<f32>>>>,
     output_device_sample_rates: HashMap<String, u32>, // Track output device sample rates
     // Virtual mixer instance with persistent resamplers
-    virtual_mixer: crate::audio::mixer::types::VirtualMixer,
+    virtual_mixer: VirtualMixer,
     stream_manager: StreamManager,
     command_rx: mpsc::Receiver<AudioCommand>,
     metrics: AudioMetrics,
@@ -90,11 +91,10 @@ impl IsolatedAudioManager {
 
     pub async fn new(command_rx: mpsc::Receiver<AudioCommand>) -> Result<Self, anyhow::Error> {
         // Create a VirtualMixer instance with default config
-        let mixer_config = crate::audio::types::MixerConfig::default();
-        let virtual_mixer = crate::audio::mixer::types::VirtualMixer::new(mixer_config).await?;
-        
+        // let mixer_config = crate::audio::types::MixerConfig::default();
+        let virtual_mixer = VirtualMixer::new().await?;
+
         Ok(Self {
-            input_streams: HashMap::new(),
             output_spmc_writers: HashMap::new(),
             output_device_sample_rates: HashMap::new(),
             virtual_mixer,
@@ -211,7 +211,7 @@ impl IsolatedAudioManager {
                 response_tx,
             } => {
                 let result = self
-                    .handle_add_coreaudio_input_stream_alternative(
+                    .handle_add_coreaudio_input_stream(
                         device_id,
                         coreaudio_device_id,
                         device_name,
@@ -279,13 +279,13 @@ impl IsolatedAudioManager {
         for (device_id, input_stream) in &mut self.input_streams {
             input_sample_rates.push((device_id.clone(), input_stream.sample_rate));
         }
-        
+
         // Determine target mix rate using proper function
         let target_mix_rate = self.calculate_target_mix_rate(&input_sample_rates);
-        
+
         // Continue with sample collection
         for (device_id, input_stream) in &mut self.input_streams {
-            
+
             // Get raw samples (before effects - we'll apply effects after sample rate conversion)
             let samples = input_stream.get_samples();
             if !samples.is_empty() {
@@ -306,7 +306,7 @@ impl IsolatedAudioManager {
 
         // **SAMPLE RATE CONVERSION PIPELINE**: Step 3 - Apply effects to rate-converted samples
         let mut effected_samples = Vec::<(String, Vec<f32>)>::new();
-        
+
         for (device_id, samples) in converted_input_samples {
             if let Some(input_stream) = self.input_streams.get_mut(&device_id) {
                 // **EFFECTS FIX**: Create default channel config with effects enabled
@@ -319,7 +319,7 @@ impl IsolatedAudioManager {
                 // TODO: We need a way to apply effects to arbitrary sample data, not just from the stream
                 // For now, use the samples as-is after rate conversion
                 let processed_samples = samples; // TODO: Apply effects here
-                
+
                 if !processed_samples.is_empty() {
                     // Debug log for first few audio processing cycles
                     let peak = processed_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
@@ -345,7 +345,7 @@ impl IsolatedAudioManager {
         }
 
         // **SAMPLE RATE CONVERSION PIPELINE**: Step 4 - Mix all rate-converted, effected samples
-        let mixed_samples = crate::audio::mixer::types::VirtualMixer::mix_input_samples(effected_samples);
+        let mixed_samples = VirtualMixer::mix_input_samples(effected_samples);
 
         if !mixed_samples.is_empty() {
             // **SAMPLE RATE CONVERSION PIPELINE**: Step 5 - Convert mixed audio to each output device's rate
@@ -409,7 +409,7 @@ impl IsolatedAudioManager {
     }
 
     #[cfg(target_os = "macos")]
-    async fn handle_add_coreaudio_input_stream_alternative(
+    async fn handle_add_coreaudio_input_stream(
         &mut self,
         device_id: String,
         coreaudio_device_id: coreaudio_sys::AudioDeviceID,
@@ -427,8 +427,8 @@ impl IsolatedAudioManager {
         // This allows get_samples_for_device() to find CoreAudio streams in input_streams
         // **ADAPTIVE**: Detect device native sample rate for AudioInputStream and buffer calculations
         let native_sample_rate = crate::audio::devices::coreaudio_stream::get_device_native_sample_rate(coreaudio_device_id)?;
-        let mut input_stream =
-            AudioInputStream::new(device_id.clone(), device_name.clone(), native_sample_rate)?;
+        // let mut input_stream =
+        //     AudioInputStream::new(device_id.clone(), device_name.clone(), native_sample_rate)?;
 
         // Create new RTRB pair - consumer goes to AudioInputStream, producer goes to CoreAudio callback
         let buffer_capacity = (native_sample_rate as usize * 2) / 10; // 100ms of stereo samples
@@ -444,7 +444,7 @@ impl IsolatedAudioManager {
 
         // Use StreamManager to create and start the CoreAudio input stream as CPAL alternative
         // **ADAPTIVE AUDIO**: No longer pass sample_rate - it will be detected from device
-        self.stream_manager.add_coreaudio_input_stream_alternative(
+        self.stream_manager.add_coreaudio_input_stream(
             device_id.clone(),
             coreaudio_device_id,
             device_name,
@@ -453,7 +453,6 @@ impl IsolatedAudioManager {
             self.global_input_notifier.clone(), // CRITICAL FIX: Use global notifier like CPAL
         )?;
 
-        self.metrics.input_streams = self.input_streams.len();
         info!(
             "✅ CoreAudio input stream (CPAL alternative) added and started for device '{}'",
             device_id
@@ -464,7 +463,6 @@ impl IsolatedAudioManager {
     fn handle_remove_input_stream(&mut self, device_id: String) -> bool {
         let removed = self.input_streams.remove(&device_id).is_some();
         self.stream_manager.remove_stream(&device_id);
-        self.metrics.input_streams = self.input_streams.len();
         removed
     }
 
@@ -494,7 +492,7 @@ impl IsolatedAudioManager {
             .insert(device_id.clone(), spmc_writer);
 
         // **SAMPLE RATE TRACKING**: Store the output device's ACTUAL DETECTED sample rate
-        println!("🔧 OUTPUT_DEVICE_RATE: Storing DETECTED {} Hz for output device '{}'", 
+        println!("🔧 OUTPUT_DEVICE_RATE: Storing DETECTED {} Hz for output device '{}'",
                  native_sample_rate, device_id);
         self.output_device_sample_rates
             .insert(device_id.clone(), native_sample_rate);
@@ -596,7 +594,7 @@ impl IsolatedAudioManager {
     /// Calculate the target mix rate as the highest sample rate among all inputs and outputs
     fn calculate_target_mix_rate(&self, input_sample_rates: &[(String, u32)]) -> u32 {
         let mut max_rate = 0u32;
-        
+
         // Rate-limited debug logging
         use std::sync::{LazyLock, Mutex as StdMutex};
         static DEBUG_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
@@ -606,7 +604,7 @@ impl IsolatedAudioManager {
         } else {
             false
         };
-        
+
         // Consider all input sample rates
         for (device_id, rate) in input_sample_rates {
             if should_log {
@@ -614,7 +612,7 @@ impl IsolatedAudioManager {
             }
             max_rate = max_rate.max(*rate);
         }
-        
+
         // Consider all output sample rates
         for (device_id, rate) in &self.output_device_sample_rates {
             if should_log {
@@ -622,13 +620,13 @@ impl IsolatedAudioManager {
             }
             max_rate = max_rate.max(*rate);
         }
-        
+
         let target_rate = if max_rate == 0 {
             crate::types::DEFAULT_SAMPLE_RATE
         } else {
             max_rate
         };
-        
+
         if should_log {
             println!("🎯 TARGET_MIX_RATE: Calculated {} Hz", target_rate);
         }
