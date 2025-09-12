@@ -32,7 +32,7 @@ pub enum AudioCommand {
         response_tx: oneshot::Sender<Result<()>>,
     },
     #[cfg(target_os = "macos")]
-    AddCoreAudioInputStreamAlternative {
+    AddCoreAudioInputStream {
         device_id: String,
         coreaudio_device_id: coreaudio_sys::AudioDeviceID,
         device_name: String,
@@ -203,7 +203,7 @@ impl IsolatedAudioManager {
                 let _ = response_tx.send(result);
             }
             #[cfg(target_os = "macos")]
-            AudioCommand::AddCoreAudioInputStreamAlternative {
+            AudioCommand::AddCoreAudioInputStream {
                 device_id,
                 coreaudio_device_id,
                 device_name,

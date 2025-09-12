@@ -148,65 +148,66 @@ impl VirtualMixer {
                 mix_rate, output_rate, rate_diff
             );
         }
+        mixed_samples
 
-        if rate_diff > 1.0 {
-            // Get or create persistent resampler for this output device
-            let resampler_key = format!("output_{}_{}_to_{}", device_id, mix_rate, output_rate);
+        // if rate_diff > 1.0 {
+        //     // Get or create persistent resampler for this output device
+        //     let resampler_key = format!("output_{}_{}_to_{}", device_id, mix_rate, output_rate);
 
-            // Check if resampler exists and get/create it
-            let mut should_create_resampler = false;
-            if let Ok(resamplers) = self.output_resamplers.try_lock() {
-                should_create_resampler = !resamplers.contains_key(&resampler_key);
-            }
+        //     // Check if resampler exists and get/create it
+        //     let mut should_create_resampler = false;
+        //     if let Ok(resamplers) = self.output_resamplers.try_lock() {
+        //         should_create_resampler = !resamplers.contains_key(&resampler_key);
+        //     }
 
-            if should_create_resampler {
-                println!("🔧 PERSISTENT_OUTPUT_SRC: Creating new output resampler for {} ({} Hz -> {} Hz)",
-                         device_id, mix_rate, output_rate);
+        //     if should_create_resampler {
+        //         println!("🔧 PERSISTENT_OUTPUT_SRC: Creating new output resampler for {} ({} Hz -> {} Hz)",
+        //                  device_id, mix_rate, output_rate);
 
-                match RubatoSRC::new(mix_rate as f32, output_rate as f32) {
-                    Ok(resampler) => {
-                        if let Ok(mut resamplers) = self.output_resamplers.try_lock() {
-                            resamplers.insert(resampler_key.clone(), resampler);
-                        }
-                    }
-                    Err(e) => {
-                        println!("❌ PERSISTENT_OUTPUT_SRC: Failed to create output resampler for {}: {}", device_id, e);
-                        return mixed_samples;
-                    }
-                }
-            }
+        //         match RubatoSRC::new(mix_rate as f32, output_rate as f32) {
+        //             Ok(resampler) => {
+        //                 if let Ok(mut resamplers) = self.output_resamplers.try_lock() {
+        //                     resamplers.insert(resampler_key.clone(), resampler);
+        //                 }
+        //             }
+        //             Err(e) => {
+        //                 println!("❌ PERSISTENT_OUTPUT_SRC: Failed to create output resampler for {}: {}", device_id, e);
+        //                 return mixed_samples;
+        //             }
+        //         }
+        //     }
 
-            // Use persistent resampler
-            if let Ok(mut resamplers) = self.output_resamplers.try_lock() {
-                if let Some(resampler) = resamplers.get_mut(&resampler_key) {
-                    // Let resampler do its job properly - no padding or manipulation
-                    let converted = resampler.convert(&mixed_samples, 0); // Let resampler decide output size
+        //     // Use persistent resampler
+        //     if let Ok(mut resamplers) = self.output_resamplers.try_lock() {
+        //         if let Some(resampler) = resamplers.get_mut(&resampler_key) {
+        //             // Let resampler do its job properly - no padding or manipulation
+        //             let converted = resampler.convert(&mixed_samples, 0); // Let resampler decide output size
 
-                    // Rate-limited logging
-                    use std::sync::{LazyLock, Mutex as StdMutex};
-                    static OUTPUT_CONVERSION_COUNT: LazyLock<StdMutex<u64>> =
-                        LazyLock::new(|| StdMutex::new(0));
-                    if let Ok(mut count) = OUTPUT_CONVERSION_COUNT.lock() {
-                        *count += 1;
-                        if *count <= 3 || *count % 1000 == 0 {
-                            println!("🔄 PERSISTENT_OUTPUT_SRC: {} converted {} samples -> {} samples (call #{})",
-                                     device_id, mixed_samples.len(), converted.len(), count);
-                        }
-                    }
+        //             // Rate-limited logging
+        //             use std::sync::{LazyLock, Mutex as StdMutex};
+        //             static OUTPUT_CONVERSION_COUNT: LazyLock<StdMutex<u64>> =
+        //                 LazyLock::new(|| StdMutex::new(0));
+        //             if let Ok(mut count) = OUTPUT_CONVERSION_COUNT.lock() {
+        //                 *count += 1;
+        //                 if *count <= 3 || *count % 1000 == 0 {
+        //                     println!("🔄 PERSISTENT_OUTPUT_SRC: {} converted {} samples -> {} samples (call #{})",
+        //                              device_id, mixed_samples.len(), converted.len(), count);
+        //                 }
+        //             }
 
-                    converted
-                } else {
-                    // Fallback if resampler not found
-                    mixed_samples
-                }
-            } else {
-                // Fallback if lock failed
-                mixed_samples
-            }
-        } else {
-            // No conversion needed
-            mixed_samples
-        }
+        //             converted
+        //         } else {
+        //             // Fallback if resampler not found
+        //             mixed_samples
+        //         }
+        //     } else {
+        //         // Fallback if lock failed
+        //         mixed_samples
+        //     }
+        // } else {
+        //     // No conversion needed
+        //     mixed_samples
+        // }
     }
 
     /// Professional audio mixing utility with stereo processing, smart gain management, and level calculation

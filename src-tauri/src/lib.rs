@@ -38,6 +38,7 @@ use commands::file_player::*;
 use commands::icecast::*;
 use commands::recording::*;
 use commands::streaming::*;
+use commands::mixer::*;
 
 // File player state for managing multiple file players
 use commands::file_player::FilePlayerState;
@@ -258,6 +259,7 @@ pub fn run() {
             add_channel_effect,
             remove_channel_effect,
             get_channel_effects,
+            get_dj_mixer_config,
             // Debug commands
             get_recent_vu_levels,
             get_recent_master_levels,
