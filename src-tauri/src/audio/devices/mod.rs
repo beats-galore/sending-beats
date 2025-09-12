@@ -36,8 +36,8 @@ pub use health_monitoring::{DeviceHealthMonitor, HealthStatistics};
 
 // Re-export existing monitor types (preserved for backward compatibility)
 pub use monitor::{
-    get_device_monitor, get_device_monitoring_stats,
-   DeviceMonitor, DeviceMonitorConfig, DeviceMonitorStats,
+    get_device_monitor, get_device_monitoring_stats, DeviceMonitor, DeviceMonitorConfig,
+    DeviceMonitorStats,
 };
 
 // Re-export existing CoreAudio streams (preserved for backward compatibility)

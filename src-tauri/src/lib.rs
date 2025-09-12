@@ -15,12 +15,11 @@ pub mod commands;
 
 // Re-export audio types for testing and external use
 pub use audio::{
-    get_device_monitoring_stats as get_monitoring_stats_impl,
-   AudioChannel, AudioConfigFactory,
+    get_device_monitoring_stats as get_monitoring_stats_impl, AudioChannel, AudioConfigFactory,
     AudioDatabase, AudioDeviceInfo, AudioDeviceManager, AudioEventBus, AudioMetrics, ChannelConfig,
     Compressor, DeviceMonitorStats, EQBand, FilePlayerService, Limiter, MasterLevelData,
-    MixerCommand, MixerConfig, OutputRouteConfig, PeakDetector, RmsDetector, ThreeBandEqualizer,
-    VULevelData, VirtualMixer,
+    MixerConfig, OutputRouteConfig, PeakDetector, RmsDetector, ThreeBandEqualizer, VULevelData,
+    VirtualMixer,
 };
 // Re-export application audio types
 pub use audio::tap::{ApplicationAudioError, ProcessInfo, TapStats};
@@ -173,7 +172,9 @@ pub fn run() {
                 tracing::info!("🎵 Starting IsolatedAudioManager in dedicated thread");
                 match crate::audio::mixer::stream_management::IsolatedAudioManager::new(
                     audio_command_rx,
-                ).await {
+                )
+                .await
+                {
                     Ok(mut isolated_audio_manager) => {
                         isolated_audio_manager.run().await;
                     }
@@ -241,13 +242,11 @@ pub fn run() {
             remove_input_stream,
             set_output_stream,
             start_device_monitoring,
-
             get_device_monitoring_stats,
             // Mixer commands
             add_output_device,
             remove_output_device,
             update_output_device,
-
             // CoreAudio specific commands
             enumerate_coreaudio_devices,
             get_device_type_info,

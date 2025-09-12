@@ -59,7 +59,7 @@ impl RubatoSRC {
             window: WindowFunction::BlackmanHarris2,      // Excellent side-lobe suppression
         };
 
-        // Create Rubato's fixed-input-size resampler  
+        // Create Rubato's fixed-input-size resampler
         // NOTE: SincFixedIn may expect INPUT/OUTPUT ratio despite documentation
         let resampler = SincFixedIn::new(
             input_rate as f64 / output_rate as f64, // Try INPUT/OUTPUT ratio (48000/44100 = 1.088)
@@ -105,11 +105,17 @@ impl RubatoSRC {
         // Convert interleaved stereo to de-interleaved format for Rubato
         let input_frames = input_samples.len() / 2; // Each frame has L+R samples
         let input_frames = input_frames.min(self.max_input_frames);
-        
+
         // DEBUG: Track conversion details
-        println!("🔍 RUBATO_DEBUG: Input {} samples → {} frames, ratio {:.4} ({}→{}Hz)", 
-                 input_samples.len(), input_frames, self.ratio, self.input_rate, self.output_rate);
-        
+        println!(
+            "🔍 RUBATO_DEBUG: Input {} samples → {} frames, ratio {:.4} ({}→{}Hz)",
+            input_samples.len(),
+            input_frames,
+            self.ratio,
+            self.input_rate,
+            self.output_rate
+        );
+
         if input_frames == 0 {
             return vec![0.0; output_size];
         }
@@ -117,7 +123,7 @@ impl RubatoSRC {
         // De-interleave: LRLRLR... -> L...L, R...R
         for frame in 0..input_frames {
             if frame * 2 + 1 < input_samples.len() {
-                self.input_buffer[0][frame] = input_samples[frame * 2];     // Left channel
+                self.input_buffer[0][frame] = input_samples[frame * 2]; // Left channel
                 self.input_buffer[1][frame] = input_samples[frame * 2 + 1]; // Right channel
             }
         }
@@ -145,8 +151,13 @@ impl RubatoSRC {
                 }
 
                 // DEBUG: Track output conversion
-                println!("🔍 RUBATO_DEBUG: {} frames → {} samples ({}→{})", 
-                         actual_output_frames, result.len(), input_frames, actual_output_frames);
+                println!(
+                    "🔍 RUBATO_DEBUG: {} frames → {} samples ({}→{})",
+                    actual_output_frames,
+                    result.len(),
+                    input_frames,
+                    actual_output_frames
+                );
 
                 result
             }

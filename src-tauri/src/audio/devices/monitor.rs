@@ -152,47 +152,45 @@ impl DeviceMonitor {
         }
     }
 
-
-        /// Start device monitoring service
-        pub async fn start_monitoring(&self) -> Result<()> {
-            if self
-                .is_running
-                .compare_exchange(
-                    false,
-                    true,
-                    std::sync::atomic::Ordering::SeqCst,
-                    std::sync::atomic::Ordering::SeqCst,
-                )
-                .is_err()
-            {
-                return Err(anyhow::anyhow!("Device monitor is already running"));
-            }
-
-            info!("🔍 Starting device monitoring service");
-
-            // Clone references for the monitoring task
-            let device_manager = self.device_manager.clone();
-            let mixer_weak = self.mixer.clone();
-            let config = self.config.clone();
-            let is_running = self.is_running.clone();
-            let stats = self.stats.clone();
-
-            // Start the monitoring loop
-            tokio::spawn(async move {
-                Self::monitoring_loop(device_manager, mixer_weak, config, is_running, stats).await;
-            });
-
-            info!("✅ Device monitoring service started");
-            Ok(())
+    /// Start device monitoring service
+    pub async fn start_monitoring(&self) -> Result<()> {
+        if self
+            .is_running
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+            )
+            .is_err()
+        {
+            return Err(anyhow::anyhow!("Device monitor is already running"));
         }
 
-        /// Stop device monitoring service
-        pub async fn stop_monitoring(&self) {
-            self.is_running
-                .store(false, std::sync::atomic::Ordering::SeqCst);
-            info!("🛑 Device monitoring service stopped");
-        }
+        info!("🔍 Starting device monitoring service");
 
+        // Clone references for the monitoring task
+        let device_manager = self.device_manager.clone();
+        let mixer_weak = self.mixer.clone();
+        let config = self.config.clone();
+        let is_running = self.is_running.clone();
+        let stats = self.stats.clone();
+
+        // Start the monitoring loop
+        tokio::spawn(async move {
+            Self::monitoring_loop(device_manager, mixer_weak, config, is_running, stats).await;
+        });
+
+        info!("✅ Device monitoring service started");
+        Ok(())
+    }
+
+    /// Stop device monitoring service
+    pub async fn stop_monitoring(&self) {
+        self.is_running
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        info!("🛑 Device monitoring service stopped");
+    }
 
     /// Get monitoring statistics
     pub async fn get_stats(&self) -> DeviceMonitorStats {
@@ -204,10 +202,8 @@ impl DeviceMonitor {
         self.is_running.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-
-
-     /// Main monitoring loop
-     async fn monitoring_loop(
+    /// Main monitoring loop
+    async fn monitoring_loop(
         device_manager: Arc<AsyncMutex<AudioDeviceManager>>,
         mixer_weak: std::sync::Weak<VirtualMixer>,
         config: DeviceMonitorConfig,
@@ -256,7 +252,6 @@ impl DeviceMonitor {
         }
         Ok(())
     }
-
 
     /// Perform health check on all tracked devices
     async fn perform_health_check(
@@ -459,12 +454,10 @@ impl DeviceMonitor {
 static DEVICE_MONITOR: tokio::sync::OnceCell<Arc<DeviceMonitor>> =
     tokio::sync::OnceCell::const_new();
 
-
 /// Get the global device monitor
 pub async fn get_device_monitor() -> Option<Arc<DeviceMonitor>> {
     DEVICE_MONITOR.get().cloned()
 }
-
 
 /// Get device monitoring statistics
 pub async fn get_device_monitoring_stats() -> Option<DeviceMonitorStats> {

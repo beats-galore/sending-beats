@@ -4,10 +4,10 @@
 // - isolated_audio_manager: Main audio processing manager with event-driven architecture
 // - stream_manager: Hardware stream management for CoreAudio/CPAL integration
 
+pub mod audio_input_stream;
 pub mod isolated_audio_manager;
 pub mod stream_manager;
 pub mod virtual_mixer;
-
 
 pub use isolated_audio_manager::{AudioCommand, IsolatedAudioManager};
 pub use stream_manager::{AudioMetrics, StreamInfo, StreamManager};

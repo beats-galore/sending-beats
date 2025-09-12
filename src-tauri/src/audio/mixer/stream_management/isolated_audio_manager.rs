@@ -10,7 +10,9 @@ use crate::audio::types::AudioChannel;
 use tokio::sync::{mpsc, oneshot, Mutex, Notify};
 
 // Internal stream_management module imports
+use super::audio_input_stream::AudioInputStream;
 use super::stream_manager::{AudioMetrics, StreamManager};
+use crate::audio::devices::coreaudio_stream::CoreAudioInputStream;
 
 // Lock-free audio buffer imports
 use rtrb::{Consumer, Producer, RingBuffer};
@@ -59,9 +61,8 @@ pub enum AudioCommand {
 
 /// Isolated Audio Manager - owns audio streams directly, no Arc sharing!
 pub struct IsolatedAudioManager {
-    // TODO: we removed AudioInputStream, we need to just interface directly with CoreAudioInputStream
-
-
+    // Input streams using AudioInputStream abstraction over CoreAudioInputStream
+    input_streams: HashMap<String, AudioInputStream>,
     output_spmc_writers: HashMap<String, Arc<Mutex<Writer<f32>>>>,
     output_device_sample_rates: HashMap<String, u32>, // Track output device sample rates
     // Virtual mixer instance with persistent resamplers
@@ -95,6 +96,7 @@ impl IsolatedAudioManager {
         let virtual_mixer = VirtualMixer::new().await?;
 
         Ok(Self {
+            input_streams: HashMap::new(),
             output_spmc_writers: HashMap::new(),
             output_device_sample_rates: HashMap::new(),
             virtual_mixer,
@@ -285,7 +287,6 @@ impl IsolatedAudioManager {
 
         // Continue with sample collection
         for (device_id, input_stream) in &mut self.input_streams {
-
             // Get raw samples (before effects - we'll apply effects after sample rate conversion)
             let samples = input_stream.get_samples();
             if !samples.is_empty() {
@@ -322,9 +323,13 @@ impl IsolatedAudioManager {
 
                 if !processed_samples.is_empty() {
                     // Debug log for first few audio processing cycles
-                    let peak = processed_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                    let peak = processed_samples
+                        .iter()
+                        .map(|&s| s.abs())
+                        .fold(0.0f32, f32::max);
                     use std::sync::{LazyLock, Mutex as StdMutex};
-                    static PROCESS_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
+                    static PROCESS_COUNT: LazyLock<StdMutex<u64>> =
+                        LazyLock::new(|| StdMutex::new(0));
                     if let Ok(mut count) = PROCESS_COUNT.lock() {
                         *count += 1;
                         if *count <= 20 || *count % 1000 == 0 {
@@ -354,7 +359,8 @@ impl IsolatedAudioManager {
                 .output_spmc_writers
                 .iter()
                 .map(|(device_id, writer)| {
-                    let output_device_rate = self.output_device_sample_rates
+                    let output_device_rate = self
+                        .output_device_sample_rates
                         .get(device_id)
                         .copied()
                         .unwrap_or(target_mix_rate);
@@ -423,12 +429,14 @@ impl IsolatedAudioManager {
           device_id, coreaudio_device_id
       );
 
-        // **CRITICAL FIX**: Create AudioInputStream wrapper to match CPAL architecture
-        // This allows get_samples_for_device() to find CoreAudio streams in input_streams
+        // **RESTORE AUDIOINPUTSTREAM**: Create AudioInputStream with native sample rate
         // **ADAPTIVE**: Detect device native sample rate for AudioInputStream and buffer calculations
-        let native_sample_rate = crate::audio::devices::coreaudio_stream::get_device_native_sample_rate(coreaudio_device_id)?;
-        // let mut input_stream =
-        //     AudioInputStream::new(device_id.clone(), device_name.clone(), native_sample_rate)?;
+        let native_sample_rate =
+            crate::audio::devices::coreaudio_stream::get_device_native_sample_rate(
+                coreaudio_device_id,
+            )?;
+        let mut input_stream =
+            AudioInputStream::new(device_id.clone(), device_name.clone(), native_sample_rate)?;
 
         // Create new RTRB pair - consumer goes to AudioInputStream, producer goes to CoreAudio callback
         let buffer_capacity = (native_sample_rate as usize * 2) / 10; // 100ms of stereo samples
@@ -478,7 +486,10 @@ impl IsolatedAudioManager {
         );
 
         // **ADAPTIVE AUDIO**: Detect actual device native sample rate like we do for inputs
-        let native_sample_rate = crate::audio::devices::coreaudio_stream::get_device_native_sample_rate(coreaudio_device.device_id)?;
+        let native_sample_rate =
+            crate::audio::devices::coreaudio_stream::get_device_native_sample_rate(
+                coreaudio_device.device_id,
+            )?;
 
         // Create SPMC queue for this output device using detected native rate
         let buffer_capacity = (native_sample_rate as usize * 2) / 10; // 100ms of stereo samples
@@ -492,8 +503,10 @@ impl IsolatedAudioManager {
             .insert(device_id.clone(), spmc_writer);
 
         // **SAMPLE RATE TRACKING**: Store the output device's ACTUAL DETECTED sample rate
-        println!("🔧 OUTPUT_DEVICE_RATE: Storing DETECTED {} Hz for output device '{}'",
-                 native_sample_rate, device_id);
+        println!(
+            "🔧 OUTPUT_DEVICE_RATE: Storing DETECTED {} Hz for output device '{}'",
+            native_sample_rate, device_id
+        );
         self.output_device_sample_rates
             .insert(device_id.clone(), native_sample_rate);
 

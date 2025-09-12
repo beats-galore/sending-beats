@@ -53,7 +53,12 @@ pub async fn get_all_device_health(
     audio_state: State<'_, AudioState>,
 ) -> Result<std::collections::HashMap<String, crate::audio::devices::DeviceHealth>, String> {
     // TODO: return fake Hashmap
-    Ok(crate::audio::devices::DeviceHealth::new_healthy("".to_string(), "".to_string()))
+    let mut health_map = std::collections::HashMap::new();
+    health_map.insert(
+        "fake_device".to_string(),
+        crate::audio::devices::DeviceHealth::new_healthy("".to_string(), "".to_string()),
+    );
+    Ok(health_map)
 }
 
 #[tauri::command]
@@ -105,18 +110,28 @@ pub async fn safe_switch_input_device(
                 println!("🗑️ Removing old input device via AudioCommand: {}", old_id);
 
                 let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-                let command = crate::audio::mixer::stream_management::AudioCommand::RemoveInputStream {
-                    device_id: old_id.clone(),
-                    response_tx,
-                };
+                let command =
+                    crate::audio::mixer::stream_management::AudioCommand::RemoveInputStream {
+                        device_id: old_id.clone(),
+                        response_tx,
+                    };
 
                 if let Err(_) = audio_state.audio_command_tx.send(command).await {
-                    eprintln!("Warning: Audio system not available for removing {}", old_id);
+                    eprintln!(
+                        "Warning: Audio system not available for removing {}",
+                        old_id
+                    );
                 } else {
                     match response_rx.await {
                         Ok(Ok(_)) => println!("✅ Removed old input device: {}", old_id),
-                        Ok(Err(e)) => eprintln!("Warning: Failed to remove old input device {}: {}", old_id, e),
-                        Err(_) => eprintln!("Warning: Audio system did not respond for removing {}", old_id),
+                        Ok(Err(e)) => eprintln!(
+                            "Warning: Failed to remove old input device {}: {}",
+                            old_id, e
+                        ),
+                        Err(_) => eprintln!(
+                            "Warning: Audio system did not respond for removing {}",
+                            old_id
+                        ),
                     }
                 }
 
@@ -126,7 +141,10 @@ pub async fn safe_switch_input_device(
         }
 
         // **CRASH FIX**: Add new device with better error handling
-        println!("➕ Adding new input device via AudioCommand: {}", new_device_id);
+        println!(
+            "➕ Adding new input device via AudioCommand: {}",
+            new_device_id
+        );
 
         // Get device handle using device manager
         let device_manager = audio_state.device_manager.lock().await;
@@ -166,7 +184,10 @@ pub async fn safe_switch_input_device(
         // Wait for response from isolated audio thread
         match response_rx.await {
             Ok(Ok(())) => {
-                println!("✅ Successfully switched input device to: {}", new_device_id);
+                println!(
+                    "✅ Successfully switched input device to: {}",
+                    new_device_id
+                );
                 Ok(())
             }
             Ok(Err(e)) => {
@@ -231,11 +252,17 @@ pub async fn safe_switch_output_device(
         // Wait for response from isolated audio thread
         match response_rx.await {
             Ok(Ok(())) => {
-                println!("✅ Successfully switched output device to: {}", new_device_id);
+                println!(
+                    "✅ Successfully switched output device to: {}",
+                    new_device_id
+                );
                 Ok(())
             }
             Ok(Err(e)) => {
-                eprintln!("❌ Failed to set output stream for {}: {}", new_device_id, e);
+                eprintln!(
+                    "❌ Failed to set output stream for {}: {}",
+                    new_device_id, e
+                );
                 Err(format!("Failed to set output device: {}", e))
             }
             Err(_) => Err("Audio system did not respond".to_string()),
@@ -261,7 +288,10 @@ pub async fn add_input_stream(
     }
 
     // **STREAMLINED ARCHITECTURE**: Bypass VirtualMixer and send command directly to IsolatedAudioManager
-    println!("🎤 Adding input stream directly via AudioCommand: {}", device_id);
+    println!(
+        "🎤 Adding input stream directly via AudioCommand: {}",
+        device_id
+    );
 
     // Get device handle using device manager
     let device_manager = audio_state.device_manager.lock().await;
@@ -303,7 +333,10 @@ pub async fn add_input_stream(
     // Wait for response from isolated audio thread
     match response_rx.await {
         Ok(Ok(())) => {
-            println!("✅ Successfully added input stream via direct command: {}", device_id);
+            println!(
+                "✅ Successfully added input stream via direct command: {}",
+                device_id
+            );
             Ok(())
         }
         Ok(Err(e)) => Err(format!("Failed to add input stream: {}", e)),
@@ -317,7 +350,10 @@ pub async fn remove_input_stream(
     device_id: String,
 ) -> Result<(), String> {
     // **STREAMLINED ARCHITECTURE**: Bypass VirtualMixer and send command directly to IsolatedAudioManager
-    println!("🗑️ Removing input stream directly via AudioCommand: {}", device_id);
+    println!(
+        "🗑️ Removing input stream directly via AudioCommand: {}",
+        device_id
+    );
 
     // Create command for removal
     let (response_tx, response_rx) = tokio::sync::oneshot::channel();
@@ -334,7 +370,10 @@ pub async fn remove_input_stream(
     // Wait for response from isolated audio thread
     match response_rx.await {
         Ok(Ok(_)) => {
-            println!("✅ Successfully removed input stream via direct command: {}", device_id);
+            println!(
+                "✅ Successfully removed input stream via direct command: {}",
+                device_id
+            );
             Ok(())
         }
         Ok(Err(e)) => Err(format!("Failed to remove input stream: {}", e)),
@@ -356,7 +395,10 @@ pub async fn set_output_stream(
     }
 
     // **STREAMLINED ARCHITECTURE**: Bypass VirtualMixer and send command directly to IsolatedAudioManager
-    println!("🔊 Setting output stream directly via AudioCommand: {}", device_id);
+    println!(
+        "🔊 Setting output stream directly via AudioCommand: {}",
+        device_id
+    );
 
     // Get device handle using device manager
     let device_manager = audio_state.device_manager.lock().await;
@@ -389,7 +431,10 @@ pub async fn set_output_stream(
     // Wait for response from isolated audio thread
     match response_rx.await {
         Ok(Ok(())) => {
-            println!("✅ Successfully set output stream via direct command: {}", device_id);
+            println!(
+                "✅ Successfully set output stream via direct command: {}",
+                device_id
+            );
             Ok(())
         }
         Ok(Err(e)) => Err(format!("Failed to set output stream: {}", e)),
@@ -412,7 +457,6 @@ pub async fn start_device_monitoring(audio_state: State<'_, AudioState>) -> Resu
         Err("No mixer created - cannot start device monitoring".to_string())
     }
 }
-
 
 #[tauri::command]
 pub async fn get_device_monitoring_stats() -> Result<Option<crate::DeviceMonitorStats>, String> {

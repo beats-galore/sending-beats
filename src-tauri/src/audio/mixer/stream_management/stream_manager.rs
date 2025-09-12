@@ -160,8 +160,6 @@ impl StreamManager {
         removed
     }
 
-
-
     /// Add CoreAudio output stream with SPMC Reader integration
     #[cfg(target_os = "macos")]
     pub fn add_coreaudio_output_stream(

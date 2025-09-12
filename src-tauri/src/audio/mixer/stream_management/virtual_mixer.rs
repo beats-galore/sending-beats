@@ -5,29 +5,28 @@
 // and stream configuration operations.
 
 use anyhow::{Context, Result};
+use std::collections::HashMap;
 use std::sync::{atomic::Ordering, Arc, Mutex};
 use tracing::{error, info, warn};
-use std::collections::HashMap;
 
-use super::stream_manager::StreamInfo;
 use super::super::sample_rate_converter::RubatoSRC;
-
+use super::stream_manager::StreamInfo;
 
 #[derive(Debug)]
 pub struct VirtualMixer {
     // Audio processing with persistent sample rate converters (thread-safe)
     pub input_resamplers: Arc<Mutex<HashMap<String, RubatoSRC>>>,
     pub output_resamplers: Arc<Mutex<HashMap<String, RubatoSRC>>>,
-
 }
-
 
 impl VirtualMixer {
-  /// Create a new virtual mixer with default device manager
-  pub async fn new() -> anyhow::Result<Self> {
-
-}
-
+    /// Create a new virtual mixer with default device manager
+    pub async fn new() -> anyhow::Result<Self> {
+        Ok(Self {
+            input_resamplers: Arc::new(Mutex::new(HashMap::new())),
+            output_resamplers: Arc::new(Mutex::new(HashMap::new())),
+        })
+    }
 
     /// Convert input samples to target mix rate using professional RubatoSRC resampling
     /// Call this BEFORE effects processing to ensure all inputs are at the same rate
@@ -39,8 +38,6 @@ impl VirtualMixer {
         input_sample_rates: Vec<(String, u32)>,
         target_mix_rate: u32,
     ) -> Vec<(String, Vec<f32>)> {
-
-
         let mut converted_samples = Vec::new();
 
         for (device_id, samples) in input_samples {
@@ -63,8 +60,10 @@ impl VirtualMixer {
                 }
 
                 if should_create_resampler {
-                    println!("🔧 PERSISTENT_SRC: Creating new input resampler for {} ({} Hz -> {} Hz)",
-                             device_id, input_rate, target_mix_rate);
+                    println!(
+                        "🔧 PERSISTENT_SRC: Creating new input resampler for {} ({} Hz -> {} Hz)",
+                        device_id, input_rate, target_mix_rate
+                    );
 
                     match RubatoSRC::new(input_rate as f32, target_mix_rate as f32) {
                         Ok(resampler) => {
@@ -73,7 +72,10 @@ impl VirtualMixer {
                             }
                         }
                         Err(e) => {
-                            println!("❌ PERSISTENT_SRC: Failed to create resampler for {}: {}", device_id, e);
+                            println!(
+                                "❌ PERSISTENT_SRC: Failed to create resampler for {}: {}",
+                                device_id, e
+                            );
                             converted_samples.push((device_id, samples));
                             continue;
                         }
@@ -84,12 +86,15 @@ impl VirtualMixer {
                 if let Ok(mut resamplers) = self.input_resamplers.try_lock() {
                     if let Some(resampler) = resamplers.get_mut(&resampler_key) {
                         // Calculate expected output size
-                        let expected_output_size = ((samples.len() as f32 * target_mix_rate as f32) / input_rate as f32) as usize;
+                        let expected_output_size = ((samples.len() as f32 * target_mix_rate as f32)
+                            / input_rate as f32)
+                            as usize;
                         let converted = resampler.convert(&samples, expected_output_size);
 
                         // Rate-limited logging
                         use std::sync::{LazyLock, Mutex as StdMutex};
-                        static CONVERSION_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
+                        static CONVERSION_COUNT: LazyLock<StdMutex<u64>> =
+                            LazyLock::new(|| StdMutex::new(0));
                         if let Ok(mut count) = CONVERSION_COUNT.lock() {
                             *count += 1;
                             if *count <= 3 || *count % 1000 == 0 {
@@ -125,7 +130,6 @@ impl VirtualMixer {
         mix_rate: u32,
         output_rate: u32,
     ) -> Vec<f32> {
-
         // Rate-limited debug logging (only first 3 calls)
         use std::sync::{LazyLock, Mutex as StdMutex};
         static DEBUG_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
@@ -139,7 +143,10 @@ impl VirtualMixer {
         // Check if conversion is needed
         let rate_diff = (mix_rate as f32 - output_rate as f32).abs();
         if should_log {
-            println!("🔍 OUTPUT_CONVERSION_CHECK: {} Hz -> {} Hz, diff: {:.1} Hz", mix_rate, output_rate, rate_diff);
+            println!(
+                "🔍 OUTPUT_CONVERSION_CHECK: {} Hz -> {} Hz, diff: {:.1} Hz",
+                mix_rate, output_rate, rate_diff
+            );
         }
 
         if rate_diff > 1.0 {
@@ -177,7 +184,8 @@ impl VirtualMixer {
 
                     // Rate-limited logging
                     use std::sync::{LazyLock, Mutex as StdMutex};
-                    static OUTPUT_CONVERSION_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
+                    static OUTPUT_CONVERSION_COUNT: LazyLock<StdMutex<u64>> =
+                        LazyLock::new(|| StdMutex::new(0));
                     if let Ok(mut count) = OUTPUT_CONVERSION_COUNT.lock() {
                         *count += 1;
                         if *count <= 3 || *count % 1000 == 0 {
@@ -229,7 +237,8 @@ impl VirtualMixer {
                 let (peak_left, rms_left, peak_right, rms_right) = if samples.len() >= 2 {
                     // Stereo audio: separate L/R channels (interleaved format)
                     let left_samples: Vec<f32> = samples.iter().step_by(2).copied().collect();
-                    let right_samples: Vec<f32> = samples.iter().skip(1).step_by(2).copied().collect();
+                    let right_samples: Vec<f32> =
+                        samples.iter().skip(1).step_by(2).copied().collect();
 
                     let peak_left = left_samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
                     let rms_left = if !left_samples.is_empty() {

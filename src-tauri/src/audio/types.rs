@@ -178,30 +178,6 @@ impl Default for AudioMetrics {
     }
 }
 
-/// Commands for controlling the mixer
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum MixerCommand {
-    AddChannel(AudioChannel),
-    RemoveChannel(u32),
-    UpdateChannel(u32, AudioChannel),
-    SetMasterGain(f32),
-    SetMasterVolume(f32),       // Alias for SetMasterGain
-    SetChannelVolume(u32, f32), // channel_id, volume
-    StartStream,
-    StopStream,
-    Stop, // General stop command
-    EnableChannel(u32, bool),
-    SoloChannel(u32, bool),
-    MuteChannel(u32, bool),
-    UpdateConfig(MixerConfig), // Update mixer configuration
-    // Multiple output device commands
-    AddOutputDevice(OutputDevice),
-    RemoveOutputDevice(String),               // device_id
-    UpdateOutputDevice(String, OutputDevice), // device_id, new_config
-    SetOutputDeviceGain(String, f32),         // device_id, gain
-    EnableOutputDevice(String, bool),         // device_id, enabled
-}
-
 /// Factory for creating optimized audio configurations based on use case
 pub struct AudioConfigFactory;
 
