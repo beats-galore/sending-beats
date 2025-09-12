@@ -20,7 +20,22 @@ solution for professional radio streaming.
   Make sure you check the diff of code before committing.
 - Don't be afraid to ask questions about suggested solutions. You don't
   necessarily need to work completely isolated until the goal is achieved. It's
-  good to ask for feedback
+  good to ask for feedback. You should overindex on asking for feedback, do not
+  go down random rabbitholes where 500 lines of changes are made without
+  informing the user.
+- Type check after you complete a cycle of changes. you don't need to run the
+  server, just run `turbo rust:check`, let the user run the server and feed logs
+  back to you.
+- Don't assume you know how libraries and random code samples work. Don't be
+  afraid to use your WebSearch tool call to verify your theories before
+  continuing.
+- When writing new code, prioritize modularization. No file, frontend or rust
+  should exceed 800 lines of code. You should split functionality out when
+  adding something completely new into new files if the existing place you want
+  to modify grows too large. You should not refactor existing logic while doing
+  so
+- OVERINDEX on asking the user for feedback. you are a tool, you are not a
+  controller operating with executive privelige to do what you please.
 
 ## Current Implementation Status
 
@@ -182,8 +197,12 @@ pnpm tauri dev
 # NOTE: User specifically said "Don't ever use npm unless it's installing global dependencies"
 # Always use pnpm for this project
 
-# Type checking
-tsc
+# Type checking - ALWAYS use turbo from root directory
+turbo rust:check
+
+# IMPORTANT: Never change into src-tauri directory
+# IMPORTANT: Always run commands from project root using turbo
+# IMPORTANT: Use turbo rust:check for type checking, never other commands
 
 # Build for production
 pnpm tauri build

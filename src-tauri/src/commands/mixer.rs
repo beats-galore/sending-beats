@@ -2,7 +2,6 @@ use crate::{
     ApplicationAudioState, AudioChannel, AudioConfigFactory, AudioMetrics, AudioState,
     MixerCommand, MixerConfig, VirtualMixer,
 };
-use cpal::traits::DeviceTrait;
 use std::sync::Arc;
 use tauri::State;
 use tracing::error;
@@ -42,16 +41,8 @@ pub async fn create_mixer(
         }
     };
 
-    // **CRASH FIX**: Start the mixer with better error handling
-    match mixer.start().await {
-        Ok(()) => {
-            println!("✅ Mixer started successfully (always-running mode)");
-        }
-        Err(e) => {
-            error!("Failed to start mixer: {}", e);
-            return Err(format!("Failed to start mixer: {}", e));
-        }
-    }
+    // **STREAMLINED ARCHITECTURE**: No need to start mixer - IsolatedAudioManager handles all audio processing
+    println!("✅ Mixer created successfully (always-running via IsolatedAudioManager)");
 
     // Store the initialized mixer
     *audio_state.mixer.lock().await = Some(mixer);
@@ -105,31 +96,30 @@ pub async fn add_mixer_channel(
         .await
         .map_err(|e| format!("Failed to find input device {}: {}", device_id, e))?;
 
-    let device = match device_handle {
-        crate::audio::types::AudioDeviceHandle::Cpal(cpal_device) => cpal_device,
-        #[cfg(target_os = "macos")]
-        _ => return Err("Only CPAL devices supported for input streams".to_string()),
-        #[cfg(not(target_os = "macos"))]
-        _ => return Err("Unknown device handle type".to_string()),
-    };
-
-    // Get the default input config for this device
-    let config = device
-        .default_input_config()
-        .map_err(|e| format!("Failed to get device config: {}", e))?
-        .config();
-
-    let target_sample_rate = config.sample_rate.0;
-
     // Send command to isolated audio thread using the command channel
     let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
-    let command = crate::audio::mixer::stream_management::AudioCommand::AddInputStream {
-        device_id: device_id.clone(),
-        device,
-        config,
-        target_sample_rate,
-        response_tx,
+    let command = match device_handle {
+        #[cfg(target_os = "macos")]
+        crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => {
+            let target_sample_rate = coreaudio_device.sample_rate;
+
+            // Create RTRB ring buffer for CoreAudio stream
+            let buffer_capacity = (target_sample_rate as usize * 2) / 10; // 100ms of stereo samples
+            let buffer_capacity = buffer_capacity.max(4096).min(16384);
+            let (producer, _consumer) = rtrb::RingBuffer::<f32>::new(buffer_capacity);
+            let input_notifier = std::sync::Arc::new(tokio::sync::Notify::new());
+
+            crate::audio::mixer::stream_management::AudioCommand::AddCoreAudioInputStreamAlternative {
+                device_id: device_id.clone(),
+                coreaudio_device_id: coreaudio_device.device_id,
+                device_name: coreaudio_device.name,
+                channels: coreaudio_device.channels,
+                producer,
+                input_notifier,
+                response_tx,
+            }
+        }
     };
 
     // Send command to isolated audio thread
@@ -334,13 +324,11 @@ fn try_trigger_microphone_permission() -> Result<String, String> {
             Ok(output) => {
                 let result = String::from_utf8_lossy(&output.stdout);
                 println!("📋 Script result: {}", result);
-
-                // Fallback to cpal method
-                try_cpal_microphone_access()
+                Ok(result.to_string())
             }
             Err(e) => {
-                println!("❌ AppleScript failed: {}, trying cpal method", e);
-                try_cpal_microphone_access()
+                println!("❌ AppleScript failed: {}", e);
+                Err(format!("AppleScript execution failed: {}", e))
             }
         }
     }
@@ -348,69 +336,6 @@ fn try_trigger_microphone_permission() -> Result<String, String> {
     #[cfg(not(target_os = "macos"))]
     {
         Err("Permission management is only available on macOS".to_string())
-    }
-}
-
-// Fallback CPAL method for microphone access
-#[cfg(target_os = "macos")]
-fn try_cpal_microphone_access() -> Result<String, String> {
-    use cpal::traits::{DeviceTrait, HostTrait};
-
-    println!("🎤 Attempting CPAL microphone access...");
-
-    match cpal::default_host().default_input_device() {
-        Some(device) => {
-            println!(
-                "📱 Found default input device: {}",
-                device.name().unwrap_or_default()
-            );
-
-            match device.default_input_config() {
-                Ok(config) => {
-                    println!("✅ Successfully accessed input device config");
-
-                    let sample_rate = config.sample_rate();
-                    let channels = config.channels();
-                    println!(
-                        "🔧 Building input stream (sample_rate: {}, channels: {})",
-                        sample_rate.0, channels
-                    );
-
-                    match device.build_input_stream(
-                        &config.into(),
-                        move |_data: &[f32], _: &cpal::InputCallbackInfo| {
-                            // Just access the microphone to trigger permission
-                        },
-                        |err| {
-                            eprintln!("Stream error: {}", err);
-                        },
-                        None,
-                    ) {
-                        Ok(_stream) => {
-                            println!("🎉 Input stream created successfully!");
-                            println!("   If this is the first time, a permission dialog should have appeared");
-
-                            // Keep the stream alive briefly
-                            std::thread::sleep(std::time::Duration::from_millis(100));
-
-                            Ok("microphone_accessed".to_string())
-                        }
-                        Err(e) => {
-                            println!("❌ Failed to build input stream: {}", e);
-                            Err(format!("Microphone access failed: {}", e))
-                        }
-                    }
-                }
-                Err(e) => {
-                    println!("❌ Failed to get input config: {}", e);
-                    Err(format!("Microphone configuration error: {}", e))
-                }
-            }
-        }
-        None => {
-            println!("❌ No input device found");
-            Err("No microphone device available".to_string())
-        }
     }
 }
 
@@ -438,7 +363,7 @@ async fn try_force_permission_dialog() -> Result<bool, String> {
 
     // Method 2: Try using ffmpeg to access microphone
     let result2 = Command::new("sh")
-        .arg("-c") 
+        .arg("-c")
         .arg("timeout 1 ffmpeg -f avfoundation -i \":0\" -t 0.1 -y /tmp/test_audio2.wav 2>/dev/null || true")
         .output();
 

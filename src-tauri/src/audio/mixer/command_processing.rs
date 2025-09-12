@@ -73,8 +73,9 @@ impl VirtualMixer {
                 self.update_config(config).await?;
             }
             MixerCommand::Stop => {
-                info!("Received stop command");
-                self.stop().await?;
+                info!("Received stop command - VirtualMixer is now just utility, no lifecycle to manage");
+                // **STREAMLINED ARCHITECTURE**: VirtualMixer no longer manages audio lifecycle
+                // IsolatedAudioManager handles all audio processing automatically
             }
             MixerCommand::SetMasterGain(gain) => {
                 self.set_master_volume(gain).await?;

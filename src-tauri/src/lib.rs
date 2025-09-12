@@ -15,8 +15,8 @@ pub mod commands;
 
 // Re-export audio types for testing and external use
 pub use audio::{
-    get_device_monitoring_stats as get_monitoring_stats_impl, initialize_device_monitoring,
-    stop_device_monitoring as stop_monitoring_impl, AudioChannel, AudioConfigFactory,
+    get_device_monitoring_stats as get_monitoring_stats_impl,
+   AudioChannel, AudioConfigFactory,
     AudioDatabase, AudioDeviceInfo, AudioDeviceManager, AudioEventBus, AudioMetrics, ChannelConfig,
     Compressor, DeviceMonitorStats, EQBand, FilePlayerService, Limiter, MasterLevelData,
     MixerCommand, MixerConfig, OutputRouteConfig, PeakDetector, RmsDetector, ThreeBandEqualizer,
@@ -172,11 +172,16 @@ pub fn run() {
 
             rt.block_on(async move {
                 tracing::info!("🎵 Starting IsolatedAudioManager in dedicated thread");
-                let mut isolated_audio_manager =
-                    crate::audio::mixer::stream_management::IsolatedAudioManager::new(
-                        audio_command_rx,
-                    );
-                isolated_audio_manager.run().await;
+                match crate::audio::mixer::stream_management::IsolatedAudioManager::new(
+                    audio_command_rx,
+                ).await {
+                    Ok(mut isolated_audio_manager) => {
+                        isolated_audio_manager.run().await;
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to create IsolatedAudioManager: {}", e);
+                    }
+                }
             });
         });
 
@@ -237,7 +242,7 @@ pub fn run() {
             remove_input_stream,
             set_output_stream,
             start_device_monitoring,
-            stop_device_monitoring,
+
             get_device_monitoring_stats,
             // Mixer commands
             create_mixer,
@@ -258,6 +263,10 @@ pub fn run() {
             remove_output_device,
             update_output_device,
             get_output_devices,
+            // CoreAudio specific commands
+            enumerate_coreaudio_devices,
+            get_device_type_info,
+            is_coreaudio_device,
             // Audio effects commands
             update_channel_eq,
             update_channel_compressor,

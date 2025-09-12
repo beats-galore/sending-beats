@@ -23,6 +23,8 @@ pub mod monitor;
 #[cfg(target_os = "macos")]
 pub mod coreaudio_stream;
 
+// CoreAudio input stream as alternative to CPAL (not a full replacement)
+
 // Re-export main public API
 pub use device_manager::AudioDeviceManager;
 
@@ -34,10 +36,12 @@ pub use health_monitoring::{DeviceHealthMonitor, HealthStatistics};
 
 // Re-export existing monitor types (preserved for backward compatibility)
 pub use monitor::{
-    get_device_monitor, get_device_monitoring_stats, initialize_device_monitoring,
-    stop_device_monitoring, DeviceMonitor, DeviceMonitorConfig, DeviceMonitorStats,
+    get_device_monitor, get_device_monitoring_stats,
+   DeviceMonitor, DeviceMonitorConfig, DeviceMonitorStats,
 };
 
-// Re-export existing CoreAudio stream (preserved for backward compatibility)
+// Re-export existing CoreAudio streams (preserved for backward compatibility)
 #[cfg(target_os = "macos")]
-pub use coreaudio_stream::CoreAudioOutputStream;
+pub use coreaudio_stream::{CoreAudioInputStream, CoreAudioOutputStream};
+
+// CoreAudio input streams work as CPAL alternatives, using existing audio pipeline

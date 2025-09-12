@@ -31,7 +31,7 @@ pub use effects::{
     RmsDetector, SpectrumAnalyzer, ThreeBandEqualizer,
 };
 
-pub use mixer::{AudioInputStream, AudioOutputStream, VirtualMixer, VirtualMixerHandle};
+pub use mixer::{AudioInputStream, AudioOutputStream, VirtualMixer};
 
 pub use crate::db::{
     AudioDatabase, AudioDeviceConfig, AudioEventBus, ChannelConfig, MasterLevelData,
@@ -45,8 +45,8 @@ pub use broadcasting::{
 };
 
 pub use devices::{
-    get_device_monitor, get_device_monitoring_stats, initialize_device_monitoring,
-    stop_device_monitoring, AudioDeviceManager, DeviceMonitor, DeviceMonitorConfig,
+    get_device_monitor, get_device_monitoring_stats,
+   AudioDeviceManager, DeviceMonitor, DeviceMonitorConfig,
     DeviceMonitorStats,
 };
 

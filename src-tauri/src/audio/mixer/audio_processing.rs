@@ -5,8 +5,6 @@
 // operations that occur in audio callback threads.
 
 use anyhow::Result;
-use cpal::traits::DeviceTrait;
-use cpal::{BufferSize, Device};
 use std::collections::HashMap;
 use tracing::{info, warn};
 
@@ -75,7 +73,7 @@ impl AudioFormatConverter {
                 *buffer = new_buffer;
 
                 if callback_count % 100 == 0 {
-                    println!("🔧 BUFFER OPTIMIZATION [{}]: Kept latest {} samples, buffer now {} samples (max: {})", 
+                    println!("🔧 BUFFER OPTIMIZATION [{}]: Kept latest {} samples, buffer now {} samples (max: {})",
                         device_id, target_size, buffer.len(), max_buffer_size);
                 }
             }

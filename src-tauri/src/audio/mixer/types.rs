@@ -42,8 +42,9 @@ pub struct VirtualMixer {
     // Real-time audio buffers
     pub mix_buffer: Arc<Mutex<Vec<f32>>>,
 
-    // Audio processing (placeholder for future sample rate conversion)
-    pub sample_rate_converter: Option<()>,
+    // Audio processing with persistent sample rate converters (thread-safe)
+    pub input_resamplers: Arc<Mutex<HashMap<String, crate::audio::mixer::sample_rate_converter::RubatoSRC>>>,
+    pub output_resamplers: Arc<Mutex<HashMap<String, crate::audio::mixer::sample_rate_converter::RubatoSRC>>>,
     pub audio_analyzer: AudioAnalyzer,
 
     // Communication channels
@@ -113,7 +114,8 @@ impl VirtualMixer {
             config: config.clone(),
             is_running: Arc::new(AtomicBool::new(false)),
             mix_buffer: Arc::new(Mutex::new(Vec::new())), // Dynamic allocation - starts empty
-            sample_rate_converter: None,
+            input_resamplers: Arc::new(Mutex::new(HashMap::new())),
+            output_resamplers: Arc::new(Mutex::new(HashMap::new())),
             audio_analyzer: AudioAnalyzer::new(sample_rate),
             command_tx,
             command_rx: Arc::new(Mutex::new(command_rx)),
