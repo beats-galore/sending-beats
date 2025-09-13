@@ -2,15 +2,16 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use super::virtual_mixer::VirtualMixer;
 use crate::audio::effects::{AudioEffectsChain, EQBand};
+use crate::audio::mixer::pipeline::queue_types::RawAudioSamples;
+use crate::audio::mixer::AudioPipeline;
 use crate::audio::types::AudioChannel;
 use tokio::sync::{mpsc, oneshot, Mutex, Notify};
 
 // Internal stream_management module imports
-use super::audio_input_stream::AudioInputStream;
 use super::stream_manager::{AudioMetrics, StreamManager};
 use crate::audio::devices::coreaudio_stream::CoreAudioInputStream;
 
@@ -59,17 +60,25 @@ pub enum AudioCommand {
     },
 }
 
-/// Isolated Audio Manager - owns audio streams directly, no Arc sharing!
+/// Isolated Audio Manager - manages device lifecycle only
+/// **NEW ARCHITECTURE**: InputWorkers read directly from RTRB, no AudioInputStream storage
 pub struct IsolatedAudioManager {
-    // Input streams using AudioInputStream abstraction over CoreAudioInputStream
-    input_streams: HashMap<String, AudioInputStream>,
+    // **REMOVED**: input_streams - InputWorkers read directly from RTRB now
     output_spmc_writers: HashMap<String, Arc<Mutex<Writer<f32>>>>,
     output_device_sample_rates: HashMap<String, u32>, // Track output device sample rates
-    // Virtual mixer instance with persistent resamplers
-    virtual_mixer: VirtualMixer,
+
+    // **NEW**: 4-layer audio pipeline replaces VirtualMixer
+    audio_pipeline: AudioPipeline,
+
+    // **NEW**: Pipeline input senders (Layer 1 → Layer 2)
+    pipeline_input_senders: HashMap<String, mpsc::UnboundedSender<RawAudioSamples>>,
+
+    // Legacy components (will be gradually phased out)
+    virtual_mixer: VirtualMixer, // Keep for transition period
     stream_manager: StreamManager,
     command_rx: mpsc::Receiver<AudioCommand>,
     metrics: AudioMetrics,
+
     // TRUE EVENT-DRIVEN: Global notification channels for async processing
     global_input_notifier: Arc<Notify>,
     global_output_notifier: Arc<Notify>,
@@ -77,13 +86,90 @@ pub struct IsolatedAudioManager {
 
 impl IsolatedAudioManager {
     /// Check if any input streams have data available for processing
-    /// Returns true if at least one stream has samples ready
+    /// Returns true if at least one stream has samples ready OR resampler buffers have enough for output
     fn has_input_data_available(&self) -> bool {
-        for input_stream in self.input_streams.values() {
-            // RTRB: Check if consumer has samples available (lock-free!)
-            if input_stream.has_samples_available() {
-                return true;
+        // **REMOVED**: input_streams no longer exist - InputWorkers handle input directly
+        // **NEW**: Check resampler accumulator buffers (legacy functionality)
+        self.has_resampler_data_available()
+    }
+
+    /// Check if any resampler accumulators have enough samples ready for output delivery
+    /// This prevents audio gaps when input queues are empty but resamplers have buffered data
+    fn has_resampler_data_available(&self) -> bool {
+        // DEBUG: Add comprehensive logging to understand what's happening
+        use std::sync::{LazyLock, Mutex as StdMutex};
+        static DEBUG_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
+        let should_debug = if let Ok(mut count) = DEBUG_COUNT.try_lock() {
+            *count += 1;
+            *count <= 10 || *count % 100 == 0
+        } else {
+            false
+        };
+
+        // **LOCK-FREE**: Check output resamplers FIRST (most likely to have buffered data in your setup)
+        if should_debug {
+            println!(
+                "🔍 OUTPUT_RESAMPLER_DEBUG: Found {} output resamplers",
+                self.virtual_mixer.output_resamplers.len()
+            );
+        }
+
+        for (device_id, resampler_arc) in self.virtual_mixer.output_resamplers.iter() {
+            if let Ok(resampler) = resampler_arc.try_lock() {
+                let target_samples = resampler.get_target_chunk_size() * 2; // Stereo samples
+                let current_samples = resampler.get_accumulator_size();
+
+                if should_debug {
+                    println!("🔍 OUTPUT_RESAMPLER_DEBUG: Device '{}' - accumulator: {}, target: {}, ready: {}",
+                             device_id, current_samples, target_samples, current_samples >= target_samples);
+                }
+
+                if current_samples >= target_samples && should_debug {
+                    println!("🎯 OUTPUT_RESAMPLER_READY: Device '{}' accumulator has {} samples ready (target: {})",
+                             device_id, current_samples, target_samples);
+                    return true;
+                }
+            } else if should_debug {
+                println!(
+                    "🔍 OUTPUT_RESAMPLER_DEBUG: Failed to lock device '{}' output resampler",
+                    device_id
+                );
             }
+        }
+
+        // **LOCK-FREE**: Check input resamplers (less likely in your setup since inputs match mix rate)
+        if should_debug {
+            println!(
+                "🔍 INPUT_RESAMPLER_DEBUG: Found {} input resamplers",
+                self.virtual_mixer.input_resamplers.len()
+            );
+        }
+
+        for (device_id, resampler_arc) in self.virtual_mixer.input_resamplers.iter() {
+            if let Ok(resampler) = resampler_arc.try_lock() {
+                let target_samples = resampler.get_target_chunk_size() * 2; // Stereo samples
+                let current_samples = resampler.get_accumulator_size();
+
+                if should_debug {
+                    println!("🔍 INPUT_RESAMPLER_DEBUG: Device '{}' - accumulator: {}, target: {}, ready: {}",
+                             device_id, current_samples, target_samples, current_samples >= target_samples);
+                }
+
+                if current_samples >= target_samples {
+                    println!("🎯 INPUT_RESAMPLER_READY: Device '{}' accumulator has {} samples ready (target: {})",
+                             device_id, current_samples, target_samples);
+                    return true;
+                }
+            } else if should_debug {
+                println!(
+                    "🔍 INPUT_RESAMPLER_DEBUG: Failed to lock device '{}' input resampler",
+                    device_id
+                );
+            }
+        }
+
+        if should_debug {
+            println!("🔍 RESAMPLER_DEBUG: No resamplers ready - returning false");
         }
         false
     }
@@ -91,14 +177,27 @@ impl IsolatedAudioManager {
     /// Check if any output streams need more data (are running low)
 
     pub async fn new(command_rx: mpsc::Receiver<AudioCommand>) -> Result<Self, anyhow::Error> {
-        // Create a VirtualMixer instance with default config
-        // let mixer_config = crate::audio::types::MixerConfig::default();
+        // **NEW**: Create 4-layer AudioPipeline with max sample rate of 48kHz
+        const MAX_SAMPLE_RATE: u32 = 48000;
+        let mut audio_pipeline = AudioPipeline::new(MAX_SAMPLE_RATE);
+
+        // **LEGACY**: Keep VirtualMixer for transition period
         let virtual_mixer = VirtualMixer::new().await?;
 
+        info!(
+            "🎧 ISOLATED_AUDIO_MANAGER: Initialized with 4-layer AudioPipeline (max: {} Hz)",
+            MAX_SAMPLE_RATE
+        );
+
         Ok(Self {
-            input_streams: HashMap::new(),
             output_spmc_writers: HashMap::new(),
             output_device_sample_rates: HashMap::new(),
+
+            // **NEW**: Pipeline architecture
+            audio_pipeline,
+            pipeline_input_senders: HashMap::new(),
+
+            // **LEGACY**: Keep for transition
             virtual_mixer,
             stream_manager: StreamManager::new(),
             command_rx,
@@ -118,6 +217,13 @@ impl IsolatedAudioManager {
     /// Main processing loop for the isolated audio thread
     pub async fn run(&mut self) {
         info!("🎵 Isolated audio manager started - lock-free RTRB architecture");
+
+        // **NEW**: Start the 4-layer audio pipeline
+        if let Err(e) = self.audio_pipeline.start().await {
+            error!("❌ Failed to start AudioPipeline: {}", e);
+            return;
+        }
+        info!("🚀 PIPELINE: 4-layer AudioPipeline started successfully");
 
         // **TRUE EVENT-DRIVEN PROCESSING**: Use async notifications instead of polling
         info!("🚀 TRUE EVENT-DRIVEN: Starting async notification-driven audio processing");
@@ -168,14 +274,14 @@ impl IsolatedAudioManager {
                         self.process_audio().await;
 
                         // Track event-driven processing
-                        // use std::sync::{LazyLock, Mutex as StdMutex};
-                        // static OUTPUT_EVENT_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
-                        // if let Ok(mut count) = OUTPUT_EVENT_COUNT.lock() {
-                        //     *count += 1;
-                        //     if *count <= 5 || *count % 1000 == 0 {
-                        //         info!("⚡ OUTPUT_EVENT [{}]: Processed audio on output demand notification", count);
-                        //     }
-                        // }
+                        use std::sync::{LazyLock, Mutex as StdMutex};
+                        static OUTPUT_EVENT_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
+                        if let Ok(mut count) = OUTPUT_EVENT_COUNT.lock() {
+                            *count += 1;
+                            if *count <= 5 || *count % 1000 == 0 {
+                                info!("⚡ OUTPUT_EVENT [{}]: Processed audio on output demand notification", count);
+                            }
+                        }
                     }
                 }
 
@@ -251,52 +357,42 @@ impl IsolatedAudioManager {
         }
     }
 
-    /// Continuous audio processing: mix inputs and distribute to outputs
+    /// **TEMPORARY**: Process audio using legacy VirtualMixer (pipeline under development)
     async fn process_audio(&mut self) {
-        // Debug: Log the processing attempt
+        // **ARCHITECTURE NOTE**: This method currently creates inefficient double-buffering
+        // by reading from RTRB → AudioInputStream → process_audio → pipeline input queues.
+        //
+        // TODO: InputWorkers should read directly from RTRB consumers, eliminating this middleman.
+        // For now, using legacy VirtualMixer processing until pipeline output is connected.
+
         use std::sync::{LazyLock, Mutex as StdMutex};
-        static DEBUG_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
-        if let Ok(mut count) = DEBUG_COUNT.lock() {
+        static PROCESS_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
+        if let Ok(mut count) = PROCESS_COUNT.lock() {
             *count += 1;
             if *count <= 10 || *count % 1000 == 0 {
-                println!(
-                    "🔧 PROCESS_AUDIO [{}]: Called with {} inputs, {} outputs",
+                info!(
+                    "🔧 LEGACY_PROCESSING [{}]: Using VirtualMixer ({} outputs)",
                     count,
-                    self.input_streams.len(),
                     self.output_spmc_writers.len()
                 );
             }
         }
 
-        if self.input_streams.is_empty() {
-            // Only skip if no inputs - we'll drain inputs even without outputs
-            return;
-        }
+        // **REMOVED**: No longer check input_streams since InputWorkers handle input directly
 
-        // **SAMPLE RATE CONVERSION PIPELINE**: Step 1 - Collect raw samples and sample rates
-        let mut input_samples = Vec::<(String, Vec<f32>)>::new();
-        let mut input_sample_rates = Vec::<(String, u32)>::new();
-
-        // Collect input sample rates
-        for (device_id, input_stream) in &mut self.input_streams {
-            input_sample_rates.push((device_id.clone(), input_stream.sample_rate));
-        }
-
-        // Determine target mix rate using proper function
-        let target_mix_rate = self.calculate_target_mix_rate(&input_sample_rates);
-
-        // Continue with sample collection
-        for (device_id, input_stream) in &mut self.input_streams {
-            // Get raw samples (before effects - we'll apply effects after sample rate conversion)
-            let samples = input_stream.get_samples();
-            if !samples.is_empty() {
-                input_samples.push((device_id.clone(), samples));
-            }
-        }
+        // **LEGACY PATH**: Use existing VirtualMixer processing for now
+        let (input_samples, input_sample_rates) = self.collect_input_sample_data();
 
         if input_samples.is_empty() {
             return;
         }
+
+        // **ADAPTIVE MIXER**: Determine the target mixing rate from the maximum input sample rate
+        let target_mix_rate = input_sample_rates
+            .iter()
+            .map(|(_, rate)| *rate)
+            .max()
+            .unwrap_or(48000);
 
         // **SAMPLE RATE CONVERSION PIPELINE**: Step 2 - Convert all inputs to target mix rate
         let converted_input_samples = self.virtual_mixer.convert_inputs_to_mix_rate(
@@ -308,53 +404,14 @@ impl IsolatedAudioManager {
         // **SAMPLE RATE CONVERSION PIPELINE**: Step 3 - Apply effects to rate-converted samples
         let mut effected_samples = Vec::<(String, Vec<f32>)>::new();
 
-        for (device_id, samples) in converted_input_samples {
-            if let Some(input_stream) = self.input_streams.get_mut(&device_id) {
-                // **EFFECTS FIX**: Create default channel config with effects enabled
-                let mut default_channel_config = crate::audio::types::AudioChannel::default();
-                default_channel_config.name = format!("Channel for {}", device_id);
-                default_channel_config.input_device_id = Some(device_id.clone());
-                default_channel_config.effects_enabled = false; // **TEMPORARY**: Disable effects to test raw audio levels
-
-                // Apply effects to the rate-converted samples
-                // TODO: We need a way to apply effects to arbitrary sample data, not just from the stream
-                // For now, use the samples as-is after rate conversion
-                let processed_samples = samples; // TODO: Apply effects here
-
-                if !processed_samples.is_empty() {
-                    // Debug log for first few audio processing cycles
-                    let peak = processed_samples
-                        .iter()
-                        .map(|&s| s.abs())
-                        .fold(0.0f32, f32::max);
-                    use std::sync::{LazyLock, Mutex as StdMutex};
-                    static PROCESS_COUNT: LazyLock<StdMutex<u64>> =
-                        LazyLock::new(|| StdMutex::new(0));
-                    if let Ok(mut count) = PROCESS_COUNT.lock() {
-                        *count += 1;
-                        if *count <= 20 || *count % 1000 == 0 {
-                            println!(
-                                "🎵 SRC_AUDIO_PROCESSING [{}]: Input '{}' provided {} samples at {} Hz, peak: {:.4}",
-                                count,
-                                device_id,
-                                processed_samples.len(),
-                                target_mix_rate,
-                                peak
-                            );
-                        }
-                    }
-
-                    effected_samples.push((device_id.clone(), processed_samples));
-                }
-            }
-        }
+        // **REMOVED**: input_streams no longer exist - InputWorkers handle processing
+        effected_samples = converted_input_samples;
 
         // **SAMPLE RATE CONVERSION PIPELINE**: Step 4 - Mix all rate-converted, effected samples
         let mixed_samples = VirtualMixer::mix_input_samples(effected_samples);
 
         if !mixed_samples.is_empty() {
             // **SAMPLE RATE CONVERSION PIPELINE**: Step 5 - Convert mixed audio to each output device's rate
-            // First collect all the output device information to avoid borrowing conflicts
             let output_device_infos: Vec<(String, u32, Arc<Mutex<Writer<f32>>>)> = self
                 .output_spmc_writers
                 .iter()
@@ -368,10 +425,8 @@ impl IsolatedAudioManager {
                 })
                 .collect();
 
-            // Now process each output device using the collected information
             for (device_id, output_device_rate, spmc_writer) in output_device_infos {
                 if let Ok(mut writer) = spmc_writer.try_lock() {
-                    // **PER-OUTPUT CONVERSION**: Convert mixed samples to this device's actual rate
                     let device_samples = self.virtual_mixer.convert_output_to_device_rate(
                         &device_id,
                         mixed_samples.clone(),
@@ -379,33 +434,8 @@ impl IsolatedAudioManager {
                         output_device_rate,
                     );
 
-                    // Write rate-converted samples to SPMC queue for hardware stream to read
                     for &sample in &device_samples {
                         writer.write(sample);
-                    }
-
-                    // Debug log for output distribution
-                    use std::sync::{LazyLock, Mutex as StdMutex};
-                    static OUTPUT_COUNT: LazyLock<
-                        StdMutex<std::collections::HashMap<String, u64>>,
-                    > = LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
-                    if let Ok(mut count_map) = OUTPUT_COUNT.lock() {
-                        let count = count_map.entry(device_id.clone()).or_insert(0);
-                        *count += 1;
-                        if *count <= 20 || *count % 1000 == 0 {
-                            let peak = device_samples
-                                .iter()
-                                .map(|&s| s.abs())
-                                .fold(0.0f32, f32::max);
-                            println!(
-                                "🔊 SRC_AUDIO_OUTPUT [{}]: Sent {} samples to '{}' at {} Hz, peak: {:.4}",
-                                count,
-                                device_samples.len(),
-                                device_id,
-                                output_device_rate,
-                                peak
-                            );
-                        }
                     }
                 }
             }
@@ -429,14 +459,12 @@ impl IsolatedAudioManager {
           device_id, coreaudio_device_id
       );
 
-        // **RESTORE AUDIOINPUTSTREAM**: Create AudioInputStream with native sample rate
-        // **ADAPTIVE**: Detect device native sample rate for AudioInputStream and buffer calculations
+        // **REMOVED AUDIOINPUTSTREAM**: InputWorkers read directly from RTRB
+        // **ADAPTIVE**: Detect device native sample rate for buffer calculations
         let native_sample_rate =
             crate::audio::devices::coreaudio_stream::get_device_native_sample_rate(
                 coreaudio_device_id,
             )?;
-        let mut input_stream =
-            AudioInputStream::new(device_id.clone(), device_name.clone(), native_sample_rate)?;
 
         // Create new RTRB pair - consumer goes to AudioInputStream, producer goes to CoreAudio callback
         let buffer_capacity = (native_sample_rate as usize * 2) / 10; // 100ms of stereo samples
@@ -444,11 +472,27 @@ impl IsolatedAudioManager {
         let (coreaudio_producer, audio_input_consumer) =
             rtrb::RingBuffer::<f32>::new(buffer_capacity);
 
-        // Replace the consumer in input_stream with our CoreAudio consumer
-        input_stream.audio_buffer_consumer = audio_input_consumer;
+        // **NEW ARCHITECTURE**: Give RTRB consumer directly to InputWorker
+        // Create dedicated notification for this input device
+        let input_device_notifier = Arc::new(Notify::new());
 
-        // Store the input stream (with consumer) so get_samples_for_device() can find it
-        self.input_streams.insert(device_id.clone(), input_stream);
+        // Connect RTRB consumer directly to pipeline InputWorker
+        if let Err(e) = self.audio_pipeline.add_input_device_with_consumer(
+            device_id.clone(),
+            native_sample_rate,
+            channels,
+            audio_input_consumer,
+            input_device_notifier.clone(),
+        ) {
+            error!(
+                "❌ PIPELINE: Failed to connect RTRB consumer to InputWorker for '{}': {}",
+                device_id, e
+            );
+            return Err(e);
+        }
+
+        // **REMOVED**: No longer store AudioInputStream - InputWorkers handle RTRB directly
+        // Device management is handled by the AudioPipeline now
 
         // Use StreamManager to create and start the CoreAudio input stream as CPAL alternative
         // **ADAPTIVE AUDIO**: No longer pass sample_rate - it will be detected from device
@@ -457,8 +501,8 @@ impl IsolatedAudioManager {
             coreaudio_device_id,
             device_name,
             channels,
-            coreaudio_producer, // Use new producer that connects to AudioInputStream consumer
-            self.global_input_notifier.clone(), // CRITICAL FIX: Use global notifier like CPAL
+            coreaudio_producer, // Producer writes to RTRB that InputWorker reads from
+            input_device_notifier, // Each InputWorker gets its own dedicated notification
         )?;
 
         info!(
@@ -469,9 +513,19 @@ impl IsolatedAudioManager {
     }
 
     fn handle_remove_input_stream(&mut self, device_id: String) -> bool {
-        let removed = self.input_streams.remove(&device_id).is_some();
+        // **NEW PIPELINE**: Remove device from AudioPipeline
+        // TODO: Add remove_input_device method to AudioPipeline
+
+        // **LEGACY**: Remove from pipeline input senders (will be cleaned up)
+        if self.pipeline_input_senders.remove(&device_id).is_some() {
+            info!(
+                "✅ PIPELINE: Disconnected input device '{}' from pipeline",
+                device_id
+            );
+        }
+
         self.stream_manager.remove_stream(&device_id);
-        removed
+        true // Always return true since we don't track input_streams anymore
     }
 
     #[cfg(target_os = "macos")]
@@ -510,6 +564,23 @@ impl IsolatedAudioManager {
         self.output_device_sample_rates
             .insert(device_id.clone(), native_sample_rate);
 
+        // **NEW PIPELINE**: Connect this output device to AudioPipeline Layer 4
+        let chunk_size = (native_sample_rate as usize) / 100; // 10ms chunks
+        if let Err(e) =
+            self.audio_pipeline
+                .add_output_device(device_id.clone(), native_sample_rate, chunk_size)
+        {
+            error!(
+                "❌ PIPELINE: Failed to connect output device '{}' to Layer 4: {}",
+                device_id, e
+            );
+        } else {
+            info!(
+                "✅ PIPELINE: Connected output device '{}' to Layer 4 at {} Hz",
+                device_id, native_sample_rate
+            );
+        }
+
         // Update the coreaudio_device to use the detected native sample rate
         let mut corrected_coreaudio_device = coreaudio_device;
         corrected_coreaudio_device.sample_rate = native_sample_rate;
@@ -535,24 +606,8 @@ impl IsolatedAudioManager {
         device_id: String,
         effects: AudioEffectsChain,
     ) -> Result<()> {
-        if let Some(input_stream) = self.input_streams.get_mut(&device_id) {
-            match input_stream.effects_chain.try_lock() {
-                Ok(mut effects_guard) => {
-                    *effects_guard = effects;
-                    Ok(())
-                }
-                Err(_) => {
-                    println!(
-                        "⚠️ LOCK_CONTENTION: Failed to acquire effects chain lock for device {}",
-                        device_id
-                    );
-                    // Continue without updating effects - operation succeeds but effects update is skipped
-                    Ok(())
-                }
-            }
-        } else {
-            Err(anyhow::anyhow!("Input stream not found: {}", device_id))
-        }
+        // **REMOVED**: input_streams no longer exist - InputWorkers handle effects directly
+        Ok(())
     }
 
     fn get_vu_levels(&mut self) -> HashMap<String, f32> {
@@ -590,17 +645,82 @@ impl IsolatedAudioManager {
     ) -> Vec<f32> {
         // Debug removed
 
-        if let Some(stream) = self.input_streams.get_mut(device_id) {
-            let samples = if channel_config.effects_enabled {
-                stream.process_with_effects(channel_config)
-            } else {
-                stream.get_samples()
-            };
-            // Debug removed to reduce log spam
-            samples
-        } else {
-            // Debug removed to reduce log spam
-            Vec::new()
+        // **REMOVED**: input_streams no longer exist - InputWorkers handle sampling
+        Vec::new() // Method obsolete
+                   // let samples = if channel_config.effects_enabled {
+                   //     stream.process_with_effects(channel_config)
+                   // } else {
+                   //     stream.get_samples()
+                   // };
+                   // // Debug removed to reduce log spam
+                   // samples
+    }
+
+    /// **HELPER**: Collect input sample data from all input streams
+    fn collect_input_sample_data(&mut self) -> (Vec<(String, Vec<f32>)>, Vec<(String, u32)>) {
+        let mut input_samples = Vec::new();
+        let mut input_sample_rates = Vec::new();
+
+        // Collect sample rates first
+        // **REMOVED**: input_streams no longer exist - InputWorkers read directly from RTRB
+        // This method should no longer be called with the new architecture
+
+        (input_samples, input_sample_rates)
+    }
+
+    /// **LEGACY**: Connect input device to AudioPipeline Layer 1 (old inefficient way)
+    fn connect_input_device_to_pipeline(
+        &mut self,
+        device_id: &str,
+        sample_rate: u32,
+    ) -> Result<()> {
+        // Connect device to AudioPipeline Layer 1 and get sender
+        match self
+            .audio_pipeline
+            .add_input_device(device_id.to_string(), sample_rate)
+        {
+            Ok(sender) => {
+                // Store sender for future use
+                self.pipeline_input_senders
+                    .insert(device_id.to_string(), sender);
+                info!(
+                    "✅ PIPELINE: Connected device '{}' to Layer 1 at {} Hz",
+                    device_id, sample_rate
+                );
+                Ok(())
+            }
+            Err(e) => {
+                error!(
+                    "❌ PIPELINE: Failed to add input device '{}' to Layer 1: {}",
+                    device_id, e
+                );
+                Err(e)
+            }
+        }
+    }
+
+    /// **NEW PIPELINE**: Get processed audio from Layer 4 and distribute to output devices
+    /// TODO: Implement proper output sample retrieval from pipeline Layer 4
+    fn distribute_pipeline_output_to_devices(&mut self) {
+        // **TODO**: This method needs to be implemented once the pipeline Layer 4
+        // provides an API to retrieve processed output samples.
+        // For now, this is a placeholder to avoid compilation errors.
+
+        // The pipeline workers will handle output distribution internally
+        // through their own channels and processing loops.
+
+        // Debug log to track when this would be called
+        use std::sync::{LazyLock, Mutex as StdMutex};
+        static CALL_COUNT: LazyLock<StdMutex<u64>> = LazyLock::new(|| StdMutex::new(0));
+        if let Ok(mut count) = CALL_COUNT.lock() {
+            *count += 1;
+            if *count <= 5 || *count % 1000 == 0 {
+                debug!(
+                    "🔧 PIPELINE_OUTPUT_PLACEHOLDER [{}]: Would distribute to {} outputs",
+                    count,
+                    self.output_spmc_writers.len()
+                );
+            }
         }
     }
 
@@ -650,24 +770,28 @@ impl IsolatedAudioManager {
     /// This fixes sample rate mismatch issues by using real hardware rates instead of mixer config
     pub async fn get_actual_hardware_sample_rate(&self) -> u32 {
         // Check active input streams first - they reflect actual hardware capture rates
-        if let Some((_, input_stream)) = self.input_streams.iter().next() {
-            info!(
-                "🔧 SAMPLE RATE FIX: Found active input stream with sample rate: {} Hz",
-                input_stream.sample_rate
-            );
-            return input_stream.sample_rate;
-        }
-
-        // Check active output streams
-        // Check output streams - currently not implemented in IsolatedAudioManager
-        // TODO: Add output stream tracking if needed
-
-        // Last resort: use default sample rate
-        let default_rate = crate::types::DEFAULT_SAMPLE_RATE;
-        warn!(
-            "🔧 SAMPLE RATE FIX: No active streams found, falling back to default {} Hz",
-            default_rate
-        );
+        // **REMOVED**: input_streams no longer exist
+        let default_rate = 48000u32; // Default fallback
         default_rate
     }
+
+    // if let Some((_, input_stream)) = self.input_streams.iter().next() {
+    //     info!(
+    //         "🔧 SAMPLE RATE FIX: Found active input stream with sample rate: {} Hz",
+    //         input_stream.sample_rate
+    //     );
+    //     return input_stream.sample_rate;
+    // }
+
+    // // Check active output streams
+    // // Check output streams - currently not implemented in IsolatedAudioManager
+    // // TODO: Add output stream tracking if needed
+
+    // // Last resort: use default sample rate
+    // let default_rate = crate::types::DEFAULT_SAMPLE_RATE;
+    // warn!(
+    //     "🔧 SAMPLE RATE FIX: No active streams found, falling back to default {} Hz",
+    //     default_rate
+    // );
+    // default_rate
 }

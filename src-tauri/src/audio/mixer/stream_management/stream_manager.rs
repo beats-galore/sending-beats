@@ -167,22 +167,23 @@ impl StreamManager {
         device_id: String,
         coreaudio_device: crate::audio::types::CoreAudioDevice,
         spmc_reader: spmcq::Reader<f32>,
-        _output_notifier: Arc<Notify>, // CoreAudio integration pending
+        output_notifier: Arc<Notify>, // CoreAudio integration - NOW ACTIVE
     ) -> Result<()> {
         info!(
             "🔊 Creating CoreAudio output stream for device '{}' (ID: {})",
             device_id, coreaudio_device.device_id
         );
 
-        // **SPMC INTEGRATION**: Create CoreAudio stream with SPMC reader
+        // **SPMC INTEGRATION**: Create CoreAudio stream with SPMC reader AND output notifier
         // Extract values from CoreAudioDevice and use new constructor
         // **ADAPTIVE AUDIO**: No longer pass sample_rate - it will be detected from device
         let mut coreaudio_stream =
-            crate::audio::devices::CoreAudioOutputStream::new_with_spmc_reader(
+            crate::audio::devices::CoreAudioOutputStream::new_with_spmc_reader_and_notifier(
                 coreaudio_device.device_id,    // AudioDeviceID (u32)
                 coreaudio_device.name.clone(), // String
                 2,                             // channels: u16 (stereo)
                 spmc_reader,                   // **SPMC READER INTEGRATION**
+                output_notifier,               // **OUTPUT NOTIFIER INTEGRATION**
             )?;
 
         // **SPMC READER NOW INTEGRATED**: Stream created with SPMC reader for real audio data

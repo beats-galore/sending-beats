@@ -28,6 +28,10 @@ pub struct RubatoSRC {
     ratio: f32,
     /// Maximum input chunk size this resampler can handle
     max_input_frames: usize,
+    /// Buffer accumulator to smooth output size variations
+    pub accumulator: Vec<f32>,
+    /// Target output chunk size for consistent delivery
+    pub target_output_chunk_size: usize,
 }
 
 impl RubatoSRC {
@@ -36,12 +40,65 @@ impl RubatoSRC {
     /// # Arguments
     /// * `input_rate` - Input sample rate in Hz (e.g., 44100)
     /// * `output_rate` - Output sample rate in Hz (e.g., 48000)
-    /// * `max_input_frames` - Maximum expected input chunk size (default: 1024)
     ///
     /// # Returns
     /// High-quality resampler with windowed sinc interpolation and anti-aliasing
     pub fn new(input_rate: f32, output_rate: f32) -> Result<Self, String> {
-        Self::with_max_frames(input_rate, output_rate, 1024)
+        Self::with_target_chunk_size(input_rate, output_rate, None)
+    }
+
+    /// Create a new resampler with a specific target output chunk size
+    ///
+    /// # Arguments
+    /// * `target_chunk_size` - Desired output chunk size (should be power of 2), None for auto-detection
+    pub fn with_target_chunk_size(
+        input_rate: f32,
+        output_rate: f32,
+        target_chunk_size: Option<usize>,
+    ) -> Result<Self, String> {
+        // Calculate appropriate max chunk size based on sample rates
+        // Higher sample rates might need larger buffers for efficiency
+        let max_rate = input_rate.max(output_rate);
+        let suggested_max_frames = if max_rate > 96000.0 {
+            4096 // High sample rates (>96kHz) - larger chunks for efficiency
+        } else if max_rate > 48000.0 {
+            2048 // Standard high quality (48-96kHz)
+        } else {
+            1024 // Standard quality (<=48kHz)
+        };
+
+        println!(
+            "🔧 RUBATO_INIT: Creating resampler {}Hz→{}Hz with max {} frames",
+            input_rate, output_rate, suggested_max_frames
+        );
+
+        Self::with_max_frames(input_rate, output_rate, suggested_max_frames)
+    }
+
+    /// Create a low-artifact resampler for testing (reduced quality but fewer artifacts)
+    /// Use this temporarily to isolate if filter complexity is causing artifacts
+    pub fn new_low_artifact(input_rate: f32, output_rate: f32) -> Result<Self, String> {
+        let max_rate = input_rate.max(output_rate);
+        let suggested_max_frames = if max_rate > 96000.0 {
+            4096
+        } else if max_rate > 48000.0 {
+            2048
+        } else {
+            1024
+        };
+
+        println!(
+            "🔧 RUBATO_LOW_ARTIFACT: Creating reduced-artifact resampler {}Hz→{}Hz",
+            input_rate, output_rate
+        );
+
+        Self::with_target_chunk_size_and_params(
+            input_rate,
+            output_rate,
+            None,
+            suggested_max_frames,
+            true,
+        )
     }
 
     /// Create a new resampler with specified maximum input frame size
@@ -50,19 +107,81 @@ impl RubatoSRC {
         output_rate: f32,
         max_input_frames: usize,
     ) -> Result<Self, String> {
-        // Configure high-quality sinc interpolation parameters
-        let params = SincInterpolationParameters {
-            sinc_len: 256,                                // High-quality sinc filter length
-            f_cutoff: 0.95,                               // Conservative cutoff to prevent aliasing
-            interpolation: SincInterpolationType::Linear, // Linear interpolation between sinc samples
-            oversampling_factor: 256,                     // High oversampling for quality
-            window: WindowFunction::BlackmanHarris2,      // Excellent side-lobe suppression
+        Self::with_target_chunk_size_and_params(
+            input_rate,
+            output_rate,
+            None,
+            max_input_frames,
+            false,
+        )
+    }
+
+    /// Internal method with all parameters
+    pub fn with_target_chunk_size_and_params(
+        input_rate: f32,
+        output_rate: f32,
+        target_chunk_size: Option<usize>,
+        max_input_frames: usize,
+        low_artifact: bool,
+    ) -> Result<Self, String> {
+        Self::with_params_internal(
+            input_rate,
+            output_rate,
+            target_chunk_size,
+            max_input_frames,
+            low_artifact,
+        )
+    }
+
+    /// Create a new resampler with configurable quality parameters
+    pub fn with_params(
+        input_rate: f32,
+        output_rate: f32,
+        max_input_frames: usize,
+        low_artifact: bool,
+    ) -> Result<Self, String> {
+        Self::with_params_internal(
+            input_rate,
+            output_rate,
+            None,
+            max_input_frames,
+            low_artifact,
+        )
+    }
+
+    /// Internal implementation with all parameters
+    fn with_params_internal(
+        input_rate: f32,
+        output_rate: f32,
+        target_chunk_size: Option<usize>,
+        max_input_frames: usize,
+        low_artifact: bool,
+    ) -> Result<Self, String> {
+        // Configure sinc interpolation parameters - high quality vs low artifact
+        let params = if low_artifact {
+            println!("🔧 Using LOW ARTIFACT settings (may reduce quality)");
+            SincInterpolationParameters {
+                sinc_len: 64,                                 // Shorter filter = fewer artifacts
+                f_cutoff: 0.9,                                // Less aggressive cutoff
+                interpolation: SincInterpolationType::Linear, // Linear interpolation
+                oversampling_factor: 64,                      // Lower oversampling
+                window: WindowFunction::Hann,                 // Simpler window function
+            }
+        } else {
+            println!("🔧 Using HIGH QUALITY settings (may have more artifacts)");
+            SincInterpolationParameters {
+                sinc_len: 256,                                // High-quality sinc filter length
+                f_cutoff: 0.95, // Conservative cutoff to prevent aliasing
+                interpolation: SincInterpolationType::Linear, // Linear interpolation between sinc samples
+                oversampling_factor: 256,                     // High oversampling for quality
+                window: WindowFunction::BlackmanHarris2,      // Excellent side-lobe suppression
+            }
         };
 
         // Create Rubato's fixed-input-size resampler
         // NOTE: SincFixedIn may expect INPUT/OUTPUT ratio despite documentation
         let resampler = SincFixedIn::new(
-            input_rate as f64 / output_rate as f64, // Try INPUT/OUTPUT ratio (48000/44100 = 1.088)
+            output_rate as f64 / input_rate as f64,
             2.0, // Maximum ratio change (for future dynamic adjustment)
             params,
             max_input_frames, // Fixed input chunk size
@@ -77,47 +196,163 @@ impl RubatoSRC {
             + 64; // Extra headroom
         let output_buffer = vec![vec![0.0; max_output_frames]; 2]; // 2 channels for stereo
 
+        // Determine target output chunk size
+        let target_output_chunk_size = if let Some(size) = target_chunk_size {
+            // Use specified chunk size (should be power of 2)
+            println!(
+                "🔧 BUFFER_ACCUMULATOR: Using specified target chunk size: {} frames",
+                size
+            );
+            size
+        } else {
+            // Smart power-of-2 size selection based on up/downsampling
+            let calculated_size = (512.0 * output_rate as f64 / input_rate as f64).round() as usize;
+            let is_downsampling = output_rate < input_rate;
+
+            let power_of_2_size = if is_downsampling {
+                // DOWNSAMPLING: Choose smaller power-of-2 to ensure samples are always available
+                if calculated_size <= 128 {
+                    128
+                } else if calculated_size <= 256 {
+                    256 // 48kHz→44.1kHz: 470 → choose 256 for guaranteed availability
+                } else if calculated_size <= 512 {
+                    512 // Still choose smaller to avoid waiting
+                } else {
+                    1024
+                }
+            } else {
+                // UPSAMPLING: Choose larger power-of-2 as normal
+                if calculated_size <= 256 {
+                    256
+                } else if calculated_size <= 512 {
+                    512
+                } else if calculated_size <= 1024 {
+                    1024
+                } else {
+                    2048
+                }
+            };
+
+            let strategy = if is_downsampling {
+                "DOWNSAMPLING (smaller target)"
+            } else {
+                "UPSAMPLING (normal target)"
+            };
+            println!(
+                "🔧 BUFFER_ACCUMULATOR: {} - Calculated {} frames, using power-of-2: {} frames",
+                strategy, calculated_size, power_of_2_size
+            );
+            power_of_2_size
+        };
+
         Ok(Self {
             resampler,
             input_buffer,
             output_buffer,
             input_rate,
             output_rate,
-            ratio: input_rate / output_rate, // Store the ratio we actually used (INPUT/OUTPUT)
+            ratio: output_rate / input_rate,
             max_input_frames,
+            accumulator: Vec::new(),
+            target_output_chunk_size,
         })
     }
 
     /// Convert input samples to output sample rate with broadcast quality
+    /// Uses dynamic output buffer sizing - no fixed output size calculation needed
     ///
     /// # Arguments
     /// * `input_samples` - Input audio samples at input_rate (interleaved stereo)
-    /// * `output_size` - Desired number of output samples (interleaved stereo)
     ///
     /// # Returns
-    /// Vector of resampled audio with transparent quality and anti-aliasing
-    pub fn convert(&mut self, input_samples: &[f32], output_size: usize) -> Vec<f32> {
+    /// Vector of resampled audio with actual dynamic length determined by rubato
+    pub fn convert(&mut self, input_samples: &[f32]) -> Vec<f32> {
+        // Entry log to verify function is called
+        static CALL_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let count = CALL_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if count < 5 {
+            println!(
+                "🚨 RUBATO_ENTRY: convert() called with {} samples (call #{})",
+                input_samples.len(),
+                count + 1
+            );
+        }
+
         // Handle empty input
         if input_samples.is_empty() {
-            return vec![0.0; output_size];
+            return Vec::new();
         }
 
         // Convert interleaved stereo to de-interleaved format for Rubato
         let input_frames = input_samples.len() / 2; // Each frame has L+R samples
         let input_frames = input_frames.min(self.max_input_frames);
 
-        // DEBUG: Track conversion details
-        println!(
-            "🔍 RUBATO_DEBUG: Input {} samples → {} frames, ratio {:.4} ({}→{}Hz)",
-            input_samples.len(),
-            input_frames,
-            self.ratio,
-            self.input_rate,
-            self.output_rate
-        );
-
         if input_frames == 0 {
-            return vec![0.0; output_size];
+            return Vec::new();
+        }
+
+        // CONTINUITY DEBUG: Check for buffer size changes that could cause discontinuities
+        static LAST_INPUT_SIZE: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
+        static LAST_OUTPUT_SIZE: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
+        let prev_input_size = LAST_INPUT_SIZE.load(std::sync::atomic::Ordering::Relaxed);
+        // if prev_input_size != 0 && prev_input_size != input_frames {
+        //     println!("⚠️ CONTINUITY_WARNING: Input size changed {} → {} frames (discontinuity risk!)",
+        //              prev_input_size, input_frames);
+        // }
+        LAST_INPUT_SIZE.store(input_frames, std::sync::atomic::Ordering::Relaxed);
+
+        // Set dynamic chunk size for this call - SincFixedIn supports variable input sizes!
+        if let Err(e) = self.resampler.set_chunk_size(input_frames) {
+            println!(
+                "❌ RUBATO_CHUNK_SIZE_ERROR: Failed to set chunk size to {}: {}",
+                input_frames, e
+            );
+            return Vec::new();
+        }
+
+        // BUFFER RECREATION DEBUG: Check if we're constantly resizing (bad for performance and continuity)
+        static RESIZE_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        static LAST_BUFFER_SIZE: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
+        let prev_buffer_size = LAST_BUFFER_SIZE.load(std::sync::atomic::Ordering::Relaxed);
+
+        // **PERFORMANCE FIX**: Use pre-allocated buffers instead of constant resizing
+        const MAX_FRAMES: usize = 2048; // Pre-allocate for maximum expected size
+
+        // Ensure buffers are large enough (one-time allocation)
+        if self.input_buffer[0].len() < MAX_FRAMES {
+            self.input_buffer[0].resize(MAX_FRAMES, 0.0);
+            self.input_buffer[1].resize(MAX_FRAMES, 0.0);
+            println!(
+                "📋 BUFFER_INIT: Pre-allocated {} frame buffers (eliminates resize overhead)",
+                MAX_FRAMES
+            );
+        }
+
+        // Clear only the portion we'll use (much faster than resize)
+        for i in 0..input_frames {
+            self.input_buffer[0][i] = 0.0;
+            self.input_buffer[1][i] = 0.0;
+        }
+
+        // AUDIO QUALITY DEBUG: Check for input anomalies that could cause artifacts
+        let input_peak = input_samples
+            .iter()
+            .map(|&s| s.abs())
+            .fold(0.0f32, f32::max);
+        let input_rms =
+            (input_samples.iter().map(|&s| s * s).sum::<f32>() / input_samples.len() as f32).sqrt();
+        static EXTREME_INPUT_COUNT: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+
+        if input_peak > 0.99 || input_rms > 0.7 {
+            let count = EXTREME_INPUT_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if count < 5 {
+                println!("⚠️ AUDIO_QUALITY: High input levels - peak: {:.3}, rms: {:.3} (clipping risk!)",
+                         input_peak, input_rms);
+            }
         }
 
         // De-interleave: LRLRLR... -> L...L, R...R
@@ -128,43 +363,128 @@ impl RubatoSRC {
             }
         }
 
-        // Zero-pad the rest of the buffers if needed
-        for frame in input_frames..self.max_input_frames {
-            self.input_buffer[0][frame] = 0.0;
-            self.input_buffer[1][frame] = 0.0;
+        // **PERFORMANCE FIX**: Pre-allocate output buffers to eliminate resize overhead
+        let max_output_frames = ((input_frames as f64 * self.output_rate as f64
+            / self.input_rate as f64)
+            .ceil() as usize)
+            + 64;
+        const MAX_OUTPUT_FRAMES: usize = 4096; // Pre-allocate for maximum expected output
+
+        // Ensure output buffers are large enough (one-time allocation)
+        if self.output_buffer[0].len() < MAX_OUTPUT_FRAMES {
+            self.output_buffer[0].resize(MAX_OUTPUT_FRAMES, 0.0);
+            self.output_buffer[1].resize(MAX_OUTPUT_FRAMES, 0.0);
         }
 
-        // Perform high-quality resampling
+        // Clear only the portion we'll use
+        for i in 0..max_output_frames.min(MAX_OUTPUT_FRAMES) {
+            self.output_buffer[0][i] = 0.0;
+            self.output_buffer[1][i] = 0.0;
+        }
+
+        // Perform high-quality resampling with dynamic output sizing
         match self
             .resampler
             .process_into_buffer(&self.input_buffer, &mut self.output_buffer, None)
         {
             Ok((_input_frames_used, output_frames_generated)) => {
-                // Re-interleave the output: L...L, R...R -> LRLRLR...
-                // Return ACTUAL converted samples, not padded to requested size
-                let actual_output_frames = output_frames_generated.min(self.output_buffer[0].len());
-                let mut result = Vec::with_capacity(actual_output_frames * 2);
+                // CONTINUITY DEBUG: Check for output size variations
+                let prev_output_size = LAST_OUTPUT_SIZE.load(std::sync::atomic::Ordering::Relaxed);
 
-                for frame in 0..actual_output_frames {
-                    result.push(self.output_buffer[0][frame]); // Left
-                    result.push(self.output_buffer[1][frame]); // Right
+                LAST_OUTPUT_SIZE.store(
+                    output_frames_generated,
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+
+                // RATIO DEBUG: Check if resampling ratio matches expected
+                let expected_output_frames = (input_frames as f64 * self.output_rate as f64
+                    / self.input_rate as f64)
+                    .round() as usize;
+                let ratio_error =
+                    (output_frames_generated as f64 - expected_output_frames as f64).abs();
+                if ratio_error > 2.0 {
+                    println!(
+                        "⚠️ RATIO_MISMATCH: Expected ~{} output frames, got {} (error: {:.1})",
+                        expected_output_frames, output_frames_generated, ratio_error
+                    );
                 }
 
-                // DEBUG: Track output conversion
-                println!(
-                    "🔍 RUBATO_DEBUG: {} frames → {} samples ({}→{})",
-                    actual_output_frames,
-                    result.len(),
-                    input_frames,
-                    actual_output_frames
-                );
+                // Add resampled output to accumulator for smoothing
+                for frame in 0..output_frames_generated {
+                    self.accumulator.push(self.output_buffer[0][frame]); // Left
+                    self.accumulator.push(self.output_buffer[1][frame]); // Right
+                }
+
+                // Extract consistent chunk size from accumulator
+                let target_samples = self.target_output_chunk_size * 2; // Stereo samples
+                let result = if self.accumulator.len() >= target_samples {
+                    // Extract exactly target_samples for consistent output
+                    let extracted: Vec<f32> = self.accumulator.drain(0..target_samples).collect();
+
+                    static ACCUMULATOR_COUNT: std::sync::atomic::AtomicU64 =
+                        std::sync::atomic::AtomicU64::new(0);
+                    let count =
+                        ACCUMULATOR_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if count < 5 || count % 1000 == 0 {
+                        println!(
+                            "🔄 ACCUMULATOR: Extracted {} samples from buffer (size: {}, call #{})",
+                            extracted.len(),
+                            self.accumulator.len(),
+                            count
+                        );
+                    }
+
+                    extracted
+                } else {
+                    // Not enough samples yet - return empty (audio pipeline will handle gaps)
+                    Vec::new()
+                };
+
+                // ARTIFACT DEBUG: Only check for clipping artifacts (not gain comparisons)
+                // NOTE: Peak comparison is invalid due to accumulator mixing samples from different time domains
+                if !result.is_empty() {
+                    let output_peak = result.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                    let output_rms =
+                        (result.iter().map(|&s| s * s).sum::<f32>() / result.len() as f32).sqrt();
+
+                    // Only flag actual clipping (>1.0) - gain comparison is invalid with accumulator
+                    static CLIPPING_COUNT: std::sync::atomic::AtomicU64 =
+                        std::sync::atomic::AtomicU64::new(0);
+                    if output_peak > 1.0 {
+                        let count =
+                            CLIPPING_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if count < 10 {
+                            println!(
+                                "🚨 CLIPPING_DETECTED: Output peak {:.3} > 1.0 (digital clipping!)",
+                                output_peak
+                            );
+                        }
+                    }
+
+                    // Rate-limited DEBUG: Track output conversion (every 1000 calls)
+                    use std::sync::{LazyLock, Mutex as StdMutex};
+                    static RUBATO_DEBUG_COUNT: LazyLock<StdMutex<u64>> =
+                        LazyLock::new(|| StdMutex::new(0));
+                    if let Ok(mut count) = RUBATO_DEBUG_COUNT.lock() {
+                        *count += 1;
+                        if *count <= 3 || *count % 1000 == 0 {
+                            println!(
+                                "🔍 RUBATO_SMOOTH: {} input → {} consistent output frames, peak: {:.3}→{:.3} (call #{})",
+                                input_frames,
+                                result.len() / 2,
+                                input_peak, output_peak,
+                                count
+                            );
+                        }
+                    }
+                }
 
                 result
             }
             Err(e) => {
                 println!("❌ RUBATO_ERROR: Resampling failed: {}", e);
-                // Fallback to silence on processing error
-                vec![0.0; output_size]
+                // Return empty vector on error - no fixed size assumption
+                Vec::new()
             }
         }
     }
@@ -182,6 +502,38 @@ impl RubatoSRC {
     /// Get delay introduced by the resampler (for latency compensation)
     pub fn output_delay(&self) -> f32 {
         self.resampler.output_delay() as f32
+    }
+
+    /// Get the target chunk size for consistent output delivery
+    pub fn get_target_chunk_size(&self) -> usize {
+        self.target_output_chunk_size
+    }
+
+    /// Get the current number of samples in the accumulator buffer
+    pub fn get_accumulator_size(&self) -> usize {
+        self.accumulator.len()
+    }
+
+    /// Drain samples from accumulator without processing new input
+    /// Used when accumulator has enough samples and we want to avoid overflow
+    pub fn drain_accumulator_only(&mut self) -> Vec<f32> {
+        let target_samples = self.target_output_chunk_size * 2; // Stereo samples
+        if self.accumulator.len() >= target_samples {
+            // Extract exactly target_samples for consistent output
+            let extracted: Vec<f32> = self.accumulator.drain(0..target_samples).collect();
+
+            static DRAIN_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let count = DRAIN_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if count < 5 || count % 1000 == 0 {
+                println!("🚰 ACCUMULATOR_DRAIN: Extracted {} samples without processing (remaining: {}, call #{})",
+                         extracted.len(), self.accumulator.len(), count);
+            }
+
+            extracted
+        } else {
+            // Not enough samples yet - return empty
+            Vec::new()
+        }
     }
 }
 
@@ -265,18 +617,18 @@ impl R8BrainSRC {
     ///
     /// Uses r8brain's **automatic latency removal** and **pull processing**
     /// designed specifically for real-time audio callbacks like CoreAudio.
+    /// Uses dynamic output sizing - no fixed output size calculation needed.
     ///
     /// # Arguments
     /// * `input_samples` - Input audio samples at input_rate
-    /// * `output_size` - Exact number of output samples needed
     ///
     /// # Returns
-    /// Vector of exactly `output_size` samples with transparent quality
+    /// Vector with dynamic length determined by r8brain's actual output
     /// **NO PERCEIVED LATENCY** - latency is automatically compensated
-    pub fn convert(&mut self, input_samples: &[f32], output_size: usize) -> Vec<f32> {
+    pub fn convert(&mut self, input_samples: &[f32]) -> Vec<f32> {
         // Handle empty input
         if input_samples.is_empty() {
-            return vec![0.0; output_size];
+            return Vec::new();
         }
 
         // Ensure we don't exceed buffer capacity
@@ -293,31 +645,21 @@ impl R8BrainSRC {
         // Note: r8brain may need multiple calls before yielding output (this is normal)
         let output_len = self.resampler.process(&input_f64, &mut self.output_buffer);
 
-        // Handle the output
-        let mut result = Vec::with_capacity(output_size);
-
+        // Return actual dynamic output from r8brain
         if output_len > 0 {
-            // We got some output from r8brain
-            for i in 0..output_size {
-                if i < output_len {
-                    result.push(self.output_buffer[i] as f32);
-                } else {
-                    // Need more samples than r8brain produced, repeat last sample
-                    let last_sample = if output_len > 0 {
-                        self.output_buffer[output_len - 1] as f32
-                    } else {
-                        0.0
-                    };
-                    result.push(last_sample);
-                }
-            }
+            // Convert and return only the samples that r8brain actually produced
+            let result: Vec<f32> = self
+                .output_buffer
+                .iter()
+                .take(output_len)
+                .map(|&x| x as f32)
+                .collect();
+            result
         } else {
             // r8brain hasn't produced output yet (normal during initial processing)
-            // Fill with silence for now - output will come in subsequent calls
-            result.resize(output_size, 0.0);
+            // Return empty vector - no fixed size assumption
+            Vec::new()
         }
-
-        result
     }
 
     /// Get conversion ratio (for compatibility with other SRC types)

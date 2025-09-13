@@ -36,9 +36,9 @@ use commands::audio_effects::*;
 use commands::debug::*;
 use commands::file_player::*;
 use commands::icecast::*;
+use commands::mixer::*;
 use commands::recording::*;
 use commands::streaming::*;
-use commands::mixer::*;
 
 // File player state for managing multiple file players
 use commands::file_player::FilePlayerState;
