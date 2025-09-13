@@ -7,17 +7,20 @@
 // 4. Sends audio to actual output devices
 
 use anyhow::Result;
-use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc;
+use std::sync::Arc;
+use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, warn};
 
 use super::queue_types::MixedAudioSamples;
 use crate::audio::mixer::sample_rate_converter::RubatoSRC;
 
+// SPMC queue imports for hardware output
+use spmcq::Writer;
+
 /// Output processing worker for a specific device
 pub struct OutputWorker {
     device_id: String,
-    device_sample_rate: u32, // Target device sample rate (e.g., 44.1kHz)
+    pub device_sample_rate: u32, // Target device sample rate (e.g., 44.1kHz)
 
     // Audio processing components
     resampler: Option<RubatoSRC>,
@@ -27,8 +30,8 @@ pub struct OutputWorker {
     // Communication channels
     mixed_audio_rx: mpsc::UnboundedReceiver<MixedAudioSamples>,
 
-    // Device output integration
-    // TODO: Add actual device output sender when we integrate with CoreAudio/CPAL
+    // Hardware output integration via SPMC queue
+    spmc_writer: Option<Arc<Mutex<Writer<f32>>>>, // Writes to hardware via SPMC queue
 
     // Worker thread handle
     worker_handle: Option<tokio::task::JoinHandle<()>>,
@@ -46,9 +49,21 @@ impl OutputWorker {
         target_chunk_size: usize,
         mixed_audio_rx: mpsc::UnboundedReceiver<MixedAudioSamples>,
     ) -> Self {
+        Self::new_with_spmc_writer(device_id, device_sample_rate, target_chunk_size, mixed_audio_rx, None)
+    }
+
+    /// Create a new output processing worker with SPMC writer for hardware output
+    pub fn new_with_spmc_writer(
+        device_id: String,
+        device_sample_rate: u32,
+        target_chunk_size: usize,
+        mixed_audio_rx: mpsc::UnboundedReceiver<MixedAudioSamples>,
+        spmc_writer: Option<Arc<Mutex<Writer<f32>>>>,
+    ) -> Self {
+        let has_hardware_output = spmc_writer.is_some();
         info!(
-            "🔊 OUTPUT_WORKER: Creating worker for device '{}' ({} Hz, {} sample chunks)",
-            device_id, device_sample_rate, target_chunk_size
+            "🔊 OUTPUT_WORKER: Creating worker for device '{}' ({} Hz, {} sample chunks, hardware: {})",
+            device_id, device_sample_rate, target_chunk_size, has_hardware_output
         );
 
         Self {
@@ -58,10 +73,18 @@ impl OutputWorker {
             sample_buffer: Vec::new(),
             target_chunk_size,
             mixed_audio_rx,
+            spmc_writer,
             worker_handle: None,
             chunks_processed: 0,
             samples_output: 0,
         }
+    }
+
+    pub fn update_target_mix_rate(&mut self, target_mix_rate: u32) -> Result<()> {
+        if let Some(ref mut resampler) = self.resampler {
+            resampler.update_resampler_rate(target_mix_rate);
+        }
+        Ok(())
     }
 
     /// Start the output processing worker thread
@@ -70,9 +93,10 @@ impl OutputWorker {
         let device_sample_rate = self.device_sample_rate;
         let target_chunk_size = self.target_chunk_size;
 
-        // Take ownership of receiver for the worker thread
+        // Take ownership of receiver and SPMC writer for the worker thread
         let mut mixed_audio_rx =
             std::mem::replace(&mut self.mixed_audio_rx, mpsc::unbounded_channel().1);
+        let spmc_writer = self.spmc_writer.clone();
 
         // Spawn dedicated worker thread
         let worker_handle = tokio::spawn(async move {
@@ -95,13 +119,13 @@ impl OutputWorker {
                 {
                     // Create resampler if needed (persistent across calls)
                     if resampler.is_none() {
-                        match RubatoSRC::new_low_artifact(
+                        match RubatoSRC::new_fast(
                             mixed_audio.sample_rate as f32,
                             device_sample_rate as f32,
                         ) {
                             Ok(new_resampler) => {
                                 info!(
-                                    "🔧 OUTPUT_WORKER: Created resampler for {} ({} Hz → {} Hz)",
+                                    "🚀 OUTPUT_WORKER: Created FAST resampler for {} ({} Hz → {} Hz)",
                                     device_id, mixed_audio.sample_rate, device_sample_rate
                                 );
                                 resampler = Some(new_resampler);
@@ -116,18 +140,10 @@ impl OutputWorker {
                         };
                     }
 
-                    // Resample using persistent resampler with accumulator logic
+                    // Resample using persistent resampler with consistent processing
                     if let Some(ref mut resampler) = resampler {
-                        let target_samples = resampler.get_target_chunk_size() * 2; // Stereo
-                        let accumulator_size = resampler.get_accumulator_size();
-
-                        if accumulator_size >= target_samples {
-                            // Accumulator has enough samples - drain for hardware output
-                            resampler.drain_accumulator_only()
-                        } else {
-                            // Accumulator needs more samples - process normally
-                            resampler.convert(&mixed_audio.samples)
-                        }
+                        // Always process new input to maintain consistent timing
+                        resampler.convert(&mixed_audio.samples)
                     } else {
                         mixed_audio.samples
                     }
@@ -145,16 +161,19 @@ impl OutputWorker {
                     let hardware_chunk: Vec<f32> =
                         sample_buffer.drain(..target_chunk_size).collect();
 
-                    // TODO: Send to actual audio output device
-                    // For now, just simulate the device output
-                    Self::simulate_device_output(&device_id, &hardware_chunk);
+                    // Send to actual hardware via SPMC queue
+                    if let Some(ref spmc_writer) = spmc_writer {
+                        Self::write_to_hardware_spmc(&device_id, &hardware_chunk, spmc_writer).await;
+                    } else {
+                        // warn!("⚠️ OUTPUT_WORKER: {} has no SPMC writer, dropping {} samples", device_id, hardware_chunk.len());
+                    }
 
                     chunks_processed += 1;
 
                     // Rate-limited logging
-                    if chunks_processed <= 5 || chunks_processed % 100 == 0 {
+                    if chunks_processed <= 5 || chunks_processed % 1000 == 0 {
                         info!(
-                            "🎵 OUTPUT_WORKER: {} sent chunk #{} ({} samples) to device",
+                            "🎵 OUTPUT_WORKER (4th layer): {} sent chunk #{} ({} samples) to device",
                             device_id,
                             chunks_processed,
                             hardware_chunk.len()
@@ -166,11 +185,11 @@ impl OutputWorker {
 
                 // Performance monitoring
                 if processing_duration.as_micros() > 500 {
-                    warn!(
-                        "⏱️ OUTPUT_WORKER: {} slow processing: {}μs",
-                        device_id,
-                        processing_duration.as_micros()
-                    );
+                    // warn!(
+                    //     "⏱️ OUTPUT_WORKER: {} slow processing: {}μs",
+                    //     device_id,
+                    //     processing_duration.as_micros()
+                    // );
                 }
             }
 
@@ -209,26 +228,41 @@ impl OutputWorker {
         Ok(())
     }
 
-    /// Simulate device output (placeholder until we integrate with actual audio output)
-    fn simulate_device_output(device_id: &str, samples: &[f32]) {
-        // Calculate peak level for monitoring
-        let peak_level = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+    /// Write audio samples to hardware via SPMC queue
+    async fn write_to_hardware_spmc(
+        device_id: &str,
+        samples: &[f32],
+        spmc_writer: &Arc<Mutex<Writer<f32>>>,
+    ) {
+        if let Ok(mut writer) = spmc_writer.try_lock() {
+            let mut samples_written = 0;
+            for &sample in samples {
+                writer.write(sample);
+                samples_written += 1;
+            }
 
-        // Very rate-limited logging to avoid spam
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static OUTPUT_COUNT: AtomicU64 = AtomicU64::new(0);
-        let count = OUTPUT_COUNT.fetch_add(1, Ordering::Relaxed);
+            // Very rate-limited logging to avoid spam
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static HARDWARE_OUTPUT_COUNT: AtomicU64 = AtomicU64::new(0);
+            let count = HARDWARE_OUTPUT_COUNT.fetch_add(1, Ordering::Relaxed);
 
-        if count <= 3 || count % 1000 == 0 {
-            info!(
-                "🎧 DEVICE_OUTPUT: {} received {} samples, peak: {:.3} (output #{})",
+            if count <= 3 || count % 1000 == 0 {
+                info!(
+                    "🎧 HARDWARE_OUTPUT: {} wrote {} samples to SPMC queue (output #{})",
+                    device_id,
+                    samples_written,
+                    count
+                );
+            }
+        } else {
+            warn!(
+                "⚠️ OUTPUT_WORKER: {} failed to lock SPMC writer, dropping {} samples",
                 device_id,
-                samples.len(),
-                peak_level,
-                count
+                samples.len()
             );
         }
     }
+
 
     /// Get processing statistics
     pub fn get_stats(&self) -> OutputWorkerStats {

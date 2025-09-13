@@ -17,8 +17,8 @@ use crate::audio::mixer::sample_rate_converter::RubatoSRC;
 
 /// Input processing worker for a specific device
 pub struct InputWorker {
-    device_id: String,
-    device_sample_rate: u32, // Original device sample rate
+    pub device_id: String,
+    pub device_sample_rate: u32, // Original device sample rate
     target_sample_rate: u32, // Max sample rate for mixing (e.g., 48kHz)
     channels: u16,
 
@@ -145,13 +145,13 @@ impl InputWorker {
                     if (device_sample_rate as f32 - target_sample_rate as f32).abs() > 1.0 {
                         // Create resampler if needed (persistent across calls)
                         if resampler.is_none() {
-                            match RubatoSRC::new_low_artifact(
+                            match RubatoSRC::new_fast(
                                 device_sample_rate as f32,
                                 target_sample_rate as f32,
                             ) {
                                 Ok(new_resampler) => {
                                     info!(
-                                        "🔧 INPUT_WORKER: Created resampler for {} ({} Hz → {} Hz)",
+                                        "🚀 INPUT_WORKER: Created FAST resampler for {} ({} Hz → {} Hz)",
                                         device_id, device_sample_rate, target_sample_rate
                                     );
                                     resampler = Some(new_resampler);
@@ -203,15 +203,14 @@ impl InputWorker {
                 // Rate-limited logging
                 if samples_processed <= 5 || samples_processed % 1000 == 0 {
                     info!(
-                        "🔄 INPUT_WORKER: {} processed {} samples in {}μs (batch #{})",
+                        "🔄 RESAMPLE_AND_EFFECTS_INPUT_WORKER: (2nd layer) {} processed {} samples in {}μs (batch #{})",
                         device_id,
                         original_samples_len,
                         processing_duration.as_micros(),
                         samples_processed
                     );
-                }
 
-                // Log slow processing
+                                // Log slow processing
                 if processing_duration.as_micros() > 500 {
                     warn!(
                         "⏱️ INPUT_WORKER: {} slow processing: {}μs",
@@ -219,6 +218,9 @@ impl InputWorker {
                         processing_duration.as_micros()
                     );
                 }
+                }
+
+
             }
 
             info!(
@@ -233,6 +235,12 @@ impl InputWorker {
             self.device_id
         );
 
+        Ok(())
+    }
+
+    pub fn update_target_mix_rate(&mut self, target_mix_rate: u32) -> Result<()> {
+        self.target_sample_rate = target_mix_rate;
+        self.update_effects(AudioEffectsChain::new(target_mix_rate));
         Ok(())
     }
 

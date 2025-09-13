@@ -12,6 +12,18 @@ use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 use super::queue_types::{MixedAudioSamples, ProcessedAudioSamples};
+use crate::audio::mixer::stream_management::virtual_mixer::VirtualMixer;
+
+/// Command for dynamically managing running MixingLayer
+pub enum MixingLayerCommand {
+    AddInputStream {
+        device_id: String,
+        receiver: mpsc::UnboundedReceiver<ProcessedAudioSamples>,
+    },
+    AddOutputSender {
+        sender: mpsc::UnboundedSender<MixedAudioSamples>,
+    },
+}
 
 /// Mixing layer that combines all processed input streams
 pub struct MixingLayer {
@@ -20,6 +32,9 @@ pub struct MixingLayer {
 
     // Output: Mixed stream to Layer 4
     mixed_output_senders: Vec<mpsc::UnboundedSender<MixedAudioSamples>>, // Broadcast to all output devices
+
+    // Command channel for dynamic input stream management
+    command_tx: mpsc::UnboundedSender<MixingLayerCommand>,
 
     // Configuration
     target_sample_rate: u32,
@@ -36,9 +51,12 @@ pub struct MixingLayer {
 impl MixingLayer {
     /// Create new mixing layer
     pub fn new(target_sample_rate: u32) -> Self {
+        let (command_tx, _command_rx) = mpsc::unbounded_channel();
+
         Self {
             processed_input_receivers: HashMap::new(),
             mixed_output_senders: Vec::new(),
+            command_tx,
             target_sample_rate,
             master_gain: 1.0,
             worker_handle: None,
@@ -47,27 +65,45 @@ impl MixingLayer {
         }
     }
 
-    /// Add an input stream from an input worker
+    /// Add an input stream from an input worker (dynamically)
     pub fn add_input_stream(
         &mut self,
         device_id: String,
         receiver: mpsc::UnboundedReceiver<ProcessedAudioSamples>,
     ) {
-        self.processed_input_receivers
-            .insert(device_id.clone(), receiver);
-        info!(
-            "🎛️ MIXING_LAYER: Added input stream for device '{}'",
-            device_id
-        );
+        if self.worker_handle.is_some() {
+            // MixingLayer is already running - send command to worker thread
+            let cmd = MixingLayerCommand::AddInputStream { device_id: device_id.clone(), receiver };
+            if let Err(_) = self.command_tx.send(cmd) {
+                warn!("⚠️ MIXING_LAYER: Failed to send add input stream command for '{}'", device_id);
+            } else {
+                info!("🎛️ MIXING_LAYER: Sent add input stream command for device '{}'", device_id);
+            }
+        } else {
+            // MixingLayer not started yet - add to local storage
+            self.processed_input_receivers.insert(device_id.clone(), receiver);
+            info!("🎛️ MIXING_LAYER: Queued input stream for device '{}'", device_id);
+        }
     }
 
     /// Add an output sender (broadcasts mixed audio to output workers)
     pub fn add_output_sender(&mut self, sender: mpsc::UnboundedSender<MixedAudioSamples>) {
-        self.mixed_output_senders.push(sender);
-        info!(
-            "🔊 MIXING_LAYER: Added output sender (total: {})",
-            self.mixed_output_senders.len()
-        );
+        if self.worker_handle.is_some() {
+            // MixingLayer is already running - send command to worker thread
+            let cmd = MixingLayerCommand::AddOutputSender { sender };
+            if let Err(_) = self.command_tx.send(cmd) {
+                warn!("⚠️ MIXING_LAYER: Failed to send add output sender command");
+            } else {
+                info!("🔊 MIXING_LAYER: Sent add output sender command");
+            }
+        } else {
+            // MixingLayer not started yet - add to local storage
+            self.mixed_output_senders.push(sender);
+            info!(
+                "🔊 MIXING_LAYER: Queued output sender (total: {})",
+                self.mixed_output_senders.len()
+            );
+        }
     }
 
     /// Start the mixing processing thread
@@ -75,9 +111,13 @@ impl MixingLayer {
         let target_sample_rate = self.target_sample_rate;
         let master_gain = self.master_gain;
 
+        // Create command channel for this run
+        let (command_tx, mut command_rx) = mpsc::unbounded_channel();
+        self.command_tx = command_tx;
+
         // Take ownership of receivers for the worker thread
         let mut processed_input_receivers = std::mem::take(&mut self.processed_input_receivers);
-        let mixed_output_senders = self.mixed_output_senders.clone();
+        let mut mixed_output_senders = self.mixed_output_senders.clone();
 
         // Spawn mixing worker thread
         let worker_handle = tokio::spawn(async move {
@@ -88,12 +128,25 @@ impl MixingLayer {
             );
 
             let mut mix_cycles = 0u64;
-            let mut accumulator_buffer = Vec::new();
             let mut available_samples = HashMap::new();
 
             loop {
                 let cycle_start = std::time::Instant::now();
                 let mut mixed_something = false;
+
+                // Handle commands (add new input/output streams dynamically)
+                while let Ok(cmd) = command_rx.try_recv() {
+                    match cmd {
+                        MixingLayerCommand::AddInputStream { device_id, receiver } => {
+                            processed_input_receivers.insert(device_id.clone(), receiver);
+                            info!("🎛️ MIXING_LAYER_WORKER: Added input stream for device '{}'", device_id);
+                        }
+                        MixingLayerCommand::AddOutputSender { sender } => {
+                            mixed_output_senders.push(sender);
+                            info!("🔊 MIXING_LAYER_WORKER: Added output sender (total: {})", mixed_output_senders.len());
+                        }
+                    }
+                }
 
                 // Step 1: Collect available samples from all input streams
                 available_samples.clear();
@@ -107,59 +160,25 @@ impl MixingLayer {
 
                 // Step 2: Mix available samples if we have any
                 if mixed_something && !available_samples.is_empty() {
-                    // Find the maximum buffer size needed
-                    let max_samples = available_samples
-                        .values()
-                        .map(|audio| audio.samples.len())
-                        .max()
-                        .unwrap_or(0);
+                    // Convert ProcessedAudioSamples to the format expected by VirtualMixer
+                    let input_samples_for_mixer: Vec<(String, Vec<f32>)> = available_samples
+                        .iter()
+                        .map(|(device_id, processed_audio)| (device_id.clone(), processed_audio.samples.clone()))
+                        .collect();
 
-                    if max_samples > 0 {
-                        // Resize accumulator buffer
-                        accumulator_buffer.clear();
-                        accumulator_buffer.resize(max_samples, 0.0);
+                    let active_inputs = input_samples_for_mixer.len();
 
-                        let mut active_inputs = 0;
+                    if !input_samples_for_mixer.is_empty() {
+                        // Use VirtualMixer's professional mixing algorithm
+                        let mixed_samples = VirtualMixer::mix_input_samples(input_samples_for_mixer);
 
-                        // Sum all input streams
-                        for (device_id, processed_audio) in available_samples.iter() {
-                            active_inputs += 1;
-
-                            // Add samples to accumulator (with bounds checking)
-                            for (i, &sample) in processed_audio.samples.iter().enumerate() {
-                                if i < accumulator_buffer.len() {
-                                    accumulator_buffer[i] += sample;
-                                }
-                            }
+                        // Apply master gain to the professionally mixed samples
+                        let mut final_samples = mixed_samples;
+                        for sample in final_samples.iter_mut() {
+                            *sample *= master_gain;
                         }
 
-                        // Apply master gain and smart normalization
-                        let mut final_samples = accumulator_buffer.clone();
-
-                        // Smart gain management (only normalize if approaching clipping)
-                        if active_inputs > 1 {
-                            let buffer_peak = final_samples
-                                .iter()
-                                .map(|&s| s.abs())
-                                .fold(0.0f32, f32::max);
-
-                            if buffer_peak > 0.8 {
-                                let normalization_factor = (0.8 / buffer_peak) * master_gain;
-                                for sample in final_samples.iter_mut() {
-                                    *sample *= normalization_factor;
-                                }
-                            } else {
-                                // Apply master gain without normalization
-                                for sample in final_samples.iter_mut() {
-                                    *sample *= master_gain;
-                                }
-                            }
-                        } else {
-                            // Single input - just apply master gain
-                            for sample in final_samples.iter_mut() {
-                                *sample *= master_gain;
-                            }
-                        }
+                        let samples_count = final_samples.len(); // Get count before moving
 
                         // Step 3: Broadcast mixed audio to all output workers
                         let mixed_audio = MixedAudioSamples {
@@ -180,8 +199,8 @@ impl MixingLayer {
 
                         // Rate-limited logging
                         if mix_cycles <= 5 || mix_cycles % 1000 == 0 {
-                            info!("🎵 MIXING_LAYER: Mixed {} inputs ({} samples) and sent to {} outputs (cycle #{})",
-                                  active_inputs, max_samples, mixed_output_senders.len(), mix_cycles);
+                            info!("🎵 MIXING_LAYER_WORKER (3rd layer): VirtualMixer mixed {} inputs ({} samples) and sent to {} outputs (cycle #{})",
+                                  active_inputs, samples_count, mixed_output_senders.len(), mix_cycles);
                         }
                     }
                 }
@@ -227,6 +246,12 @@ impl MixingLayer {
     pub fn set_master_gain(&mut self, gain: f32) {
         self.master_gain = gain;
         info!("🎚️ MIXING_LAYER: Set master gain to {:.2}", gain);
+    }
+
+    /// Update target sample rate when devices are added/removed
+    pub fn update_target_sample_rate(&mut self, new_sample_rate: u32) {
+        self.target_sample_rate = new_sample_rate;
+        info!("🎛️ MIXING_LAYER: Updated target sample rate to {} Hz", new_sample_rate);
     }
 
     /// Get mixing statistics

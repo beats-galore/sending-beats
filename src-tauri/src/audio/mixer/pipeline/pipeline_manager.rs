@@ -12,6 +12,9 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
+// SPMC queue imports for hardware output connection
+use spmcq::Writer;
+
 use super::{
     input_worker::{InputWorker, InputWorkerStats},
     mixing_layer::{MixingLayer, MixingLayerStats},
@@ -54,6 +57,64 @@ impl AudioPipeline {
         }
     }
 
+        fn get_all_sample_rates(&self) -> Vec<(String, u32)> {
+            let mut sample_rates = Vec::new();
+
+            // Collect sample rates from input workers
+            for (device_id, worker) in &self.input_workers {
+                sample_rates.push((device_id.clone(), worker.device_sample_rate));
+            }
+
+            // Collect sample rates from output workers
+            for (device_id, worker) in &self.output_workers {
+                sample_rates.push((device_id.clone(), worker.device_sample_rate));
+            }
+
+            sample_rates
+        }
+
+        /// Calculate the target mix rate as the highest sample rate among all inputs and outputs
+        fn calculate_target_mix_rate(&mut self) -> Result<u32> {
+            let all_sample_rates = self.get_all_sample_rates();
+
+            if all_sample_rates.is_empty() {
+                return Ok(crate::types::DEFAULT_SAMPLE_RATE);
+            }
+
+            if all_sample_rates.len() == 1 {
+                return Ok(all_sample_rates[0].1);
+            }
+
+            // Find the maximum sample rate using the max function
+            let max_rate = all_sample_rates
+                .iter()
+                .map(|(_, rate)| *rate)
+                .max()
+                .unwrap_or(crate::types::DEFAULT_SAMPLE_RATE);
+
+            let target_rate = if max_rate == 0 {
+                crate::types::DEFAULT_SAMPLE_RATE
+            } else {
+                max_rate
+            };
+
+            self.max_sample_rate = target_rate;
+            Ok(target_rate)
+        }
+
+    fn update_target_sample_rates(&mut self) -> Result<()> {
+        for (device_id, worker) in &mut self.input_workers {
+            worker.update_target_mix_rate(self.max_sample_rate);
+        }
+
+        // Collect sample rates from output workers
+        for (device_id, worker) in &mut self.output_workers {
+            worker.update_target_mix_rate(self.max_sample_rate);
+        }
+        Ok(())
+    }
+
+
     /// Register a new input device with direct RTRB consumer (bypasses IsolatedAudioManager)
     pub fn add_input_device_with_consumer(
         &mut self,
@@ -84,6 +145,20 @@ impl AudioPipeline {
             })?
             .clone();
 
+        // Connect processed input receiver to mixing layer
+        if let Some(processed_input_rx) = self.queues.take_processed_input_receiver(&device_id) {
+            self.mixing_layer.add_input_stream(device_id.clone(), processed_input_rx);
+            info!(
+                "✅ PIPELINE: Connected input device '{}' to MixingLayer",
+                device_id
+            );
+        } else {
+            warn!(
+                "⚠️ PIPELINE: Failed to connect input device '{}' to MixingLayer",
+                device_id
+            );
+        }
+
         // Create input worker with direct RTRB consumer
         let mut input_worker = InputWorker::new_with_rtrb(
             device_id.clone(),
@@ -94,6 +169,13 @@ impl AudioPipeline {
             input_notifier,
             processed_output_tx,
         );
+
+        // every time a new input is added, we have to recalculate the new maximum and update other input workers / output workers.
+        self.calculate_target_mix_rate()?;
+        self.update_target_sample_rates()?;
+
+        // Update mixing layer with new target rate
+        self.mixing_layer.update_target_sample_rate(self.max_sample_rate);
 
         // Start the worker if pipeline is running
         if self.is_running {
@@ -118,6 +200,17 @@ impl AudioPipeline {
         device_sample_rate: u32,
         chunk_size: usize,
     ) -> Result<()> {
+        self.add_output_device_with_spmc_writer(device_id, device_sample_rate, chunk_size, None)
+    }
+
+    /// Register a new output device with SPMC writer for hardware connection
+    pub fn add_output_device_with_spmc_writer(
+        &mut self,
+        device_id: String,
+        device_sample_rate: u32,
+        chunk_size: usize,
+        spmc_writer: Option<Arc<tokio::sync::Mutex<spmcq::Writer<f32>>>>,
+    ) -> Result<()> {
         if self.output_workers.contains_key(&device_id) {
             return Err(anyhow::anyhow!(
                 "Output device '{}' already registered",
@@ -131,9 +224,18 @@ impl AudioPipeline {
         // Add sender to mixing layer for broadcast
         self.mixing_layer.add_output_sender(mixed_tx);
 
-        // Create output worker for this device
-        let mut output_worker =
-            OutputWorker::new(device_id.clone(), device_sample_rate, chunk_size, mixed_rx);
+        // Create output worker for this device (with SPMC writer if provided)
+        let mut output_worker = if let Some(spmc_writer) = spmc_writer {
+            OutputWorker::new_with_spmc_writer(
+                device_id.clone(),
+                device_sample_rate,
+                chunk_size,
+                mixed_rx,
+                Some(spmc_writer),
+            )
+        } else {
+            OutputWorker::new(device_id.clone(), device_sample_rate, chunk_size, mixed_rx)
+        };
 
         // Start the worker if pipeline is running
         if self.is_running {
@@ -142,6 +244,13 @@ impl AudioPipeline {
 
         self.output_workers.insert(device_id.clone(), output_worker);
         self.devices_registered += 1;
+
+        // every time a new output is added, we have to recalculate the new maximum and update other input workers / output workers.
+        self.calculate_target_mix_rate()?;
+        self.update_target_sample_rates()?;
+
+        // Update mixing layer with new target rate
+        self.mixing_layer.update_target_sample_rate(self.max_sample_rate);
 
         info!(
             "✅ AUDIO_PIPELINE: Added output device '{}' ({} Hz ← {} Hz, {} sample chunks)",
@@ -259,6 +368,78 @@ impl AudioPipeline {
         sender.send(raw_audio).map_err(|_| {
             anyhow::anyhow!("Failed to send audio to input worker for '{}'", device_id)
         })?;
+
+        Ok(())
+    }
+
+    /// Remove an input device from the pipeline
+    pub async fn remove_input_device(&mut self, device_id: &str) -> Result<()> {
+        if !self.input_workers.contains_key(device_id) {
+            return Err(anyhow::anyhow!(
+                "Input device '{}' not found",
+                device_id
+            ));
+        }
+
+        // Stop the input worker
+        if let Some(mut input_worker) = self.input_workers.remove(device_id) {
+            // Stop worker gracefully
+            if let Err(e) = input_worker.stop().await {
+                warn!("⚠️ AUDIO_PIPELINE: Error stopping input worker '{}': {}", device_id, e);
+            }
+        }
+
+        // Remove from queue system
+        self.queues.remove_input_device(device_id.to_string())
+            .map_err(|e| anyhow::anyhow!("Failed to remove input device from queues: {}", e))?;
+
+        self.devices_registered = self.devices_registered.saturating_sub(1);
+
+        // Recalculate target sample rate and update all workers
+        self.calculate_target_mix_rate()?;
+        self.update_target_sample_rates()?;
+
+        // Update mixing layer with new target rate
+        self.mixing_layer.update_target_sample_rate(self.max_sample_rate);
+
+        info!(
+            "✅ AUDIO_PIPELINE: Removed input device '{}' and recalculated mix rate to {} Hz",
+            device_id, self.max_sample_rate
+        );
+
+        Ok(())
+    }
+
+    /// Remove an output device from the pipeline
+    pub async fn remove_output_device(&mut self, device_id: &str) -> Result<()> {
+        if !self.output_workers.contains_key(device_id) {
+            return Err(anyhow::anyhow!(
+                "Output device '{}' not found",
+                device_id
+            ));
+        }
+
+        // Stop the output worker
+        if let Some(mut output_worker) = self.output_workers.remove(device_id) {
+            // Stop worker gracefully
+            if let Err(e) = output_worker.stop().await {
+                warn!("⚠️ AUDIO_PIPELINE: Error stopping output worker '{}': {}", device_id, e);
+            }
+        }
+
+        self.devices_registered = self.devices_registered.saturating_sub(1);
+
+        // Recalculate target sample rate and update all workers
+        self.calculate_target_mix_rate()?;
+        self.update_target_sample_rates()?;
+
+        // Update mixing layer with new target rate
+        self.mixing_layer.update_target_sample_rate(self.max_sample_rate);
+
+        info!(
+            "✅ AUDIO_PIPELINE: Removed output device '{}' and recalculated mix rate to {} Hz",
+            device_id, self.max_sample_rate
+        );
 
         Ok(())
     }

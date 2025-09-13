@@ -118,7 +118,7 @@ impl PipelineQueues {
         self.raw_input_senders.get(device_id)
     }
 
-    /// Get sender for processed input (Layer 2 → Layer 3)  
+    /// Get sender for processed input (Layer 2 → Layer 3)
     pub fn get_processed_input_sender(
         &self,
         device_id: &str,
@@ -126,8 +126,44 @@ impl PipelineQueues {
         self.processed_input_senders.get(device_id)
     }
 
+    /// Get receiver for processed input (Layer 2 → Layer 3) - used by MixingLayer
+    pub fn take_processed_input_receiver(
+        &mut self,
+        device_id: &str,
+    ) -> Option<mpsc::UnboundedReceiver<ProcessedAudioSamples>> {
+        self.processed_input_receivers.remove(device_id)
+    }
+
     /// Get the mixed audio sender (Layer 3 → Layer 4)
     pub fn get_mixed_audio_sender(&self) -> &mpsc::UnboundedSender<MixedAudioSamples> {
         &self.mixed_audio_sender
+    }
+
+    /// Remove an input device from the pipeline
+    pub fn remove_input_device(&mut self, device_id: String) -> Result<(), String> {
+        let mut removed = false;
+
+        if self.raw_input_senders.remove(&device_id).is_some() {
+            removed = true;
+        }
+        if self.raw_input_receivers.remove(&device_id).is_some() {
+            removed = true;
+        }
+        if self.processed_input_senders.remove(&device_id).is_some() {
+            removed = true;
+        }
+        if self.processed_input_receivers.remove(&device_id).is_some() {
+            removed = true;
+        }
+
+        if !removed {
+            return Err(format!("Input device '{}' not found", device_id));
+        }
+
+        println!(
+            "✅ PIPELINE_QUEUE: Removed input device '{}' from pipeline",
+            device_id
+        );
+        Ok(())
     }
 }

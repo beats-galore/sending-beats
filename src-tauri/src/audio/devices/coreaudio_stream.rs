@@ -18,6 +18,7 @@ use coreaudio_sys::{
 };
 use std::os::raw::c_void;
 use std::ptr;
+use tracing::info;
 
 /// Get the native sample rate of a CoreAudio device
 pub fn get_device_native_sample_rate(device_id: AudioDeviceID) -> Result<u32> {
@@ -739,7 +740,7 @@ extern "C" fn spmc_render_callback(
                         static mut SPMC_PLAYBACK_COUNT: u64 = 0;
                         unsafe {
                             SPMC_PLAYBACK_COUNT += 1;
-                            if SPMC_PLAYBACK_COUNT % 100 == 0 || SPMC_PLAYBACK_COUNT < 10 {
+                            if SPMC_PLAYBACK_COUNT % 1000 == 0 || SPMC_PLAYBACK_COUNT < 10 {
                                 let peak = (0..samples_to_fill)
                                     .map(|i| unsafe { *output_data.add(i) }.abs())
                                     .fold(0.0f32, f32::max);
@@ -1320,28 +1321,17 @@ extern "C" fn coreaudio_input_callback(
         // **SMART INPUT NOTIFICATION**: Only notify if we actually captured samples
         if samples_written > 0 {
             context.input_notifier.notify_one();
-
-            // Rate-limited logging for debugging
-            use std::sync::atomic::{AtomicU64, Ordering};
-            static INPUT_NOTIFICATION_COUNT: AtomicU64 = AtomicU64::new(0);
-            let count = INPUT_NOTIFICATION_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
-            if count <= 10 || count % 200 == 0 {
-                println!(
-                    "🔔 INPUT_NOTIFY: New samples captured - notified processing (#{}) ⚡",
-                    count
-                );
-            }
         }
 
         // Debug logging for audio capture (same pattern as CPAL)
         static mut INPUT_CAPTURE_COUNT: u64 = 0;
         unsafe {
             INPUT_CAPTURE_COUNT += 1;
-            if INPUT_CAPTURE_COUNT % 100 == 0 || INPUT_CAPTURE_COUNT < 10 {
+            if INPUT_CAPTURE_COUNT % 1000 == 0 || INPUT_CAPTURE_COUNT < 10 {
                 let peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
                 let rms =
                     (samples.iter().map(|&s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
-                println!("🎤 COREAUDIO_INPUT [{}]: Captured {} frames ({}), wrote: {}, dropped: {}, peak: {:.4}, rms: {:.4} ⚡NOTIFIED",
+                info!("🎤 COREAUDIO_INPUT (1st layer) [{}]: Captured {} frames ({}), wrote: {}, dropped: {}, peak: {:.4}, rms: {:.4} ⚡NOTIFIED",
                     context.device_name, frames_needed, INPUT_CAPTURE_COUNT, samples_written, samples_dropped, peak, rms);
             }
         }
