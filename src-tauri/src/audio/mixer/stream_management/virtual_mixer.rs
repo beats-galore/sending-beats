@@ -55,8 +55,20 @@ impl VirtualMixer {
 
                 // Check if resampler exists and get/create it
                 let mut should_create_resampler = false;
-                if let Ok(resamplers) = self.input_resamplers.try_lock() {
-                    should_create_resampler = !resamplers.contains_key(&resampler_key);
+                let lock_start = std::time::Instant::now();
+                match self.input_resamplers.try_lock() {
+                    Ok(resamplers) => {
+                        should_create_resampler = !resamplers.contains_key(&resampler_key);
+                    }
+                    Err(_) => {
+                        // **LOCK CONTENTION DETECTION**: Input thread blocked by output processing
+                        static INPUT_LOCK_FAILS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                        let fail_count = INPUT_LOCK_FAILS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if fail_count <= 20 || fail_count % 100 == 0 {
+                            println!("🔒 INPUT_LOCK_CONTENTION: Input thread blocked on resampler access (fail #{})", fail_count);
+                        }
+                        // Fallback: don't create resampler, will retry next cycle
+                    }
                 }
 
                 if should_create_resampler {
@@ -65,10 +77,17 @@ impl VirtualMixer {
                         device_id, input_rate, target_mix_rate
                     );
 
-                    match RubatoSRC::new(input_rate as f32, target_mix_rate as f32) {
+                    match RubatoSRC::new_low_artifact(input_rate as f32, target_mix_rate as f32) {
                         Ok(resampler) => {
-                            if let Ok(mut resamplers) = self.input_resamplers.try_lock() {
-                                resamplers.insert(resampler_key.clone(), resampler);
+                            match self.input_resamplers.try_lock() {
+                                Ok(mut resamplers) => {
+                                    resamplers.insert(resampler_key.clone(), resampler);
+                                }
+                                Err(_) => {
+                                    static INSERT_LOCK_FAILS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                                    let fail_count = INSERT_LOCK_FAILS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    println!("🔒 INPUT_INSERT_CONTENTION: Failed to insert new resampler (fail #{})", fail_count);
+                                }
                             }
                         }
                         Err(e) => {
@@ -83,13 +102,12 @@ impl VirtualMixer {
                 }
 
                 // Use persistent resampler
-                if let Ok(mut resamplers) = self.input_resamplers.try_lock() {
-                    if let Some(resampler) = resamplers.get_mut(&resampler_key) {
-                        // Calculate expected output size
-                        let expected_output_size = ((samples.len() as f32 * target_mix_rate as f32)
-                            / input_rate as f32)
-                            as usize;
-                        let converted = resampler.convert(&samples, expected_output_size);
+                let lock_start = std::time::Instant::now();
+                match self.input_resamplers.try_lock() {
+                    Ok(mut resamplers) => {
+                        if let Some(resampler) = resamplers.get_mut(&resampler_key) {
+                            // Use dynamic output sizing - let rubato determine the actual output size
+                            let converted = resampler.convert(&samples);
 
                         // Rate-limited logging
                         use std::sync::{LazyLock, Mutex as StdMutex};
@@ -103,14 +121,22 @@ impl VirtualMixer {
                             }
                         }
 
-                        converted_samples.push((device_id, converted));
-                    } else {
-                        // Fallback if resampler not found
+                            converted_samples.push((device_id, converted));
+                        } else {
+                            // Fallback if resampler not found
+                            converted_samples.push((device_id, samples));
+                        }
+                    }
+                    Err(_) => {
+                        // **LOCK CONTENTION DETECTION**: Input thread blocked during active conversion
+                        static CONVERT_LOCK_FAILS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                        let fail_count = CONVERT_LOCK_FAILS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if fail_count <= 20 || fail_count % 100 == 0 {
+                            println!("🔒 INPUT_CONVERT_CONTENTION: Input conversion blocked by output thread (fail #{})", fail_count);
+                        }
+                        // Fallback: use original samples without conversion
                         converted_samples.push((device_id, samples));
                     }
-                } else {
-                    // Fallback if lock failed
-                    converted_samples.push((device_id, samples));
                 }
             } else {
                 // No conversion needed
@@ -148,66 +174,132 @@ impl VirtualMixer {
                 mix_rate, output_rate, rate_diff
             );
         }
-        mixed_samples
 
-        // if rate_diff > 1.0 {
-        //     // Get or create persistent resampler for this output device
-        //     let resampler_key = format!("output_{}_{}_to_{}", device_id, mix_rate, output_rate);
 
-        //     // Check if resampler exists and get/create it
-        //     let mut should_create_resampler = false;
-        //     if let Ok(resamplers) = self.output_resamplers.try_lock() {
-        //         should_create_resampler = !resamplers.contains_key(&resampler_key);
-        //     }
+        if rate_diff > 1.0 {
+            // Get or create persistent resampler for this output device
+            let resampler_key = format!("output_{}_{}_to_{}", device_id, mix_rate, output_rate);
 
-        //     if should_create_resampler {
-        //         println!("🔧 PERSISTENT_OUTPUT_SRC: Creating new output resampler for {} ({} Hz -> {} Hz)",
-        //                  device_id, mix_rate, output_rate);
+            // Check if resampler exists and get/create it
+            let mut should_create_resampler = false;
+            let lock_start = std::time::Instant::now();
+            match self.output_resamplers.try_lock() {
+                Ok(resamplers) => {
+                    should_create_resampler = !resamplers.contains_key(&resampler_key);
+                }
+                Err(_) => {
+                    // **LOCK CONTENTION DETECTION**: Output thread blocked by input processing
+                    static OUTPUT_LOCK_FAILS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                    let fail_count = OUTPUT_LOCK_FAILS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if fail_count <= 20 || fail_count % 100 == 0 {
+                        println!("🔒 OUTPUT_LOCK_CONTENTION: Output thread blocked on resampler access (fail #{})", fail_count);
+                    }
+                    // Fallback: don't create resampler, will retry next cycle
+                }
+            }
 
-        //         match RubatoSRC::new(mix_rate as f32, output_rate as f32) {
-        //             Ok(resampler) => {
-        //                 if let Ok(mut resamplers) = self.output_resamplers.try_lock() {
-        //                     resamplers.insert(resampler_key.clone(), resampler);
-        //                 }
-        //             }
-        //             Err(e) => {
-        //                 println!("❌ PERSISTENT_OUTPUT_SRC: Failed to create output resampler for {}: {}", device_id, e);
-        //                 return mixed_samples;
-        //             }
-        //         }
-        //     }
+            if should_create_resampler {
+                println!("🔧 PERSISTENT_OUTPUT_SRC: Creating new output resampler for {} ({} Hz -> {} Hz)",
+                         device_id, mix_rate, output_rate);
 
-        //     // Use persistent resampler
-        //     if let Ok(mut resamplers) = self.output_resamplers.try_lock() {
-        //         if let Some(resampler) = resamplers.get_mut(&resampler_key) {
-        //             // Let resampler do its job properly - no padding or manipulation
-        //             let converted = resampler.convert(&mixed_samples, 0); // Let resampler decide output size
+                match RubatoSRC::new_low_artifact(mix_rate as f32, output_rate as f32) {
+                    Ok(resampler) => {
+                        match self.output_resamplers.try_lock() {
+                            Ok(mut resamplers) => {
+                                resamplers.insert(resampler_key.clone(), resampler);
+                            }
+                            Err(_) => {
+                                static OUTPUT_INSERT_LOCK_FAILS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                                let fail_count = OUTPUT_INSERT_LOCK_FAILS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                println!("🔒 OUTPUT_INSERT_CONTENTION: Failed to insert new output resampler (fail #{})", fail_count);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        println!("❌ PERSISTENT_OUTPUT_SRC: Failed to create output resampler for {}: {}", device_id, e);
+                        return mixed_samples;
+                    }
+                }
+            }
 
-        //             // Rate-limited logging
-        //             use std::sync::{LazyLock, Mutex as StdMutex};
-        //             static OUTPUT_CONVERSION_COUNT: LazyLock<StdMutex<u64>> =
-        //                 LazyLock::new(|| StdMutex::new(0));
-        //             if let Ok(mut count) = OUTPUT_CONVERSION_COUNT.lock() {
-        //                 *count += 1;
-        //                 if *count <= 3 || *count % 1000 == 0 {
-        //                     println!("🔄 PERSISTENT_OUTPUT_SRC: {} converted {} samples -> {} samples (call #{})",
-        //                              device_id, mixed_samples.len(), converted.len(), count);
-        //                 }
-        //             }
+            // Use persistent resampler
+            let lock_start = std::time::Instant::now();
+            match self.output_resamplers.try_lock() {
+                Ok(mut resamplers) => {
+                    let lock_duration = lock_start.elapsed();
+                    if lock_duration.as_micros() > 50 { // Log if lock acquisition took > 50μs
+                        static SLOW_OUTPUT_LOCKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                        let count = SLOW_OUTPUT_LOCKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if count <= 10 || count % 100 == 0 {
+                            println!("⏱️ OUTPUT_LOCK_SLOW: Took {}μs to acquire output resampler lock (slow #{})", lock_duration.as_micros(), count);
+                        }
+                    }
+                    
+                    if let Some(resampler) = resamplers.get_mut(&resampler_key) {
+                    let processing_start = std::time::Instant::now();
+                    // **CRITICAL FIX**: Check if accumulator already has enough samples before processing more
+                    // This prevents endless buffer accumulation when output can't keep up with input
+                    let target_samples = resampler.get_target_chunk_size() * 2; // Stereo
+                    let accumulator_size = resampler.get_accumulator_size();
 
-        //             converted
-        //         } else {
-        //             // Fallback if resampler not found
-        //             mixed_samples
-        //         }
-        //     } else {
-        //         // Fallback if lock failed
-        //         mixed_samples
-        //     }
-        // } else {
-        //     // No conversion needed
-        //     mixed_samples
-        // }
+                    let converted = if accumulator_size >= target_samples {
+                        // Accumulator has enough samples - drain without processing more
+                        static DRAIN_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                        let count = DRAIN_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if count <= 10 || count % 100 == 0 {
+                            println!("🚰 ACCUMULATOR_READY: Draining {} samples (target: {}), skipping new processing (#{}))",
+                                     accumulator_size, target_samples, count);
+                        }
+                        // Return existing samples without adding more
+                        resampler.drain_accumulator_only()
+                    } else {
+                        // Accumulator needs more samples - process normally
+                        resampler.convert(&mixed_samples)
+                    };
+                    
+                    let processing_duration = processing_start.elapsed();
+                    // Log if resampling took unexpectedly long (indicating lock was held too long)
+                    if processing_duration.as_micros() > 300 {
+                        static SLOW_OUTPUT_PROCESSING: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                        let count = SLOW_OUTPUT_PROCESSING.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if count <= 10 {
+                            println!("⏱️ OUTPUT_PROCESSING_SLOW: Resampling took {}μs (lock held too long, slow #{})", processing_duration.as_micros(), count);
+                        }
+                    }
+
+                    // Rate-limited logging
+                    use std::sync::{LazyLock, Mutex as StdMutex};
+                    static OUTPUT_CONVERSION_COUNT: LazyLock<StdMutex<u64>> =
+                        LazyLock::new(|| StdMutex::new(0));
+                    if let Ok(mut count) = OUTPUT_CONVERSION_COUNT.lock() {
+                        *count += 1;
+                        if *count <= 3 || *count % 1000 == 0 {
+                            println!("🔄 PERSISTENT_OUTPUT_SRC: {} converted {} samples -> {} samples (call #{})",
+                                     device_id, mixed_samples.len(), converted.len(), count);
+                        }
+                    }
+
+                        converted
+                    } else {
+                        // Fallback if resampler not found
+                        mixed_samples
+                    }
+                }
+                Err(_) => {
+                    // **LOCK CONTENTION DETECTION**: Output thread blocked during active conversion
+                    static OUTPUT_CONVERT_LOCK_FAILS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                    let fail_count = OUTPUT_CONVERT_LOCK_FAILS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if fail_count <= 20 || fail_count % 100 == 0 {
+                        println!("🔒 OUTPUT_CONVERT_CONTENTION: Output conversion blocked by input thread (fail #{})", fail_count);
+                    }
+                    // Fallback: use original samples without conversion
+                    mixed_samples
+                }
+            }
+        } else {
+            // No conversion needed
+            mixed_samples
+        }
     }
 
     /// Professional audio mixing utility with stereo processing, smart gain management, and level calculation
