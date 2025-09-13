@@ -41,7 +41,7 @@ lame = "0.1"               # MP3 encoding for recording
 cpal = "0.15"              # Cross-platform audio I/O
 rtrb = "0.2"               # Real-time ring buffer
 spmcq = "0.1"              # Single Producer Multiple Consumer queue for output distribution
-rubato = "0.15"            # High-quality sample rate conversion
+rubato = "0.16.2"            # High-quality sample rate conversion
 r8brain-rs = "0.3"          # Professional broadcast-quality resampling with zero-latency
 rustfft = "6.2"            # Fast Fourier Transform for spectrum analysis
 sysinfo = "0.30"           # System process enumeration for application audio capture
@@ -64,7 +64,7 @@ crossbeam = "0.8"          # Lock-free data structures for audio threading
 [target.'cfg(target_os = "macos")'.dependencies]
 coreaudio-rs = "0.13"     # macOS Core Audio integration
 libc = "0.2"               # System calls for thread priority
-core-foundation = "0.9"   # Core Foundation framework  
+core-foundation = "0.9"   # Core Foundation framework
 core-foundation-sys = "0.8" # Core Foundation C APIs
 coreaudio-sys = "0.2"     # Low-level Core Audio bindings
 objc2-core-audio = { version = "0.3", features = ["AudioHardware", "objc2", "objc2-foundation"] }  # Modern Core Audio process taps

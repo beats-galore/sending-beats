@@ -85,6 +85,7 @@ use tracing::warn;
 struct AudioCallbackContext {
     buffer: Arc<Mutex<Vec<f32>>>,
     spmc_reader: Option<Arc<Mutex<spmcq::Reader<f32>>>>,
+    output_notifier: Option<Arc<tokio::sync::Notify>>,
 }
 
 /// Context struct for CoreAudio input callbacks - matches CPAL architecture exactly
@@ -113,6 +114,8 @@ pub struct CoreAudioOutputStream {
     callback_context: Arc<AtomicPtr<AudioCallbackContext>>,
     // **SPMC INTEGRATION**: Reader for lock-free audio data from processing pipeline
     spmc_reader: Option<Arc<Mutex<spmcq::Reader<f32>>>>,
+    // **OUTPUT NOTIFIER**: Notify isolated audio manager when buffer runs low
+    output_notifier: Option<Arc<tokio::sync::Notify>>,
 }
 
 // Manual Debug implementation to handle the AudioUnit pointer
@@ -163,7 +166,8 @@ impl CoreAudioOutputStream {
             is_running,
             audio_unit: None,
             callback_context: Arc::new(AtomicPtr::new(ptr::null_mut())),
-            spmc_reader: None, // No SPMC reader for legacy constructor
+            spmc_reader: None,     // No SPMC reader for legacy constructor
+            output_notifier: None, // No notifier for legacy constructor
         })
     }
 
@@ -195,6 +199,40 @@ impl CoreAudioOutputStream {
             audio_unit: None,
             callback_context: Arc::new(AtomicPtr::new(ptr::null_mut())),
             spmc_reader: Some(Arc::new(Mutex::new(spmc_reader))), // **SPMC INTEGRATION**
+            output_notifier: None, // No notifier for this constructor
+        })
+    }
+
+    /// Create CoreAudio output stream with SPMC reader AND output notifier for event-driven processing
+    pub fn new_with_spmc_reader_and_notifier(
+        device_id: AudioDeviceID,
+        device_name: String,
+        channels: u16,
+        spmc_reader: spmcq::Reader<f32>,
+        output_notifier: Arc<tokio::sync::Notify>,
+    ) -> Result<Self> {
+        // **ADAPTIVE AUDIO**: Detect device's native sample rate instead of imposing our own
+        let native_sample_rate = get_device_native_sample_rate(device_id)?;
+
+        println!(
+            "🔊 Creating CoreAudio output stream with SPMC reader AND notifier for device: {} (ID: {}, NATIVE SR: {}, CH: {})",
+            device_name, device_id, native_sample_rate, channels
+        );
+
+        let input_buffer = Arc::new(Mutex::new(Vec::new()));
+        let is_running = Arc::new(Mutex::new(false));
+
+        Ok(Self {
+            device_id,
+            device_name,
+            sample_rate: native_sample_rate, // **ADAPTIVE**: Use detected native rate
+            channels,
+            input_buffer,
+            is_running,
+            audio_unit: None,
+            callback_context: Arc::new(AtomicPtr::new(ptr::null_mut())),
+            spmc_reader: Some(Arc::new(Mutex::new(spmc_reader))), // **SPMC INTEGRATION**
+            output_notifier: Some(output_notifier),               // **EVENT-DRIVEN PROCESSING**
         })
     }
 
@@ -293,6 +331,7 @@ impl CoreAudioOutputStream {
         let context = AudioCallbackContext {
             buffer: self.input_buffer.clone(),
             spmc_reader: self.spmc_reader.clone(),
+            output_notifier: self.output_notifier.clone(),
         };
         let boxed_context = Box::new(context);
         let context_ptr = Box::into_raw(boxed_context);
@@ -633,10 +672,19 @@ extern "C" fn spmc_render_callback(
 
                         // Collect all available samples from SPMC queue
                         let mut input_samples = Vec::new();
+
+                        // **SMART NOTIFICATION**: Shared state for transition detection
+                        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+                        static QUEUE_WAS_EMPTY_LAST_TIME: AtomicBool = AtomicBool::new(true);
+                        static TRANSITION_COUNT: AtomicU64 = AtomicU64::new(0);
+
                         loop {
                             match spmc_reader.read() {
                                 spmcq::ReadResult::Ok(sample) => {
                                     input_samples.push(sample);
+                                    // Reset empty state when we have data
+                                    QUEUE_WAS_EMPTY_LAST_TIME.store(false, Ordering::Relaxed);
+
                                     // Prevent unbounded reads
                                     if input_samples.len() >= 4096 {
                                         println!(
@@ -647,11 +695,28 @@ extern "C" fn spmc_render_callback(
                                 }
                                 spmcq::ReadResult::Dropout(sample) => {
                                     input_samples.push(sample);
+                                    // Reset empty state when we have data (even dropout data)
+                                    QUEUE_WAS_EMPTY_LAST_TIME.store(false, Ordering::Relaxed);
+
                                     if input_samples.len() >= 4096 {
                                         break;
                                     }
                                 }
                                 spmcq::ReadResult::Empty => {
+                                    // **SMART NOTIFICATION**: Only notify on transition from "had data" to "no data"
+                                    if let Some(ref output_notifier) = context.output_notifier {
+                                        // Only notify when transitioning TO empty (not every time it's empty)
+                                        if !QUEUE_WAS_EMPTY_LAST_TIME.swap(true, Ordering::Relaxed)
+                                        {
+                                            output_notifier.notify_one();
+                                            let count = TRANSITION_COUNT
+                                                .fetch_add(1, Ordering::Relaxed)
+                                                + 1;
+                                            if count <= 10 || count % 100 == 0 {
+                                                println!("🔔 OUTPUT_TRANSITION: Queue became empty - notified processing (#{}) ⚡", count);
+                                            }
+                                        }
+                                    }
                                     break;
                                 }
                             }
@@ -1251,8 +1316,22 @@ extern "C" fn coreaudio_input_callback(
             }
         }
 
-        // **TRUE EVENT-DRIVEN**: Always notify async processing thread when hardware callback runs (EXACTLY like CPAL)
-        context.input_notifier.notify_one();
+        // **EVENT-DRIVEN**: Notify async processing thread when hardware has provided new samples
+        // **SMART INPUT NOTIFICATION**: Only notify if we actually captured samples
+        if samples_written > 0 {
+            context.input_notifier.notify_one();
+
+            // Rate-limited logging for debugging
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static INPUT_NOTIFICATION_COUNT: AtomicU64 = AtomicU64::new(0);
+            let count = INPUT_NOTIFICATION_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+            if count <= 10 || count % 200 == 0 {
+                println!(
+                    "🔔 INPUT_NOTIFY: New samples captured - notified processing (#{}) ⚡",
+                    count
+                );
+            }
+        }
 
         // Debug logging for audio capture (same pattern as CPAL)
         static mut INPUT_CAPTURE_COUNT: u64 = 0;
