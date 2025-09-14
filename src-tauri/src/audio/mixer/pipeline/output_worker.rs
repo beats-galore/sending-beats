@@ -13,6 +13,8 @@ use tracing::{error, info, warn};
 
 use super::queue_types::MixedAudioSamples;
 use crate::audio::mixer::sample_rate_converter::RubatoSRC;
+use crate::audio::utils::calculate_optimal_chunk_size;
+use colored::*;
 
 // SPMC queue imports for hardware output
 use spmcq::Writer;
@@ -29,6 +31,10 @@ pub struct OutputWorker {
 
     // Communication channels
     mixed_audio_rx: mpsc::UnboundedReceiver<MixedAudioSamples>,
+
+    // Hardware buffer size updates (macOS CoreAudio only)
+    #[cfg(target_os = "macos")]
+    hardware_update_tx: Option<mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>>,
 
     // Hardware output integration via SPMC queue
     spmc_writer: Option<Arc<Mutex<Writer<f32>>>>, // Writes to hardware via SPMC queue
@@ -58,33 +64,6 @@ impl OutputWorker {
         )
     }
 
-    /// Calculate optimal chunk size for downsampling to avoid waiting cycles
-    fn calculate_optimal_chunk_size(
-        input_sample_rate: u32,
-        output_sample_rate: u32,
-        base_chunk_size: usize,
-    ) -> usize {
-        let rate_ratio = input_sample_rate as f32 / output_sample_rate as f32;
-
-        // Only adjust for downsampling (rate_ratio > 1.0)
-        if rate_ratio > 1.05 {
-            // Reduce chunk size to next power of 2 down to ensure we get samples every cycle
-            let optimal_size = if base_chunk_size >= 1024 {
-                512 // 1024 → 512 for typical downsampling
-            } else if base_chunk_size >= 512 {
-                256 // 512 → 256
-            } else {
-                base_chunk_size // Keep small sizes as-is
-            };
-
-            println!("🎯 CHUNK_OPTIMIZATION: Downsampling {}Hz→{}Hz (ratio: {:.3}), chunk {} → {} for consistent flow",
-                input_sample_rate, output_sample_rate, rate_ratio, base_chunk_size, optimal_size);
-            optimal_size
-        } else {
-            // No downsampling - keep original size
-            base_chunk_size
-        }
-    }
 
     /// Create a new output processing worker with SPMC writer for hardware output
     pub fn new_with_spmc_writer(
@@ -107,6 +86,39 @@ impl OutputWorker {
             sample_buffer: Vec::new(),
             target_chunk_size,
             mixed_audio_rx,
+            #[cfg(target_os = "macos")]
+            hardware_update_tx: None, // No hardware updates for this constructor
+            spmc_writer,
+            worker_handle: None,
+            chunks_processed: 0,
+            samples_output: 0,
+        }
+    }
+
+    /// Create a new output processing worker with hardware update channel (macOS only)
+    #[cfg(target_os = "macos")]
+    pub fn new_with_hardware_updates(
+        device_id: String,
+        device_sample_rate: u32,
+        target_chunk_size: usize,
+        mixed_audio_rx: mpsc::UnboundedReceiver<MixedAudioSamples>,
+        spmc_writer: Option<Arc<Mutex<Writer<f32>>>>,
+        hardware_update_tx: mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>,
+    ) -> Self {
+        let has_hardware_output = spmc_writer.is_some();
+        info!(
+            "🔊 OUTPUT_WORKER: Creating worker with hardware updates for device '{}' ({} Hz, {} sample chunks, hardware: {})",
+            device_id, device_sample_rate, target_chunk_size, has_hardware_output
+        );
+
+        Self {
+            device_id,
+            device_sample_rate,
+            resampler: None,
+            sample_buffer: Vec::new(),
+            target_chunk_size,
+            mixed_audio_rx,
+            hardware_update_tx: Some(hardware_update_tx),
             spmc_writer,
             worker_handle: None,
             chunks_processed: 0,
@@ -132,12 +144,19 @@ impl OutputWorker {
             std::mem::replace(&mut self.mixed_audio_rx, mpsc::unbounded_channel().1);
         let spmc_writer = self.spmc_writer.clone();
 
+        // Clone hardware update channel for dynamic buffer size updates
+        #[cfg(target_os = "macos")]
+        let hardware_update_tx = self.hardware_update_tx.clone();
+
         // Spawn dedicated worker thread
         let worker_handle = tokio::spawn(async move {
             let mut resampler: Option<RubatoSRC> = None;
             let mut sample_buffer = Vec::new();
             let mut chunks_processed = 0u64;
             let mut adaptive_chunk_size = target_chunk_size; // Start with default, adapt on first audio
+
+            // **PERFORMANCE FIX**: Reusable buffer for hardware chunks to avoid allocations
+            let mut reusable_hardware_chunk = Vec::with_capacity(target_chunk_size * 2); // Extra capacity for safety
 
             info!(
                 "🚀 OUTPUT_WORKER: Started processing thread for device '{}'",
@@ -158,7 +177,7 @@ impl OutputWorker {
                 };
 
                 if input_rate_changed {
-                    let optimal_chunk_size = Self::calculate_optimal_chunk_size(
+                    let optimal_chunk_size = calculate_optimal_chunk_size(
                         mixed_audio.sample_rate,
                         device_sample_rate,
                         target_chunk_size,
@@ -167,6 +186,21 @@ impl OutputWorker {
                         adaptive_chunk_size = optimal_chunk_size;
                         info!("🔧 DYNAMIC_CHUNKS: {} updated chunk size to {} for {}Hz→{}Hz (sample rate changed)",
                               device_id, adaptive_chunk_size, mixed_audio.sample_rate, device_sample_rate);
+
+                        // **HARDWARE SYNC**: Update CoreAudio hardware buffer size to match
+                        #[cfg(target_os = "macos")]
+                        if let Some(ref hardware_tx) = hardware_update_tx {
+                            let command = crate::audio::mixer::stream_management::AudioCommand::UpdateOutputHardwareBufferSize {
+                                device_id: device_id.clone(),
+                                target_frames: adaptive_chunk_size as u32,
+                            };
+                            if let Err(e) = hardware_tx.try_send(command) {
+                                warn!("⚠️ Failed to send hardware buffer update: {}", e);
+                            } else {
+                                info!("📡 {}: Sent hardware buffer update to {} frames",
+                                    "HARDWARE_SYNC_COMMAND".cyan(), adaptive_chunk_size);
+                            }
+                        }
                     }
                 }
 
@@ -220,8 +254,30 @@ impl OutputWorker {
 
                     // Resample using persistent resampler with consistent processing
                     if let Some(ref mut resampler) = resampler {
+                        let resampler_convert_start = std::time::Instant::now();
                         // Always process new input to maintain consistent timing
-                        resampler.convert(&mixed_audio.samples)
+                        let resampled = resampler.convert(&mixed_audio.samples);
+                        let resampler_convert_duration = resampler_convert_start.elapsed();
+
+                        // Log actual resampling operation timing
+                        static RESAMPLE_LOG_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                        let resample_count = RESAMPLE_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                        if (resample_count < 5|| resample_count % 2000 == 0)  && resampler_convert_duration.as_micros() > 1000 {
+                            info!(
+                                "🔄 {}: {} resampled {} → {} samples in {}μs ({}Hz→{}Hz, ratio: {:.3})",
+                                "RESAMPLER_TIMING".cyan(),
+                                device_id,
+                                mixed_audio.samples.len(),
+                                resampled.len(),
+                                resampler_convert_duration.as_micros(),
+                                mixed_audio.sample_rate,
+                                device_sample_rate,
+                                rate_ratio
+                            );
+                        }
+
+                        resampled
                     } else {
                         mixed_audio.samples
                     }
@@ -241,17 +297,17 @@ impl OutputWorker {
                 let mut chunks_sent_this_cycle = 0;
                 let mut total_spmc_duration = std::time::Duration::ZERO;
                 while sample_buffer.len() >= adaptive_chunk_size {
-                    // Extract chunk for hardware (using adaptive chunk size)
-                    let hardware_chunk: Vec<f32> =
-                        sample_buffer.drain(..adaptive_chunk_size).collect();
+                    // **PERFORMANCE FIX**: Use reusable buffer instead of allocating new Vec
+                    reusable_hardware_chunk.clear();
+                    reusable_hardware_chunk.extend(sample_buffer.drain(..adaptive_chunk_size));
 
                     // Send to actual hardware via SPMC queue
                     let spmc_write_start = std::time::Instant::now();
                     if let Some(ref spmc_writer) = spmc_writer {
-                        Self::write_to_hardware_spmc(&device_id, &hardware_chunk, spmc_writer)
+                        Self::write_to_hardware_spmc(&device_id, &reusable_hardware_chunk, spmc_writer)
                             .await;
                     } else {
-                        // warn!("⚠️ OUTPUT_WORKER: {} has no SPMC writer, dropping {} samples", device_id, hardware_chunk.len());
+                        // warn!("⚠️ OUTPUT_WORKER: {} has no SPMC writer, dropping {} samples", device_id, reusable_hardware_chunk.len());
                     }
                     let spmc_write_duration = spmc_write_start.elapsed();
                     total_spmc_duration += spmc_write_duration;
@@ -262,10 +318,11 @@ impl OutputWorker {
                     // Rate-limited logging
                     if chunks_processed <= 5 || chunks_processed % 1000 == 0 {
                         info!(
-                            "🎵 OUTPUT_WORKER (4th layer): {} sent chunk #{} ({} samples) to device",
+                            "🎵 {} (4th layer): {} sent chunk #{} ({} samples) to device",
+                            "OUTPUT_WORKER".purple(),
                             device_id,
                             chunks_processed,
-                            hardware_chunk.len()
+                            reusable_hardware_chunk.len()
                         );
                     }
                 }
@@ -279,14 +336,15 @@ impl OutputWorker {
                 let debug_count =
                     TIMING_DEBUG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-                if debug_count < 10 || processing_duration.as_micros() > 1000 {
+                if (debug_count < 10 || debug_count % 1000 == 0) && processing_duration.as_micros() > 1000 {
                     let time_between = if let Some(gap) = time_since_last {
                         format!("{}μs", gap.as_micros())
                     } else {
                         "N/A".to_string()
                     };
 
-                    info!("⏱️ OUTPUT_TIMING[{}]: gap_since_last={}, input={}→{} samples, resample={}μs, buffer={}→{}→{}, chunks_sent={}, spmc={}μs, total={}μs",
+                    info!("⏱️  {} [{}]: gap_since_last={}, input={}→{} samples, 🔄resample={}μs, buffer={}→{}→{}, chunks_sent={}, spmc={}μs, total={}μs",
+                        "OUTPUT_TIMING".purple(),
                         device_id,
                         time_between,
                         input_samples_len,
@@ -307,7 +365,8 @@ impl OutputWorker {
                 let count = OUTPUT_WORKER_COUNT.fetch_add(1, Ordering::Relaxed);
                 if processing_duration.as_micros() > 500 && (count <= 3 || count % 1000 == 0) {
                     warn!(
-                        "🐌 OUTPUT_WORKER: {} SLOW processing: {}μs (resample: {}μs, buffer: {}μs)",
+                        "🐌 {}: {} SLOW processing: {}μs (🔄resample: {}μs, buffer: {}μs)",
+                        "OUTPUT_WORKER_SLOW".bright_red(),
                         device_id,
                         processing_duration.as_micros(),
                         resample_duration.as_micros(),
@@ -371,9 +430,10 @@ impl OutputWorker {
             static HARDWARE_OUTPUT_COUNT: AtomicU64 = AtomicU64::new(0);
             let count = HARDWARE_OUTPUT_COUNT.fetch_add(1, Ordering::Relaxed);
 
-            if count <= 3 || count % 1000 == 0 || lock_duration.as_micros() > 100 {
+            if (count <= 3 || count % 1000 == 0) && lock_duration.as_micros() > 100 {
                 info!(
-                    "🎧 HARDWARE_OUTPUT: {} wrote {} samples to SPMC queue (lock: {}μs, output #{})",
+                    "🎧 {}: {} wrote {} samples to SPMC queue (lock: {}μs, output #{})",
+                    "HARDWARE_OUTPUT".purple(),
                     device_id,
                     samples_written,
                     lock_duration.as_micros(),

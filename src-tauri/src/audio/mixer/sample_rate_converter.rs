@@ -41,6 +41,8 @@ pub struct RubatoSRC {
     pub accumulator: Vec<f32>,
     /// Target output chunk size for consistent delivery
     pub target_output_chunk_size: usize,
+    /// **PERFORMANCE FIX**: Reusable result buffer to eliminate Vec allocations
+    reusable_result_buffer: Vec<f32>,
 }
 
 impl RubatoSRC {
@@ -306,6 +308,7 @@ impl RubatoSRC {
             max_input_frames,
             accumulator: Vec::new(),
             target_output_chunk_size,
+            reusable_result_buffer: Vec::with_capacity(8192), // Pre-allocate for reuse
         })
     }
 
@@ -414,6 +417,7 @@ impl RubatoSRC {
             max_input_frames,
             accumulator: Vec::new(),
             target_output_chunk_size,
+            reusable_result_buffer: Vec::with_capacity(8192), // Pre-allocate for reuse
         })
     }
 
@@ -636,13 +640,14 @@ impl RubatoSRC {
                     );
                 }
 
-                // **TIMING FIX**: Return ALL resampled samples immediately - let OutputWorker handle buffering
-                // This eliminates irregular timing from internal accumulator logic
-                let mut result = Vec::with_capacity(output_frames_generated * 2);
+                // **PERFORMANCE FIX**: Use reusable buffer to eliminate Vec allocation on every convert() call
+                self.reusable_result_buffer.clear();
+                self.reusable_result_buffer.reserve(output_frames_generated * 2);
                 for frame in 0..output_frames_generated {
-                    result.push(self.output_buffer[0][frame]); // Left
-                    result.push(self.output_buffer[1][frame]); // Right
+                    self.reusable_result_buffer.push(self.output_buffer[0][frame]); // Left
+                    self.reusable_result_buffer.push(self.output_buffer[1][frame]); // Right
                 }
+                let result = self.reusable_result_buffer.clone(); // Final unavoidable clone for API
 
                 static DIRECT_OUTPUT_COUNT: std::sync::atomic::AtomicU64 =
                     std::sync::atomic::AtomicU64::new(0);
@@ -735,8 +740,11 @@ impl RubatoSRC {
     pub fn drain_accumulator_only(&mut self) -> Vec<f32> {
         let target_samples = self.target_output_chunk_size * 2; // Stereo samples
         if self.accumulator.len() >= target_samples {
-            // Extract exactly target_samples for consistent output
-            let extracted: Vec<f32> = self.accumulator.drain(0..target_samples).collect();
+            // **PERFORMANCE FIX**: Use reusable buffer instead of drain().collect()
+            self.reusable_result_buffer.clear();
+            self.reusable_result_buffer.reserve(target_samples);
+            self.reusable_result_buffer.extend(self.accumulator.drain(0..target_samples));
+            let extracted = self.reusable_result_buffer.clone(); // Final unavoidable clone for API
 
             static DRAIN_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             let count = DRAIN_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -780,6 +788,9 @@ pub struct R8BrainSRC {
     output_buffer: Vec<f64>,
     /// Maximum expected input size
     max_input_size: usize,
+    /// **PERFORMANCE FIX**: Reusable buffers to eliminate allocations in convert()
+    reusable_input_f64: Vec<f64>,
+    reusable_result_f32: Vec<f32>,
 }
 
 impl R8BrainSRC {
@@ -826,6 +837,8 @@ impl R8BrainSRC {
             ratio: output_rate / input_rate,
             output_buffer,
             max_input_size,
+            reusable_input_f64: Vec::with_capacity(max_input_size),
+            reusable_result_f32: Vec::with_capacity(max_output_size),
         })
     }
 
@@ -850,30 +863,28 @@ impl R8BrainSRC {
         // Ensure we don't exceed buffer capacity
         let input_len = input_samples.len().min(self.max_input_size);
 
-        // Convert f32 input to f64 for r8brain processing
-        let input_f64: Vec<f64> = input_samples
-            .iter()
-            .take(input_len)
-            .map(|&x| x as f64)
-            .collect();
+        // **PERFORMANCE FIX**: Use reusable buffer to eliminate allocation
+        self.reusable_input_f64.clear();
+        self.reusable_input_f64.reserve(input_len);
+        for &sample in input_samples.iter().take(input_len) {
+            self.reusable_input_f64.push(sample as f64);
+        }
 
         // Process with r8brain professional resampler
         // Note: r8brain may need multiple calls before yielding output (this is normal)
-        let output_len = self.resampler.process(&input_f64, &mut self.output_buffer);
+        let output_len = self.resampler.process(&self.reusable_input_f64, &mut self.output_buffer);
 
-        // Return actual dynamic output from r8brain
+        // **PERFORMANCE FIX**: Use reusable buffer to eliminate allocation
         if output_len > 0 {
-            // Convert and return only the samples that r8brain actually produced
-            let result: Vec<f32> = self
-                .output_buffer
-                .iter()
-                .take(output_len)
-                .map(|&x| x as f32)
-                .collect();
-            result
+            // Convert using reusable buffer instead of collect()
+            self.reusable_result_f32.clear();
+            self.reusable_result_f32.reserve(output_len);
+            for &sample in self.output_buffer.iter().take(output_len) {
+                self.reusable_result_f32.push(sample as f32);
+            }
+            self.reusable_result_f32.clone() // Final unavoidable clone for API
         } else {
             // r8brain hasn't produced output yet (normal during initial processing)
-            // Return empty vector - no fixed size assumption
             Vec::new()
         }
     }

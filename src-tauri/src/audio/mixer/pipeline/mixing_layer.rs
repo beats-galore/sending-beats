@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 use super::queue_types::{MixedAudioSamples, ProcessedAudioSamples};
+use colored::*;
 use crate::audio::mixer::stream_management::virtual_mixer::VirtualMixer;
 
 /// Command for dynamically managing running MixingLayer
@@ -182,20 +183,20 @@ impl MixingLayer {
 
                 // Step 2: Mix available samples if we have any
                 if mixed_something && !available_samples.is_empty() {
-                    // Convert ProcessedAudioSamples to the format expected by VirtualMixer
-                    let input_samples_for_mixer: Vec<(String, Vec<f32>)> = available_samples
+                    // **PERFORMANCE FIX**: Use references to avoid cloning sample vectors
+                    let input_samples_for_mixer: Vec<(String, &[f32])> = available_samples
                         .iter()
                         .map(|(device_id, processed_audio)| {
-                            (device_id.clone(), processed_audio.samples.clone())
+                            (device_id.clone(), processed_audio.samples.as_slice())
                         })
                         .collect();
 
                     let active_inputs = input_samples_for_mixer.len();
 
                     if !input_samples_for_mixer.is_empty() {
-                        // Use VirtualMixer's professional mixing algorithm
+                        // Use VirtualMixer's professional mixing algorithm with references
                         let mixed_samples =
-                            VirtualMixer::mix_input_samples(input_samples_for_mixer);
+                            VirtualMixer::mix_input_samples_ref(&input_samples_for_mixer);
 
                         // Apply master gain to the professionally mixed samples
                         let mut final_samples = mixed_samples;
@@ -222,22 +223,24 @@ impl MixingLayer {
 
                         mix_cycles += 1;
 
-                        // Rate-limited logging
+                        let cycle_duration = cycle_start.elapsed();
+
+                        // Rate-limited logging (only when we actually mixed something)
                         if mix_cycles <= 5 || mix_cycles % 1000 == 0 {
-                            info!("🎵 MIXING_LAYER_WORKER (3rd layer): VirtualMixer mixed {} inputs ({} samples) and sent to {} outputs (cycle #{})",
-                                  active_inputs, samples_count, mixed_output_senders.len(), mix_cycles);
+                            info!("🎵 {}: VirtualMixer mixed {} inputs ({} samples) and sent to {} outputs (cycle #{}, took {}μs)",
+                                  "MIXING_LAYER_WORKER".yellow(),
+                                  active_inputs, samples_count, mixed_output_senders.len(), mix_cycles, cycle_duration.as_micros());
+                        }
+
+                        // Performance monitoring (only when we actually mixed something)
+                        if cycle_duration.as_micros() > 1000 {
+                            warn!(
+                                "⏱️ {}: Slow mixing cycle: {}μs",
+                                "MIXING_LAYER_SLOW".red(),
+                                cycle_duration.as_micros()
+                            );
                         }
                     }
-                }
-
-                let cycle_duration = cycle_start.elapsed();
-
-                // Performance monitoring
-                if cycle_duration.as_micros() > 1000 {
-                    warn!(
-                        "⏱️ MIXING_LAYER: Slow mixing cycle: {}μs",
-                        cycle_duration.as_micros()
-                    );
                 }
 
                 // Small yield to prevent busy-waiting
