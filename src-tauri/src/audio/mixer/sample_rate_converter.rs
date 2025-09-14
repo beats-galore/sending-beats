@@ -1,8 +1,8 @@
 use anyhow::Result;
 use r8brain_rs::{PrecisionProfile, Resampler as R8BrainResampler};
 use rubato::{
-    FastFixedIn, PolynomialDegree, Resampler as RubatoResampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType,
-    WindowFunction,
+    FastFixedIn, PolynomialDegree, Resampler as RubatoResampler, SincFixedIn,
+    SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
 /// Sample Rate Converter for Dynamic Audio Buffer Conversion
 ///
@@ -112,7 +112,7 @@ impl RubatoSRC {
         } else if max_rate > 48000.0 {
             1024 // Standard high quality
         } else {
-            512  // Standard quality - smaller for speed
+            512 // Standard quality - smaller for speed
         };
 
         println!(
@@ -217,13 +217,7 @@ impl RubatoSRC {
         max_input_frames: usize,
         low_artifact: bool,
     ) -> Result<Self, String> {
-        Self::with_params_internal(
-            input_rate,
-            output_rate,
-            None,
-            max_input_frames,
-            true,
-        )
+        Self::with_params_internal(input_rate, output_rate, None, max_input_frames, true)
     }
 
     /// Internal implementation with all parameters for FAST resampling
@@ -241,8 +235,8 @@ impl RubatoSRC {
             output_rate as f64 / input_rate as f64, // resample_ratio
             2.0,                      // max_ratio_change (for future dynamic adjustment)
             PolynomialDegree::Septic, // polynomial_degree (Septic = 7th order for balance of speed/quality)
-            max_input_frames,                        // num_channels (stereo)
-            2,         // chunk_size (fixed input chunk size)
+            max_input_frames,         // num_channels (stereo)
+            2,                        // chunk_size (fixed input chunk size)
         )
         .map_err(|e| format!("Failed to create FastFixedIn resampler: {}", e))?;
 
@@ -471,7 +465,10 @@ impl RubatoSRC {
             ResamplerType::Fast(_) => {
                 // FastFixedIn requires exactly max_input_frames - pad if needed, truncate if too large
                 if input_frames > self.max_input_frames {
-                    println!("⚠️ FAST_RESAMPLER: Truncating {} frames to max {}", input_frames, self.max_input_frames);
+                    println!(
+                        "⚠️ FAST_RESAMPLER: Truncating {} frames to max {}",
+                        input_frames, self.max_input_frames
+                    );
                     self.max_input_frames
                 } else if input_frames < self.max_input_frames {
                     // For FastFixedIn, we need to pad smaller inputs to the fixed size
@@ -639,39 +636,25 @@ impl RubatoSRC {
                     );
                 }
 
-                // Add resampled output to accumulator for smoothing
+                // **TIMING FIX**: Return ALL resampled samples immediately - let OutputWorker handle buffering
+                // This eliminates irregular timing from internal accumulator logic
+                let mut result = Vec::with_capacity(output_frames_generated * 2);
                 for frame in 0..output_frames_generated {
-                    self.accumulator.push(self.output_buffer[0][frame]); // Left
-                    self.accumulator.push(self.output_buffer[1][frame]); // Right
+                    result.push(self.output_buffer[0][frame]); // Left
+                    result.push(self.output_buffer[1][frame]); // Right
                 }
 
-                // Extract consistent chunk size from accumulator
-                let target_samples = self.target_output_chunk_size * 2; // Stereo samples
-                let result = if self.accumulator.len() >= target_samples {
-                    // Extract exactly target_samples for consistent output
-                    let extracted: Vec<f32> = self.accumulator.drain(0..target_samples).collect();
+                static DIRECT_OUTPUT_COUNT: std::sync::atomic::AtomicU64 =
+                    std::sync::atomic::AtomicU64::new(0);
+                let count = DIRECT_OUTPUT_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if count < 5 || count % 1000 == 0 {
+                    println!(
+                        "🎯 DIRECT_OUTPUT: Returning ALL {} resampled samples immediately (no accumulator delay, call #{})",
+                        result.len(), count
+                    );
+                }
 
-                    static ACCUMULATOR_COUNT: std::sync::atomic::AtomicU64 =
-                        std::sync::atomic::AtomicU64::new(0);
-                    let count =
-                        ACCUMULATOR_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    if count < 5 || count % 1000 == 0 {
-                        println!(
-                            "🔄 ACCUMULATOR: Extracted {} samples from buffer (size: {}, call #{})",
-                            extracted.len(),
-                            self.accumulator.len(),
-                            count
-                        );
-                    }
-
-                    extracted
-                } else {
-                    // Not enough samples yet - return empty (audio pipeline will handle gaps)
-                    Vec::new()
-                };
-
-                // ARTIFACT DEBUG: Only check for clipping artifacts (not gain comparisons)
-                // NOTE: Peak comparison is invalid due to accumulator mixing samples from different time domains
+                // ARTIFACT DEBUG: Only check for clipping artifacts
                 if !result.is_empty() {
                     let output_peak = result.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
                     let output_rms =

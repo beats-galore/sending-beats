@@ -57,50 +57,50 @@ impl AudioPipeline {
         }
     }
 
-        fn get_all_sample_rates(&self) -> Vec<(String, u32)> {
-            let mut sample_rates = Vec::new();
+    fn get_all_sample_rates(&self) -> Vec<(String, u32)> {
+        let mut sample_rates = Vec::new();
 
-            // Collect sample rates from input workers
-            for (device_id, worker) in &self.input_workers {
-                sample_rates.push((device_id.clone(), worker.device_sample_rate));
-            }
-
-            // Collect sample rates from output workers
-            for (device_id, worker) in &self.output_workers {
-                sample_rates.push((device_id.clone(), worker.device_sample_rate));
-            }
-
-            sample_rates
+        // Collect sample rates from input workers
+        for (device_id, worker) in &self.input_workers {
+            sample_rates.push((device_id.clone(), worker.device_sample_rate));
         }
 
-        /// Calculate the target mix rate as the highest sample rate among all inputs and outputs
-        fn calculate_target_mix_rate(&mut self) -> Result<u32> {
-            let all_sample_rates = self.get_all_sample_rates();
-
-            if all_sample_rates.is_empty() {
-                return Ok(crate::types::DEFAULT_SAMPLE_RATE);
-            }
-
-            if all_sample_rates.len() == 1 {
-                return Ok(all_sample_rates[0].1);
-            }
-
-            // Find the maximum sample rate using the max function
-            let max_rate = all_sample_rates
-                .iter()
-                .map(|(_, rate)| *rate)
-                .max()
-                .unwrap_or(crate::types::DEFAULT_SAMPLE_RATE);
-
-            let target_rate = if max_rate == 0 {
-                crate::types::DEFAULT_SAMPLE_RATE
-            } else {
-                max_rate
-            };
-
-            self.max_sample_rate = target_rate;
-            Ok(target_rate)
+        // Collect sample rates from output workers
+        for (device_id, worker) in &self.output_workers {
+            sample_rates.push((device_id.clone(), worker.device_sample_rate));
         }
+
+        sample_rates
+    }
+
+    /// Calculate the target mix rate as the highest sample rate among all inputs and outputs
+    fn calculate_target_mix_rate(&mut self) -> Result<u32> {
+        let all_sample_rates = self.get_all_sample_rates();
+
+        if all_sample_rates.is_empty() {
+            return Ok(crate::types::DEFAULT_SAMPLE_RATE);
+        }
+
+        if all_sample_rates.len() == 1 {
+            return Ok(all_sample_rates[0].1);
+        }
+
+        // Find the maximum sample rate using the max function
+        let max_rate = all_sample_rates
+            .iter()
+            .map(|(_, rate)| *rate)
+            .max()
+            .unwrap_or(crate::types::DEFAULT_SAMPLE_RATE);
+
+        let target_rate = if max_rate == 0 {
+            crate::types::DEFAULT_SAMPLE_RATE
+        } else {
+            max_rate
+        };
+
+        self.max_sample_rate = target_rate;
+        Ok(target_rate)
+    }
 
     fn update_target_sample_rates(&mut self) -> Result<()> {
         for (device_id, worker) in &mut self.input_workers {
@@ -113,7 +113,6 @@ impl AudioPipeline {
         }
         Ok(())
     }
-
 
     /// Register a new input device with direct RTRB consumer (bypasses IsolatedAudioManager)
     pub fn add_input_device_with_consumer(
@@ -147,7 +146,8 @@ impl AudioPipeline {
 
         // Connect processed input receiver to mixing layer
         if let Some(processed_input_rx) = self.queues.take_processed_input_receiver(&device_id) {
-            self.mixing_layer.add_input_stream(device_id.clone(), processed_input_rx);
+            self.mixing_layer
+                .add_input_stream(device_id.clone(), processed_input_rx);
             info!(
                 "✅ PIPELINE: Connected input device '{}' to MixingLayer",
                 device_id
@@ -175,7 +175,8 @@ impl AudioPipeline {
         self.update_target_sample_rates()?;
 
         // Update mixing layer with new target rate
-        self.mixing_layer.update_target_sample_rate(self.max_sample_rate);
+        self.mixing_layer
+            .update_target_sample_rate(self.max_sample_rate);
 
         // Start the worker if pipeline is running
         if self.is_running {
@@ -250,7 +251,8 @@ impl AudioPipeline {
         self.update_target_sample_rates()?;
 
         // Update mixing layer with new target rate
-        self.mixing_layer.update_target_sample_rate(self.max_sample_rate);
+        self.mixing_layer
+            .update_target_sample_rate(self.max_sample_rate);
 
         info!(
             "✅ AUDIO_PIPELINE: Added output device '{}' ({} Hz ← {} Hz, {} sample chunks)",
@@ -375,22 +377,23 @@ impl AudioPipeline {
     /// Remove an input device from the pipeline
     pub async fn remove_input_device(&mut self, device_id: &str) -> Result<()> {
         if !self.input_workers.contains_key(device_id) {
-            return Err(anyhow::anyhow!(
-                "Input device '{}' not found",
-                device_id
-            ));
+            return Err(anyhow::anyhow!("Input device '{}' not found", device_id));
         }
 
         // Stop the input worker
         if let Some(mut input_worker) = self.input_workers.remove(device_id) {
             // Stop worker gracefully
             if let Err(e) = input_worker.stop().await {
-                warn!("⚠️ AUDIO_PIPELINE: Error stopping input worker '{}': {}", device_id, e);
+                warn!(
+                    "⚠️ AUDIO_PIPELINE: Error stopping input worker '{}': {}",
+                    device_id, e
+                );
             }
         }
 
         // Remove from queue system
-        self.queues.remove_input_device(device_id.to_string())
+        self.queues
+            .remove_input_device(device_id.to_string())
             .map_err(|e| anyhow::anyhow!("Failed to remove input device from queues: {}", e))?;
 
         self.devices_registered = self.devices_registered.saturating_sub(1);
@@ -400,7 +403,8 @@ impl AudioPipeline {
         self.update_target_sample_rates()?;
 
         // Update mixing layer with new target rate
-        self.mixing_layer.update_target_sample_rate(self.max_sample_rate);
+        self.mixing_layer
+            .update_target_sample_rate(self.max_sample_rate);
 
         info!(
             "✅ AUDIO_PIPELINE: Removed input device '{}' and recalculated mix rate to {} Hz",
@@ -413,17 +417,17 @@ impl AudioPipeline {
     /// Remove an output device from the pipeline
     pub async fn remove_output_device(&mut self, device_id: &str) -> Result<()> {
         if !self.output_workers.contains_key(device_id) {
-            return Err(anyhow::anyhow!(
-                "Output device '{}' not found",
-                device_id
-            ));
+            return Err(anyhow::anyhow!("Output device '{}' not found", device_id));
         }
 
         // Stop the output worker
         if let Some(mut output_worker) = self.output_workers.remove(device_id) {
             // Stop worker gracefully
             if let Err(e) = output_worker.stop().await {
-                warn!("⚠️ AUDIO_PIPELINE: Error stopping output worker '{}': {}", device_id, e);
+                warn!(
+                    "⚠️ AUDIO_PIPELINE: Error stopping output worker '{}': {}",
+                    device_id, e
+                );
             }
         }
 
@@ -434,7 +438,8 @@ impl AudioPipeline {
         self.update_target_sample_rates()?;
 
         // Update mixing layer with new target rate
-        self.mixing_layer.update_target_sample_rate(self.max_sample_rate);
+        self.mixing_layer
+            .update_target_sample_rate(self.max_sample_rate);
 
         info!(
             "✅ AUDIO_PIPELINE: Removed output device '{}' and recalculated mix rate to {} Hz",

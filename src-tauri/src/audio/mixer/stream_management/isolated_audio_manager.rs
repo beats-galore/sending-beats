@@ -237,9 +237,9 @@ impl IsolatedAudioManager {
         input_notifier: Arc<Notify>,
     ) -> Result<()> {
         info!(
-          "🎤 AUDIO_COORDINATOR: Adding CoreAudio input stream for device '{}' (ID: {})",
-          device_id, coreaudio_device_id
-      );
+            "🎤 AUDIO_COORDINATOR: Adding CoreAudio input stream for device '{}' (ID: {})",
+            device_id, coreaudio_device_id
+        );
 
         // **HARDWARE**: Get native sample rate from device
         let native_sample_rate =
@@ -269,16 +269,22 @@ impl IsolatedAudioManager {
             coreaudio_device_id,
             device_name,
             channels,
-            coreaudio_producer, // Hardware writes to this
+            coreaudio_producer,    // Hardware writes to this
             input_device_notifier, // Notifies AudioPipeline when data available
         )?;
 
-        info!("✅ AUDIO_COORDINATOR: Input device '{}' connected to AudioPipeline", device_id);
+        info!(
+            "✅ AUDIO_COORDINATOR: Input device '{}' connected to AudioPipeline",
+            device_id
+        );
         Ok(())
     }
 
     async fn handle_remove_input_stream(&mut self, device_id: String) -> bool {
-        info!("🗑️ AUDIO_COORDINATOR: Removing input device '{}'", device_id);
+        info!(
+            "🗑️ AUDIO_COORDINATOR: Removing input device '{}'",
+            device_id
+        );
 
         // **PIPELINE**: Remove device from AudioPipeline
         if let Err(e) = self.audio_pipeline.remove_input_device(&device_id).await {

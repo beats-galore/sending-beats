@@ -10,6 +10,7 @@ dependencies = [
  "anyhow",
  "base64 0.21.7",
  "chrono",
+ "colored",
  "core-foundation 0.9.4",
  "core-foundation-sys",
  "coreaudio-rs 0.13.0",
@@ -730,6 +731,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7caa3f9de89ddbe2c607f4101924c5abec803763ae9534e4f4d7d8f84aa81f0"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "colored"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
+dependencies = [
+ "lazy_static",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

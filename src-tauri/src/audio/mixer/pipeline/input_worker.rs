@@ -19,7 +19,7 @@ use crate::audio::mixer::sample_rate_converter::RubatoSRC;
 pub struct InputWorker {
     pub device_id: String,
     pub device_sample_rate: u32, // Original device sample rate
-    target_sample_rate: u32, // Max sample rate for mixing (e.g., 48kHz)
+    target_sample_rate: u32,     // Max sample rate for mixing (e.g., 48kHz)
     channels: u16,
 
     // Audio processing components
@@ -141,41 +141,43 @@ impl InputWorker {
                 let original_samples_len = samples.len();
 
                 // Step 1: Resample to target sample rate if needed
-                let resampled_samples =
-                    if (device_sample_rate as f32 - target_sample_rate as f32).abs() > 1.0 {
-                        // Create resampler if needed (persistent across calls)
-                        if resampler.is_none() {
-                            match RubatoSRC::new_fast(
-                                device_sample_rate as f32,
-                                target_sample_rate as f32,
-                            ) {
-                                Ok(new_resampler) => {
-                                    info!(
+                let resampled_samples = if (device_sample_rate as f32 - target_sample_rate as f32)
+                    .abs()
+                    > 1.0
+                {
+                    // Create resampler if needed (persistent across calls)
+                    if resampler.is_none() {
+                        match RubatoSRC::new_fast(
+                            device_sample_rate as f32,
+                            target_sample_rate as f32,
+                        ) {
+                            Ok(new_resampler) => {
+                                info!(
                                         "🚀 INPUT_WORKER: Created FAST resampler for {} ({} Hz → {} Hz)",
                                         device_id, device_sample_rate, target_sample_rate
                                     );
-                                    resampler = Some(new_resampler);
-                                }
-                                Err(e) => {
-                                    error!(
-                                        "❌ INPUT_WORKER: Failed to create resampler for {}: {}",
-                                        device_id, e
-                                    );
-                                    // No resampler created - will use original samples below
-                                }
-                            };
-                        }
+                                resampler = Some(new_resampler);
+                            }
+                            Err(e) => {
+                                error!(
+                                    "❌ INPUT_WORKER: Failed to create resampler for {}: {}",
+                                    device_id, e
+                                );
+                                // No resampler created - will use original samples below
+                            }
+                        };
+                    }
 
-                        // Resample using persistent resampler
-                        if let Some(ref mut resampler) = resampler {
-                            resampler.convert(&samples)
-                        } else {
-                            samples.clone()
-                        }
+                    // Resample using persistent resampler
+                    if let Some(ref mut resampler) = resampler {
+                        resampler.convert(&samples)
                     } else {
-                        // No resampling needed
                         samples.clone()
-                    };
+                    }
+                } else {
+                    // No resampling needed
+                    samples.clone()
+                };
 
                 // Step 2: Apply per-input effects (EQ, compressor, etc.)
                 let mut effects_processed = resampled_samples;
@@ -210,17 +212,15 @@ impl InputWorker {
                         samples_processed
                     );
 
-                                // Log slow processing
-                if processing_duration.as_micros() > 500 {
-                    warn!(
-                        "⏱️ INPUT_WORKER: {} slow processing: {}μs",
-                        device_id,
-                        processing_duration.as_micros()
-                    );
+                    // Log slow processing
+                    if processing_duration.as_micros() > 500 {
+                        warn!(
+                            "⏱️ INPUT_WORKER: {} slow processing: {}μs",
+                            device_id,
+                            processing_duration.as_micros()
+                        );
+                    }
                 }
-                }
-
-
             }
 
             info!(

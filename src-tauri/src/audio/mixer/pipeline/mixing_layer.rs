@@ -73,16 +73,29 @@ impl MixingLayer {
     ) {
         if self.worker_handle.is_some() {
             // MixingLayer is already running - send command to worker thread
-            let cmd = MixingLayerCommand::AddInputStream { device_id: device_id.clone(), receiver };
+            let cmd = MixingLayerCommand::AddInputStream {
+                device_id: device_id.clone(),
+                receiver,
+            };
             if let Err(_) = self.command_tx.send(cmd) {
-                warn!("⚠️ MIXING_LAYER: Failed to send add input stream command for '{}'", device_id);
+                warn!(
+                    "⚠️ MIXING_LAYER: Failed to send add input stream command for '{}'",
+                    device_id
+                );
             } else {
-                info!("🎛️ MIXING_LAYER: Sent add input stream command for device '{}'", device_id);
+                info!(
+                    "🎛️ MIXING_LAYER: Sent add input stream command for device '{}'",
+                    device_id
+                );
             }
         } else {
             // MixingLayer not started yet - add to local storage
-            self.processed_input_receivers.insert(device_id.clone(), receiver);
-            info!("🎛️ MIXING_LAYER: Queued input stream for device '{}'", device_id);
+            self.processed_input_receivers
+                .insert(device_id.clone(), receiver);
+            info!(
+                "🎛️ MIXING_LAYER: Queued input stream for device '{}'",
+                device_id
+            );
         }
     }
 
@@ -137,13 +150,22 @@ impl MixingLayer {
                 // Handle commands (add new input/output streams dynamically)
                 while let Ok(cmd) = command_rx.try_recv() {
                     match cmd {
-                        MixingLayerCommand::AddInputStream { device_id, receiver } => {
+                        MixingLayerCommand::AddInputStream {
+                            device_id,
+                            receiver,
+                        } => {
                             processed_input_receivers.insert(device_id.clone(), receiver);
-                            info!("🎛️ MIXING_LAYER_WORKER: Added input stream for device '{}'", device_id);
+                            info!(
+                                "🎛️ MIXING_LAYER_WORKER: Added input stream for device '{}'",
+                                device_id
+                            );
                         }
                         MixingLayerCommand::AddOutputSender { sender } => {
                             mixed_output_senders.push(sender);
-                            info!("🔊 MIXING_LAYER_WORKER: Added output sender (total: {})", mixed_output_senders.len());
+                            info!(
+                                "🔊 MIXING_LAYER_WORKER: Added output sender (total: {})",
+                                mixed_output_senders.len()
+                            );
                         }
                     }
                 }
@@ -163,14 +185,17 @@ impl MixingLayer {
                     // Convert ProcessedAudioSamples to the format expected by VirtualMixer
                     let input_samples_for_mixer: Vec<(String, Vec<f32>)> = available_samples
                         .iter()
-                        .map(|(device_id, processed_audio)| (device_id.clone(), processed_audio.samples.clone()))
+                        .map(|(device_id, processed_audio)| {
+                            (device_id.clone(), processed_audio.samples.clone())
+                        })
                         .collect();
 
                     let active_inputs = input_samples_for_mixer.len();
 
                     if !input_samples_for_mixer.is_empty() {
                         // Use VirtualMixer's professional mixing algorithm
-                        let mixed_samples = VirtualMixer::mix_input_samples(input_samples_for_mixer);
+                        let mixed_samples =
+                            VirtualMixer::mix_input_samples(input_samples_for_mixer);
 
                         // Apply master gain to the professionally mixed samples
                         let mut final_samples = mixed_samples;
@@ -251,7 +276,10 @@ impl MixingLayer {
     /// Update target sample rate when devices are added/removed
     pub fn update_target_sample_rate(&mut self, new_sample_rate: u32) {
         self.target_sample_rate = new_sample_rate;
-        info!("🎛️ MIXING_LAYER: Updated target sample rate to {} Hz", new_sample_rate);
+        info!(
+            "🎛️ MIXING_LAYER: Updated target sample rate to {} Hz",
+            new_sample_rate
+        );
     }
 
     /// Get mixing statistics
