@@ -16,6 +16,7 @@ pub mod mixer;
 pub mod recording;
 pub mod tap;
 pub mod types;
+pub mod utils;
 
 // Re-export commonly used types for easier imports
 pub use types::{

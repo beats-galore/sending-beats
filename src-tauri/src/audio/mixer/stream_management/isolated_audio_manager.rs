@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use colored::*;
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -31,6 +32,11 @@ pub enum AudioCommand {
         device_id: String,
         coreaudio_device: crate::audio::types::CoreAudioDevice,
         response_tx: oneshot::Sender<Result<()>>,
+    },
+    #[cfg(target_os = "macos")]
+    UpdateOutputHardwareBufferSize {
+        device_id: String,
+        target_frames: u32,
     },
     #[cfg(target_os = "macos")]
     AddCoreAudioInputStream {
@@ -74,6 +80,11 @@ pub struct IsolatedAudioManager {
 
     // **COMMAND INTERFACE**: Handle Tauri audio commands
     command_rx: mpsc::Receiver<AudioCommand>,
+
+    // **HARDWARE UPDATES**: Hardware buffer update commands from OutputWorker (macOS only)
+    #[cfg(target_os = "macos")]
+    hardware_update_rx: Option<mpsc::Receiver<AudioCommand>>,
+
     metrics: AudioMetrics,
 
     // **COORDINATION**: Event notifications for pipeline coordination
@@ -88,6 +99,15 @@ impl IsolatedAudioManager {
     pub async fn new(command_rx: mpsc::Receiver<AudioCommand>) -> Result<Self, anyhow::Error> {
         // **CORE**: Create 4-layer AudioPipeline with max sample rate of 48kHz
         const MAX_SAMPLE_RATE: u32 = 48000;
+
+        // **HARDWARE SYNC**: Create hardware update channel for CoreAudio buffer synchronization
+        #[cfg(target_os = "macos")]
+        let (hardware_update_tx, mut hardware_update_rx) = mpsc::channel::<AudioCommand>(32);
+
+        #[cfg(target_os = "macos")]
+        let audio_pipeline = AudioPipeline::new_with_hardware_updates(MAX_SAMPLE_RATE, Some(hardware_update_tx));
+
+        #[cfg(not(target_os = "macos"))]
         let audio_pipeline = AudioPipeline::new(MAX_SAMPLE_RATE);
 
         info!(
@@ -107,6 +127,11 @@ impl IsolatedAudioManager {
 
             // **INTERFACE**: Command handling
             command_rx,
+
+            // **HARDWARE UPDATES**: Hardware buffer update receiver (macOS only)
+            #[cfg(target_os = "macos")]
+            hardware_update_rx: Some(hardware_update_rx),
+
             metrics: AudioMetrics {
                 input_streams: 0,
                 output_streams: 0,
@@ -134,6 +159,19 @@ impl IsolatedAudioManager {
 
         // **COORDINATION LOOP**: Handle Tauri commands and coordinate components
         loop {
+            // **HARDWARE SYNC**: Create hardware update future conditionally (macOS only)
+            #[cfg(target_os = "macos")]
+            let hardware_future = async {
+                if let Some(ref mut rx) = self.hardware_update_rx {
+                    rx.recv().await
+                } else {
+                    std::future::pending().await
+                }
+            };
+
+            #[cfg(not(target_os = "macos"))]
+            let hardware_future = std::future::pending::<Option<AudioCommand>>();
+
             tokio::select! {
                 // Handle Tauri audio commands
                 command = self.command_rx.recv() => {
@@ -142,8 +180,28 @@ impl IsolatedAudioManager {
                             self.handle_command(cmd).await;
                         },
                         None => {
-                            info!("🛑 AUDIO_COORDINATOR: Command channel closed, shutting down");
+                            info!("🛑 {}: Command channel closed, shutting down", "AUDIO_COORDINATOR".red());
                             break;
+                        }
+                    }
+                }
+
+                // **HARDWARE SYNC**: Handle hardware buffer update requests from OutputWorker
+                hardware_command = hardware_future => {
+                    if let Some(cmd) = hardware_command {
+                        match cmd {
+                            AudioCommand::UpdateOutputHardwareBufferSize { device_id, target_frames } => {
+                                info!(
+                                    "🔄 {}: Processing hardware buffer update for {} → {} frames",
+                                    "HARDWARE_SYNC".cyan(),
+                                    device_id,
+                                    target_frames
+                                );
+                                self.update_output_hardware_buffer_size(device_id, target_frames);
+                            }
+                            _ => {
+                                warn!("⚠️ {}: Unexpected command on hardware channel: {:?}", "HARDWARE_SYNC".yellow(), std::mem::discriminant(&cmd));
+                            }
                         }
                     }
                 }
@@ -174,6 +232,13 @@ impl IsolatedAudioManager {
             } => {
                 let result = self.add_coreaudio_output_stream_direct(device_id, coreaudio_device);
                 let _ = response_tx.send(result);
+            }
+            #[cfg(target_os = "macos")]
+            AudioCommand::UpdateOutputHardwareBufferSize {
+                device_id,
+                target_frames,
+            } => {
+                self.update_output_hardware_buffer_size(device_id, target_frames);
             }
             #[cfg(target_os = "macos")]
             AudioCommand::AddCoreAudioInputStream {
@@ -299,6 +364,24 @@ impl IsolatedAudioManager {
     }
 
     #[cfg(target_os = "macos")]
+    /// Update hardware buffer size for a CoreAudio output stream
+    #[cfg(target_os = "macos")]
+    fn update_output_hardware_buffer_size(&mut self, device_id: String, target_frames: u32) {
+        if let Err(e) = self.stream_manager.update_coreaudio_output_buffer_size(&device_id, target_frames) {
+            tracing::warn!(
+                "⚠️ Failed to update hardware buffer size for {}: {}",
+                device_id, e
+            );
+        } else {
+            tracing::info!(
+                "🔄 {}: Updated hardware buffer size to {} frames for {}",
+                "DYNAMIC_HARDWARE_SYNC".green(),
+                target_frames,
+                device_id
+            );
+        }
+    }
+
     fn add_coreaudio_output_stream_direct(
         &mut self,
         device_id: String,
@@ -333,6 +416,7 @@ impl IsolatedAudioManager {
 
         // **NEW PIPELINE**: Connect this output device to AudioPipeline Layer 4 with SPMC writer
         // Use power-of-2 chunk sizes for optimal performance
+        // OutputWorker will dynamically adjust these based on actual input rates
         let chunk_size = if native_sample_rate >= 44100 {
             1024 // High sample rates use 1024 samples (~21ms at 48kHz, ~23ms at 44.1kHz)
         } else {

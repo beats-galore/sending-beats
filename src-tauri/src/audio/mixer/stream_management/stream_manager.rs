@@ -207,4 +207,15 @@ impl StreamManager {
       );
         Ok(())
     }
+
+    /// Update hardware buffer size for a CoreAudio output stream
+    #[cfg(target_os = "macos")]
+    pub fn update_coreaudio_output_buffer_size(&self, device_id: &str, target_frames: u32) -> Result<()> {
+        if let Some(stream) = self.coreaudio_streams.get(device_id) {
+            stream.set_dynamic_buffer_size(target_frames)?;
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("CoreAudio stream '{}' not found", device_id))
+        }
+    }
 }

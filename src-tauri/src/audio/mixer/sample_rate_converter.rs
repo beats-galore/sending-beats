@@ -1,7 +1,7 @@
 use anyhow::Result;
 use r8brain_rs::{PrecisionProfile, Resampler as R8BrainResampler};
 use rubato::{
-    FastFixedIn, PolynomialDegree, Resampler as RubatoResampler, SincFixedIn,
+    FastFixedIn, FftFixedOut, PolynomialDegree, Resampler as RubatoResampler, SincFixedIn, SincFixedOut,
     SincInterpolationParameters, SincInterpolationType, WindowFunction,
 };
 /// Sample Rate Converter for Dynamic Audio Buffer Conversion
@@ -17,6 +17,10 @@ enum ResamplerType {
     HighQuality(SincFixedIn<f32>),
     /// Fast fixed interpolation (lower quality, much lower CPU)
     Fast(FastFixedIn<f32>),
+    /// **PRE-BUFFERING**: Fixed output size resampler (accumulate input until we can produce exact output)
+    FixedOutput(SincFixedOut<f32>),
+    /// **FAST PRE-BUFFERING**: FFT-based fixed output size resampler (faster, good quality)
+    FastFixedOutput(FftFixedOut<f32>),
 }
 
 /// Professional sample rate converter using Rubato's windowed sinc interpolation
@@ -123,6 +127,127 @@ impl RubatoSRC {
         );
 
         Self::with_max_frames_fast(input_rate, output_rate, suggested_max_frames)
+    }
+
+    /// Create a pre-buffering resampler with fixed output chunk size (your suggested approach)
+    /// This accumulates input samples until it has enough to produce exactly the desired output size
+    ///
+    /// # Arguments
+    /// * `input_rate` - Input sample rate in Hz (e.g., 48000)
+    /// * `output_rate` - Output sample rate in Hz (e.g., 44100)
+    /// * `target_output_chunk_size` - Exact number of output frames desired (e.g., 1024)
+    ///
+    /// # Returns
+    /// Resampler that produces exactly `target_output_chunk_size` frames per conversion
+    pub fn new_with_fixed_output(
+        input_rate: f32,
+        output_rate: f32,
+        target_output_chunk_size: usize,
+    ) -> Result<Self, String> {
+        println!(
+            "🔧 PREBUFFER_RESAMPLER: Creating SincFixedOut resampler {}Hz→{}Hz with {} output frames",
+            input_rate, output_rate, target_output_chunk_size
+        );
+
+        // Configure high-quality sinc interpolation parameters
+        let params = SincInterpolationParameters {
+            sinc_len: 256,                                // High-quality sinc filter length
+            f_cutoff: 0.95,                               // Conservative cutoff to prevent aliasing
+            interpolation: SincInterpolationType::Linear, // Linear interpolation between sinc samples
+            oversampling_factor: 256,                     // High oversampling for quality
+            window: WindowFunction::BlackmanHarris2,      // Excellent side-lobe suppression
+        };
+
+        // Create Rubato's fixed-output-size resampler
+        let resampler = SincFixedOut::new(
+            output_rate as f64 / input_rate as f64, // resample_ratio
+            2.0, // Maximum ratio change (for future dynamic adjustment)
+            params,
+            target_output_chunk_size, // Fixed OUTPUT chunk size (this is the key difference)
+            2,                        // Number of channels (stereo)
+        )
+        .map_err(|e| format!("Failed to create SincFixedOut resampler: {}", e))?;
+
+        // Calculate maximum input frames needed to produce target output
+        let max_input_frames = ((target_output_chunk_size as f64 * input_rate as f64 / output_rate as f64).ceil() as usize) + 64; // Extra headroom
+
+        println!(
+            "🔧 PREBUFFER_CALC: Need ~{} input frames to produce {} output frames (ratio: {:.3})",
+            max_input_frames, target_output_chunk_size, input_rate / output_rate
+        );
+
+        // Pre-allocate buffers for zero-allocation processing
+        let input_buffer = vec![vec![0.0; max_input_frames]; 2]; // 2 channels for stereo
+        let output_buffer = vec![vec![0.0; target_output_chunk_size]; 2]; // Exact output size
+
+        Ok(Self {
+            resampler: ResamplerType::FixedOutput(resampler),
+            input_buffer,
+            output_buffer,
+            input_rate,
+            output_rate,
+            ratio: output_rate / input_rate,
+            max_input_frames,
+            accumulator: Vec::new(), // May still need for partial input accumulation
+            target_output_chunk_size,
+            reusable_result_buffer: Vec::with_capacity(target_output_chunk_size * 2), // Exact output size
+        })
+    }
+
+    /// Create a FAST pre-buffering resampler with fixed output chunk size using FFT
+    /// Much faster than SincFixedOut, good quality, ideal for real-time audio
+    ///
+    /// # Arguments
+    /// * `input_rate` - Input sample rate in Hz (e.g., 48000)
+    /// * `output_rate` - Output sample rate in Hz (e.g., 44100)
+    /// * `target_output_chunk_size` - Exact number of output frames desired (e.g., 512)
+    ///
+    /// # Returns
+    /// Fast FFT-based resampler that produces exactly `target_output_chunk_size` frames per conversion
+    pub fn new_with_fast_fixed_output(
+        input_rate: f32,
+        output_rate: f32,
+        target_output_chunk_size: usize,
+    ) -> Result<Self, String> {
+        println!(
+            "🚀 FAST_PREBUFFER: Creating FftFixedOut resampler {}Hz→{}Hz with {} output frames",
+            input_rate, output_rate, target_output_chunk_size
+        );
+
+        // Create Rubato's FFT-based fixed-output-size resampler (much faster than Sinc)
+        let resampler = FftFixedOut::new(
+            input_rate as usize,         // input sample rate
+            output_rate as usize,        // output sample rate
+            target_output_chunk_size,    // Fixed OUTPUT chunk size
+            4,                           // sub_chunks: desired number of subchunks for processing
+            2,                           // Number of channels (stereo)
+        )
+        .map_err(|e| format!("Failed to create FftFixedOut resampler: {}", e))?;
+
+        // Calculate maximum input frames needed to produce target output
+        let max_input_frames = ((target_output_chunk_size as f64 * input_rate as f64 / output_rate as f64).ceil() as usize) + 64;
+
+        println!(
+            "🚀 FAST_PREBUFFER_CALC: Need ~{} input frames to produce {} output frames (ratio: {:.3})",
+            max_input_frames, target_output_chunk_size, input_rate / output_rate
+        );
+
+        // Pre-allocate buffers for zero-allocation processing
+        let input_buffer = vec![vec![0.0; max_input_frames]; 2]; // 2 channels for stereo
+        let output_buffer = vec![vec![0.0; target_output_chunk_size]; 2]; // Exact output size
+
+        Ok(Self {
+            resampler: ResamplerType::FastFixedOutput(resampler),
+            input_buffer,
+            output_buffer,
+            input_rate,
+            output_rate,
+            ratio: output_rate / input_rate,
+            max_input_frames,
+            accumulator: Vec::new(), // May still need for partial input accumulation
+            target_output_chunk_size,
+            reusable_result_buffer: Vec::with_capacity(target_output_chunk_size * 2), // Exact output size
+        })
     }
 
     /// Create a low-artifact resampler for testing (reduced quality but fewer artifacts)
@@ -430,6 +555,13 @@ impl RubatoSRC {
             ResamplerType::Fast(resampler) => {
                 resampler.set_resample_ratio(ratio, true);
             }
+            ResamplerType::FixedOutput(resampler) => {
+                resampler.set_resample_ratio(ratio, true);
+            }
+            ResamplerType::FastFixedOutput(_resampler) => {
+                // FastFixedOutput doesn't support ratio changes (returns SyncNotAdjustable)
+                // This is expected for FFT-based fixed output resamplers
+            }
         }
         Ok(())
     }
@@ -482,6 +614,8 @@ impl RubatoSRC {
                     input_frames
                 }
             }
+            ResamplerType::FixedOutput(_) => input_frames, // SincFixedOut supports variable input sizes
+            ResamplerType::FastFixedOutput(_) => input_frames, // FftFixedOut supports variable input sizes
         };
 
         if input_frames == 0 {
@@ -522,6 +656,20 @@ impl RubatoSRC {
                     // We'll handle this by limiting the input size below
                 }
             }
+            ResamplerType::FixedOutput(resampler) => {
+                // SincFixedOut supports variable input sizes like SincFixedIn
+                if let Err(e) = resampler.set_chunk_size(input_frames) {
+                    println!(
+                        "❌ RUBATO_FIXEDOUT_ERROR: Failed to set input chunk size to {}: {}",
+                        input_frames, e
+                    );
+                    return Vec::new();
+                }
+            }
+            ResamplerType::FastFixedOutput(_resampler) => {
+                // FftFixedOut doesn't support dynamic chunk sizes - it produces fixed output
+                // Input size is variable, no need to set chunk size
+            }
         }
 
         // BUFFER RECREATION DEBUG: Check if we're constantly resizing (bad for performance and continuity)
@@ -547,6 +695,8 @@ impl RubatoSRC {
         let frames_to_fill = match &self.resampler {
             ResamplerType::HighQuality(_) => input_frames, // Only fill what we have
             ResamplerType::Fast(_) => self.max_input_frames, // Always fill the fixed size
+            ResamplerType::FixedOutput(_) => input_frames, // Variable input size, fixed output size
+            ResamplerType::FastFixedOutput(_) => input_frames, // Variable input size, fixed output size
         };
 
         // Clear the buffer portion we'll use
@@ -588,6 +738,8 @@ impl RubatoSRC {
         let processing_frames = match &self.resampler {
             ResamplerType::HighQuality(_) => input_frames,
             ResamplerType::Fast(_) => frames_to_fill, // Use the padded size for output calculation
+            ResamplerType::FixedOutput(_) => input_frames, // Variable input, fixed output
+            ResamplerType::FastFixedOutput(_) => input_frames, // Variable input, fixed output
         };
         let max_output_frames = ((processing_frames as f64 * self.output_rate as f64
             / self.input_rate as f64)
@@ -607,12 +759,20 @@ impl RubatoSRC {
             self.output_buffer[1][i] = 0.0;
         }
 
-        // Perform resampling with dynamic output sizing (high-quality or fast)
+        // Perform resampling with dynamic output sizing (high-quality, fast, or fixed-output)
         let process_result = match &mut self.resampler {
             ResamplerType::HighQuality(resampler) => {
                 resampler.process_into_buffer(&self.input_buffer, &mut self.output_buffer, None)
             }
             ResamplerType::Fast(resampler) => {
+                resampler.process_into_buffer(&self.input_buffer, &mut self.output_buffer, None)
+            }
+            ResamplerType::FixedOutput(resampler) => {
+                // **PRE-BUFFERING**: This type produces exactly target_output_chunk_size frames
+                resampler.process_into_buffer(&self.input_buffer, &mut self.output_buffer, None)
+            }
+            ResamplerType::FastFixedOutput(resampler) => {
+                // **FAST PRE-BUFFERING**: FFT-based fixed output resampler (faster, good quality)
                 resampler.process_into_buffer(&self.input_buffer, &mut self.output_buffer, None)
             }
         };
@@ -627,17 +787,40 @@ impl RubatoSRC {
                     std::sync::atomic::Ordering::Relaxed,
                 );
 
-                // RATIO DEBUG: Check if resampling ratio matches expected
-                let expected_output_frames = (input_frames as f64 * self.output_rate as f64
-                    / self.input_rate as f64)
-                    .round() as usize;
-                let ratio_error =
-                    (output_frames_generated as f64 - expected_output_frames as f64).abs();
-                if ratio_error > 2.0 {
-                    println!(
-                        "⚠️ RATIO_MISMATCH: Expected ~{} output frames, got {} (error: {:.1})",
-                        expected_output_frames, output_frames_generated, ratio_error
-                    );
+                // RATIO DEBUG: Check if resampling ratio matches expected (skip for FixedOutput types)
+                match &self.resampler {
+                    ResamplerType::FixedOutput(_) => {
+                        // **PRE-BUFFERING**: SincFixedOut produces exact target size, not ratio-based size
+                        if output_frames_generated != self.target_output_chunk_size {
+                            println!(
+                                "⚠️ FIXEDOUT_SIZE_MISMATCH: Expected exactly {} output frames, got {}",
+                                self.target_output_chunk_size, output_frames_generated
+                            );
+                        }
+                    }
+                    ResamplerType::FastFixedOutput(_) => {
+                        // **FAST PRE-BUFFERING**: FftFixedOut also produces exact target size, not ratio-based size
+                        if output_frames_generated != self.target_output_chunk_size {
+                            println!(
+                                "⚠️ FASTFIXEDOUT_SIZE_MISMATCH: Expected exactly {} output frames, got {}",
+                                self.target_output_chunk_size, output_frames_generated
+                            );
+                        }
+                    }
+                    _ => {
+                        // Dynamic output: check ratio accuracy for variable output resamplers
+                        let expected_output_frames = (input_frames as f64 * self.output_rate as f64
+                            / self.input_rate as f64)
+                            .round() as usize;
+                        let ratio_error =
+                            (output_frames_generated as f64 - expected_output_frames as f64).abs();
+                        if ratio_error > 2.0 {
+                            println!(
+                                "⚠️ RATIO_MISMATCH: Expected ~{} output frames, got {} (error: {:.1})",
+                                expected_output_frames, output_frames_generated, ratio_error
+                            );
+                        }
+                    }
                 }
 
                 // **PERFORMANCE FIX**: Use reusable buffer to eliminate Vec allocation on every convert() call
@@ -722,6 +905,8 @@ impl RubatoSRC {
         match &self.resampler {
             ResamplerType::HighQuality(resampler) => resampler.output_delay() as f32,
             ResamplerType::Fast(resampler) => resampler.output_delay() as f32,
+            ResamplerType::FixedOutput(resampler) => resampler.output_delay() as f32,
+            ResamplerType::FastFixedOutput(resampler) => resampler.output_delay() as f32,
         }
     }
 

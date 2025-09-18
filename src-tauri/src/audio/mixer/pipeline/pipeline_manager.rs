@@ -7,6 +7,7 @@
 // - Provides unified API for audio system integration
 
 use anyhow::Result;
+use colored::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -33,6 +34,10 @@ pub struct AudioPipeline {
     mixing_layer: MixingLayer,
     output_workers: HashMap<String, OutputWorker>,
 
+    // Hardware communication (macOS CoreAudio only)
+    #[cfg(target_os = "macos")]
+    hardware_update_tx: Option<tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>>,
+
     // State tracking
     is_running: bool,
     devices_registered: usize,
@@ -42,7 +47,8 @@ impl AudioPipeline {
     /// Create a new audio pipeline
     pub fn new(max_sample_rate: u32) -> Self {
         info!(
-            "🏗️ AUDIO_PIPELINE: Creating new 4-layer audio pipeline (max rate: {} Hz)",
+            "🏗️ {}: Creating new 4-layer audio pipeline (max rate: {} Hz)",
+            "AUDIO_PIPELINE".bright_blue(),
             max_sample_rate
         );
 
@@ -52,9 +58,42 @@ impl AudioPipeline {
             input_workers: HashMap::new(),
             mixing_layer: MixingLayer::new(max_sample_rate),
             output_workers: HashMap::new(),
+            #[cfg(target_os = "macos")]
+            hardware_update_tx: None,
             is_running: false,
             devices_registered: 0,
         }
+    }
+
+    /// Create a new audio pipeline with hardware update channel (macOS only)
+    #[cfg(target_os = "macos")]
+    pub fn new_with_hardware_updates(
+        max_sample_rate: u32,
+        hardware_update_tx: Option<tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>>
+    ) -> Self {
+        info!(
+            "🏗️ {}: Creating new 4-layer audio pipeline with hardware updates (max rate: {} Hz)",
+            "AUDIO_PIPELINE".bright_blue(),
+            max_sample_rate
+        );
+
+        Self {
+            max_sample_rate,
+            queues: PipelineQueues::new(),
+            input_workers: HashMap::new(),
+            mixing_layer: MixingLayer::new(max_sample_rate),
+            output_workers: HashMap::new(),
+            hardware_update_tx,
+            is_running: false,
+            devices_registered: 0,
+        }
+    }
+
+    /// Set hardware update channel for dynamic CoreAudio buffer management (macOS only)
+    #[cfg(target_os = "macos")]
+    pub fn set_hardware_update_channel(&mut self, tx: tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>) {
+        self.hardware_update_tx = Some(tx);
+        tracing::info!("🔗 AudioPipeline: Hardware update channel connected for dynamic buffer management");
     }
 
     fn get_all_sample_rates(&self) -> Vec<(String, u32)> {
@@ -225,8 +264,32 @@ impl AudioPipeline {
         // Add sender to mixing layer for broadcast
         self.mixing_layer.add_output_sender(mixed_tx);
 
-        // Create output worker for this device (with SPMC writer if provided)
+        // Create output worker for this device (with SPMC writer and hardware updates if available)
         let mut output_worker = if let Some(spmc_writer) = spmc_writer {
+            // **HARDWARE SYNC**: Use new constructor with hardware update channel on macOS
+            #[cfg(target_os = "macos")]
+            if let Some(ref hardware_tx) = self.hardware_update_tx {
+                tracing::info!("🔗 {}: Creating OutputWorker with HARDWARE UPDATES for {}", "PIPELINE".bright_blue(), device_id);
+                OutputWorker::new_with_hardware_updates(
+                    device_id.clone(),
+                    device_sample_rate,
+                    chunk_size,
+                    mixed_rx,
+                    Some(spmc_writer),
+                    hardware_tx.clone(),
+                )
+            } else {
+                tracing::info!("⚠️ {}: Creating OutputWorker WITHOUT hardware updates for {}", "PIPELINE".bright_blue(), device_id);
+                OutputWorker::new_with_spmc_writer(
+                    device_id.clone(),
+                    device_sample_rate,
+                    chunk_size,
+                    mixed_rx,
+                    Some(spmc_writer),
+                )
+            }
+
+            #[cfg(not(target_os = "macos"))]
             OutputWorker::new_with_spmc_writer(
                 device_id.clone(),
                 device_sample_rate,

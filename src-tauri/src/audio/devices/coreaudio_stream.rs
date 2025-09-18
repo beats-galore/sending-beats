@@ -3,16 +3,16 @@ use crate::types::{COMMON_SAMPLE_RATES_HZ, DEFAULT_SAMPLE_RATE};
 use anyhow::Result;
 use colored::*;
 use coreaudio_sys::{
-    kAudioDevicePropertyNominalSampleRate, kAudioDevicePropertyStreamFormat,
+    kAudioDevicePropertyBufferFrameSize, kAudioDevicePropertyNominalSampleRate, kAudioDevicePropertyStreamFormat,
     kAudioFormatFlagIsFloat, kAudioFormatFlagIsNonInterleaved, kAudioFormatFlagIsPacked,
-    kAudioFormatLinearPCM, kAudioObjectPropertyElementMaster, kAudioObjectPropertyScopeInput,
+    kAudioFormatLinearPCM, kAudioObjectPropertyElementMaster, kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput,
     kAudioOutputUnitProperty_CurrentDevice, kAudioOutputUnitProperty_EnableIO,
     kAudioOutputUnitProperty_SetInputCallback, kAudioUnitManufacturer_Apple,
     kAudioUnitProperty_SetRenderCallback, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Global,
     kAudioUnitScope_Input, kAudioUnitScope_Output, kAudioUnitSubType_HALOutput,
     kAudioUnitType_Output, AURenderCallbackStruct, AudioBufferList, AudioComponentDescription,
     AudioComponentFindNext, AudioComponentInstanceDispose, AudioComponentInstanceNew,
-    AudioDeviceID, AudioObjectGetPropertyData, AudioObjectPropertyAddress, AudioOutputUnitStart,
+    AudioDeviceID, AudioObjectGetPropertyData, AudioObjectPropertyAddress, AudioObjectSetPropertyData, AudioOutputUnitStart,
     AudioOutputUnitStop, AudioStreamBasicDescription, AudioTimeStamp, AudioUnit,
     AudioUnitGetProperty, AudioUnitInitialize, AudioUnitRender, AudioUnitRenderActionFlags,
     AudioUnitSetProperty, AudioUnitUninitialize, OSStatus,
@@ -20,6 +20,7 @@ use coreaudio_sys::{
 use std::os::raw::c_void;
 use std::ptr;
 use tracing::info;
+use colored::*;
 
 /// Get the native sample rate of a CoreAudio device
 pub fn get_device_native_sample_rate(device_id: AudioDeviceID) -> Result<u32> {
@@ -56,6 +57,50 @@ pub fn get_device_native_sample_rate(device_id: AudioDeviceID) -> Result<u32> {
             device_id,
             status
         ))
+    }
+}
+
+/// Set the buffer frame size for a CoreAudio device (enables dynamic chunk sizing)
+pub fn set_device_buffer_frame_size(device_id: AudioDeviceID, buffer_frames: u32, is_output: bool) -> Result<()> {
+    let scope = if is_output {
+        kAudioObjectPropertyScopeOutput
+    } else {
+        kAudioObjectPropertyScopeInput
+    };
+
+    let status = unsafe {
+        AudioObjectSetPropertyData(
+            device_id,
+            &AudioObjectPropertyAddress {
+                mSelector: kAudioDevicePropertyBufferFrameSize,
+                mScope: scope,
+                mElement: kAudioObjectPropertyElementMaster,
+            },
+            0,
+            std::ptr::null(),
+            std::mem::size_of::<u32>() as u32,
+            &buffer_frames as *const _ as *const c_void,
+        )
+    };
+
+    if status == 0 {
+        info!(
+            "🎯 {}: Set device {} buffer to {} frames ({} scope)",
+            "DYNAMIC_BUFFER_SIZE".cyan(),
+            device_id,
+            buffer_frames,
+            if is_output { "output" } else { "input" }
+        );
+        Ok(())
+    } else {
+        // Note: Some devices may not support buffer size changes, this is not always an error
+        info!(
+            "⚠️ {}: Could not set buffer size for device {} (status: {}) - using hardware default",
+            "DYNAMIC_BUFFER_SIZE".yellow(),
+            device_id,
+            status
+        );
+        Ok(()) // Don't fail - just use hardware default
     }
 }
 use std::sync::{
@@ -502,6 +547,28 @@ impl CoreAudioOutputStream {
     pub fn is_running(&self) -> bool {
         *self.is_running.lock().unwrap()
     }
+
+    /// Set dynamic buffer size to match OutputWorker's adaptive chunk sizing
+    /// This enables hardware-software pipeline synchronization
+    pub fn set_dynamic_buffer_size(&self, target_frames: u32) -> Result<()> {
+        // For stereo output, we want frames (not samples)
+        // 512 samples = 256 frames for stereo
+        let buffer_frames = target_frames / self.channels as u32;
+
+        info!(
+            "🔄 {}: Updating {} to {} frames ({} samples, {} channels)",
+            "DYNAMIC_HARDWARE_BUFFER".green(),
+            self.device_name,
+            buffer_frames,
+            target_frames,
+            self.channels
+        );
+
+        // Set the hardware buffer size to match our pipeline
+        set_device_buffer_frame_size(self.device_id, buffer_frames, true)?;
+
+        Ok(())
+    }
 }
 
 
@@ -605,8 +672,8 @@ extern "C" fn spmc_render_callback(
                                             let count = TRANSITION_COUNT
                                                 .fetch_add(1, Ordering::Relaxed)
                                                 + 1;
-                                            if count <= 10 || count % 100 == 0 {
-                                                info!("🔔 OUTPUT_TRANSITION: Queue became empty - notified processing (#{}) ⚡", count);
+                                            if count <= 10 || count % 1000 == 0 {
+                                                info!("🔔 {}: Queue became empty - notified processing (#{}) ⚡", "OUTPUT_TRANSITION".blue(), count);
                                             }
                                         }
                                     }
@@ -636,7 +703,8 @@ extern "C" fn spmc_render_callback(
                                 let peak = (0..samples_to_fill)
                                     .map(|i| unsafe { *output_data.add(i) }.abs())
                                     .fold(0.0f32, f32::max);
-                                info!("🎵 SPMC_COREAUDIO [{}]: Playing {} samples (call #{}), read: {}, peak: {:.4})",
+                                info!("🎵 {} [{}]: Playing {} samples (call #{}), read: {}, peak: {:.4})",
+                                "SPMC_COREAUDIO".blue(),
                                     "CoreAudio", samples_to_fill, SPMC_PLAYBACK_COUNT, samples_read, peak);
                             }
                         }
@@ -1224,7 +1292,7 @@ extern "C" fn coreaudio_input_callback(
                 let rms =
                     (samples.iter().map(|&s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
                 info!("🎤 {} [{}]: Captured {} frames ({}), wrote: {}, dropped: {}, peak: {:.4}, rms: {:.4} ⚡NOTIFIED",
-                "COREAUDIO_INPUT (1st layer)".blue(),
+                "COREAUDIO_INPUT (1st layer)".magenta(),
                     context.device_name, frames_needed, INPUT_CAPTURE_COUNT, samples_written, samples_dropped, peak, rms);
             }
         }

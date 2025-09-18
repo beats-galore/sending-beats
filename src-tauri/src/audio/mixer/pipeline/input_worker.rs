@@ -71,6 +71,49 @@ impl InputWorker {
         }
     }
 
+
+    /// Static helper function to get or initialize resampler in async context
+    /// This can be used in the worker thread where we don't have access to &mut self
+    fn get_or_initialize_resampler_static<'a>(
+        resampler: &'a mut Option<RubatoSRC>,
+        device_sample_rate: u32,
+        target_sample_rate: u32,
+        device_id: &str,
+    ) -> Option<&'a mut RubatoSRC> {
+        let sample_rate_difference = (device_sample_rate as f32 - target_sample_rate as f32).abs();
+
+        // No resampling needed if rates are close (within 1 Hz)
+        if sample_rate_difference <= 1.0 {
+            return None;
+        }
+
+        // Initialize resampler if not already created
+        if resampler.is_none() {
+            match RubatoSRC::new_fast(
+                device_sample_rate as f32,
+                target_sample_rate as f32,
+            ) {
+                Ok(new_resampler) => {
+                    info!(
+                        "🚀 INPUT_WORKER: Created FAST resampler for {} ({} Hz → {} Hz)",
+                        device_id, device_sample_rate, target_sample_rate
+                    );
+                    *resampler = Some(new_resampler);
+                }
+                Err(e) => {
+                    error!(
+                        "❌ INPUT_WORKER: Failed to create resampler for {}: {}",
+                        device_id, e
+                    );
+                    return None;
+                }
+            }
+        }
+
+        // Return mutable reference to the resampler
+        resampler.as_mut()
+    }
+
     /// Start the input processing worker thread
     pub fn start(&mut self) -> Result<()> {
         let device_id = self.device_id.clone();
@@ -83,12 +126,14 @@ impl InputWorker {
         let input_notifier = self.input_notifier.clone();
         let processed_output_tx = self.processed_output_tx.clone();
 
+        // Move the resampler from struct to worker thread (proper ownership transfer)
+        let mut resampler = self.resampler.take();
+
         // Create new effects chain for worker thread (AudioEffectsChain doesn't implement Clone)
         let mut effects_chain = AudioEffectsChain::new(target_sample_rate);
 
         // Spawn dedicated worker thread that waits for RTRB notifications
         let worker_handle = tokio::spawn(async move {
-            let mut resampler: Option<RubatoSRC> = None;
             let mut samples_processed = 0u64;
 
             info!(
@@ -141,41 +186,16 @@ impl InputWorker {
                 let original_samples_len = samples.len();
 
                 // Step 1: Resample to target sample rate if needed
-                let resampled_samples = if (device_sample_rate as f32 - target_sample_rate as f32)
-                    .abs()
-                    > 1.0
-                {
-                    // Create resampler if needed (persistent across calls)
-                    if resampler.is_none() {
-                        match RubatoSRC::new_fast(
-                            device_sample_rate as f32,
-                            target_sample_rate as f32,
-                        ) {
-                            Ok(new_resampler) => {
-                                info!(
-                                        "🚀 INPUT_WORKER: Created FAST resampler for {} ({} Hz → {} Hz)",
-                                        device_id, device_sample_rate, target_sample_rate
-                                    );
-                                resampler = Some(new_resampler);
-                            }
-                            Err(e) => {
-                                error!(
-                                    "❌ INPUT_WORKER: Failed to create resampler for {}: {}",
-                                    device_id, e
-                                );
-                                // No resampler created - will use original samples below
-                            }
-                        };
-                    }
-
-                    // Resample using persistent resampler
-                    if let Some(ref mut resampler) = resampler {
-                        resampler.convert(&samples)
-                    } else {
-                        samples.clone()
-                    }
+                let resampled_samples = if let Some(active_resampler) = Self::get_or_initialize_resampler_static(
+                    &mut resampler,
+                    device_sample_rate,
+                    target_sample_rate,
+                    &device_id,
+                ) {
+                    // Resample using the active resampler
+                    active_resampler.convert(&samples)
                 } else {
-                    // No resampling needed
+                    // No resampling needed or resampler creation failed
                     samples.clone()
                 };
 
