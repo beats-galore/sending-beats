@@ -1,3 +1,5 @@
+use anyhow::Result;
+
 use super::compressor::Compressor;
 use super::equalizer::{EQBand, ThreeBandEqualizer};
 use super::filter::BiquadFilter;
@@ -20,7 +22,7 @@ impl AudioEffectsChain {
             equalizer: ThreeBandEqualizer::new(sample_rate),
             compressor: Compressor::new(sample_rate),
             limiter: Limiter::new(sample_rate),
-            enabled: true,
+            enabled: false,
         }
     }
 
