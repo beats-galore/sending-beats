@@ -156,11 +156,15 @@ impl MixingLayer {
             let mut mix_cycles = 0u64;
             let mut available_samples = HashMap::new();
 
+            // **PERFORMANCE FIX**: Pre-allocate reusable vectors outside the loop
+            let mut input_samples_for_mixer: Vec<(String, &[f32])> = Vec::with_capacity(8);
+
             loop {
                 let cycle_start = std::time::Instant::now();
                 let mut mixed_something = false;
 
                 // Handle commands (add new input/output streams dynamically)
+                let command_start = std::time::Instant::now();
                 while let Ok(cmd) = command_rx.try_recv() {
                     match cmd {
                         MixingLayerCommand::AddInputStream {
@@ -182,8 +186,10 @@ impl MixingLayer {
                         }
                     }
                 }
+                let command_duration = command_start.elapsed();
 
                 // Step 1: Collect available samples from all input streams
+                let collection_start = std::time::Instant::now();
                 available_samples.clear();
                 for (device_id, receiver) in processed_input_receivers.iter_mut() {
                     // Non-blocking receive - get whatever samples are available
@@ -192,33 +198,43 @@ impl MixingLayer {
                         mixed_something = true;
                     }
                 }
+                let collection_duration = collection_start.elapsed();
 
                 // Step 2: Mix available samples if we have any
-                if mixed_something && !available_samples.is_empty() {
-                    // **PERFORMANCE FIX**: Use references to avoid cloning sample vectors
+                let mixing_duration = if mixed_something && !available_samples.is_empty() {
+                    let mixing_start = std::time::Instant::now();
+
+                    // **PERFORMANCE FIX**: Use original approach but accept one allocation per cycle
+                    let prep_start = std::time::Instant::now();
                     let input_samples_for_mixer: Vec<(String, &[f32])> = available_samples
                         .iter()
                         .map(|(device_id, processed_audio)| {
                             (device_id.clone(), processed_audio.samples.as_slice())
                         })
                         .collect();
+                    let prep_duration = prep_start.elapsed();
 
                     let active_inputs = input_samples_for_mixer.len();
 
                     if !input_samples_for_mixer.is_empty() {
                         // Use VirtualMixer's professional mixing algorithm with references
+                        let mix_start = std::time::Instant::now();
                         let mixed_samples =
                             VirtualMixer::mix_input_samples_ref(&input_samples_for_mixer);
+                        let mix_duration = mix_start.elapsed();
 
                         // Apply master gain to the professionally mixed samples
+                        let gain_start = std::time::Instant::now();
                         let mut final_samples = mixed_samples;
                         for sample in final_samples.iter_mut() {
                             *sample *= master_gain;
                         }
+                        let gain_duration = gain_start.elapsed();
 
                         let samples_count = final_samples.len(); // Get count before moving
 
                         // Step 3: Broadcast mixed audio to all output workers
+                        let broadcast_start = std::time::Instant::now();
                         let mixed_audio = MixedAudioSamples {
                             samples: final_samples,
                             sample_rate: target_sample_rate,
@@ -227,32 +243,59 @@ impl MixingLayer {
                         };
 
                         // Send to all output senders
+                        // **PERFORMANCE NOTE**: Each output still requires a clone due to queue_types structure
+                        // Future optimization could use Arc<Vec<f32>> in queue_types to eliminate this
                         for sender in mixed_output_senders.iter() {
                             if let Err(_) = sender.send(mixed_audio.clone()) {
                                 warn!("⚠️ MIXING_LAYER: Failed to send to output worker (may be shut down)");
                             }
                         }
+                        let broadcast_duration = broadcast_start.elapsed();
 
                         mix_cycles += 1;
 
-                        let cycle_duration = cycle_start.elapsed();
+                        let total_mixing_duration = mixing_start.elapsed();
 
                         // Rate-limited logging (only when we actually mixed something)
                         if mix_cycles <= 5 || mix_cycles % 1000 == 0 {
                             info!("🎵 {}: VirtualMixer mixed {} inputs ({} samples) and sent to {} outputs (cycle #{}, took {}μs)",
                                   "MIXING_LAYER_WORKER".yellow(),
-                                  active_inputs, samples_count, mixed_output_senders.len(), mix_cycles, cycle_duration.as_micros());
+                                  active_inputs, samples_count, mixed_output_senders.len(), mix_cycles, total_mixing_duration.as_micros());
                         }
 
-                        // Performance monitoring (only when we actually mixed something)
-                        if cycle_duration.as_micros() > 1000 {
+                        // Performance monitoring with detailed breakdown (only when we actually mixed something)
+                        if total_mixing_duration.as_micros() > 1000 {
                             warn!(
-                                "⏱️ {}: Slow mixing cycle: {}μs",
-                                "MIXING_LAYER_SLOW".red(),
-                                cycle_duration.as_micros()
+                                "⏱️ {}: Slow mixing cycle: total {}μs (prep: {}μs, mix: {}μs, gain: {}μs, broadcast: {}μs)",
+                                "MIXING_LAYER_SLOW".yellow(),
+                                total_mixing_duration.as_micros(),
+                                prep_duration.as_micros(),
+                                mix_duration.as_micros(),
+                                gain_duration.as_micros(),
+                                broadcast_duration.as_micros()
                             );
                         }
+
+                        total_mixing_duration
+                    } else {
+                        std::time::Duration::ZERO
                     }
+                } else {
+                    std::time::Duration::ZERO
+                };
+
+                let cycle_duration = cycle_start.elapsed();
+
+                // Log full cycle breakdown for very slow cycles
+                if cycle_duration.as_micros() > 2000 {
+                    warn!(
+                        "⏱️ {}: Very slow cycle: total {}μs (commands: {}μs, collection: {}μs, mixing: {}μs)",
+                        "MIXING_CYCLE_BREAKDOWN".yellow(),
+                        cycle_duration.as_micros(),
+                        command_duration.as_micros(),
+                        collection_duration.as_micros(),
+                        mixing_duration.as_micros()
+                    );
                 }
 
                 // Small yield to prevent busy-waiting

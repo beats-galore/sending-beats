@@ -264,7 +264,7 @@ impl OutputWorker {
                             } else {
                                 info!(
                                     "📡 {}: Sent hardware buffer update to {} frames",
-                                    "HARDWARE_SYNC_COMMAND".cyan(),
+                                    "HARDWARE_SYNC_COMMAND".purple(),
                                     adaptive_chunk_size
                                 );
                             }
@@ -315,7 +315,7 @@ impl OutputWorker {
                     {
                         info!(
                             "🔄 {}: {} resampled {} → {} samples in {}μs ({}Hz→{}Hz, ratio: {:.3})",
-                            "RESAMPLER_TIMING".cyan(),
+                            "RESAMPLER_TIMING".purple(),
                             device_id,
                             mixed_audio.samples.len(),
                             resampled.len(),
@@ -414,7 +414,7 @@ impl OutputWorker {
                     if accum_count < 10 || accum_count % 1000 == 0 {
                         info!(
                             "🔄 {}: {} accumulated {} samples (buffer: {}/{}, chunks_sent: {})",
-                            "ACCUMULATION".cyan(),
+                            "ACCUMULATION".purple(),
                             device_id,
                             device_samples.len(),
                             accumulation_buffer.len(),
@@ -458,10 +458,10 @@ impl OutputWorker {
                 use std::sync::atomic::{AtomicU64, Ordering};
                 static OUTPUT_WORKER_COUNT: AtomicU64 = AtomicU64::new(0);
                 let count = OUTPUT_WORKER_COUNT.fetch_add(1, Ordering::Relaxed);
-                if processing_duration.as_micros() > 500 && (count <= 3 || count % 1000 == 0) {
+                if processing_duration.as_micros() > 1000 && count % 1000 == 0 {
                     warn!(
                         "🐌 {}: {} SLOW processing: {}μs (🔄resample: {}μs, spmc: {}μs) [FFT_FIXED_IN]",
-                        "OUTPUT_WORKER_SLOW".bright_red(),
+                        "OUTPUT_WORKER_SLOW".purple(),
                         device_id,
                         processing_duration.as_micros(),
                         resample_duration.as_micros(),

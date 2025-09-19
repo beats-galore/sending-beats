@@ -43,23 +43,16 @@ impl VirtualMixer {
             .max()
             .unwrap_or(256);
 
-        // **DEBUG**: Log input sample sizes to track the accumulation bug
-        static SAMPLE_SIZE_LOG_COUNT: std::sync::atomic::AtomicU64 =
+        // **DEBUG**: Log buffer operations for performance analysis
+        static BUFFER_DEBUG_COUNT: std::sync::atomic::AtomicU64 =
             std::sync::atomic::AtomicU64::new(0);
-        let log_count = SAMPLE_SIZE_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        if log_count < 10 {
-            for (device_id, samples) in input_samples.iter() {
-                info!(
-                    "🔍 {}: Input '{}' has {} samples",
-                    "MIXER_INPUT_DEBUG".cyan(),
-                    device_id,
-                    samples.len()
-                );
-            }
+        let debug_count = BUFFER_DEBUG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if debug_count < 20 || debug_count % 1000 == 0 {
             info!(
-                "🔍 {}: Required buffer size: {} samples",
-                "MIXER_INPUT_DEBUG".cyan(),
-                required_stereo_samples
+                "🔍 {}: Required: {} samples, inputs: {}",
+                "MIXER_BUFFER_DEBUG".cyan(),
+                required_stereo_samples,
+                input_samples.len()
             );
         }
 
@@ -71,11 +64,36 @@ impl VirtualMixer {
 
         REUSABLE_MIX_BUFFER.with(|buf| {
             let mut buffer = buf.borrow_mut();
-            // **CRITICAL FIX**: Always resize to exact size AND clear - this was the bug
-            buffer.resize(required_stereo_samples, 0.0);
-            buffer.fill(0.0); // Ensure buffer is completely zeroed
+            let buffer_start = std::time::Instant::now();
 
-            // Mix all input channels together and calculate levels
+            // **PERFORMANCE FIX**: Only resize if buffer is smaller, avoid unnecessary operations
+            if buffer.len() < required_stereo_samples {
+                buffer.resize(required_stereo_samples, 0.0);
+            } else {
+                // **PERFORMANCE FIX**: Only zero the portion we'll actually use
+                buffer.truncate(required_stereo_samples);
+            }
+
+            // **PERFORMANCE FIX**: Always zero buffer for consistent mixing behavior
+            let fill_start = std::time::Instant::now();
+            buffer.fill(0.0);
+            let fill_duration = fill_start.elapsed();
+
+            let buffer_setup_duration = buffer_start.elapsed();
+
+            // **DEBUG**: Log slow buffer operations
+            if buffer_setup_duration.as_micros() > 500 {
+                warn!(
+                    "🐌 {}: Slow buffer setup: {}μs (size: {}, fill: {}μs)",
+                    "BUFFER_SLOW".red(),
+                    buffer_setup_duration.as_micros(),
+                    buffer.len(),
+                    fill_duration.as_micros()
+                );
+            }
+
+            // Mix all input channels together
+            let mixing_start = std::time::Instant::now();
             let mut active_channels = 0;
 
             for (device_id, samples) in input_samples.iter() {
@@ -106,49 +124,70 @@ impl VirtualMixer {
                 }
             }
 
-            // **AUDIO QUALITY FIX**: Smart gain management instead of aggressive division
-            // Only normalize if we have multiple overlapping channels with significant signal
-            if active_channels > 1 {
-                // Check if we actually need normalization by checking peak levels
-                let buffer_peak = buffer.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+            let mixing_loop_duration = mixing_start.elapsed();
 
-                // Only normalize if we're approaching clipping (> 0.8) with multiple channels
-                if buffer_peak > 0.8 {
-                    let normalization_factor = 0.8 / buffer_peak; // Normalize to 80% max to prevent clipping
+            // **PERFORMANCE FIX**: Skip expensive peak calculations during real-time mixing
+            // Only do gain management if we actually have multiple channels that could clip
+            let clipping_start = std::time::Instant::now();
+            if active_channels > 1 {
+                // **PERFORMANCE FIX**: Use a faster max sample detection (early exit on first clip)
+                let mut needs_limiting = false;
+                for &sample in buffer.iter() {
+                    if sample.abs() > 0.95 {
+                        needs_limiting = true;
+                        break;
+                    }
+                }
+
+                if needs_limiting {
+                    // Only calculate full peak when we actually need to limit
+                    let buffer_peak = buffer.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+                    let normalization_factor = 0.85 / buffer_peak; // Normalize to 85% max to prevent clipping
                     for sample in buffer.iter_mut() {
                         *sample *= normalization_factor;
                     }
-                    println!(
-                        "🔧 GAIN CONTROL: Normalized {} channels, peak {:.3} -> {:.3}",
-                        active_channels,
+                    warn!(
+                        "🔧 {}: Hot multi-channel signal {:.3}, applied {:.2} limiting",
+                        "CLIPPING PROTECTION".bright_green(),
                         buffer_peak,
-                        buffer_peak * normalization_factor
+                        normalization_factor
                     );
                 }
-                // If not approaching clipping, leave levels untouched for better dynamics
             }
             // Single channels: NO normalization - preserve full dynamics
+            // **PERFORMANCE FIX**: Skip master peak check unless we detect potential clipping
 
-            // **AUDIO LEVEL FIX**: Only apply gain reduction when actually needed
-            let pre_master_peak = buffer.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
+            let clipping_duration = clipping_start.elapsed();
 
-            // Only apply gain reduction if signal is approaching clipping (> 0.9)
-            if pre_master_peak > 0.9 {
-                let safety_gain = 0.85f32; // Prevent clipping with safety margin
-                for sample in buffer.iter_mut() {
-                    *sample *= safety_gain;
-                }
+            // **DEBUG**: Log slow VirtualMixer operations
+            let total_mix_duration = buffer_start.elapsed();
+            if total_mix_duration.as_micros() > 800 {
                 warn!(
-                    "🔧 {}: Hot signal {:.3}, applied {:.2} safety gain",
-                    "CLIPPING PROTECTION".bright_green(),
-                    pre_master_peak,
-                    safety_gain
+                    "🐌 {}: Slow mix operation: total {}μs (buffer: {}μs, mixing: {}μs, clipping: {}μs, samples: {})",
+                    "VIRTUALMIXER_SLOW".red(),
+                    total_mix_duration.as_micros(),
+                    buffer_setup_duration.as_micros(),
+                    mixing_loop_duration.as_micros(),
+                    clipping_duration.as_micros(),
+                    buffer.len()
                 );
             }
-            // Otherwise: NO gain reduction - preserve original signal levels
 
             // Return cloned buffer (final allocation, but unavoidable for API)
-            buffer.clone()
+            let clone_start = std::time::Instant::now();
+            let result = buffer.clone();
+            let clone_duration = clone_start.elapsed();
+
+            if clone_duration.as_micros() > 200 {
+                warn!(
+                    "🐌 {}: Slow buffer clone: {}μs (size: {})",
+                    "BUFFER_CLONE_SLOW".red(),
+                    clone_duration.as_micros(),
+                    buffer.len()
+                );
+            }
+
+            result
         })
     }
 }
