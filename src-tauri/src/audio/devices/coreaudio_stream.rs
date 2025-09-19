@@ -158,7 +158,6 @@ use std::sync::{
     Arc, Mutex,
 };
 
-
 /// # CoreAudio Thread Safety Documentation
 ///
 /// This module implements CoreAudio stream management with careful attention to memory safety
@@ -1324,13 +1323,13 @@ extern "C" fn coreaudio_input_callback(
                 Err(e) => {
                     samples_dropped += 1;
                     // Log the actual error instead of assuming it's "buffer full"
-                    if samples_dropped == 1 { // Only log on first error to avoid spam
+                    if samples_dropped == 1 {
+                        // Only log on first error to avoid spam
                         warn!("🔴 RTRB push error: {:?}", e);
                     }
                 }
             }
         }
-
 
         // **EVENT-DRIVEN**: Notify async processing thread when hardware has provided new samples
         // **SMART INPUT NOTIFICATION**: Only notify if we actually captured samples

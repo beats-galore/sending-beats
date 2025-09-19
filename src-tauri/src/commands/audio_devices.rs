@@ -98,7 +98,10 @@ pub async fn safe_switch_input_device(
                 };
 
             if let Err(e) = audio_state.audio_command_tx.send(remove_command).await {
-                let error_msg = format!("Audio system not available - failed to send remove command: {}", e);
+                let error_msg = format!(
+                    "Audio system not available - failed to send remove command: {}",
+                    e
+                );
                 tracing::error!("{}", error_msg);
                 return Err(error_msg);
             }

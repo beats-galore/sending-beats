@@ -154,7 +154,8 @@ impl OutputWorker {
 
         // Check if resampler exists and has the correct rates
         let needs_recreation = if let Some(ref existing_resampler) = resampler {
-            existing_resampler.input_rate != input_sample_rate as f32 || existing_resampler.output_rate != output_sample_rate as f32
+            existing_resampler.input_rate != input_sample_rate as f32
+                || existing_resampler.output_rate != output_sample_rate as f32
         } else {
             true // No resampler exists
         };
@@ -172,7 +173,11 @@ impl OutputWorker {
                     info!(
                         "🔄 {}: {} resampler for {} ({} Hz → {} Hz, {} input_frames)",
                         "OUTPUT_RESAMPLER".green(),
-                        if resampler.is_some() { "Recreated" } else { "Created" },
+                        if resampler.is_some() {
+                            "Recreated"
+                        } else {
+                            "Created"
+                        },
                         device_id,
                         input_sample_rate,
                         output_sample_rate,
@@ -287,13 +292,14 @@ impl OutputWorker {
                 let resample_start = std::time::Instant::now();
                 let rate_ratio = mixed_audio.sample_rate as f32 / device_sample_rate as f32;
 
-                let device_samples = if let Some(active_resampler) = Self::get_or_initialize_resampler_static(
-                    &mut resampler,
-                    mixed_audio.sample_rate,
-                    device_sample_rate,
-                    adaptive_chunk_size,
-                    &device_id,
-                ) {
+                let device_samples = if let Some(active_resampler) =
+                    Self::get_or_initialize_resampler_static(
+                        &mut resampler,
+                        mixed_audio.sample_rate,
+                        device_sample_rate,
+                        adaptive_chunk_size,
+                        &device_id,
+                    ) {
                     let resampler_convert_start = std::time::Instant::now();
                     let resampled = active_resampler.convert(&mixed_audio.samples);
                     let resampler_convert_duration = resampler_convert_start.elapsed();
@@ -333,9 +339,10 @@ impl OutputWorker {
 
                 if !device_samples.is_empty() {
                     // **FAST PATH**: No resampling needed and chunk size matches exactly
-                    if mixed_audio.sample_rate == device_sample_rate &&
-                       device_samples.len() == adaptive_chunk_size &&
-                       accumulation_buffer.is_empty() {
+                    if mixed_audio.sample_rate == device_sample_rate
+                        && device_samples.len() == adaptive_chunk_size
+                        && accumulation_buffer.is_empty()
+                    {
                         // Send directly without accumulation
                         let spmc_write_start = std::time::Instant::now();
                         if let Some(ref spmc_writer) = spmc_writer {
@@ -368,22 +375,26 @@ impl OutputWorker {
                             let hardware_chunk: Vec<f32> =
                                 accumulation_buffer.drain(0..adaptive_chunk_size).collect();
 
-                        let spmc_write_start = std::time::Instant::now();
-                        if let Some(ref spmc_writer) = spmc_writer {
-                            Self::write_to_hardware_spmc(&device_id, &hardware_chunk, spmc_writer)
+                            let spmc_write_start = std::time::Instant::now();
+                            if let Some(ref spmc_writer) = spmc_writer {
+                                Self::write_to_hardware_spmc(
+                                    &device_id,
+                                    &hardware_chunk,
+                                    spmc_writer,
+                                )
                                 .await;
-                        } else {
-                            // warn!("⚠️ OUTPUT_WORKER: {} has no SPMC writer, dropping {} samples", device_id, hardware_chunk.len());
-                        }
-                        let spmc_write_duration = spmc_write_start.elapsed();
-                        total_spmc_duration += spmc_write_duration;
+                            } else {
+                                // warn!("⚠️ OUTPUT_WORKER: {} has no SPMC writer, dropping {} samples", device_id, hardware_chunk.len());
+                            }
+                            let spmc_write_duration = spmc_write_start.elapsed();
+                            total_spmc_duration += spmc_write_duration;
 
-                        chunks_processed += 1;
-                        chunks_sent_this_cycle += 1;
+                            chunks_processed += 1;
+                            chunks_sent_this_cycle += 1;
 
-                        // Rate-limited logging
-                        if chunks_processed <= 5 || chunks_processed % 1000 == 0 {
-                            info!(
+                            // Rate-limited logging
+                            if chunks_processed <= 5 || chunks_processed % 1000 == 0 {
+                                info!(
                                 "🎵 {} (4th layer): {} sent accumulated chunk #{} ({} samples, {} buffered)",
                                 "OUTPUT_WORKER".purple(),
                                 device_id,
@@ -391,7 +402,7 @@ impl OutputWorker {
                                 hardware_chunk.len(),
                                 accumulation_buffer.len()
                             );
-                        }
+                            }
                         }
                     }
 

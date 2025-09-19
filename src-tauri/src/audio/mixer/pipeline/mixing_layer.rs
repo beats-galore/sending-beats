@@ -52,7 +52,8 @@ pub struct MixingLayer {
 impl MixingLayer {
     /// Get the current sample rate, panics if not set (must have devices added first)
     fn get_sample_rate(&self) -> u32 {
-        self.target_sample_rate.expect("MixingLayer sample rate not set - no devices have been added yet")
+        self.target_sample_rate
+            .expect("MixingLayer sample rate not set - no devices have been added yet")
     }
     /// Create new mixing layer with dynamic sample rate detection
     pub fn new() -> Self {

@@ -7,10 +7,10 @@
 // 4. Sends processed audio to Layer 3 mixing
 
 use anyhow::Result;
+use colored::*;
 use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, Notify};
 use tracing::{error, info, warn};
-use colored::*;
 
 use super::queue_types::ProcessedAudioSamples;
 use crate::audio::effects::AudioEffectsChain;
@@ -109,7 +109,11 @@ impl InputWorker {
                     info!(
                         "🔄 {}: {} resampler for {} ({} Hz → {} Hz)",
                         "INPUT_RESAMPLER".green(),
-                        if resampler.is_some() { "Recreated" } else { "Created" },
+                        if resampler.is_some() {
+                            "Recreated"
+                        } else {
+                            "Created"
+                        },
                         device_id,
                         device_sample_rate,
                         target_sample_rate
@@ -231,8 +235,6 @@ impl InputWorker {
                     timestamp: std::time::Instant::now(),
                     effects_applied: true,
                 };
-
-
 
                 // Send to Layer 3 mixing
                 if let Err(_) = processed_output_tx.send(processed_audio) {

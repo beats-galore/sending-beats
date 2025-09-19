@@ -104,7 +104,6 @@ impl RubatoSRC {
         })
     }
 
-
     /// Convert input samples to output sample rate using FftFixedIn
     /// Accepts exactly the fixed input frame size and returns variable output frames
     ///

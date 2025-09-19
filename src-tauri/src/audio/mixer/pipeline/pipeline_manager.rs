@@ -47,7 +47,8 @@ pub struct AudioPipeline {
 impl AudioPipeline {
     /// Get the current pipeline sample rate, panics if not set (must have devices added first)
     fn get_sample_rate(&self) -> u32 {
-        self.max_sample_rate.expect("Pipeline sample rate not set - no devices have been added yet")
+        self.max_sample_rate
+            .expect("Pipeline sample rate not set - no devices have been added yet")
     }
     /// Create a new audio pipeline with dynamic sample rate detection
     pub fn new() -> Self {
@@ -126,7 +127,9 @@ impl AudioPipeline {
         let all_sample_rates = self.get_all_sample_rates();
 
         if all_sample_rates.is_empty() {
-            return Err(anyhow::anyhow!("Cannot calculate target mix rate: no devices have been added"));
+            return Err(anyhow::anyhow!(
+                "Cannot calculate target mix rate: no devices have been added"
+            ));
         }
 
         if all_sample_rates.len() == 1 {
@@ -143,7 +146,9 @@ impl AudioPipeline {
             .expect("At least one sample rate should exist");
 
         if target_rate == 0 {
-            return Err(anyhow::anyhow!("Invalid sample rate: devices reported 0 Hz"));
+            return Err(anyhow::anyhow!(
+                "Invalid sample rate: devices reported 0 Hz"
+            ));
         }
 
         self.max_sample_rate = Some(target_rate);
@@ -228,7 +233,8 @@ impl AudioPipeline {
             );
 
             // Update mixing layer with the determined sample rate
-            self.mixing_layer.update_target_sample_rate(device_sample_rate);
+            self.mixing_layer
+                .update_target_sample_rate(device_sample_rate);
         }
 
         let target_sample_rate = self.max_sample_rate.unwrap(); // Safe to unwrap after check above
@@ -259,7 +265,10 @@ impl AudioPipeline {
         // Start the mixing layer if pipeline is running and this is the first device (triggering layer start)
         if self.is_running && !self.mixing_layer.get_stats().is_running {
             if let Err(e) = self.mixing_layer.start() {
-                error!("❌ AUDIO_PIPELINE: Failed to start mixing layer after adding device: {}", e);
+                error!(
+                    "❌ AUDIO_PIPELINE: Failed to start mixing layer after adding device: {}",
+                    e
+                );
                 return Err(e);
             } else {
                 info!("🚀 AUDIO_PIPELINE: Started mixing layer after adding first device");
@@ -276,7 +285,9 @@ impl AudioPipeline {
 
         info!(
             "✅ AUDIO_PIPELINE: Added input device '{}' with direct RTRB consumer ({} Hz → {} Hz)",
-            device_id, device_sample_rate, self.get_sample_rate()
+            device_id,
+            device_sample_rate,
+            self.get_sample_rate()
         );
 
         Ok(())
@@ -386,7 +397,10 @@ impl AudioPipeline {
 
         info!(
             "✅ AUDIO_PIPELINE: Added output device '{}' ({} Hz ← {} Hz, {} sample chunks)",
-            device_id, device_sample_rate, self.get_sample_rate(), chunk_size
+            device_id,
+            device_sample_rate,
+            self.get_sample_rate(),
+            chunk_size
         );
 
         Ok(())
@@ -538,7 +552,8 @@ impl AudioPipeline {
 
         info!(
             "✅ AUDIO_PIPELINE: Removed input device '{}' and recalculated mix rate to {} Hz",
-            device_id, self.get_sample_rate()
+            device_id,
+            self.get_sample_rate()
         );
 
         Ok(())
@@ -573,7 +588,8 @@ impl AudioPipeline {
 
         info!(
             "✅ AUDIO_PIPELINE: Removed output device '{}' and recalculated mix rate to {} Hz",
-            device_id, self.get_sample_rate()
+            device_id,
+            self.get_sample_rate()
         );
 
         Ok(())

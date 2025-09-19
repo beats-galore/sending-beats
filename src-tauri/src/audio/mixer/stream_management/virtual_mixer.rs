@@ -4,13 +4,13 @@
 // management, including adding/removing input/output streams, device switching,
 // and stream configuration operations.
 
+use super::super::sample_rate_converter::RubatoSRC;
+use super::stream_manager::StreamInfo;
 use anyhow::{Context, Result};
+use colored::*;
 use std::collections::HashMap;
 use std::sync::{atomic::Ordering, Arc, Mutex};
 use tracing::{error, info, warn};
-use colored::*;
-use super::super::sample_rate_converter::RubatoSRC;
-use super::stream_manager::StreamInfo;
 
 #[derive(Debug)]
 pub struct VirtualMixer {
@@ -44,13 +44,23 @@ impl VirtualMixer {
             .unwrap_or(256);
 
         // **DEBUG**: Log input sample sizes to track the accumulation bug
-        static SAMPLE_SIZE_LOG_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        static SAMPLE_SIZE_LOG_COUNT: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
         let log_count = SAMPLE_SIZE_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if log_count < 10 {
             for (device_id, samples) in input_samples.iter() {
-                info!("🔍 {}: Input '{}' has {} samples", "MIXER_INPUT_DEBUG".cyan(), device_id, samples.len());
+                info!(
+                    "🔍 {}: Input '{}' has {} samples",
+                    "MIXER_INPUT_DEBUG".cyan(),
+                    device_id,
+                    samples.len()
+                );
             }
-            info!("🔍 {}: Required buffer size: {} samples", "MIXER_INPUT_DEBUG".cyan(), required_stereo_samples);
+            info!(
+                "🔍 {}: Required buffer size: {} samples",
+                "MIXER_INPUT_DEBUG".cyan(),
+                required_stereo_samples
+            );
         }
 
         // **PERFORMANCE FIX**: Use thread-local reusable buffer to eliminate allocations
@@ -131,7 +141,8 @@ impl VirtualMixer {
                 warn!(
                     "🔧 {}: Hot signal {:.3}, applied {:.2} safety gain",
                     "CLIPPING PROTECTION".bright_green(),
-                    pre_master_peak, safety_gain
+                    pre_master_peak,
+                    safety_gain
                 );
             }
             // Otherwise: NO gain reduction - preserve original signal levels
