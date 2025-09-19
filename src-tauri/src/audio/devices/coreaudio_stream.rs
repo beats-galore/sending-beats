@@ -2,25 +2,27 @@ use crate::types::{COMMON_SAMPLE_RATES_HZ, DEFAULT_SAMPLE_RATE};
 #[cfg(target_os = "macos")]
 use anyhow::Result;
 use colored::*;
+use colored::*;
 use coreaudio_sys::{
-    kAudioDevicePropertyBufferFrameSize, kAudioDevicePropertyNominalSampleRate, kAudioDevicePropertyStreamFormat,
-    kAudioFormatFlagIsFloat, kAudioFormatFlagIsNonInterleaved, kAudioFormatFlagIsPacked,
-    kAudioFormatLinearPCM, kAudioObjectPropertyElementMaster, kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput,
+    kAudioDevicePropertyBufferFrameSize, kAudioDevicePropertyNominalSampleRate,
+    kAudioDevicePropertyStreamFormat, kAudioFormatFlagIsFloat, kAudioFormatFlagIsNonInterleaved,
+    kAudioFormatFlagIsPacked, kAudioFormatLinearPCM, kAudioObjectPropertyElementMaster,
+    kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput,
     kAudioOutputUnitProperty_CurrentDevice, kAudioOutputUnitProperty_EnableIO,
     kAudioOutputUnitProperty_SetInputCallback, kAudioUnitManufacturer_Apple,
     kAudioUnitProperty_SetRenderCallback, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Global,
     kAudioUnitScope_Input, kAudioUnitScope_Output, kAudioUnitSubType_HALOutput,
     kAudioUnitType_Output, AURenderCallbackStruct, AudioBufferList, AudioComponentDescription,
     AudioComponentFindNext, AudioComponentInstanceDispose, AudioComponentInstanceNew,
-    AudioDeviceID, AudioObjectGetPropertyData, AudioObjectPropertyAddress, AudioObjectSetPropertyData, AudioOutputUnitStart,
-    AudioOutputUnitStop, AudioStreamBasicDescription, AudioTimeStamp, AudioUnit,
-    AudioUnitGetProperty, AudioUnitInitialize, AudioUnitRender, AudioUnitRenderActionFlags,
-    AudioUnitSetProperty, AudioUnitUninitialize, OSStatus,
+    AudioDeviceID, AudioObjectGetPropertyData, AudioObjectPropertyAddress,
+    AudioObjectSetPropertyData, AudioOutputUnitStart, AudioOutputUnitStop,
+    AudioStreamBasicDescription, AudioTimeStamp, AudioUnit, AudioUnitGetProperty,
+    AudioUnitInitialize, AudioUnitRender, AudioUnitRenderActionFlags, AudioUnitSetProperty,
+    AudioUnitUninitialize, OSStatus,
 };
 use std::os::raw::c_void;
 use std::ptr;
-use tracing::info;
-use colored::*;
+use tracing::{info, warn};
 
 /// Get the native sample rate of a CoreAudio device
 pub fn get_device_native_sample_rate(device_id: AudioDeviceID) -> Result<u32> {
@@ -60,8 +62,56 @@ pub fn get_device_native_sample_rate(device_id: AudioDeviceID) -> Result<u32> {
     }
 }
 
+/// Get the current buffer frame size for a CoreAudio device
+pub fn get_device_buffer_frame_size(device_id: AudioDeviceID, is_output: bool) -> Result<u32> {
+    let scope = if is_output {
+        kAudioObjectPropertyScopeOutput
+    } else {
+        kAudioObjectPropertyScopeInput
+    };
+
+    let mut buffer_frames: u32 = 0;
+    let mut size = std::mem::size_of::<u32>() as u32;
+
+    let status = unsafe {
+        AudioObjectGetPropertyData(
+            device_id,
+            &AudioObjectPropertyAddress {
+                mSelector: kAudioDevicePropertyBufferFrameSize,
+                mScope: scope,
+                mElement: kAudioObjectPropertyElementMaster,
+            },
+            0,
+            std::ptr::null(),
+            &mut size,
+            &mut buffer_frames as *mut _ as *mut c_void,
+        )
+    };
+
+    if status == 0 {
+        info!(
+            "🔍 {}: Device {} buffer size is {} frames ({} scope)",
+            "HARDWARE_BUFFER_QUERY".cyan(),
+            device_id,
+            buffer_frames,
+            if is_output { "output" } else { "input" }
+        );
+        Ok(buffer_frames)
+    } else {
+        Err(anyhow::anyhow!(
+            "Failed to get buffer frame size for device {}: status {}",
+            device_id,
+            status
+        ))
+    }
+}
+
 /// Set the buffer frame size for a CoreAudio device (enables dynamic chunk sizing)
-pub fn set_device_buffer_frame_size(device_id: AudioDeviceID, buffer_frames: u32, is_output: bool) -> Result<()> {
+pub fn set_device_buffer_frame_size(
+    device_id: AudioDeviceID,
+    buffer_frames: u32,
+    is_output: bool,
+) -> Result<()> {
     let scope = if is_output {
         kAudioObjectPropertyScopeOutput
     } else {
@@ -107,7 +157,7 @@ use std::sync::{
     atomic::{AtomicPtr, Ordering},
     Arc, Mutex,
 };
-use tracing::warn;
+
 
 /// # CoreAudio Thread Safety Documentation
 ///
@@ -570,7 +620,6 @@ impl CoreAudioOutputStream {
         Ok(())
     }
 }
-
 
 /// Helper function to safely fill all audio buffers with silence (INTERLEAVED)
 #[cfg(target_os = "macos")]
@@ -1267,15 +1316,21 @@ extern "C" fn coreaudio_input_callback(
         let mut samples_written = 0;
         let mut samples_dropped = 0;
 
+        let buffer_slots_before = context.rtrb_producer.slots();
+
         for &sample in samples.iter() {
             match context.rtrb_producer.push(sample) {
                 Ok(()) => samples_written += 1,
-                Err(_) => {
+                Err(e) => {
                     samples_dropped += 1;
-                    // Ring buffer full - skip this sample (prevents blocking)
+                    // Log the actual error instead of assuming it's "buffer full"
+                    if samples_dropped == 1 { // Only log on first error to avoid spam
+                        warn!("🔴 RTRB push error: {:?}", e);
+                    }
                 }
             }
         }
+
 
         // **EVENT-DRIVEN**: Notify async processing thread when hardware has provided new samples
         // **SMART INPUT NOTIFICATION**: Only notify if we actually captured samples

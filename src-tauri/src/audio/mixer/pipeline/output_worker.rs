@@ -29,6 +29,9 @@ pub struct OutputWorker {
     sample_buffer: Vec<f32>,  // Hardware chunk accumulator
     target_chunk_size: usize, // Device-required buffer size (e.g., 512 samples stereo)
 
+    // **ACCUMULATION**: Buffer for collecting variable FftFixedIn outputs until hardware chunk size
+    accumulation_buffer: Vec<f32>, // Accumulates samples until target_chunk_size reached
+
     // Communication channels
     mixed_audio_rx: mpsc::UnboundedReceiver<MixedAudioSamples>,
 
@@ -64,7 +67,6 @@ impl OutputWorker {
         )
     }
 
-
     /// Create a new output processing worker with SPMC writer for hardware output
     pub fn new_with_spmc_writer(
         device_id: String,
@@ -85,6 +87,7 @@ impl OutputWorker {
             resampler: None,
             sample_buffer: Vec::new(),
             target_chunk_size,
+            accumulation_buffer: Vec::with_capacity(target_chunk_size * 2), // Pre-allocate for efficiency
             mixed_audio_rx,
             #[cfg(target_os = "macos")]
             hardware_update_tx: None, // No hardware updates for this constructor
@@ -117,6 +120,7 @@ impl OutputWorker {
             resampler: None,
             sample_buffer: Vec::new(),
             target_chunk_size,
+            accumulation_buffer: Vec::with_capacity(target_chunk_size * 2), // Pre-allocate for efficiency
             mixed_audio_rx,
             hardware_update_tx: Some(hardware_update_tx),
             spmc_writer,
@@ -126,11 +130,68 @@ impl OutputWorker {
         }
     }
 
-    pub fn update_target_mix_rate(&mut self, target_mix_rate: u32) -> Result<()> {
-        if let Some(ref mut resampler) = self.resampler {
-            resampler.update_resampler_rate(target_mix_rate);
-        }
+    pub fn update_target_mix_rate(&mut self, _target_mix_rate: u32) -> Result<()> {
+        // **CRITICAL**: Force resampler recreation with new target rate
+        // The resampler will be recreated in the worker thread when needed
+        self.resampler = None;
         Ok(())
+    }
+
+    /// Static helper function to get or initialize resampler in async context
+    fn get_or_initialize_resampler_static<'a>(
+        resampler: &'a mut Option<RubatoSRC>,
+        input_sample_rate: u32,
+        output_sample_rate: u32,
+        chunk_size: usize, // Output device chunk size
+        device_id: &str,
+    ) -> Option<&'a mut RubatoSRC> {
+        let sample_rate_difference = (input_sample_rate as f32 - output_sample_rate as f32).abs();
+
+        // No resampling needed if rates are close (within 1 Hz)
+        if sample_rate_difference <= 1.0 {
+            return None;
+        }
+
+        // Check if resampler exists and has the correct rates
+        let needs_recreation = if let Some(ref existing_resampler) = resampler {
+            existing_resampler.input_rate != input_sample_rate as f32 || existing_resampler.output_rate != output_sample_rate as f32
+        } else {
+            true // No resampler exists
+        };
+
+        // Create or recreate resampler if needed
+        if needs_recreation {
+            // **FRAMES vs SAMPLES**: chunk_size is in samples, FftFixedIn expects input frames
+            let input_frames = chunk_size / 2; // Stereo: 2 samples per frame
+            match RubatoSRC::new_fft_fixed_input(
+                input_sample_rate as f32,
+                output_sample_rate as f32,
+                input_frames, // Fixed input size in frames
+            ) {
+                Ok(new_resampler) => {
+                    info!(
+                        "🔄 {}: {} resampler for {} ({} Hz → {} Hz, {} input_frames)",
+                        "OUTPUT_RESAMPLER".green(),
+                        if resampler.is_some() { "Recreated" } else { "Created" },
+                        device_id,
+                        input_sample_rate,
+                        output_sample_rate,
+                        input_frames
+                    );
+                    *resampler = Some(new_resampler);
+                }
+                Err(e) => {
+                    error!(
+                        "❌ OUTPUT_WORKER: Failed to create resampler for {}: {}",
+                        device_id, e
+                    );
+                    return None;
+                }
+            }
+        }
+
+        // Return mutable reference to the resampler
+        resampler.as_mut()
     }
 
     /// Start the output processing worker thread
@@ -154,7 +215,8 @@ impl OutputWorker {
             let mut chunks_processed = 0u64;
             let mut adaptive_chunk_size = target_chunk_size; // Start with default, adapt on first audio
 
-            // **PRE-BUFFERING**: No accumulator buffer needed - resampler handles buffering internally
+            // **ACCUMULATION BUFFER**: Collect variable FftFixedIn outputs until hardware chunk size
+            let mut accumulation_buffer: Vec<f32> = Vec::with_capacity(adaptive_chunk_size * 2);
 
             info!(
                 "🚀 OUTPUT_WORKER: Started processing thread for device '{}'",
@@ -195,8 +257,11 @@ impl OutputWorker {
                             if let Err(e) = hardware_tx.try_send(command) {
                                 warn!("⚠️ Failed to send hardware buffer update: {}", e);
                             } else {
-                                info!("📡 {}: Sent hardware buffer update to {} frames",
-                                    "HARDWARE_SYNC_COMMAND".cyan(), adaptive_chunk_size);
+                                info!(
+                                    "📡 {}: Sent hardware buffer update to {} frames",
+                                    "HARDWARE_SYNC_COMMAND".cyan(),
+                                    adaptive_chunk_size
+                                );
                             }
                         }
                     }
@@ -220,102 +285,102 @@ impl OutputWorker {
 
                 // Step 1: Resample from mix rate to device rate if needed
                 let resample_start = std::time::Instant::now();
-                let sample_rate_difference =
-                    (mixed_audio.sample_rate as f32 - device_sample_rate as f32).abs();
                 let rate_ratio = mixed_audio.sample_rate as f32 / device_sample_rate as f32;
-                let device_samples = if (mixed_audio.sample_rate as f32 - device_sample_rate as f32)
-                    .abs()
-                    > 1.0
-                {
-                    // **PRE-BUFFERING APPROACH**: Create resampler with fixed output size
-                    if resampler.is_none() {
-                        // **FRAMES vs SAMPLES**: adaptive_chunk_size is in samples, FixedOut expects frames
-                        let target_output_frames = adaptive_chunk_size / 2; // Stereo: 2 samples per frame
-                        match RubatoSRC::new_with_fast_fixed_output(
-                            mixed_audio.sample_rate as f32,
-                            device_sample_rate as f32,
-                            target_output_frames, // Produce exactly this many output frames
-                        ) {
-                            Ok(new_resampler) => {
-                                info!(
-                                    "🚀 OUTPUT_WORKER: Created FAST FftFixedOut resampler for {} ({} Hz → {} Hz, {} samples={} frames, resampler_target={})",
-                                    device_id, mixed_audio.sample_rate, device_sample_rate, adaptive_chunk_size, target_output_frames, new_resampler.get_target_chunk_size()
-                                );
-                                resampler = Some(new_resampler);
-                            }
-                            Err(e) => {
-                                error!(
-                                    "❌ OUTPUT_WORKER: Failed to create SincFixedOut resampler for {}: {}",
-                                    device_id, e
-                                );
-                                // No resampler created - will use original samples below
-                            }
-                        };
+
+                let device_samples = if let Some(active_resampler) = Self::get_or_initialize_resampler_static(
+                    &mut resampler,
+                    mixed_audio.sample_rate,
+                    device_sample_rate,
+                    adaptive_chunk_size,
+                    &device_id,
+                ) {
+                    let resampler_convert_start = std::time::Instant::now();
+                    let resampled = active_resampler.convert(&mixed_audio.samples);
+                    let resampler_convert_duration = resampler_convert_start.elapsed();
+
+                    // Log actual resampling operation timing
+                    static RESAMPLE_LOG_COUNT: std::sync::atomic::AtomicU64 =
+                        std::sync::atomic::AtomicU64::new(0);
+                    let resample_count =
+                        RESAMPLE_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                    if (resample_count < 5 || resample_count % 2000 == 0)
+                        && resampler_convert_duration.as_micros() > 1000
+                    {
+                        info!(
+                            "🔄 {}: {} resampled {} → {} samples in {}μs ({}Hz→{}Hz, ratio: {:.3})",
+                            "RESAMPLER_TIMING".cyan(),
+                            device_id,
+                            mixed_audio.samples.len(),
+                            resampled.len(),
+                            resampler_convert_duration.as_micros(),
+                            mixed_audio.sample_rate,
+                            device_sample_rate,
+                            rate_ratio
+                        );
                     }
 
-                    // Resample using persistent resampler with consistent processing
-                    if let Some(ref mut resampler) = resampler {
-                        let resampler_convert_start = std::time::Instant::now();
-                        // Always process new input to maintain consistent timing
-                        let resampled = resampler.convert(&mixed_audio.samples);
-                        let resampler_convert_duration = resampler_convert_start.elapsed();
-
-                        // Log actual resampling operation timing
-                        static RESAMPLE_LOG_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-                        let resample_count = RESAMPLE_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-                        if (resample_count < 5|| resample_count % 2000 == 0)  && resampler_convert_duration.as_micros() > 1000 {
-                            info!(
-                                "🔄 {}: {} resampled {} → {} samples in {}μs ({}Hz→{}Hz, ratio: {:.3})",
-                                "RESAMPLER_TIMING".cyan(),
-                                device_id,
-                                mixed_audio.samples.len(),
-                                resampled.len(),
-                                resampler_convert_duration.as_micros(),
-                                mixed_audio.sample_rate,
-                                device_sample_rate,
-                                rate_ratio
-                            );
-                        }
-
-                        resampled
-                    } else {
-                        mixed_audio.samples
-                    }
+                    resampled
                 } else {
-                    // No resampling needed
+                    // No resampling needed - use original samples
                     mixed_audio.samples
                 };
                 let resample_duration = resample_start.elapsed();
 
-                // **PRE-BUFFERING APPROACH**: Send samples directly when resampler produces output
+                // **ACCUMULATION APPROACH**: Accumulate variable FftFixedIn outputs until hardware chunk size
                 let mut chunks_sent_this_cycle = 0;
                 let mut total_spmc_duration = std::time::Duration::ZERO;
 
                 if !device_samples.is_empty() {
-                    // SincFixedOut produces exactly adaptive_chunk_size samples or empty Vec
-                    // No accumulator needed - send directly to hardware
-                    let spmc_write_start = std::time::Instant::now();
-                    if let Some(ref spmc_writer) = spmc_writer {
-                        Self::write_to_hardware_spmc(&device_id, &device_samples, spmc_writer)
-                            .await;
-                    } else {
-                        // warn!("⚠️ OUTPUT_WORKER: {} has no SPMC writer, dropping {} samples", device_id, device_samples.len());
+                    // **ACCUMULATION**: Add resampled samples to buffer
+                    accumulation_buffer.extend_from_slice(&device_samples);
+
+                    // **CHUNK COMPLETION**: Send accumulated samples when we have enough for hardware
+                    while accumulation_buffer.len() >= adaptive_chunk_size {
+                        // Extract exactly the chunk size needed for hardware
+                        let hardware_chunk: Vec<f32> =
+                            accumulation_buffer.drain(0..adaptive_chunk_size).collect();
+
+                        let spmc_write_start = std::time::Instant::now();
+                        if let Some(ref spmc_writer) = spmc_writer {
+                            Self::write_to_hardware_spmc(&device_id, &hardware_chunk, spmc_writer)
+                                .await;
+                        } else {
+                            // warn!("⚠️ OUTPUT_WORKER: {} has no SPMC writer, dropping {} samples", device_id, hardware_chunk.len());
+                        }
+                        let spmc_write_duration = spmc_write_start.elapsed();
+                        total_spmc_duration += spmc_write_duration;
+
+                        chunks_processed += 1;
+                        chunks_sent_this_cycle += 1;
+
+                        // Rate-limited logging
+                        if chunks_processed <= 5 || chunks_processed % 1000 == 0 {
+                            info!(
+                                "🎵 {} (4th layer): {} sent accumulated chunk #{} ({} samples, {} buffered)",
+                                "OUTPUT_WORKER".purple(),
+                                device_id,
+                                chunks_processed,
+                                hardware_chunk.len(),
+                                accumulation_buffer.len()
+                            );
+                        }
                     }
-                    let spmc_write_duration = spmc_write_start.elapsed();
-                    total_spmc_duration += spmc_write_duration;
 
-                    chunks_processed += 1;
-                    chunks_sent_this_cycle = 1;
-
-                    // Rate-limited logging
-                    if chunks_processed <= 5 || chunks_processed % 1000 == 0 {
+                    // Log accumulation status for debugging
+                    static ACCUMULATION_LOG_COUNT: std::sync::atomic::AtomicU64 =
+                        std::sync::atomic::AtomicU64::new(0);
+                    let accum_count =
+                        ACCUMULATION_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if accum_count < 10 || accum_count % 1000 == 0 {
                         info!(
-                            "🎵 {} (4th layer): {} sent chunk #{} ({} samples) directly to device",
-                            "OUTPUT_WORKER".purple(),
+                            "🔄 {}: {} accumulated {} samples (buffer: {}/{}, chunks_sent: {})",
+                            "ACCUMULATION".cyan(),
                             device_id,
-                            chunks_processed,
-                            device_samples.len()
+                            device_samples.len(),
+                            accumulation_buffer.len(),
+                            adaptive_chunk_size,
+                            chunks_sent_this_cycle
                         );
                     }
                 }
@@ -328,14 +393,16 @@ impl OutputWorker {
                 let debug_count =
                     TIMING_DEBUG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-                if (debug_count < 10 || debug_count % 1000 == 0) && processing_duration.as_micros() > 1000 {
+                if (debug_count < 10 || debug_count % 1000 == 0)
+                    && processing_duration.as_micros() > 1000
+                {
                     let time_between = if let Some(gap) = time_since_last {
                         format!("{}μs", gap.as_micros())
                     } else {
                         "N/A".to_string()
                     };
 
-                    info!("⏱️  {} [{}]: gap_since_last={}, input={}→{} samples, 🔄resample={}μs, chunks_sent={}, spmc={}μs, total={}μs (PRE-BUFFERING)",
+                    info!("⏱️  {} [{}]: gap_since_last={}, input={}→{} samples, 🔄resample={}μs, chunks_sent={}, spmc={}μs, total={}μs (FFT_FIXED_IN)",
                         "OUTPUT_TIMING".purple(),
                         device_id,
                         time_between,
@@ -354,7 +421,7 @@ impl OutputWorker {
                 let count = OUTPUT_WORKER_COUNT.fetch_add(1, Ordering::Relaxed);
                 if processing_duration.as_micros() > 500 && (count <= 3 || count % 1000 == 0) {
                     warn!(
-                        "🐌 {}: {} SLOW processing: {}μs (🔄resample: {}μs, spmc: {}μs) [PRE-BUFFERING]",
+                        "🐌 {}: {} SLOW processing: {}μs (🔄resample: {}μs, spmc: {}μs) [FFT_FIXED_IN]",
                         "OUTPUT_WORKER_SLOW".bright_red(),
                         device_id,
                         processing_duration.as_micros(),

@@ -105,7 +105,8 @@ impl IsolatedAudioManager {
         let (hardware_update_tx, mut hardware_update_rx) = mpsc::channel::<AudioCommand>(32);
 
         #[cfg(target_os = "macos")]
-        let audio_pipeline = AudioPipeline::new_with_hardware_updates(MAX_SAMPLE_RATE, Some(hardware_update_tx));
+        let audio_pipeline =
+            AudioPipeline::new_with_hardware_updates(MAX_SAMPLE_RATE, Some(hardware_update_tx));
 
         #[cfg(not(target_os = "macos"))]
         let audio_pipeline = AudioPipeline::new(MAX_SAMPLE_RATE);
@@ -318,24 +319,52 @@ impl IsolatedAudioManager {
         let (coreaudio_producer, audio_input_consumer) =
             rtrb::RingBuffer::<f32>::new(buffer_capacity);
 
-        // **PIPELINE INTEGRATION**: Connect RTRB consumer directly to AudioPipeline InputWorker
+        // **QUERY ACTUAL HARDWARE BUFFER SIZE**: Query hardware before creating streams
+        let actual_buffer_frames =
+            crate::audio::devices::coreaudio_stream::get_device_buffer_frame_size(
+                coreaudio_device_id,
+                false, // input device
+            )
+            .unwrap_or_else(|e| {
+                warn!(
+                    "⚠️ Failed to query input buffer size for {}: {}, using default 512",
+                    device_id, e
+                );
+                512
+            });
+
+        // Convert frames to samples (frames × channels)
+        let chunk_size = (actual_buffer_frames * channels as u32) as usize;
+
+        info!(
+            "🎯 {}: Input device '{}' - hardware: {} frames → {} samples ({} channels)",
+            "CHUNK_SIZE_CALCULATION".green(),
+            device_id,
+            actual_buffer_frames,
+            chunk_size,
+            channels
+        );
+
+        // **PIPELINE INTEGRATION**: Create input worker FIRST to consume RTRB data
         let input_device_notifier = Arc::new(Notify::new());
         self.audio_pipeline.add_input_device_with_consumer(
             device_id.clone(),
             native_sample_rate,
             channels,
+            chunk_size,
             audio_input_consumer,
             input_device_notifier.clone(),
         )?;
 
-        // **HARDWARE STREAM**: Create CoreAudio stream that feeds the pipeline
+        // **HARDWARE STREAM**: Create CoreAudio stream AFTER pipeline worker is ready
+        // Creating before will causes the queue to become full before starting and breaks audio processing.
         self.stream_manager.add_coreaudio_input_stream(
             device_id.clone(),
             coreaudio_device_id,
             device_name,
             channels,
-            coreaudio_producer,    // Hardware writes to this
-            input_device_notifier, // Notifies AudioPipeline when data available
+            coreaudio_producer,
+            input_device_notifier, // Use the same notifier for consistency
         )?;
 
         info!(
@@ -367,10 +396,14 @@ impl IsolatedAudioManager {
     /// Update hardware buffer size for a CoreAudio output stream
     #[cfg(target_os = "macos")]
     fn update_output_hardware_buffer_size(&mut self, device_id: String, target_frames: u32) {
-        if let Err(e) = self.stream_manager.update_coreaudio_output_buffer_size(&device_id, target_frames) {
+        if let Err(e) = self
+            .stream_manager
+            .update_coreaudio_output_buffer_size(&device_id, target_frames)
+        {
             tracing::warn!(
                 "⚠️ Failed to update hardware buffer size for {}: {}",
-                device_id, e
+                device_id,
+                e
             );
         } else {
             tracing::info!(
@@ -414,14 +447,35 @@ impl IsolatedAudioManager {
             native_sample_rate, device_id
         );
 
-        // **NEW PIPELINE**: Connect this output device to AudioPipeline Layer 4 with SPMC writer
-        // Use power-of-2 chunk sizes for optimal performance
-        // OutputWorker will dynamically adjust these based on actual input rates
-        let chunk_size = if native_sample_rate >= 44100 {
-            1024 // High sample rates use 1024 samples (~21ms at 48kHz, ~23ms at 44.1kHz)
-        } else {
-            512 // Lower sample rates use 512 samples
-        };
+        // Store device_id before moving coreaudio_device
+        let coreaudio_device_id = coreaudio_device.device_id;
+
+        // **QUERY ACTUAL HARDWARE BUFFER SIZE**: Query hardware before creating streams
+        let actual_buffer_frames =
+            crate::audio::devices::coreaudio_stream::get_device_buffer_frame_size(
+                coreaudio_device_id,
+                true, // output device
+            )
+            .unwrap_or_else(|e| {
+                warn!(
+                    "⚠️ Failed to query output buffer size for {}: {}, using default 512",
+                    device_id, e
+                );
+                512
+            });
+
+        // Convert frames to samples (frames × channels) - assume stereo for now
+        let chunk_size = (actual_buffer_frames * 2) as usize;
+
+        info!(
+            "🎯 {}: Output device '{}' - hardware: {} frames → {} samples (stereo)",
+            "CHUNK_SIZE_CALCULATION".green(),
+            device_id,
+            actual_buffer_frames,
+            chunk_size
+        );
+
+        // **PIPELINE INTEGRATION**: Connect output device to AudioPipeline Layer 4 FIRST
         if let Err(e) = self.audio_pipeline.add_output_device_with_spmc_writer(
             device_id.clone(),
             native_sample_rate,
@@ -434,11 +488,12 @@ impl IsolatedAudioManager {
             );
         } else {
             info!(
-                "✅ PIPELINE: Connected output device '{}' to Layer 4 with SPMC writer at {} Hz",
-                device_id, native_sample_rate
+                "✅ PIPELINE: Connected output device '{}' to Layer 4 with SPMC writer at {} Hz (chunk: {} samples)",
+                device_id, native_sample_rate, chunk_size
             );
         }
 
+        // **HARDWARE STREAM**: Create CoreAudio stream AFTER pipeline worker is ready
         // Update the coreaudio_device to use the detected native sample rate
         let mut corrected_coreaudio_device = coreaudio_device;
         corrected_coreaudio_device.sample_rate = native_sample_rate;

@@ -10,6 +10,7 @@ use anyhow::Result;
 use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, Notify};
 use tracing::{error, info, warn};
+use colored::*;
 
 use super::queue_types::ProcessedAudioSamples;
 use crate::audio::effects::AudioEffectsChain;
@@ -21,6 +22,7 @@ pub struct InputWorker {
     pub device_sample_rate: u32, // Original device sample rate
     target_sample_rate: u32,     // Max sample rate for mixing (e.g., 48kHz)
     channels: u16,
+    chunk_size: usize, // Input device chunk size (for resampler)
 
     // Audio processing components
     resampler: Option<RubatoSRC>,
@@ -48,6 +50,7 @@ impl InputWorker {
         device_sample_rate: u32,
         target_sample_rate: u32,
         channels: u16,
+        chunk_size: usize, // Input device chunk size (e.g., from hardware buffer size)
         rtrb_consumer: rtrb::Consumer<f32>,
         input_notifier: Arc<Notify>,
         processed_output_tx: mpsc::UnboundedSender<ProcessedAudioSamples>,
@@ -60,6 +63,7 @@ impl InputWorker {
             device_sample_rate,
             target_sample_rate,
             channels,
+            chunk_size,
             resampler: None,
             effects_chain: AudioEffectsChain::new(target_sample_rate),
             rtrb_consumer: Arc::new(Mutex::new(rtrb_consumer)),
@@ -71,13 +75,13 @@ impl InputWorker {
         }
     }
 
-
     /// Static helper function to get or initialize resampler in async context
     /// This can be used in the worker thread where we don't have access to &mut self
     fn get_or_initialize_resampler_static<'a>(
         resampler: &'a mut Option<RubatoSRC>,
         device_sample_rate: u32,
         target_sample_rate: u32,
+        chunk_size: usize, // Input device chunk size
         device_id: &str,
     ) -> Option<&'a mut RubatoSRC> {
         let sample_rate_difference = (device_sample_rate as f32 - target_sample_rate as f32).abs();
@@ -87,16 +91,28 @@ impl InputWorker {
             return None;
         }
 
-        // Initialize resampler if not already created
-        if resampler.is_none() {
-            match RubatoSRC::new_fast(
+        // Check if resampler exists and has the correct target rate
+        let needs_recreation = if let Some(ref existing_resampler) = resampler {
+            existing_resampler.output_rate != target_sample_rate as f32
+        } else {
+            true // No resampler exists
+        };
+
+        // Create or recreate resampler if needed
+        if needs_recreation {
+            match RubatoSRC::new_fft_fixed_input(
                 device_sample_rate as f32,
                 target_sample_rate as f32,
+                chunk_size, // Use actual input device chunk size
             ) {
                 Ok(new_resampler) => {
                     info!(
-                        "🚀 INPUT_WORKER: Created FAST resampler for {} ({} Hz → {} Hz)",
-                        device_id, device_sample_rate, target_sample_rate
+                        "🔄 {}: {} resampler for {} ({} Hz → {} Hz)",
+                        "INPUT_RESAMPLER".green(),
+                        if resampler.is_some() { "Recreated" } else { "Created" },
+                        device_id,
+                        device_sample_rate,
+                        target_sample_rate
                     );
                     *resampler = Some(new_resampler);
                 }
@@ -120,6 +136,7 @@ impl InputWorker {
         let device_sample_rate = self.device_sample_rate;
         let target_sample_rate = self.target_sample_rate;
         let channels = self.channels;
+        let chunk_size = self.chunk_size;
 
         // Clone shared resources for the worker thread
         let rtrb_consumer = self.rtrb_consumer.clone();
@@ -186,12 +203,14 @@ impl InputWorker {
                 let original_samples_len = samples.len();
 
                 // Step 1: Resample to target sample rate if needed
-                let resampled_samples = if let Some(active_resampler) = Self::get_or_initialize_resampler_static(
-                    &mut resampler,
-                    device_sample_rate,
-                    target_sample_rate,
-                    &device_id,
-                ) {
+                let resampled_samples = if let Some(active_resampler) =
+                    Self::get_or_initialize_resampler_static(
+                        &mut resampler,
+                        device_sample_rate,
+                        target_sample_rate,
+                        chunk_size,
+                        &device_id,
+                    ) {
                     // Resample using the active resampler
                     active_resampler.convert(&samples)
                 } else {
@@ -204,6 +223,7 @@ impl InputWorker {
                 effects_chain.process(&mut effects_processed);
 
                 // Step 3: Send processed audio to mixing layer
+                let samples_to_send = effects_processed.len();
                 let processed_audio = ProcessedAudioSamples {
                     device_id: device_id.clone(),
                     samples: effects_processed,
@@ -211,6 +231,8 @@ impl InputWorker {
                     timestamp: std::time::Instant::now(),
                     effects_applied: true,
                 };
+
+
 
                 // Send to Layer 3 mixing
                 if let Err(_) = processed_output_tx.send(processed_audio) {
@@ -225,9 +247,11 @@ impl InputWorker {
                 // Rate-limited logging
                 if samples_processed <= 5 || samples_processed % 1000 == 0 {
                     info!(
-                        "🔄 RESAMPLE_AND_EFFECTS_INPUT_WORKER: (2nd layer) {} processed {} samples in {}μs (batch #{})",
+                        "🔄 {}: (2nd layer) {} processed {} samples, sent {} in {}μs (batch #{})",
+                        "RESAMPLE_AND_EFFECTS_INPUT_WORKER".green(),
                         device_id,
                         original_samples_len,
+                        samples_to_send,
                         processing_duration.as_micros(),
                         samples_processed
                     );
@@ -259,8 +283,20 @@ impl InputWorker {
     }
 
     pub fn update_target_mix_rate(&mut self, target_mix_rate: u32) -> Result<()> {
+        info!(
+            "🔄 {}: Updating target mix rate for '{}': {} Hz → {} Hz",
+            "INPUT_WORKER_UPDATE".cyan(),
+            self.device_id,
+            self.target_sample_rate,
+            target_mix_rate
+        );
+
         self.target_sample_rate = target_mix_rate;
         self.update_effects(AudioEffectsChain::new(target_mix_rate));
+
+        // **CRITICAL**: Force resampler recreation with new target rate
+        self.resampler = None;
+
         Ok(())
     }
 

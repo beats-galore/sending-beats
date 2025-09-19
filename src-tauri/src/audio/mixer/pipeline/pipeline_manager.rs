@@ -26,7 +26,7 @@ use super::{
 /// Complete 4-layer audio pipeline manager
 pub struct AudioPipeline {
     // Configuration
-    max_sample_rate: u32, // Target rate for mixing (e.g., 48kHz)
+    max_sample_rate: Option<u32>, // Target rate for mixing, determined from first device
 
     // Pipeline components
     queues: PipelineQueues,
@@ -36,7 +36,8 @@ pub struct AudioPipeline {
 
     // Hardware communication (macOS CoreAudio only)
     #[cfg(target_os = "macos")]
-    hardware_update_tx: Option<tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>>,
+    hardware_update_tx:
+        Option<tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>>,
 
     // State tracking
     is_running: bool,
@@ -44,19 +45,18 @@ pub struct AudioPipeline {
 }
 
 impl AudioPipeline {
-    /// Create a new audio pipeline
-    pub fn new(max_sample_rate: u32) -> Self {
+    /// Create a new audio pipeline with dynamic sample rate detection
+    pub fn new() -> Self {
         info!(
-            "🏗️ {}: Creating new 4-layer audio pipeline (max rate: {} Hz)",
-            "AUDIO_PIPELINE".bright_blue(),
-            max_sample_rate
+            "🏗️ {}: Creating new 4-layer audio pipeline (sample rate will be determined from first device)",
+            "AUDIO_PIPELINE".bright_blue()
         );
 
         Self {
-            max_sample_rate,
+            max_sample_rate: None,
             queues: PipelineQueues::new(),
             input_workers: HashMap::new(),
-            mixing_layer: MixingLayer::new(max_sample_rate),
+            mixing_layer: MixingLayer::new(44100), // Temporary default, will be updated
             output_workers: HashMap::new(),
             #[cfg(target_os = "macos")]
             hardware_update_tx: None,
@@ -69,7 +69,9 @@ impl AudioPipeline {
     #[cfg(target_os = "macos")]
     pub fn new_with_hardware_updates(
         max_sample_rate: u32,
-        hardware_update_tx: Option<tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>>
+        hardware_update_tx: Option<
+            tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>,
+        >,
     ) -> Self {
         info!(
             "🏗️ {}: Creating new 4-layer audio pipeline with hardware updates (max rate: {} Hz)",
@@ -91,9 +93,14 @@ impl AudioPipeline {
 
     /// Set hardware update channel for dynamic CoreAudio buffer management (macOS only)
     #[cfg(target_os = "macos")]
-    pub fn set_hardware_update_channel(&mut self, tx: tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>) {
+    pub fn set_hardware_update_channel(
+        &mut self,
+        tx: tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>,
+    ) {
         self.hardware_update_tx = Some(tx);
-        tracing::info!("🔗 AudioPipeline: Hardware update channel connected for dynamic buffer management");
+        tracing::info!(
+            "🔗 AudioPipeline: Hardware update channel connected for dynamic buffer management"
+        );
     }
 
     fn get_all_sample_rates(&self) -> Vec<(String, u32)> {
@@ -159,6 +166,7 @@ impl AudioPipeline {
         device_id: String,
         device_sample_rate: u32,
         channels: u16,
+        chunk_size: usize, // Input device chunk size from hardware
         rtrb_consumer: rtrb::Consumer<f32>,
         input_notifier: Arc<tokio::sync::Notify>,
     ) -> Result<()> {
@@ -204,6 +212,7 @@ impl AudioPipeline {
             device_sample_rate,
             self.max_sample_rate,
             channels,
+            chunk_size, // Pass the actual input device chunk size
             rtrb_consumer,
             input_notifier,
             processed_output_tx,
@@ -269,7 +278,11 @@ impl AudioPipeline {
             // **HARDWARE SYNC**: Use new constructor with hardware update channel on macOS
             #[cfg(target_os = "macos")]
             if let Some(ref hardware_tx) = self.hardware_update_tx {
-                tracing::info!("🔗 {}: Creating OutputWorker with HARDWARE UPDATES for {}", "PIPELINE".bright_blue(), device_id);
+                tracing::info!(
+                    "🔗 {}: Creating OutputWorker with HARDWARE UPDATES for {}",
+                    "PIPELINE".bright_blue(),
+                    device_id
+                );
                 OutputWorker::new_with_hardware_updates(
                     device_id.clone(),
                     device_sample_rate,
@@ -279,7 +292,11 @@ impl AudioPipeline {
                     hardware_tx.clone(),
                 )
             } else {
-                tracing::info!("⚠️ {}: Creating OutputWorker WITHOUT hardware updates for {}", "PIPELINE".bright_blue(), device_id);
+                tracing::info!(
+                    "⚠️ {}: Creating OutputWorker WITHOUT hardware updates for {}",
+                    "PIPELINE".bright_blue(),
+                    device_id
+                );
                 OutputWorker::new_with_spmc_writer(
                     device_id.clone(),
                     device_sample_rate,

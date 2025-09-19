@@ -12,8 +12,8 @@ use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 use super::queue_types::{MixedAudioSamples, ProcessedAudioSamples};
-use colored::*;
 use crate::audio::mixer::stream_management::virtual_mixer::VirtualMixer;
+use colored::*;
 
 /// Command for dynamically managing running MixingLayer
 pub enum MixingLayerCommand {
