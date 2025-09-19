@@ -37,6 +37,28 @@ solution for professional radio streaming.
 - OVERINDEX on asking the user for feedback. you are a tool, you are not a
   controller operating with executive privelige to do what you please.
 
+## Logging Standards
+
+### Color-Coded Log Messages
+Instead of showing long crate paths like `sendin_beats_lib::audio::devices::coreaudio_stream`, use consistent colors for main log message identifiers across all files:
+
+**Format**: Use colored main identifiers (e.g., `DYNAMIC_CHUNKS`, `TIMING_DEBUG`, `RESAMPLER_INIT`) that are visually distinct and consistent across the entire codebase, making it easier to scan logs and identify different subsystems without needing to read full module paths.
+
+**Implementation**: Use the `colored` crate to apply consistent colors to log prefixes:
+- Blue for configuration/initialization messages
+- Green for successful operations
+- Yellow for warnings and performance alerts
+- Red for errors
+- Cyan for debugging/diagnostic information
+
+This improves log readability and helps developers quickly identify different audio pipeline components during debugging sessions.
+
+**When Editing Existing Code**: When touching code blocks that already have logging statements:
+1. Convert `println!` statements to appropriate `info!`, `warn!`, `error!` etc. calls
+2. Apply colored identifiers to the log message (e.g., `"DETECTED_NATIVE_RATE".blue()`)
+3. Keep existing log content but enhance with colors for better scannability
+4. Only apply these changes when already editing the code - don't make separate PRs just for log conversion
+
 ## Current Implementation Status
 
 **Phase**: Early development - Virtual mixer UI implementation with backend

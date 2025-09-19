@@ -97,8 +97,13 @@ pub async fn safe_switch_input_device(
                     response_tx,
                 };
 
-            if let Err(_) = audio_state.audio_command_tx.send(remove_command).await {
-                return Err("Audio system not available".to_string());
+            if let Err(e) = audio_state.audio_command_tx.send(remove_command).await {
+                let error_msg = format!(
+                    "Audio system not available - failed to send remove command: {}",
+                    e
+                );
+                tracing::error!("{}", error_msg);
+                return Err(error_msg);
             }
 
             let _ = response_rx.await; // Don't fail on remove errors
@@ -135,8 +140,10 @@ pub async fn safe_switch_input_device(
     };
 
     // Send command to isolated audio thread
-    if let Err(_) = audio_state.audio_command_tx.send(command).await {
-        return Err("Audio system not available".to_string());
+    if let Err(e) = audio_state.audio_command_tx.send(command).await {
+        let error_msg = format!("Audio system not available - failed to send command: {}", e);
+        tracing::error!("{}", error_msg);
+        return Err(error_msg);
     }
 
     // Wait for response from isolated audio thread
@@ -176,8 +183,10 @@ pub async fn safe_switch_output_device(
     };
 
     // Send command to isolated audio thread
-    if let Err(_) = audio_state.audio_command_tx.send(command).await {
-        return Err("Audio system not available".to_string());
+    if let Err(e) = audio_state.audio_command_tx.send(command).await {
+        let error_msg = format!("Audio system not available - failed to send command: {}", e);
+        tracing::error!("{}", error_msg);
+        return Err(error_msg);
     }
 
     // Wait for response from isolated audio thread
@@ -241,8 +250,10 @@ pub async fn add_input_stream(
     };
 
     // Send command to isolated audio thread
-    if let Err(_) = audio_state.audio_command_tx.send(command).await {
-        return Err("Audio system not available".to_string());
+    if let Err(e) = audio_state.audio_command_tx.send(command).await {
+        let error_msg = format!("Audio system not available - failed to send command: {}", e);
+        tracing::error!("{}", error_msg);
+        return Err(error_msg);
     }
 
     // Wait for response from isolated audio thread
@@ -278,8 +289,10 @@ pub async fn remove_input_stream(
     };
 
     // Send command to isolated audio thread
-    if let Err(_) = audio_state.audio_command_tx.send(command).await {
-        return Err("Audio system not available".to_string());
+    if let Err(e) = audio_state.audio_command_tx.send(command).await {
+        let error_msg = format!("Audio system not available - failed to send command: {}", e);
+        tracing::error!("{}", error_msg);
+        return Err(error_msg);
     }
 
     // Wait for response from isolated audio thread
@@ -339,8 +352,10 @@ pub async fn set_output_stream(
     };
 
     // Send command to isolated audio thread
-    if let Err(_) = audio_state.audio_command_tx.send(command).await {
-        return Err("Audio system not available".to_string());
+    if let Err(e) = audio_state.audio_command_tx.send(command).await {
+        let error_msg = format!("Audio system not available - failed to send command: {}", e);
+        tracing::error!("{}", error_msg);
+        return Err(error_msg);
     }
 
     // Wait for response from isolated audio thread
@@ -414,8 +429,10 @@ pub async fn add_output_device(
     };
 
     // Send command to isolated audio thread
-    if let Err(_) = audio_state.audio_command_tx.send(command).await {
-        return Err("Audio system not available".to_string());
+    if let Err(e) = audio_state.audio_command_tx.send(command).await {
+        let error_msg = format!("Audio system not available - failed to send command: {}", e);
+        tracing::error!("{}", error_msg);
+        return Err(error_msg);
     }
 
     // Wait for response from isolated audio thread

@@ -10,6 +10,7 @@ dependencies = [
  "anyhow",
  "base64 0.21.7",
  "chrono",
+ "colored",
  "core-foundation 0.9.4",
  "core-foundation-sys",
  "coreaudio-rs 0.13.0",
@@ -27,7 +28,6 @@ dependencies = [
  "objc2-foundation 0.3.1",
  "proptest",
  "pulse",
- "r8brain-rs",
  "regex",
  "reqwest 0.11.27",
  "rtrb",
@@ -724,12 +724,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "cmake"
-version = "0.1.54"
+name = "colored"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7caa3f9de89ddbe2c607f4101924c5abec803763ae9534e4f4d7d8f84aa81f0"
+checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
 dependencies = [
- "cc",
+ "lazy_static",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3960,15 +3961,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
-name = "r8brain-rs"
-version = "0.3.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8d8a95a5235085537051f80f1cdf704e41b1a1c749c067d381412c62da88b44"
-dependencies = [
- "cmake",
-]
-
-[[package]]
 name = "rand"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4364,9 +4356,9 @@ dependencies = [
 
 [[package]]
 name = "rubato"
-version = "0.15.0"
+version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5d18b486e7d29a408ef3f825bc1327d8f87af091c987ca2f5b734625940e234"
+checksum = "5258099699851cfd0082aeb645feb9c084d9a5e1f1b8d5372086b989fc5e56a1"
 dependencies = [
  "num-complex",
  "num-integer",

@@ -36,9 +36,9 @@ use commands::audio_effects::*;
 use commands::debug::*;
 use commands::file_player::*;
 use commands::icecast::*;
+use commands::mixer::*;
 use commands::recording::*;
 use commands::streaming::*;
-use commands::mixer::*;
 
 // File player state for managing multiple file players
 use commands::file_player::FilePlayerState;
@@ -66,7 +66,7 @@ fn init_logging() {
 
     // Create a formatting layer for console output
     let console_layer = tracing_subscriber::fmt::layer()
-        .with_target(true)
+        .with_target(false) // Hide module paths (e.g., sendin_beats_lib::audio::mixer::pipeline::output_worker) for cleaner logs
         .with_file(false)
         .with_line_number(false)
         .with_level(true)
