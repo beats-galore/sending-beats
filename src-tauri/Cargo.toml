@@ -1,8 +1,8 @@
 [package]
 name = "SendinBeats"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "Mixing, streaming, recording, broadcasting software"
+authors = ["Aaron Wilson"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -43,7 +43,6 @@ cpal = "0.15"              # Cross-platform audio I/O
 rtrb = "0.2"               # Real-time ring buffer
 spmcq = "0.1"              # Single Producer Multiple Consumer queue for output distribution
 rubato = "0.16.2"            # High-quality sample rate conversion
-r8brain-rs = "0.3"          # Professional broadcast-quality resampling with zero-latency
 rustfft = "6.2"            # Fast Fourier Transform for spectrum analysis
 sysinfo = "0.30"           # System process enumeration for application audio capture
 

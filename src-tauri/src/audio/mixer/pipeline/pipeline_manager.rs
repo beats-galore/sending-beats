@@ -151,7 +151,14 @@ impl AudioPipeline {
     }
 
     fn update_target_sample_rates(&mut self) -> Result<()> {
-        let target_rate = self.get_sample_rate();
+        // No-op if no sample rate is set (no devices added yet)
+        let target_rate = match self.max_sample_rate {
+            Some(rate) => rate,
+            None => {
+                info!("🎛️ PIPELINE: No sample rate set - no devices added yet, skipping target rate update");
+                return Ok(());
+            }
+        };
 
         for (device_id, worker) in &mut self.input_workers {
             worker.update_target_mix_rate(target_rate);
@@ -238,7 +245,10 @@ impl AudioPipeline {
             processed_output_tx,
         );
 
-        // every time a new input is added, we have to recalculate the new maximum and update other input workers / output workers.
+        // Add worker to collection BEFORE recalculating (needed for sample rate detection)
+        self.input_workers.insert(device_id.clone(), input_worker);
+
+        // Now recalculate target mix rate with the new worker included
         self.calculate_target_mix_rate()?;
         self.update_target_sample_rates()?;
 
@@ -246,12 +256,22 @@ impl AudioPipeline {
         self.mixing_layer
             .update_target_sample_rate(self.get_sample_rate());
 
-        // Start the worker if pipeline is running
-        if self.is_running {
-            input_worker.start()?;
+        // Start the mixing layer if pipeline is running and this is the first device (triggering layer start)
+        if self.is_running && !self.mixing_layer.get_stats().is_running {
+            if let Err(e) = self.mixing_layer.start() {
+                error!("❌ AUDIO_PIPELINE: Failed to start mixing layer after adding device: {}", e);
+                return Err(e);
+            } else {
+                info!("🚀 AUDIO_PIPELINE: Started mixing layer after adding first device");
+            }
         }
 
-        self.input_workers.insert(device_id.clone(), input_worker);
+        // Start the worker if pipeline is running (get mutable reference after insertion)
+        if self.is_running {
+            if let Some(worker) = self.input_workers.get_mut(&device_id) {
+                worker.start()?;
+            }
+        }
         self.devices_registered += 1;
 
         info!(
@@ -353,6 +373,16 @@ impl AudioPipeline {
         // Update mixing layer with new target rate
         self.mixing_layer
             .update_target_sample_rate(self.get_sample_rate());
+
+        // Start the mixing layer if pipeline is running and this is the first device (triggering layer start)
+        if self.is_running && !self.mixing_layer.get_stats().is_running {
+            if let Err(e) = self.mixing_layer.start() {
+                error!("❌ AUDIO_PIPELINE: Failed to start mixing layer after adding output device: {}", e);
+                return Err(e);
+            } else {
+                info!("🚀 AUDIO_PIPELINE: Started mixing layer after adding first output device");
+            }
+        }
 
         info!(
             "✅ AUDIO_PIPELINE: Added output device '{}' ({} Hz ← {} Hz, {} sample chunks)",

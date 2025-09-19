@@ -126,7 +126,14 @@ impl MixingLayer {
 
     /// Start the mixing processing thread
     pub fn start(&mut self) -> Result<()> {
-        let target_sample_rate = self.get_sample_rate();
+        // No-op if no sample rate is set (no devices added yet)
+        let target_sample_rate = match self.target_sample_rate {
+            Some(rate) => rate,
+            None => {
+                info!("🎛️ MIXING_LAYER: No sample rate set - no devices added yet, skipping start");
+                return Ok(());
+            }
+        };
         let master_gain = self.master_gain;
 
         // Create command channel for this run

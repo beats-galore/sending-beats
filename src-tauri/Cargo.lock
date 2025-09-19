@@ -28,7 +28,6 @@ dependencies = [
  "objc2-foundation 0.3.1",
  "proptest",
  "pulse",
- "r8brain-rs",
  "regex",
  "reqwest 0.11.27",
  "rtrb",
@@ -722,15 +721,6 @@ dependencies = [
  "glob",
  "libc",
  "libloading 0.8.8",
-]
-
-[[package]]
-name = "cmake"
-version = "0.1.54"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7caa3f9de89ddbe2c607f4101924c5abec803763ae9534e4f4d7d8f84aa81f0"
-dependencies = [
- "cc",
 ]
 
 [[package]]
@@ -3969,15 +3959,6 @@ name = "r-efi"
 version = "5.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
-
-[[package]]
-name = "r8brain-rs"
-version = "0.3.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8d8a95a5235085537051f80f1cdf704e41b1a1c749c067d381412c62da88b44"
-dependencies = [
- "cmake",
-]
 
 [[package]]
 name = "rand"
