@@ -327,19 +327,46 @@ impl OutputWorker {
                 };
                 let resample_duration = resample_start.elapsed();
 
-                // **ACCUMULATION APPROACH**: Accumulate variable FftFixedIn outputs until hardware chunk size
+                // **OPTIMIZATION**: If no resampling and chunk size matches, bypass accumulation entirely
                 let mut chunks_sent_this_cycle = 0;
                 let mut total_spmc_duration = std::time::Duration::ZERO;
 
                 if !device_samples.is_empty() {
-                    // **ACCUMULATION**: Add resampled samples to buffer
-                    accumulation_buffer.extend_from_slice(&device_samples);
+                    // **FAST PATH**: No resampling needed and chunk size matches exactly
+                    if mixed_audio.sample_rate == device_sample_rate &&
+                       device_samples.len() == adaptive_chunk_size &&
+                       accumulation_buffer.is_empty() {
+                        // Send directly without accumulation
+                        let spmc_write_start = std::time::Instant::now();
+                        if let Some(ref spmc_writer) = spmc_writer {
+                            Self::write_to_hardware_spmc(&device_id, &device_samples, spmc_writer)
+                                .await;
+                        }
+                        let spmc_write_duration = spmc_write_start.elapsed();
+                        total_spmc_duration += spmc_write_duration;
 
-                    // **CHUNK COMPLETION**: Send accumulated samples when we have enough for hardware
-                    while accumulation_buffer.len() >= adaptive_chunk_size {
-                        // Extract exactly the chunk size needed for hardware
-                        let hardware_chunk: Vec<f32> =
-                            accumulation_buffer.drain(0..adaptive_chunk_size).collect();
+                        chunks_processed += 1;
+                        chunks_sent_this_cycle += 1;
+
+                        // Rate-limited logging for fast path
+                        if chunks_processed <= 5 || chunks_processed % 1000 == 0 {
+                            info!(
+                                "🎵 {} (4th layer): {} sent direct chunk #{} ({} samples, 0 buffered) ⚡FAST_PATH",
+                                "OUTPUT_WORKER".purple(),
+                                device_id,
+                                chunks_processed,
+                                device_samples.len()
+                            );
+                        }
+                    } else {
+                        // **ACCUMULATION PATH**: Add resampled samples to buffer
+                        accumulation_buffer.extend_from_slice(&device_samples);
+
+                        // **CHUNK COMPLETION**: Send accumulated samples when we have enough for hardware
+                        while accumulation_buffer.len() >= adaptive_chunk_size {
+                            // Extract exactly the chunk size needed for hardware
+                            let hardware_chunk: Vec<f32> =
+                                accumulation_buffer.drain(0..adaptive_chunk_size).collect();
 
                         let spmc_write_start = std::time::Instant::now();
                         if let Some(ref spmc_writer) = spmc_writer {
@@ -364,6 +391,7 @@ impl OutputWorker {
                                 hardware_chunk.len(),
                                 accumulation_buffer.len()
                             );
+                        }
                         }
                     }
 
