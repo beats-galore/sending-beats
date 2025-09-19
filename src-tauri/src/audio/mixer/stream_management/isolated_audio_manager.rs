@@ -97,23 +97,21 @@ impl IsolatedAudioManager {
     /// AudioPipeline now handles all audio processing internally
 
     pub async fn new(command_rx: mpsc::Receiver<AudioCommand>) -> Result<Self, anyhow::Error> {
-        // **CORE**: Create 4-layer AudioPipeline with max sample rate of 48kHz
-        const MAX_SAMPLE_RATE: u32 = 48000;
+        // **CORE**: Create 4-layer AudioPipeline with dynamic sample rate detection
+        // Sample rate will be determined from the first device that gets added
 
         // **HARDWARE SYNC**: Create hardware update channel for CoreAudio buffer synchronization
         #[cfg(target_os = "macos")]
         let (hardware_update_tx, mut hardware_update_rx) = mpsc::channel::<AudioCommand>(32);
 
         #[cfg(target_os = "macos")]
-        let audio_pipeline =
-            AudioPipeline::new_with_hardware_updates(MAX_SAMPLE_RATE, Some(hardware_update_tx));
+        let audio_pipeline = AudioPipeline::new_with_hardware_updates(Some(hardware_update_tx));
 
         #[cfg(not(target_os = "macos"))]
-        let audio_pipeline = AudioPipeline::new(MAX_SAMPLE_RATE);
+        let audio_pipeline = AudioPipeline::new();
 
         info!(
-            "🎧 AUDIO_COORDINATOR: Initialized with 4-layer AudioPipeline (max: {} Hz)",
-            MAX_SAMPLE_RATE
+            "🎧 AUDIO_COORDINATOR: Initialized with 4-layer AudioPipeline (dynamic sample rate detection)"
         );
 
         Ok(Self {

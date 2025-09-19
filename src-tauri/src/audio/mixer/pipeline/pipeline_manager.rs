@@ -45,6 +45,10 @@ pub struct AudioPipeline {
 }
 
 impl AudioPipeline {
+    /// Get the current pipeline sample rate, panics if not set (must have devices added first)
+    fn get_sample_rate(&self) -> u32 {
+        self.max_sample_rate.expect("Pipeline sample rate not set - no devices have been added yet")
+    }
     /// Create a new audio pipeline with dynamic sample rate detection
     pub fn new() -> Self {
         info!(
@@ -56,7 +60,7 @@ impl AudioPipeline {
             max_sample_rate: None,
             queues: PipelineQueues::new(),
             input_workers: HashMap::new(),
-            mixing_layer: MixingLayer::new(44100), // Temporary default, will be updated
+            mixing_layer: MixingLayer::new(),
             output_workers: HashMap::new(),
             #[cfg(target_os = "macos")]
             hardware_update_tx: None,
@@ -68,22 +72,20 @@ impl AudioPipeline {
     /// Create a new audio pipeline with hardware update channel (macOS only)
     #[cfg(target_os = "macos")]
     pub fn new_with_hardware_updates(
-        max_sample_rate: u32,
         hardware_update_tx: Option<
             tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>,
         >,
     ) -> Self {
         info!(
-            "🏗️ {}: Creating new 4-layer audio pipeline with hardware updates (max rate: {} Hz)",
-            "AUDIO_PIPELINE".bright_blue(),
-            max_sample_rate
+            "🏗️ {}: Creating new 4-layer audio pipeline with hardware updates (sample rate will be determined from first device)",
+            "AUDIO_PIPELINE".bright_blue()
         );
 
         Self {
-            max_sample_rate,
+            max_sample_rate: None,
             queues: PipelineQueues::new(),
             input_workers: HashMap::new(),
-            mixing_layer: MixingLayer::new(max_sample_rate),
+            mixing_layer: MixingLayer::new(),
             output_workers: HashMap::new(),
             hardware_update_tx,
             is_running: false,
@@ -124,38 +126,40 @@ impl AudioPipeline {
         let all_sample_rates = self.get_all_sample_rates();
 
         if all_sample_rates.is_empty() {
-            return Ok(crate::types::DEFAULT_SAMPLE_RATE);
+            return Err(anyhow::anyhow!("Cannot calculate target mix rate: no devices have been added"));
         }
 
         if all_sample_rates.len() == 1 {
-            return Ok(all_sample_rates[0].1);
+            let target_rate = all_sample_rates[0].1;
+            self.max_sample_rate = Some(target_rate);
+            return Ok(target_rate);
         }
 
-        // Find the maximum sample rate using the max function
-        let max_rate = all_sample_rates
+        // Find the maximum sample rate - panic if we somehow get zero rates
+        let target_rate = all_sample_rates
             .iter()
             .map(|(_, rate)| *rate)
             .max()
-            .unwrap_or(crate::types::DEFAULT_SAMPLE_RATE);
+            .expect("At least one sample rate should exist");
 
-        let target_rate = if max_rate == 0 {
-            crate::types::DEFAULT_SAMPLE_RATE
-        } else {
-            max_rate
-        };
+        if target_rate == 0 {
+            return Err(anyhow::anyhow!("Invalid sample rate: devices reported 0 Hz"));
+        }
 
-        self.max_sample_rate = target_rate;
+        self.max_sample_rate = Some(target_rate);
         Ok(target_rate)
     }
 
     fn update_target_sample_rates(&mut self) -> Result<()> {
+        let target_rate = self.get_sample_rate();
+
         for (device_id, worker) in &mut self.input_workers {
-            worker.update_target_mix_rate(self.max_sample_rate);
+            worker.update_target_mix_rate(target_rate);
         }
 
         // Collect sample rates from output workers
         for (device_id, worker) in &mut self.output_workers {
-            worker.update_target_mix_rate(self.max_sample_rate);
+            worker.update_target_mix_rate(target_rate);
         }
         Ok(())
     }
@@ -206,11 +210,27 @@ impl AudioPipeline {
             );
         }
 
+        // **DYNAMIC SAMPLE RATE**: Set pipeline sample rate from first device
+        if self.max_sample_rate.is_none() {
+            self.max_sample_rate = Some(device_sample_rate);
+            info!(
+                "🎯 {}: Pipeline sample rate initialized to {} Hz from first device '{}'",
+                "DYNAMIC_SAMPLE_RATE".blue(),
+                device_sample_rate,
+                device_id
+            );
+
+            // Update mixing layer with the determined sample rate
+            self.mixing_layer.update_target_sample_rate(device_sample_rate);
+        }
+
+        let target_sample_rate = self.max_sample_rate.unwrap(); // Safe to unwrap after check above
+
         // Create input worker with direct RTRB consumer
         let mut input_worker = InputWorker::new_with_rtrb(
             device_id.clone(),
             device_sample_rate,
-            self.max_sample_rate,
+            target_sample_rate,
             channels,
             chunk_size, // Pass the actual input device chunk size
             rtrb_consumer,
@@ -224,7 +244,7 @@ impl AudioPipeline {
 
         // Update mixing layer with new target rate
         self.mixing_layer
-            .update_target_sample_rate(self.max_sample_rate);
+            .update_target_sample_rate(self.get_sample_rate());
 
         // Start the worker if pipeline is running
         if self.is_running {
@@ -236,7 +256,7 @@ impl AudioPipeline {
 
         info!(
             "✅ AUDIO_PIPELINE: Added input device '{}' with direct RTRB consumer ({} Hz → {} Hz)",
-            device_id, device_sample_rate, self.max_sample_rate
+            device_id, device_sample_rate, self.get_sample_rate()
         );
 
         Ok(())
@@ -332,11 +352,11 @@ impl AudioPipeline {
 
         // Update mixing layer with new target rate
         self.mixing_layer
-            .update_target_sample_rate(self.max_sample_rate);
+            .update_target_sample_rate(self.get_sample_rate());
 
         info!(
             "✅ AUDIO_PIPELINE: Added output device '{}' ({} Hz ← {} Hz, {} sample chunks)",
-            device_id, device_sample_rate, self.max_sample_rate, chunk_size
+            device_id, device_sample_rate, self.get_sample_rate(), chunk_size
         );
 
         Ok(())
@@ -484,11 +504,11 @@ impl AudioPipeline {
 
         // Update mixing layer with new target rate
         self.mixing_layer
-            .update_target_sample_rate(self.max_sample_rate);
+            .update_target_sample_rate(self.get_sample_rate());
 
         info!(
             "✅ AUDIO_PIPELINE: Removed input device '{}' and recalculated mix rate to {} Hz",
-            device_id, self.max_sample_rate
+            device_id, self.get_sample_rate()
         );
 
         Ok(())
@@ -519,11 +539,11 @@ impl AudioPipeline {
 
         // Update mixing layer with new target rate
         self.mixing_layer
-            .update_target_sample_rate(self.max_sample_rate);
+            .update_target_sample_rate(self.get_sample_rate());
 
         info!(
             "✅ AUDIO_PIPELINE: Removed output device '{}' and recalculated mix rate to {} Hz",
-            device_id, self.max_sample_rate
+            device_id, self.get_sample_rate()
         );
 
         Ok(())
@@ -545,7 +565,7 @@ impl AudioPipeline {
 
         PipelineStats {
             is_running: self.is_running,
-            max_sample_rate: self.max_sample_rate,
+            max_sample_rate: self.get_sample_rate(),
             input_workers: input_stats,
             mixing_layer: self.mixing_layer.get_stats(),
             output_workers: output_stats,

@@ -38,7 +38,7 @@ pub struct MixingLayer {
     command_tx: mpsc::UnboundedSender<MixingLayerCommand>,
 
     // Configuration
-    target_sample_rate: u32,
+    target_sample_rate: Option<u32>,
     master_gain: f32,
 
     // Worker thread
@@ -50,15 +50,19 @@ pub struct MixingLayer {
 }
 
 impl MixingLayer {
-    /// Create new mixing layer
-    pub fn new(target_sample_rate: u32) -> Self {
+    /// Get the current sample rate, panics if not set (must have devices added first)
+    fn get_sample_rate(&self) -> u32 {
+        self.target_sample_rate.expect("MixingLayer sample rate not set - no devices have been added yet")
+    }
+    /// Create new mixing layer with dynamic sample rate detection
+    pub fn new() -> Self {
         let (command_tx, _command_rx) = mpsc::unbounded_channel();
 
         Self {
             processed_input_receivers: HashMap::new(),
             mixed_output_senders: Vec::new(),
             command_tx,
-            target_sample_rate,
+            target_sample_rate: None,
             master_gain: 1.0,
             worker_handle: None,
             mix_cycles: 0,
@@ -122,7 +126,7 @@ impl MixingLayer {
 
     /// Start the mixing processing thread
     pub fn start(&mut self) -> Result<()> {
-        let target_sample_rate = self.target_sample_rate;
+        let target_sample_rate = self.get_sample_rate();
         let master_gain = self.master_gain;
 
         // Create command channel for this run
@@ -278,7 +282,7 @@ impl MixingLayer {
 
     /// Update target sample rate when devices are added/removed
     pub fn update_target_sample_rate(&mut self, new_sample_rate: u32) {
-        self.target_sample_rate = new_sample_rate;
+        self.target_sample_rate = Some(new_sample_rate);
         info!(
             "🎛️ MIXING_LAYER: Updated target sample rate to {} Hz",
             new_sample_rate
