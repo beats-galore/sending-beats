@@ -93,17 +93,18 @@ impl InputWorker {
 
         // Check if resampler exists and has the correct target rate
         let needs_recreation = if let Some(ref existing_resampler) = resampler {
-            existing_resampler.output_rate != target_sample_rate as f32
+            existing_resampler.output_rate() != target_sample_rate as f32
         } else {
             true // No resampler exists
         };
 
         // Create or recreate resampler if needed
         if needs_recreation {
-            match RubatoSRC::new_fft_fixed_input(
+            match RubatoSRC::new_sinc_fixed_out(
                 device_sample_rate as f32,
                 target_sample_rate as f32,
-                chunk_size, // Use actual input device chunk size
+                chunk_size / 2, // Output frames per channel (stereo)
+                2, // channels (stereo)
             ) {
                 Ok(new_resampler) => {
                     info!(
@@ -215,8 +216,10 @@ impl InputWorker {
                         chunk_size,
                         &device_id,
                     ) {
-                    // Resample using the active resampler
-                    active_resampler.convert(&samples)
+                    // Push samples into resampler FIFO and pull output
+                    active_resampler.push_interleaved(&samples);
+                    let output_frames = chunk_size / 2; // stereo frames
+                    active_resampler.get_output_interleaved(output_frames)
                 } else {
                     // No resampling needed or resampler creation failed
                     samples.clone()

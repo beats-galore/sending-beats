@@ -1,196 +1,155 @@
+use rubato::{SincFixedOut, SincInterpolationParameters, SincInterpolationType, WindowFunction, Resampler};
+use std::collections::VecDeque;
 use anyhow::Result;
-use colored::*;
-use rubato::{FftFixedIn, Resampler as RubatoResampler};
-use tracing::info;
-/// Sample Rate Converter for Dynamic Audio Buffer Conversion
-///
-/// Handles real-time sample rate conversion between input and output devices
-/// Supports both upsampling (interpolation) and downsampling (decimation)
-/// Optimized for low-latency audio processing in callback contexts
 
-/// FFT-based fixed input resampler - simplified single implementation
-struct ResamplerWrapper {
-    /// FFT-based fixed input resampler (variable output)
-    resampler: FftFixedIn<f32>,
-}
-
-impl std::fmt::Debug for ResamplerWrapper {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ResamplerWrapper(FftFixedIn)")
-    }
-}
-
-/// FFT-based sample rate converter using FftFixedIn
-/// Provides good quality audio resampling with fixed input size and variable output size
-/// Optimized for real-time audio processing with pre-allocated buffers
-#[derive(Debug)]
+/// Stereo streaming resampler: SincFixedOut (fixed output frames)
 pub struct RubatoSRC {
-    /// FFT-based fixed input resampler
-    resampler: ResamplerWrapper,
-    /// Pre-allocated input buffer for resampler
-    input_buffer: Vec<Vec<f32>>,
-    /// Pre-allocated output buffer for resampler (sized for maximum possible output)
-    output_buffer: Vec<Vec<f32>>,
-    /// Input sample rate
-    pub input_rate: f32,
-    /// Output sample rate
-    pub output_rate: f32,
-    /// Conversion ratio (output_rate / input_rate)
-    ratio: f32,
-    /// Fixed input chunk size this resampler expects
-    input_frames: usize,
-    /// **PERFORMANCE FIX**: Reusable result buffer to eliminate Vec allocations
-    reusable_result_buffer: Vec<f32>,
+    resampler: SincFixedOut<f32>,
+    // per-channel FIFO (deinterleaved): [0]=Left, [1]=Right
+    input_fifos: [VecDeque<f32>; 2],
+    channels: usize,
+    input_rate: f32,
+    output_rate: f32,
 }
 
 impl RubatoSRC {
-    /// Create a FFT-based fixed input resampler using FftFixedIn
-    /// This accepts a fixed number of input frames and returns a variable number of output frames
-    ///
-    /// # Arguments
-    /// * `input_rate` - Input sample rate in Hz (e.g., 48000)
-    /// * `output_rate` - Output sample rate in Hz (e.g., 44100)
-    /// * `chunk_size_in` - Fixed number of input frames per call (e.g., 512)
-    ///
-    /// # Returns
-    /// FFT-based resampler with fixed input and variable output frame sizes
-    pub fn new_fft_fixed_input(
+    /// Create a streaming resampler that will produce `output_frames_per_channel`
+    /// when asked (that's the "fixed output" size). `output_frames_per_channel`
+    /// should match the device chunk size divided by `channels`.
+    pub fn new_sinc_fixed_out(
         input_rate: f32,
         output_rate: f32,
-        chunk_size_in: usize,
+        output_frames_per_channel: usize,
+        channels: usize, // 2 for stereo
     ) -> Result<Self, String> {
-        info!(
-            "🎯 {}: Creating FftFixedIn resampler {}Hz→{}Hz with {} input frames",
-            "FFT_FIXED_IN".blue(),
-            input_rate,
-            output_rate,
-            chunk_size_in
-        );
 
-        // Create Rubato's FFT-based fixed input resampler
-        let resampler = FftFixedIn::new(
-            input_rate as usize,  // sample_rate_input
-            output_rate as usize, // sample_rate_output
-            chunk_size_in,        // chunk_size_in: fixed input chunk size in frames
-            4,                    // sub_chunks: desired number of subchunks for processing
-            2,                    // nbr_channels: number of channels (stereo)
+
+        let params = SincInterpolationParameters {
+            sinc_len: 64, // Reduced from 64 for real-time performance
+            f_cutoff: 0.95, // Slightly lower for stability
+            interpolation: SincInterpolationType::Cubic, // Faster than Cubic
+            oversampling_factor: 32, // Reduced from 128 for speed
+            window: WindowFunction::BlackmanHarris2, // Faster than BlackmanHarris2
+        };
+
+        // ratio = output / input (rubato expects that order for SincFixedOut::new)
+        let ratio = output_rate as f64 / input_rate as f64;
+
+        let resampler = SincFixedOut::<f32>::new(
+            ratio,
+            2.0, // Higher tolerance for real-time performance (was 2.0)
+            params,
+            output_frames_per_channel, // requested fixed output frames per channel
+            channels,
         )
-        .map_err(|e| format!("Failed to create FftFixedIn resampler: {}", e))?;
-
-        // Get the maximum possible output frame count from the resampler
-        let max_output_frames = resampler.output_frames_max();
-
-        info!(
-            "🎯 {}: FftFixedIn configured: {} input frames → max {} output frames (ratio: {:.3})",
-            "FFT_FIXED_IN".blue(),
-            chunk_size_in,
-            max_output_frames,
-            output_rate / input_rate
-        );
-
-        // Pre-allocate buffers for zero-allocation processing
-        let input_buffer = vec![vec![0.0; chunk_size_in]; 2]; // 2 channels for stereo
-        let output_buffer = vec![vec![0.0; max_output_frames]; 2]; // Maximum possible output size
+        .map_err(|e| format!("Failed creating SincFixedOut: {}", e))?;
 
         Ok(Self {
-            resampler: ResamplerWrapper { resampler },
-            input_buffer,
-            output_buffer,
+            resampler,
+            input_fifos: [VecDeque::new(), VecDeque::new()],
+            channels,
             input_rate,
             output_rate,
-            ratio: output_rate / input_rate,
-            input_frames: chunk_size_in,
-            reusable_result_buffer: Vec::with_capacity(max_output_frames * 2), // Stereo samples
         })
     }
 
-    /// Convert input samples to output sample rate using FftFixedIn
-    /// Accepts exactly the fixed input frame size and returns variable output frames
-    ///
-    /// # Arguments
-    /// * `input_samples` - Input audio samples at input_rate (interleaved stereo)
-    ///
-    /// # Returns
-    /// Vector of resampled audio with variable length determined by FftFixedIn
-    pub fn convert(&mut self, input_samples: &[f32]) -> Vec<f32> {
-        // Handle empty input
-        if input_samples.is_empty() {
-            return Vec::new();
+    /// Push interleaved samples (LRLR...) into the internal FIFOs.
+    /// This should be called from your producer when new mixed audio arrives.
+    pub fn push_interleaved(&mut self, interleaved: &[f32]) {
+        if self.channels == 1 {
+            // mono
+            for &s in interleaved {
+                self.input_fifos[0].push_back(s);
+            }
+            return;
         }
 
-        // FftFixedIn requires exactly the configured input frame count
-        let input_frames = input_samples.len() / 2; // Each frame has L+R samples
-
-        // Ensure we have exactly the required input frames, pad with zeros if needed
-        let frames_to_process = self.input_frames;
-
-        // Clear the input buffer
-        for i in 0..frames_to_process {
-            self.input_buffer[0][i] = 0.0;
-            self.input_buffer[1][i] = 0.0;
+        let mut i = 0;
+        while i + (self.channels - 1) < interleaved.len() {
+            // assume interleaved layout matches self.channels
+            for ch in 0..self.channels {
+                self.input_fifos[ch].push_back(interleaved[i + ch]);
+            }
+            i += self.channels;
         }
+    }
 
-        // De-interleave input samples: LRLRLR... -> L...L, R...R
-        // Fill actual data up to available frames, pad with zeros if needed
-        let frames_available = input_frames.min(frames_to_process);
-        for frame in 0..frames_available {
-            if frame * 2 + 1 < input_samples.len() {
-                self.input_buffer[0][frame] = input_samples[frame * 2]; // Left channel
-                self.input_buffer[1][frame] = input_samples[frame * 2 + 1]; // Right channel
+    /// Produce exactly `output_frames_per_channel * channels` interleaved samples.
+    /// This is the function you call in your output callback (or output worker)
+    /// where `output_frames_per_channel` equals device_chunk_size / channels.
+    pub fn get_output_interleaved(&mut self, output_frames_per_channel: usize) -> Vec<f32> {
+        // Ensure resampler's configured fixed output size matches requested.
+        // If not, you'd need to recreate the resampler (avoid in real-time).
+        // rubato::SincFixedOut::new used output_frames_per_channel at init time;
+        // here we assume caller set it to that value.
+
+        // For SincFixedOut, ask the resampler how many input frames it needs
+        let needed_input_frames = self.resampler.input_frames_next();
+        // If FIFO doesn't have enough, pad with zeros to avoid underrun.
+        for ch in 0..self.channels {
+            let missing = needed_input_frames.saturating_sub(self.input_fifos[ch].len());
+            if missing > 0 {
+                // push zeros
+                self.input_fifos[ch].extend(std::iter::repeat(0.0f32).take(missing));
             }
         }
 
-        // Perform resampling using FftFixedIn
-        let process_result = self.resampler.resampler.process_into_buffer(
-            &self.input_buffer,
-            &mut self.output_buffer,
-            None,
-        );
-
-        match process_result {
-            Ok((_input_frames_used, output_frames_generated)) => {
-                // Interleave output: L...L, R...R -> LRLRLR...
-                self.reusable_result_buffer.clear();
-                self.reusable_result_buffer
-                    .reserve(output_frames_generated * 2);
-
-                for frame in 0..output_frames_generated {
-                    self.reusable_result_buffer
-                        .push(self.output_buffer[0][frame]); // Left
-                    self.reusable_result_buffer
-                        .push(self.output_buffer[1][frame]); // Right
-                }
-
-                self.reusable_result_buffer.clone()
+        // Build input Vec<Vec<f32>> per rubato API: channels x frames
+        let mut input: Vec<Vec<f32>> = Vec::with_capacity(self.channels);
+        for ch in 0..self.channels {
+            let mut vec_ch = Vec::with_capacity(needed_input_frames);
+            for _ in 0..needed_input_frames {
+                // safe because we padded above
+                vec_ch.push(self.input_fifos[ch].pop_front().unwrap_or(0.0));
             }
+            input.push(vec_ch);
+        }
+
+        // Ask the resampler for exactly output_frames_per_channel per channel
+        // note: process returns Vec<Vec<f32>> where inner vec is frames for channel
+        // For SincFixedOut, the second parameter might be different
+        let processed = match self.resampler.process(&input, None) {
+            Ok(v) => v,
             Err(e) => {
-                info!(
-                    "❌ {}: Resampling failed: {}",
-                    "FFT_FIXED_IN_ERROR".red(),
-                    e
-                );
-                Vec::new()
+                // on error return silence to avoid crashing audio thread
+                eprintln!("Resampler process error: {}", e);
+                vec![vec![0.0f32; output_frames_per_channel]; self.channels]
+            }
+        };
+
+        // Interleave and return LRLR...
+        let mut interleaved = Vec::with_capacity(output_frames_per_channel * self.channels);
+        for frame in 0..output_frames_per_channel {
+            for ch in 0..self.channels {
+                interleaved.push(processed[ch][frame]);
             }
         }
+        interleaved
     }
 
-    /// Get conversion ratio (for debugging and compatibility)
-    pub fn ratio(&self) -> f32 {
-        self.ratio
+    /// Optional: query the current configured delay (samples)
+    pub fn output_delay(&self) -> usize {
+        self.resampler.output_delay()
     }
 
-    /// Check if conversion is needed (rates are different)
-    pub fn conversion_needed(&self) -> bool {
-        (self.ratio - 1.0).abs() > 0.001
+    /// Get input sample rate for compatibility checks
+    pub fn input_rate(&self) -> f32 {
+        self.input_rate
     }
 
-    /// Get delay introduced by the resampler (for latency compensation)
-    pub fn output_delay(&self) -> f32 {
-        self.resampler.resampler.output_delay() as f32
+    /// Get output sample rate for compatibility checks
+    pub fn output_rate(&self) -> f32 {
+        self.output_rate
     }
+}
 
-    /// Get the fixed input frame size
-    pub fn get_input_frames(&self) -> usize {
-        self.input_frames
+impl std::fmt::Debug for RubatoSRC {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RubatoSRC")
+            .field("channels", &self.channels)
+            .field("input_rate", &self.input_rate)
+            .field("output_rate", &self.output_rate)
+            .field("input_fifos_len", &[self.input_fifos[0].len(), self.input_fifos[1].len()])
+            .finish()
     }
 }

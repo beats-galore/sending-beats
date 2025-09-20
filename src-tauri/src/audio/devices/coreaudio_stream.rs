@@ -1302,11 +1302,27 @@ extern "C" fn coreaudio_input_callback(
             audio_data
         } else {
             // Check for specific errors to understand what's wrong
-            match render_status {
-                -10863 => info!("🔴 AudioUnitRender: kAudioUnitErr_CannotDoInCurrentContext - check format/timing"),
-                -10865 => info!("🔴 AudioUnitRender: kAudioUnitErr_PropertyNotWritable - check configuration"),
-                -10866 => info!("🔴 AudioUnitRender: kAudioUnitErr_CannotDoInCurrentContext - invalid format"),
-                _ => info!("🔴 AudioUnitRender failed with status {}", render_status),
+            static mut ERROR_COUNT: u64 = 0;
+            static mut LAST_ERROR_TIME: Option<std::time::Instant> = None;
+
+            unsafe {
+                ERROR_COUNT += 1;
+                let now = std::time::Instant::now();
+                let should_log = if let Some(last_time) = LAST_ERROR_TIME {
+                    now.duration_since(last_time).as_secs() >= 5 // Log every 5 seconds max
+                } else {
+                    true
+                };
+
+                if should_log || ERROR_COUNT <= 3 {
+                    LAST_ERROR_TIME = Some(now);
+                    match render_status {
+                        -10863 => info!("🔴 AudioUnitRender: kAudioUnitErr_CannotDoInCurrentContext - check format/timing (count: {})", ERROR_COUNT),
+                        -10865 => info!("🔴 AudioUnitRender: kAudioUnitErr_PropertyNotWritable - check configuration (count: {})", ERROR_COUNT),
+                        -10866 => info!("🔴 AudioUnitRender: kAudioUnitErr_CannotDoInCurrentContext - invalid format (count: {})", ERROR_COUNT),
+                        _ => info!("🔴 AudioUnitRender failed with status {} (count: {})", render_status, ERROR_COUNT),
+                    }
+                }
             }
             vec![0.0f32; total_samples]
         };
