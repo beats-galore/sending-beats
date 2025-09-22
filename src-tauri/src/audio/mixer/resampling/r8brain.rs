@@ -71,8 +71,8 @@ impl R8brainSRC {
         let resampler = Resampler::new(
             input_rate_f64,
             output_rate_f64,
-            4096, // Max block size
-            2.0,  // Transition band (higher = faster, lower = better quality)
+            4096,                     // Max block size
+            2.0,                      // Transition band (higher = faster, lower = better quality)
             PrecisionProfile::Bits24, // High quality
         );
 
@@ -104,30 +104,30 @@ impl R8brainSRC {
         })
     }
 
-    /// Process input samples through r8brain and accumulate output
-    ///
-    /// Uses the actual r8brain.process() method instead of terrible manual interpolation.
-    /// r8brain may need multiple calls before producing output - this is normal.
+    /// Process input samples through r8brain and return output immediately (stateless)
     ///
     /// # Arguments
     /// * `input_samples` - New samples from input device (stereo interleaved f32)
-    pub fn add_input_samples(&mut self, input_samples: &[f32]) {
+    ///
+    /// # Returns
+    /// * Resampled output samples (no internal accumulation)
+    pub fn process_samples(&mut self, input_samples: &[f32]) -> Vec<f32> {
         if input_samples.is_empty() {
-            return;
+            return Vec::new();
         }
 
         // Convert f32 input to f64 for r8brain
         self.input_buffer.clear();
-        self.input_buffer.extend(input_samples.iter().map(|&x| x as f64));
+        self.input_buffer
+            .extend(input_samples.iter().map(|&x| x as f64));
 
-        // Actually use r8brain instead of ignoring it!
-        let output_len = self.resampler.process(&self.input_buffer, &mut self.output_buffer);
+        let output_len = self
+            .resampler
+            .process(&self.input_buffer, &mut self.output_buffer);
 
-        // r8brain produced some output - convert f64 back to f32 and accumulate
+        // r8brain produced some output - convert f64 back to f32 and return immediately
         if output_len > 0 {
-            self.accumulated_output.extend(
-                self.output_buffer[..output_len].iter().map(|&x| x as f32)
-            );
+            let output_samples: Vec<f32> = self.output_buffer[..output_len].iter().map(|&x| x as f32).collect();
 
             static PROCESS_LOG_COUNT: std::sync::atomic::AtomicU64 =
                 std::sync::atomic::AtomicU64::new(0);
@@ -136,13 +136,16 @@ impl R8brainSRC {
 
             if process_count < 5 || process_count % 1000 == 0 {
                 info!(
-                    "🎯 {}: r8brain processed {} → {} samples (accumulated: {})",
+                    "🎯 {}: r8brain processed {} → {} samples (stateless)",
                     "R8BRAIN_PROCESS".on_blue().yellow(),
                     input_samples.len(),
-                    output_len,
-                    self.accumulated_output.len()
+                    output_len
                 );
             }
+
+            output_samples
+        } else {
+            Vec::new()
         }
     }
 
@@ -172,8 +175,7 @@ impl R8brainSRC {
         if to_take < output_count {
             static STARVE_LOG_COUNT: std::sync::atomic::AtomicU64 =
                 std::sync::atomic::AtomicU64::new(0);
-            let starve_count =
-                STARVE_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let starve_count = STARVE_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
             if starve_count < 10 || starve_count % 100 == 0 {
                 info!(
@@ -188,7 +190,6 @@ impl R8brainSRC {
 
         output
     }
-
 
     /// Check if resampler is ready to produce output
     ///
@@ -242,7 +243,10 @@ impl R8brainSRC {
     pub fn reset(&mut self) {
         self.accumulated_output.clear();
         // Note: r8brain doesn't expose a reset method, so we keep internal state
-        info!("🎯 {}: Resampler state reset (cleared accumulated output)", "R8BRAIN_RESET".on_blue().yellow());
+        info!(
+            "🎯 {}: Resampler state reset (cleared accumulated output)",
+            "R8BRAIN_RESET".on_blue().yellow()
+        );
     }
 
     /// Get estimated latency in samples at output rate
