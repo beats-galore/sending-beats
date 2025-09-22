@@ -1,7 +1,7 @@
 // Audio utility functions for shared logic across the pipeline
 
-use tracing::info;
 use colored::*;
+use tracing::info;
 
 /// Calculate optimal chunk size for downsampling to avoid waiting cycles
 /// This ensures consistent audio flow by reducing chunk sizes when downsampling occurs

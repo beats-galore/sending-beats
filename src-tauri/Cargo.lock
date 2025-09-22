@@ -28,11 +28,13 @@ dependencies = [
  "objc2-foundation 0.3.1",
  "proptest",
  "pulse",
+ "r8brain-rs",
  "regex",
  "reqwest 0.11.27",
  "rtrb",
  "rubato",
  "rustfft",
+ "samplerate-rs",
  "serde",
  "serde_json",
  "serial_test",
@@ -721,6 +723,15 @@ dependencies = [
  "glob",
  "libc",
  "libloading 0.8.8",
+]
+
+[[package]]
+name = "cmake"
+version = "0.1.54"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7caa3f9de89ddbe2c607f4101924c5abec803763ae9534e4f4d7d8f84aa81f0"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
@@ -2637,6 +2648,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "libsamplerate"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bcbb68a750265482d1b1f70e3b4505da140c73960f8068726e2fd1ffb792c300"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "libsqlite3-sys"
 version = "0.30.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3961,6 +3981,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 
 [[package]]
+name = "r8brain-rs"
+version = "0.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8d8a95a5235085537051f80f1cdf704e41b1a1c749c067d381412c62da88b44"
+dependencies = [
+ "cmake",
+]
+
+[[package]]
 name = "rand"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4488,6 +4517,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "samplerate-rs"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3449f851fc302cf4fa5027398fc28de660aef17fb55836efdecc90e1c7b40a36"
+dependencies = [
+ "libsamplerate",
 ]
 
 [[package]]

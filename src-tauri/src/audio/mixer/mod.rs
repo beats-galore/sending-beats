@@ -2,7 +2,7 @@
 
 // Core modules for mixer functionality
 pub mod pipeline;
-pub mod sample_rate_converter;
+pub mod resampling;
 pub mod stream_management;
 
 // Re-export stream management types

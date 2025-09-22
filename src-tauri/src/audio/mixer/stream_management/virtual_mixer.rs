@@ -4,7 +4,7 @@
 // management, including adding/removing input/output streams, device switching,
 // and stream configuration operations.
 
-use super::super::sample_rate_converter::RubatoSRC;
+use super::super::resampling::SamplerateSRC;
 use super::stream_manager::StreamInfo;
 use anyhow::{Context, Result};
 use colored::*;
@@ -16,8 +16,8 @@ use tracing::{error, info, warn};
 pub struct VirtualMixer {
     // **LOCK-FREE ARCHITECTURE**: Per-device resamplers with individual locks
     // This eliminates HashMap-level contention - multiple devices can resample in parallel
-    pub input_resamplers: HashMap<String, Arc<Mutex<RubatoSRC>>>,
-    pub output_resamplers: HashMap<String, Arc<Mutex<RubatoSRC>>>,
+    pub input_resamplers: HashMap<String, Arc<Mutex<SamplerateSRC>>>,
+    pub output_resamplers: HashMap<String, Arc<Mutex<SamplerateSRC>>>,
 }
 
 impl VirtualMixer {

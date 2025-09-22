@@ -1,6 +1,7 @@
 use anyhow::Result;
 use colored::*;
 use rubato::{FftFixedIn, Resampler as RubatoResampler};
+use samplerate_rs::{convert, ConverterType};
 use tracing::info;
 /// Sample Rate Converter for Dynamic Audio Buffer Conversion
 ///

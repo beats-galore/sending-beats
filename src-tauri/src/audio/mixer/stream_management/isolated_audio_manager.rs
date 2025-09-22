@@ -59,11 +59,6 @@ pub enum AudioCommand {
     GetAudioMetrics {
         response_tx: oneshot::Sender<AudioMetrics>,
     },
-    GetSamples {
-        device_id: String,
-        channel_config: crate::audio::types::AudioChannel,
-        response_tx: oneshot::Sender<Vec<f32>>,
-    },
 }
 
 /// Audio System Coordinator - lightweight interface between Tauri commands and audio pipeline
@@ -276,14 +271,6 @@ impl IsolatedAudioManager {
             AudioCommand::GetAudioMetrics { response_tx } => {
                 let metrics = self.get_metrics();
                 let _ = response_tx.send(metrics);
-            }
-            AudioCommand::GetSamples {
-                device_id,
-                channel_config,
-                response_tx,
-            } => {
-                let samples = self.get_samples_for_device(&device_id, &channel_config);
-                let _ = response_tx.send(samples);
             }
         }
     }
@@ -548,22 +535,5 @@ impl IsolatedAudioManager {
         self.metrics.clone()
     }
 
-    /// Get processed samples from a specific device using lock-free RTRB queues
-    fn get_samples_for_device(
-        &mut self,
-        device_id: &str,
-        channel_config: &crate::audio::types::AudioChannel,
-    ) -> Vec<f32> {
-        // Debug removed
 
-        // **REMOVED**: input_streams no longer exist - InputWorkers handle sampling
-        Vec::new() // Method obsolete
-                   // let samples = if channel_config.effects_enabled {
-                   //     stream.process_with_effects(channel_config)
-                   // } else {
-                   //     stream.get_samples()
-                   // };
-                   // // Debug removed to reduce log spam
-                   // samples
-    }
 }

@@ -12,7 +12,7 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, warn};
 
 use super::queue_types::MixedAudioSamples;
-use crate::audio::mixer::sample_rate_converter::RubatoSRC;
+use crate::audio::mixer::resampling::R8brainSRC;
 use crate::audio::utils::calculate_optimal_chunk_size;
 use colored::*;
 
@@ -25,7 +25,7 @@ pub struct OutputWorker {
     pub device_sample_rate: u32, // Target device sample rate (e.g., 44.1kHz)
 
     // Audio processing components
-    resampler: Option<RubatoSRC>,
+    resampler: Option<R8brainSRC>,
     sample_buffer: Vec<f32>,  // Hardware chunk accumulator
     target_chunk_size: usize, // Device-required buffer size (e.g., 512 samples stereo)
 
@@ -139,12 +139,12 @@ impl OutputWorker {
 
     /// Static helper function to get or initialize resampler in async context
     fn get_or_initialize_resampler_static<'a>(
-        resampler: &'a mut Option<RubatoSRC>,
+        resampler: &'a mut Option<R8brainSRC>,
         input_sample_rate: u32,
         output_sample_rate: u32,
         chunk_size: usize, // Output device chunk size
         device_id: &str,
-    ) -> Option<&'a mut RubatoSRC> {
+    ) -> Option<&'a mut R8brainSRC> {
         let sample_rate_difference = (input_sample_rate as f32 - output_sample_rate as f32).abs();
 
         // No resampling needed if rates are close (within 1 Hz)
@@ -154,24 +154,36 @@ impl OutputWorker {
 
         // Check if resampler exists and has the correct rates
         let needs_recreation = if let Some(ref existing_resampler) = resampler {
-            existing_resampler.input_rate != input_sample_rate as f32
-                || existing_resampler.output_rate != output_sample_rate as f32
+            existing_resampler.input_rate() != input_sample_rate
+                || existing_resampler.output_rate() != output_sample_rate
         } else {
             true // No resampler exists
         };
 
         // Create or recreate resampler if needed
         if needs_recreation {
-            // **FRAMES vs SAMPLES**: chunk_size is in samples, FftFixedIn expects input frames
-            let input_frames = chunk_size / 2; // Stereo: 2 samples per frame
-            match RubatoSRC::new_fft_fixed_input(
-                input_sample_rate as f32,
-                output_sample_rate as f32,
-                input_frames, // Fixed input size in frames
+            // Calculate buffer size based on device callback rate
+            // Buffer should be 2-3x the device chunk size to prevent underruns
+            let device_chunk_duration_ms = (chunk_size as f32 / output_sample_rate as f32) * 1000.0;
+            let buffer_size_ms = device_chunk_duration_ms * 3.0; // 3x chunk size for safety
+
+            info!(
+                "🔄 {}: Device callback: {} samples = {:.1}ms, buffer: {:.1}ms",
+                "OUTPUT_BUFFER_CALC".cyan(),
+                chunk_size,
+                device_chunk_duration_ms,
+                buffer_size_ms
+            );
+
+            // Using R8brainSRC with continuous read pointer philosophy
+            match R8brainSRC::new(
+                input_sample_rate,
+                output_sample_rate,
+                buffer_size_ms,
             ) {
                 Ok(new_resampler) => {
                     info!(
-                        "🔄 {}: {} resampler for {} ({} Hz → {} Hz, {} input_frames)",
+                        "🔄 {}: {} resampler for {} ({} Hz → {} Hz, ratio: {:.3})",
                         "OUTPUT_RESAMPLER".green(),
                         if resampler.is_some() {
                             "Recreated"
@@ -181,7 +193,7 @@ impl OutputWorker {
                         device_id,
                         input_sample_rate,
                         output_sample_rate,
-                        input_frames
+                        new_resampler.ratio()
                     );
                     *resampler = Some(new_resampler);
                 }
@@ -216,7 +228,7 @@ impl OutputWorker {
 
         // Spawn dedicated worker thread
         let worker_handle = tokio::spawn(async move {
-            let mut resampler: Option<RubatoSRC> = None;
+            let mut resampler: Option<R8brainSRC> = None;
             let mut chunks_processed = 0u64;
             let mut adaptive_chunk_size = target_chunk_size; // Start with default, adapt on first audio
 
@@ -300,28 +312,50 @@ impl OutputWorker {
                         adaptive_chunk_size,
                         &device_id,
                     ) {
-                    let resampler_convert_start = std::time::Instant::now();
-                    let resampled = active_resampler.convert(&mixed_audio.samples);
-                    let resampler_convert_duration = resampler_convert_start.elapsed();
+                    let resampler_start = std::time::Instant::now();
 
-                    // Log actual resampling operation timing
+                    // Step 1: Add input samples to the continuous buffer (the "tape")
+                    active_resampler.add_input_samples(&mixed_audio.samples);
+
+                    // Step 2: Read exactly the number of samples we need (the "player head")
+                    let resampled = active_resampler.read_output_samples(adaptive_chunk_size);
+
+                    let resampler_duration = resampler_start.elapsed();
+
+                    // Log resampling operation timing
                     static RESAMPLE_LOG_COUNT: std::sync::atomic::AtomicU64 =
                         std::sync::atomic::AtomicU64::new(0);
                     let resample_count =
                         RESAMPLE_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-                    if (resample_count < 5 || resample_count % 2000 == 0)
-                        && resampler_convert_duration.as_micros() > 1000
+                    // Performance warning logs (for slow operations)
+                    if (resample_count < 20 || resample_count % 500 == 0)
+                        && resampler_duration.as_micros() > 500
                     {
                         info!(
-                            "🔄 {}: {} resampled {} → {} samples in {}μs ({}Hz→{}Hz, ratio: {:.3})",
-                            "RESAMPLER_TIMING".cyan(),
+                            "🔄 {}: {} continuous resample: added {} → read {} samples in {}μs ({}Hz→{}Hz, ratio: {:.3}, buffer: {:.1}%)",
+                            "R8BRAIN_TIMING".cyan(),
                             device_id,
                             mixed_audio.samples.len(),
                             resampled.len(),
-                            resampler_convert_duration.as_micros(),
+                            resampler_duration.as_micros(),
                             mixed_audio.sample_rate,
                             device_sample_rate,
+                            rate_ratio,
+                            active_resampler.buffer_fill_ratio() * 100.0
+                        );
+                    }
+
+                    // Periodic status logs (every 1000 cycles regardless of performance)
+                    if resample_count < 5 || resample_count % 1000 == 0 {
+                        info!(
+                            "🔄 {}: {} periodic status: {} → {} samples in {}μs, buffer: {:.1}%, ratio: {:.3}",
+                            "R8BRAIN_STATUS".cyan(),
+                            device_id,
+                            mixed_audio.samples.len(),
+                            resampled.len(),
+                            resampler_duration.as_micros(),
+                            active_resampler.buffer_fill_ratio() * 100.0,
                             rate_ratio
                         );
                     }
@@ -338,90 +372,29 @@ impl OutputWorker {
                 let mut total_spmc_duration = std::time::Duration::ZERO;
 
                 if !device_samples.is_empty() {
-                    // **FAST PATH**: No resampling needed and chunk size matches exactly
-                    if mixed_audio.sample_rate == device_sample_rate
-                        && device_samples.len() == adaptive_chunk_size
-                        && accumulation_buffer.is_empty()
-                    {
-                        // Send directly without accumulation
-                        let spmc_write_start = std::time::Instant::now();
-                        if let Some(ref spmc_writer) = spmc_writer {
-                            Self::write_to_hardware_spmc(&device_id, &device_samples, spmc_writer)
-                                .await;
-                        }
-                        let spmc_write_duration = spmc_write_start.elapsed();
-                        total_spmc_duration += spmc_write_duration;
-
-                        chunks_processed += 1;
-                        chunks_sent_this_cycle += 1;
-
-                        // Rate-limited logging for fast path
-                        if chunks_processed <= 5 || chunks_processed % 1000 == 0 {
-                            info!(
-                                "🎵 {} (4th layer): {} sent direct chunk #{} ({} samples, 0 buffered) ⚡FAST_PATH",
-                                "OUTPUT_WORKER".purple(),
-                                device_id,
-                                chunks_processed,
-                                device_samples.len()
-                            );
-                        }
-                    } else {
-                        // **ACCUMULATION PATH**: Add resampled samples to buffer
-                        accumulation_buffer.extend_from_slice(&device_samples);
-
-                        // **CHUNK COMPLETION**: Send accumulated samples when we have enough for hardware
-                        while accumulation_buffer.len() >= adaptive_chunk_size {
-                            // Extract exactly the chunk size needed for hardware
-                            let hardware_chunk: Vec<f32> =
-                                accumulation_buffer.drain(0..adaptive_chunk_size).collect();
-
-                            let spmc_write_start = std::time::Instant::now();
-                            if let Some(ref spmc_writer) = spmc_writer {
-                                Self::write_to_hardware_spmc(
-                                    &device_id,
-                                    &hardware_chunk,
-                                    spmc_writer,
-                                )
-                                .await;
-                            } else {
-                                // warn!("⚠️ OUTPUT_WORKER: {} has no SPMC writer, dropping {} samples", device_id, hardware_chunk.len());
-                            }
-                            let spmc_write_duration = spmc_write_start.elapsed();
-                            total_spmc_duration += spmc_write_duration;
-
-                            chunks_processed += 1;
-                            chunks_sent_this_cycle += 1;
-
-                            // Rate-limited logging
-                            if chunks_processed <= 5 || chunks_processed % 1000 == 0 {
-                                info!(
-                                "🎵 {} (4th layer): {} sent accumulated chunk #{} ({} samples, {} buffered)",
-                                "OUTPUT_WORKER".purple(),
-                                device_id,
-                                chunks_processed,
-                                hardware_chunk.len(),
-                                accumulation_buffer.len()
-                            );
-                            }
-                        }
+                    // **DIRECT STREAMING**: Send R8brain output directly to SPMC queue
+                    // Let CoreAudio callback pull exactly what it needs when it needs it
+                    let spmc_write_start = std::time::Instant::now();
+                    if let Some(ref spmc_writer) = spmc_writer {
+                        Self::write_to_hardware_spmc(&device_id, &device_samples, spmc_writer).await;
                     }
+                    let spmc_write_duration = spmc_write_start.elapsed();
+                    total_spmc_duration += spmc_write_duration;
 
-                    // Log accumulation status for debugging
-                    static ACCUMULATION_LOG_COUNT: std::sync::atomic::AtomicU64 =
-                        std::sync::atomic::AtomicU64::new(0);
-                    let accum_count =
-                        ACCUMULATION_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    if accum_count < 10 || accum_count % 1000 == 0 {
+                    chunks_processed += 1;
+                    chunks_sent_this_cycle += 1;
+
+                    // Rate-limited logging for streaming
+                    if chunks_processed <= 5 || chunks_processed % 1000 == 0 {
                         info!(
-                            "🔄 {}: {} accumulated {} samples (buffer: {}/{}, chunks_sent: {})",
-                            "ACCUMULATION".cyan(),
+                            "🎵 {} (4th layer): {} streamed batch #{} ({} samples) 🌊DIRECT_STREAM",
+                            "OUTPUT_WORKER".purple(),
                             device_id,
-                            device_samples.len(),
-                            accumulation_buffer.len(),
-                            adaptive_chunk_size,
-                            chunks_sent_this_cycle
+                            chunks_processed,
+                            device_samples.len()
                         );
                     }
+
                 }
 
                 let processing_duration = processing_start.elapsed();
