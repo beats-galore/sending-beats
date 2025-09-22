@@ -148,32 +148,27 @@ impl R8brainSRC {
 
     /// Read output samples from r8brain-processed accumulation buffer
     ///
-    /// Drains samples from the buffer that r8brain.process() has already produced.
-    /// No terrible linear interpolation involved!
+    /// Drains available resampled samples from the internal buffer.
+    /// Returns whatever is available, no complex buffering logic.
     ///
     /// # Arguments
-    /// * `output_count` - Number of output samples needed (stereo interleaved)
+    /// * `output_count` - Number of output samples requested (stereo interleaved)
     ///
     /// # Returns
-    /// Vector of resampled audio at output sample rate
+    /// Vector of available resampled samples (may be less than requested)
     pub fn read_output_samples(&mut self, output_count: usize) -> Vec<f32> {
         let available = self.accumulated_output.len();
         let to_take = std::cmp::min(output_count, available);
 
-        // Drain the requested number of samples from accumulated output
-        let mut output = Vec::with_capacity(output_count);
+        // Drain the available samples from accumulated output
+        let mut output = Vec::with_capacity(to_take);
         for _ in 0..to_take {
             if let Some(sample) = self.accumulated_output.pop_front() {
                 output.push(sample);
             }
         }
 
-        // If we don't have enough samples, pad with silence
-        while output.len() < output_count {
-            output.push(0.0);
-        }
-
-        // Log when we don't have enough samples
+        // Log when we don't have enough samples (this is normal for rate mismatch)
         if to_take < output_count {
             static STARVE_LOG_COUNT: std::sync::atomic::AtomicU64 =
                 std::sync::atomic::AtomicU64::new(0);
@@ -182,8 +177,9 @@ impl R8brainSRC {
 
             if starve_count < 10 || starve_count % 100 == 0 {
                 info!(
-                    "🎯 {}: Output starved - requested {} samples, only had {} (padded with silence)",
-                    "R8BRAIN_STARVE".on_blue().yellow(),
+                    "🎯 {}: Provided {} / {} samples requested (buffer had {})",
+                    "R8BRAIN_PARTIAL".on_blue().yellow(),
+                    to_take,
                     output_count,
                     available
                 );

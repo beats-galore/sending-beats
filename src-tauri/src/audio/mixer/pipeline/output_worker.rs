@@ -232,8 +232,15 @@ impl OutputWorker {
             let mut chunks_processed = 0u64;
             let mut adaptive_chunk_size = target_chunk_size; // Start with default, adapt on first audio
 
-            // **ACCUMULATION BUFFER**: Collect variable FftFixedIn outputs until hardware chunk size
-            let mut accumulation_buffer: Vec<f32> = Vec::with_capacity(adaptive_chunk_size * 2);
+            // **TESTING TOGGLE**: Set to true for direct passthrough, false for accumulation buffering
+            let direct_passthrough = false;
+
+            // **R8BRAIN BUFFER**: Accumulate r8brain output to handle rate mismatch
+            // Target: 2-3 chunks to absorb the systematic 1024→940 sample deficit
+            let buffer_target_size = adaptive_chunk_size * 3; // 3x chunk size safety margin
+            let buffer_start_threshold = adaptive_chunk_size; // Start sending when we have 1 chunk
+            let mut r8brain_accumulation: Vec<f32> = Vec::with_capacity(buffer_target_size);
+            let mut output_started = false;
 
             info!(
                 "🚀 OUTPUT_WORKER: Started processing thread for device '{}'",
@@ -317,8 +324,14 @@ impl OutputWorker {
                     // Step 1: Add input samples to the continuous buffer (the "tape")
                     active_resampler.add_input_samples(&mixed_audio.samples);
 
-                    // Step 2: Read exactly the number of samples we need (the "player head")
-                    let resampled = active_resampler.read_output_samples(adaptive_chunk_size);
+                    // Step 2: Read samples based on mode
+                    let resampled = if direct_passthrough {
+                        // **DIRECT PASSTHROUGH**: Get everything r8brain has available
+                        active_resampler.read_output_samples(usize::MAX)
+                    } else {
+                        // **BUFFERED MODE**: Read exactly what we need for accumulation
+                        active_resampler.read_output_samples(adaptive_chunk_size)
+                    };
 
                     let resampler_duration = resampler_start.elapsed();
 
@@ -372,29 +385,101 @@ impl OutputWorker {
                 let mut total_spmc_duration = std::time::Duration::ZERO;
 
                 if !device_samples.is_empty() {
-                    // **DIRECT STREAMING**: Send R8brain output directly to SPMC queue
-                    // Let CoreAudio callback pull exactly what it needs when it needs it
-                    let spmc_write_start = std::time::Instant::now();
-                    if let Some(ref spmc_writer) = spmc_writer {
-                        Self::write_to_hardware_spmc(&device_id, &device_samples, spmc_writer).await;
+                    if direct_passthrough {
+                        // **DIRECT PASSTHROUGH**: Send device samples directly to SPMC (no buffering)
+                        let spmc_write_start = std::time::Instant::now();
+                        if let Some(ref spmc_writer) = spmc_writer {
+                            Self::write_to_hardware_spmc(&device_id, &device_samples, spmc_writer).await;
+                        }
+                        let spmc_write_duration = spmc_write_start.elapsed();
+                        total_spmc_duration += spmc_write_duration;
+
+                        chunks_processed += 1;
+                        chunks_sent_this_cycle += 1;
+
+                        // Rate-limited logging for direct output
+                        if chunks_processed <= 5 || chunks_processed % 1000 == 0 {
+                            info!(
+                                "🎵 {} (4th layer): {} sent direct chunk #{} ({} samples) 🔄DIRECT",
+                                "OUTPUT_WORKER".purple(),
+                                device_id,
+                                chunks_processed,
+                                device_samples.len()
+                            );
+                        }
+                    } else {
+                        // **BUFFER ACCUMULATION**: Handle r8brain rate mismatch
+                        r8brain_accumulation.extend_from_slice(&device_samples);
+
+                        // Prevent buffer overflow
+                        if r8brain_accumulation.len() > buffer_target_size {
+                            let overflow = r8brain_accumulation.len() - buffer_target_size;
+                            r8brain_accumulation.drain(0..overflow);
+                            info!(
+                                "⚠️ {}: Buffer overflow, dropped {} samples (buffer: {}/{})",
+                                "R8BRAIN_OVERFLOW".purple(),
+                                overflow,
+                                r8brain_accumulation.len(),
+                                buffer_target_size
+                            );
+                        }
+
+                        // Check if we should start outputting
+                        if !output_started && r8brain_accumulation.len() >= buffer_start_threshold {
+                            output_started = true;
+                            info!(
+                                "🚀 {}: Buffer primed with {} samples, starting output (threshold: {})",
+                                "R8BRAIN_START".purple(),
+                                r8brain_accumulation.len(),
+                                buffer_start_threshold
+                            );
+                        }
+
+                        // Send chunks if we have enough samples and have started
+                        while output_started && r8brain_accumulation.len() >= adaptive_chunk_size {
+                            let chunk: Vec<f32> = r8brain_accumulation.drain(0..adaptive_chunk_size).collect();
+
+                            let spmc_write_start = std::time::Instant::now();
+                            if let Some(ref spmc_writer) = spmc_writer {
+                                Self::write_to_hardware_spmc(&device_id, &chunk, spmc_writer).await;
+                            }
+                            let spmc_write_duration = spmc_write_start.elapsed();
+                            total_spmc_duration += spmc_write_duration;
+
+                            chunks_processed += 1;
+                            chunks_sent_this_cycle += 1;
+
+                            // Rate-limited logging for buffered output
+                            if chunks_processed <= 5 || chunks_processed % 1000 == 0 {
+                                info!(
+                                    "🎵 {} (4th layer): {} sent buffered chunk #{} ({} samples, {} buffered) 🔄BUFFERED",
+                                    "OUTPUT_WORKER".purple(),
+                                    device_id,
+                                    chunks_processed,
+                                    chunk.len(),
+                                    r8brain_accumulation.len()
+                                );
+                            }
+                        }
+
+                        // Log buffer status periodically
+                        static BUFFER_LOG_COUNT: std::sync::atomic::AtomicU64 =
+                            std::sync::atomic::AtomicU64::new(0);
+                        let buffer_count =
+                            BUFFER_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                        if buffer_count < 10 || buffer_count % 1000 == 0 {
+                            info!(
+                                "📊 {}: {} buffer status: {}/{} samples ({:.1}% full), output_started: {}",
+                                "R8BRAIN_BUFFER_STATUS".purple(),
+                                device_id,
+                                r8brain_accumulation.len(),
+                                buffer_target_size,
+                                (r8brain_accumulation.len() as f32 / buffer_target_size as f32) * 100.0,
+                                output_started
+                            );
+                        }
                     }
-                    let spmc_write_duration = spmc_write_start.elapsed();
-                    total_spmc_duration += spmc_write_duration;
-
-                    chunks_processed += 1;
-                    chunks_sent_this_cycle += 1;
-
-                    // Rate-limited logging for streaming
-                    if chunks_processed <= 5 || chunks_processed % 1000 == 0 {
-                        info!(
-                            "🎵 {} (4th layer): {} streamed batch #{} ({} samples) 🌊DIRECT_STREAM",
-                            "OUTPUT_WORKER".purple(),
-                            device_id,
-                            chunks_processed,
-                            device_samples.len()
-                        );
-                    }
-
                 }
 
                 let processing_duration = processing_start.elapsed();

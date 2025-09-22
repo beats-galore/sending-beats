@@ -2,10 +2,9 @@ use crate::types::{COMMON_SAMPLE_RATES_HZ, DEFAULT_SAMPLE_RATE};
 #[cfg(target_os = "macos")]
 use anyhow::Result;
 use colored::*;
-use colored::*;
 use coreaudio_sys::{
     kAudioDevicePropertyBufferFrameSize, kAudioDevicePropertyNominalSampleRate,
-    kAudioDevicePropertyStreamFormat, kAudioFormatFlagIsFloat, kAudioFormatFlagIsNonInterleaved,
+    kAudioDevicePropertyStreamFormat, kAudioFormatFlagIsFloat,
     kAudioFormatFlagIsPacked, kAudioFormatLinearPCM, kAudioObjectPropertyElementMaster,
     kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput,
     kAudioOutputUnitProperty_CurrentDevice, kAudioOutputUnitProperty_EnableIO,
@@ -1134,6 +1133,12 @@ impl CoreAudioInputStream {
                 status
             ));
         }
+
+        // **TESTING**: Set input device buffer size to 2048 frames
+        // info!("🧪 TESTING: Setting input device buffer to 2048 frames");
+        // if let Err(e) = set_device_buffer_frame_size(self.device_id, 1024, false) {
+        //     warn!("⚠️ Could not set input buffer size to 2048: {}", e);
+        // }
 
         // Step 9: Start the Audio Unit
         let status = unsafe { AudioOutputUnitStart(audio_unit) };

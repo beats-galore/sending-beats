@@ -1,17 +1,12 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::info;
 
-use super::virtual_mixer::VirtualMixer;
-use crate::audio::effects::{AudioEffectsChain, EQBand};
-use crate::audio::types::AudioChannel;
-use tokio::sync::{mpsc, oneshot, Mutex, Notify};
+use tokio::sync::{Notify};
 
 // Lock-free audio buffer imports
-use rtrb::{Consumer, Producer, RingBuffer};
-use spmcq::{ring_buffer, ReadResult, Reader, Writer};
+use rtrb::{ Producer};
 
 #[derive(Debug, Clone)]
 pub struct AudioMetrics {
