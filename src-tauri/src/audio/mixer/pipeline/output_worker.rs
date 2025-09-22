@@ -12,7 +12,7 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, warn};
 
 use super::queue_types::MixedAudioSamples;
-use crate::audio::mixer::resampling::R8brainSRC;
+use crate::audio::mixer::resampling::RubatoSRC;
 use crate::audio::utils::calculate_optimal_chunk_size;
 use colored::*;
 
@@ -25,7 +25,7 @@ pub struct OutputWorker {
     pub device_sample_rate: u32, // Target device sample rate (e.g., 44.1kHz)
 
     // Audio processing components
-    resampler: Option<R8brainSRC>,
+    resampler: Option<RubatoSRC>,
     sample_buffer: Vec<f32>,  // Hardware chunk accumulator
     target_chunk_size: usize, // Device-required buffer size (e.g., 512 samples stereo)
 
@@ -139,12 +139,12 @@ impl OutputWorker {
 
     /// Static helper function to get or initialize resampler in async context
     fn get_or_initialize_resampler_static<'a>(
-        resampler: &'a mut Option<R8brainSRC>,
+        resampler: &'a mut Option<RubatoSRC>,
         input_sample_rate: u32,
         output_sample_rate: u32,
         chunk_size: usize, // Output device chunk size
         device_id: &str,
-    ) -> Option<&'a mut R8brainSRC> {
+    ) -> Option<&'a mut RubatoSRC> {
         let sample_rate_difference = (input_sample_rate as f32 - output_sample_rate as f32).abs();
 
         // No resampling needed if rates are close (within 1 Hz)
@@ -162,21 +162,9 @@ impl OutputWorker {
 
         // Create or recreate resampler if needed
         if needs_recreation {
-            // Calculate buffer size based on device callback rate
-            // Buffer should be 2-3x the device chunk size to prevent underruns
-            let device_chunk_duration_ms = (chunk_size as f32 / output_sample_rate as f32) * 1000.0;
-            let buffer_size_ms = device_chunk_duration_ms * 3.0; // 3x chunk size for safety
-
-            info!(
-                "🔄 {}: Device callback: {} samples = {:.1}ms, buffer: {:.1}ms",
-                "OUTPUT_BUFFER_CALC".cyan(),
-                chunk_size,
-                device_chunk_duration_ms,
-                buffer_size_ms
-            );
-
-            // Using R8brainSRC with continuous read pointer philosophy
-            match R8brainSRC::new(input_sample_rate, output_sample_rate, buffer_size_ms) {
+            // Using RubatoSRC with continuous read pointer philosophy
+            // Buffer sizing logic is now handled inside the resampler
+            match RubatoSRC::new_fft_fixed_output(input_sample_rate as f32, output_sample_rate as f32, chunk_size / 2) {
                 Ok(new_resampler) => {
                     info!(
                         "🔄 {}: {} resampler for {} ({} Hz → {} Hz, ratio: {:.3})",
@@ -216,7 +204,7 @@ impl OutputWorker {
     ///    - Convert
     ///    - Write to SPMC
     fn process_with_pre_accumulation(
-        resampler: &mut Option<R8brainSRC>,
+        resampler: &mut Option<RubatoSRC>,
         input_sample_rate: u32,
         device_sample_rate: u32,
         chunk_size: usize,
@@ -225,21 +213,107 @@ impl OutputWorker {
         target_output_count: usize,
         pre_accumulation_buffer: &mut Vec<f32>,
         spmc_writer: &Option<Arc<Mutex<Writer<f32>>>>,
+        output_started: &mut bool,
     ) -> Vec<f32> {
         // Step 1 & 2: Wait until samples are available, drain all and add to pre accumulator
         pre_accumulation_buffer.extend_from_slice(input_samples);
 
-        // Estimate how many input samples we need for target output
-        let rate_ratio = input_sample_rate as f32 / device_sample_rate as f32;
-        let estimated_input_needed = ((target_output_count as f32 * rate_ratio) + 1.0) as usize;
+        // Get precise input frames needed from the resampler itself
+        let estimated_input_needed = if let Some(active_resampler) = Self::get_or_initialize_resampler_static(
+            resampler,
+            input_sample_rate,
+            device_sample_rate,
+            chunk_size,
+            device_id,
+        ) {
+            // Use resampler's own calculation for how many input frames it needs
+            active_resampler.input_frames_needed(target_output_count / 2) * 2 // Convert frames to samples
+        } else {
+            // Fallback to manual calculation if no resampling needed
+            target_output_count
+        };
+
+        // **BUFFER MONITORING**: Track pre-accumulation buffer levels for drift analysis
+        static BUFFER_LEVEL_LOG_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let buffer_log_count = BUFFER_LEVEL_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if buffer_log_count % 50 == 0 {
+            info!(
+                "🔄 {}: Buffer levels - accumulated: {}, input needed: {}, ratio: {:.2}",
+                "BUFFER_DRIFT_TRACK".cyan(),
+                pre_accumulation_buffer.len(),
+                estimated_input_needed,
+                pre_accumulation_buffer.len() as f32 / estimated_input_needed as f32
+            );
+        }
+
+        // **DELAYED OUTPUT START**: Wait for 2x buffer headroom before starting output
+        if !*output_started {
+            // Get the current maximum input requirement from resampler
+            let max_input_needed = if let Some(active_resampler) = Self::get_or_initialize_resampler_static(
+                resampler,
+                input_sample_rate,
+                device_sample_rate,
+                chunk_size,
+                device_id,
+            ) {
+                active_resampler.input_frames_needed(target_output_count / 2) * 2
+            } else {
+                target_output_count
+            };
+
+            let required_buffer_size = max_input_needed * 2; // 2x headroom
+
+            if pre_accumulation_buffer.len() >= required_buffer_size {
+                *output_started = true;
+                info!(
+                    "🚀 {}: Starting output with 2x buffer headroom - accumulated: {}, required: {}, headroom: {:.1}x",
+                    "DELAYED_OUTPUT_START".green(),
+                    pre_accumulation_buffer.len(),
+                    max_input_needed,
+                    pre_accumulation_buffer.len() as f32 / max_input_needed as f32
+                );
+            } else {
+                // Still accumulating, don't process any output yet
+                static ACCUMULATION_LOG_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                let accum_count = ACCUMULATION_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if accum_count % 100 == 0 {
+                    info!(
+                        "⏳ {}: Accumulating buffer before output start - {}/{} samples ({:.1}%)",
+                        "PRE_OUTPUT_ACCUMULATION".yellow(),
+                        pre_accumulation_buffer.len(),
+                        required_buffer_size,
+                        (pre_accumulation_buffer.len() as f32 / required_buffer_size as f32) * 100.0
+                    );
+                }
+                return Vec::new(); // Return empty, don't start output yet
+            }
+        }
 
         let mut chunks_written = 0;
 
-        // Step 3: While (enough samples to convert to target chunk amount)
-        while pre_accumulation_buffer.len() >= estimated_input_needed {
-            // Convert: Process exactly what we need for one target chunk
+        // Step 3: Dynamic processing loop - check requirements each iteration
+        loop {
+            // **DYNAMIC REQUIREMENT**: Get current input requirement from resampler
+            let current_input_needed = if let Some(active_resampler) = Self::get_or_initialize_resampler_static(
+                resampler,
+                input_sample_rate,
+                device_sample_rate,
+                chunk_size,
+                device_id,
+            ) {
+                active_resampler.input_frames_needed(target_output_count / 2) * 2
+            } else {
+                target_output_count
+            };
+
+            // Check if we have enough for current requirement
+            if pre_accumulation_buffer.len() < current_input_needed {
+                break; // Not enough samples yet
+            }
+
+            // Convert: Process exactly what the resampler needs right now
             let input_to_process = pre_accumulation_buffer
-                .drain(0..estimated_input_needed)
+                .drain(0..current_input_needed)
                 .collect::<Vec<_>>();
             let output_chunk = Self::process_resampling_static(
                 resampler,
@@ -302,7 +376,7 @@ impl OutputWorker {
 
     /// Post-accumulation strategy: Process input immediately, accumulate output until target reached
     fn process_with_post_accumulation(
-        resampler: &mut Option<R8brainSRC>,
+        resampler: &mut Option<RubatoSRC>,
         input_sample_rate: u32,
         device_sample_rate: u32,
         chunk_size: usize,
@@ -343,7 +417,7 @@ impl OutputWorker {
 
     /// Core resampling utility function - performs the actual resampling operation
     fn process_resampling_static(
-        resampler: &mut Option<R8brainSRC>,
+        resampler: &mut Option<RubatoSRC>,
         input_sample_rate: u32,
         device_sample_rate: u32,
         chunk_size: usize,
@@ -358,8 +432,8 @@ impl OutputWorker {
             chunk_size,
             device_id,
         ) {
-            // Process input samples and get output immediately (stateless)
-            active_resampler.process_samples(input_samples)
+            // Convert input samples and get output immediately (stateless)
+            active_resampler.convert(input_samples)
         } else {
             // No resampling needed - return original samples or portion
             input_samples[..input_samples.len().min(request_count)].to_vec()
@@ -423,7 +497,7 @@ impl OutputWorker {
 
         // Spawn dedicated worker thread
         let worker_handle = tokio::spawn(async move {
-            let mut resampler: Option<R8brainSRC> = None;
+            let mut resampler: Option<RubatoSRC> = None;
             let mut chunks_processed = 0u64;
             let mut adaptive_chunk_size = target_chunk_size; // Start with default, adapt on first audio
 
@@ -431,7 +505,8 @@ impl OutputWorker {
             let mut needs_resampling = false;
 
             // **STRATEGY STATE**: State variables for different accumulation strategies
-            let mut output_started = false; // Used by post-accumulation strategy
+            let mut pre_output_started = false; // Used by pre-accumulation strategy
+            let mut post_output_started = false; // Used by post-accumulation strategy
 
             info!(
                 "🚀 OUTPUT_WORKER: Started processing thread for device '{}'",
@@ -512,6 +587,7 @@ impl OutputWorker {
                             adaptive_chunk_size,
                             &mut pre_accumulation_buffer,
                             &spmc_writer,
+                            &mut pre_output_started,
                         )
                     } else {
                         // **POST-ACCUMULATION**: For upsampling/minor changes, accumulate output
@@ -524,7 +600,7 @@ impl OutputWorker {
                             &mixed_audio.samples,
                             adaptive_chunk_size,
                             &mut post_accumulation_buffer,
-                            &mut output_started,
+                            &mut post_output_started,
                         )
                     }
                 };
@@ -606,7 +682,7 @@ impl OutputWorker {
                     TIMING_DEBUG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                 if (debug_count < 10 || debug_count % 1000 == 0)
-                    && processing_duration.as_micros() > 1000
+
                 {
                     let time_between = if let Some(gap) = time_since_last {
                         format!("{}μs", gap.as_micros())
