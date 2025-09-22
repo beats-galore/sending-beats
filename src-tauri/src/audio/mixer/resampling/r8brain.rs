@@ -50,11 +50,11 @@ impl R8brainSRC {
     /// # Arguments
     /// * `input_rate` - Input sample rate in Hz (e.g., 48000)
     /// * `output_rate` - Output sample rate in Hz (e.g., 44100)
-    /// * `_buffer_size_ms` - Ignored, r8brain manages its own buffering
+    /// * `chunk_size` - Desired output chunk size in frames (used for buffer calculation)
     ///
     /// # Returns
     /// r8brain-based resampler ready for streaming operation
-    pub fn new(input_rate: u32, output_rate: u32, _buffer_size_ms: f32) -> Result<Self, String> {
+    pub fn new(input_rate: u32, output_rate: u32) -> Result<Self, String> {
         let input_rate_f64 = input_rate as f64;
         let output_rate_f64 = output_rate as f64;
         let ratio = input_rate_f64 / output_rate_f64;
@@ -104,14 +104,15 @@ impl R8brainSRC {
         })
     }
 
-    /// Process input samples through r8brain and return output immediately (stateless)
+    /// Convert input samples to output sample rate using r8brain
+    /// Stateless operation that processes input and returns output immediately
     ///
     /// # Arguments
-    /// * `input_samples` - New samples from input device (stereo interleaved f32)
+    /// * `input_samples` - Input audio samples at input_rate (interleaved stereo)
     ///
     /// # Returns
-    /// * Resampled output samples (no internal accumulation)
-    pub fn process_samples(&mut self, input_samples: &[f32]) -> Vec<f32> {
+    /// Vector of resampled audio with length determined by r8brain conversion
+    pub fn convert(&mut self, input_samples: &[f32]) -> Vec<f32> {
         if input_samples.is_empty() {
             return Vec::new();
         }
@@ -127,7 +128,10 @@ impl R8brainSRC {
 
         // r8brain produced some output - convert f64 back to f32 and return immediately
         if output_len > 0 {
-            let output_samples: Vec<f32> = self.output_buffer[..output_len].iter().map(|&x| x as f32).collect();
+            let output_samples: Vec<f32> = self.output_buffer[..output_len]
+                .iter()
+                .map(|&x| x as f32)
+                .collect();
 
             static PROCESS_LOG_COUNT: std::sync::atomic::AtomicU64 =
                 std::sync::atomic::AtomicU64::new(0);
@@ -136,8 +140,8 @@ impl R8brainSRC {
 
             if process_count < 5 || process_count % 1000 == 0 {
                 info!(
-                    "🎯 {}: r8brain processed {} → {} samples (stateless)",
-                    "R8BRAIN_PROCESS".on_blue().yellow(),
+                    "🎯 {}: r8brain converted {} → {} samples (stateless)",
+                    "R8BRAIN_CONVERT".on_blue().yellow(),
                     input_samples.len(),
                     output_len
                 );
@@ -224,9 +228,14 @@ impl R8brainSRC {
         );
     }
 
-    /// Get current conversion ratio
-    pub fn ratio(&self) -> f64 {
-        self.ratio
+    /// Get conversion ratio (for debugging and compatibility)
+    pub fn ratio(&self) -> f32 {
+        self.ratio as f32
+    }
+
+    /// Check if conversion is needed (rates are different)
+    pub fn conversion_needed(&self) -> bool {
+        (self.ratio - 1.0).abs() > 0.001
     }
 
     /// Get input sample rate
@@ -255,28 +264,44 @@ impl R8brainSRC {
         self.accumulated_output.len() as f32 + 64.0 // r8brain typical internal delay
     }
 
-    /// Update sample rates (for dynamic rate changes)
+    /// Calculate number of input frames needed to produce desired output frames
+    /// This provides consistent API with rubato's input_frames_next functionality
+    ///
+    /// # Arguments
+    /// * `desired_output_frames` - Number of output frames desired
+    ///
+    /// # Returns
+    /// Number of input frames needed (estimated based on conversion ratio)
+    pub fn input_frames_needed(&self, desired_output_frames: usize) -> usize {
+        // For r8brain, estimate input frames needed based on conversion ratio
+        // Add small buffer for safety since r8brain can have variable behavior
+        let estimated_input = (desired_output_frames as f64 * self.ratio * 1.1) as usize;
+
+        // Ensure minimum reasonable buffer size
+        estimated_input.max(64)
+    }
+
+    /// Update sample rates (useful for dynamic rate changes)
     pub fn update_rates(&mut self, input_rate: u32, output_rate: u32) -> Result<(), String> {
         let new_input_rate = input_rate as f64;
         let new_output_rate = output_rate as f64;
         let new_ratio = new_input_rate / new_output_rate;
 
         info!(
-            "🎯 {}: Updating rates {}Hz→{}Hz (ratio: {:.6} → {:.6})",
-            "R8BRAIN_RATE_UPDATE".on_blue().yellow(),
-            self.input_rate,
-            new_input_rate,
-            self.ratio,
-            new_ratio
+            "🎯 {}: Updated rates to {}Hz→{}Hz (ratio: {:.3})",
+            "R8BRAIN_UPDATE".cyan(),
+            input_rate,
+            output_rate,
+            new_ratio as f32
         );
 
         // Create new resampler with updated rates
         let new_resampler = Resampler::new(
             new_input_rate,
             new_output_rate,
-            2048,
-            2.0,
-            PrecisionProfile::Bits24,
+            4096,                     // Max block size
+            2.0,                      // Transition band
+            PrecisionProfile::Bits24, // High quality
         );
 
         self.input_rate = new_input_rate;

@@ -4,20 +4,19 @@ use anyhow::Result;
 use colored::*;
 use coreaudio_sys::{
     kAudioDevicePropertyBufferFrameSize, kAudioDevicePropertyNominalSampleRate,
-    kAudioDevicePropertyStreamFormat, kAudioFormatFlagIsFloat,
-    kAudioFormatFlagIsPacked, kAudioFormatLinearPCM, kAudioObjectPropertyElementMaster,
-    kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput,
-    kAudioOutputUnitProperty_CurrentDevice, kAudioOutputUnitProperty_EnableIO,
-    kAudioOutputUnitProperty_SetInputCallback, kAudioUnitManufacturer_Apple,
-    kAudioUnitProperty_SetRenderCallback, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Global,
-    kAudioUnitScope_Input, kAudioUnitScope_Output, kAudioUnitSubType_HALOutput,
-    kAudioUnitType_Output, AURenderCallbackStruct, AudioBufferList, AudioComponentDescription,
-    AudioComponentFindNext, AudioComponentInstanceDispose, AudioComponentInstanceNew,
-    AudioDeviceID, AudioObjectGetPropertyData, AudioObjectPropertyAddress,
-    AudioObjectSetPropertyData, AudioOutputUnitStart, AudioOutputUnitStop,
-    AudioStreamBasicDescription, AudioTimeStamp, AudioUnit, AudioUnitGetProperty,
-    AudioUnitInitialize, AudioUnitRender, AudioUnitRenderActionFlags, AudioUnitSetProperty,
-    AudioUnitUninitialize, OSStatus,
+    kAudioDevicePropertyStreamFormat, kAudioFormatFlagIsFloat, kAudioFormatFlagIsPacked,
+    kAudioFormatLinearPCM, kAudioObjectPropertyElementMaster, kAudioObjectPropertyScopeInput,
+    kAudioObjectPropertyScopeOutput, kAudioOutputUnitProperty_CurrentDevice,
+    kAudioOutputUnitProperty_EnableIO, kAudioOutputUnitProperty_SetInputCallback,
+    kAudioUnitManufacturer_Apple, kAudioUnitProperty_SetRenderCallback,
+    kAudioUnitProperty_StreamFormat, kAudioUnitScope_Global, kAudioUnitScope_Input,
+    kAudioUnitScope_Output, kAudioUnitSubType_HALOutput, kAudioUnitType_Output,
+    AURenderCallbackStruct, AudioBufferList, AudioComponentDescription, AudioComponentFindNext,
+    AudioComponentInstanceDispose, AudioComponentInstanceNew, AudioDeviceID,
+    AudioObjectGetPropertyData, AudioObjectPropertyAddress, AudioObjectSetPropertyData,
+    AudioOutputUnitStart, AudioOutputUnitStop, AudioStreamBasicDescription, AudioTimeStamp,
+    AudioUnit, AudioUnitGetProperty, AudioUnitInitialize, AudioUnitRender,
+    AudioUnitRenderActionFlags, AudioUnitSetProperty, AudioUnitUninitialize, OSStatus,
 };
 use std::os::raw::c_void;
 use std::ptr;
@@ -1136,9 +1135,9 @@ impl CoreAudioInputStream {
 
         // **TESTING**: Set input device buffer size to 2048 frames
         // info!("🧪 TESTING: Setting input device buffer to 2048 frames");
-        // if let Err(e) = set_device_buffer_frame_size(self.device_id, 1024, false) {
-        //     warn!("⚠️ Could not set input buffer size to 2048: {}", e);
-        // }
+        if let Err(e) = set_device_buffer_frame_size(self.device_id, 512, false) {
+            warn!("⚠️ Could not set input buffer size to 2048: {}", e);
+        }
 
         // Step 9: Start the Audio Unit
         let status = unsafe { AudioOutputUnitStart(audio_unit) };

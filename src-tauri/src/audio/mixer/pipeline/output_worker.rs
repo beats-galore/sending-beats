@@ -164,7 +164,11 @@ impl OutputWorker {
         if needs_recreation {
             // Using RubatoSRC with continuous read pointer philosophy
             // Buffer sizing logic is now handled inside the resampler
-            match RubatoSRC::new_fft_fixed_output(input_sample_rate as f32, output_sample_rate as f32, chunk_size / 2) {
+            match RubatoSRC::new_fft_fixed_output(
+                input_sample_rate as f32,
+                output_sample_rate as f32,
+                chunk_size / 2,
+            ) {
                 Ok(new_resampler) => {
                     info!(
                         "🔄 {}: {} resampler for {} ({} Hz → {} Hz, ratio: {:.3})",
@@ -219,13 +223,14 @@ impl OutputWorker {
         pre_accumulation_buffer.extend_from_slice(input_samples);
 
         // Get precise input frames needed from the resampler itself
-        let estimated_input_needed = if let Some(active_resampler) = Self::get_or_initialize_resampler_static(
-            resampler,
-            input_sample_rate,
-            device_sample_rate,
-            chunk_size,
-            device_id,
-        ) {
+        let estimated_input_needed = if let Some(active_resampler) =
+            Self::get_or_initialize_resampler_static(
+                resampler,
+                input_sample_rate,
+                device_sample_rate,
+                chunk_size,
+                device_id,
+            ) {
             // Use resampler's own calculation for how many input frames it needs
             active_resampler.input_frames_needed(target_output_count / 2) * 2 // Convert frames to samples
         } else {
@@ -234,8 +239,10 @@ impl OutputWorker {
         };
 
         // **BUFFER MONITORING**: Track pre-accumulation buffer levels for drift analysis
-        static BUFFER_LEVEL_LOG_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let buffer_log_count = BUFFER_LEVEL_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        static BUFFER_LEVEL_LOG_COUNT: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        let buffer_log_count =
+            BUFFER_LEVEL_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if buffer_log_count % 50 == 0 {
             info!(
                 "🔄 {}: Buffer levels - accumulated: {}, input needed: {}, ratio: {:.2}",
@@ -249,13 +256,14 @@ impl OutputWorker {
         // **DELAYED OUTPUT START**: Wait for 2x buffer headroom before starting output
         if !*output_started {
             // Get the current maximum input requirement from resampler
-            let max_input_needed = if let Some(active_resampler) = Self::get_or_initialize_resampler_static(
-                resampler,
-                input_sample_rate,
-                device_sample_rate,
-                chunk_size,
-                device_id,
-            ) {
+            let max_input_needed = if let Some(active_resampler) =
+                Self::get_or_initialize_resampler_static(
+                    resampler,
+                    input_sample_rate,
+                    device_sample_rate,
+                    chunk_size,
+                    device_id,
+                ) {
                 active_resampler.input_frames_needed(target_output_count / 2) * 2
             } else {
                 target_output_count
@@ -274,15 +282,18 @@ impl OutputWorker {
                 );
             } else {
                 // Still accumulating, don't process any output yet
-                static ACCUMULATION_LOG_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-                let accum_count = ACCUMULATION_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                static ACCUMULATION_LOG_COUNT: std::sync::atomic::AtomicU64 =
+                    std::sync::atomic::AtomicU64::new(0);
+                let accum_count =
+                    ACCUMULATION_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 if accum_count % 100 == 0 {
                     info!(
                         "⏳ {}: Accumulating buffer before output start - {}/{} samples ({:.1}%)",
                         "PRE_OUTPUT_ACCUMULATION".yellow(),
                         pre_accumulation_buffer.len(),
                         required_buffer_size,
-                        (pre_accumulation_buffer.len() as f32 / required_buffer_size as f32) * 100.0
+                        (pre_accumulation_buffer.len() as f32 / required_buffer_size as f32)
+                            * 100.0
                     );
                 }
                 return Vec::new(); // Return empty, don't start output yet
@@ -294,13 +305,14 @@ impl OutputWorker {
         // Step 3: Dynamic processing loop - check requirements each iteration
         loop {
             // **DYNAMIC REQUIREMENT**: Get current input requirement from resampler
-            let current_input_needed = if let Some(active_resampler) = Self::get_or_initialize_resampler_static(
-                resampler,
-                input_sample_rate,
-                device_sample_rate,
-                chunk_size,
-                device_id,
-            ) {
+            let current_input_needed = if let Some(active_resampler) =
+                Self::get_or_initialize_resampler_static(
+                    resampler,
+                    input_sample_rate,
+                    device_sample_rate,
+                    chunk_size,
+                    device_id,
+                ) {
                 active_resampler.input_frames_needed(target_output_count / 2) * 2
             } else {
                 target_output_count
@@ -328,18 +340,19 @@ impl OutputWorker {
             // Write to SPMC: Immediately write to keep queue fed
             if !output_chunk.is_empty() {
                 static OUTPUT_CHUNK_WRITE_COUNT: std::sync::atomic::AtomicU64 =
-                std::sync::atomic::AtomicU64::new(0);
-            let chunk_write_count = OUTPUT_CHUNK_WRITE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    std::sync::atomic::AtomicU64::new(0);
+                let chunk_write_count =
+                    OUTPUT_CHUNK_WRITE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-            if chunk_write_count < 10 || chunk_write_count % 100 == 0  {
-                info!(
+                if chunk_write_count < 10 || chunk_write_count % 100 == 0 {
+                    info!(
                     "🔄 {}: Chunked processing wrote {} samples ({} remaining) directly to SPMC",
                     "CHUNKS_WRITTEN_TO_SPMC".on_blue().yellow(),
                     output_chunk.len(),
                     pre_accumulation_buffer.len()
 
                 );
-            }
+                }
 
                 if let Some(ref writer) = spmc_writer {
                     if let Ok(mut w) = writer.try_lock() {
@@ -681,9 +694,7 @@ impl OutputWorker {
                 let debug_count =
                     TIMING_DEBUG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-                if (debug_count < 10 || debug_count % 1000 == 0)
-
-                {
+                if (debug_count < 10 || debug_count % 1000 == 0) {
                     let time_between = if let Some(gap) = time_since_last {
                         format!("{}μs", gap.as_micros())
                     } else {

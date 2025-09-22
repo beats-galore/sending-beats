@@ -3,10 +3,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::info;
 
-use tokio::sync::{Notify};
+use tokio::sync::Notify;
 
 // Lock-free audio buffer imports
-use rtrb::{ Producer};
+use rtrb::Producer;
 
 #[derive(Debug, Clone)]
 pub struct AudioMetrics {

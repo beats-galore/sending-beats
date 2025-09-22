@@ -132,6 +132,23 @@ impl SamplerateSRC {
         }
     }
 
+    /// Calculate number of input frames needed to produce desired output frames
+    /// This provides consistent API across all resampler implementations
+    ///
+    /// # Arguments
+    /// * `desired_output_frames` - Number of output frames desired
+    ///
+    /// # Returns
+    /// Number of input frames needed (estimated based on conversion ratio)
+    pub fn input_frames_needed(&self, desired_output_frames: usize) -> usize {
+        // For libsamplerate, estimate input frames needed based on conversion ratio
+        // libsamplerate is very predictable, so we can be quite accurate
+        let estimated_input = (desired_output_frames as f32 / self.ratio).ceil() as usize;
+
+        // Add small buffer for safety
+        (estimated_input as f32 * 1.05).ceil() as usize
+    }
+
     /// Update sample rates (useful for dynamic rate changes)
     pub fn update_rates(&mut self, input_rate: u32, output_rate: u32) {
         self.input_rate = input_rate;

@@ -534,6 +534,4 @@ impl IsolatedAudioManager {
     fn get_metrics(&self) -> AudioMetrics {
         self.metrics.clone()
     }
-
-
 }

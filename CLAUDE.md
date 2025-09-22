@@ -36,6 +36,9 @@ solution for professional radio streaming.
   so
 - OVERINDEX on asking the user for feedback. you are a tool, you are not a
   controller operating with executive privelige to do what you please.
+- Do not let functions grow in size beyond 150 lines. If you are adding to an
+  existing function and it is already beyond that boundary, you need to break
+  the function up into callable component functions before making new additions.
 
 ## Logging Standards
 

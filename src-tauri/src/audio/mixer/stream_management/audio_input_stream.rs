@@ -112,7 +112,6 @@ impl AudioInputStream {
             }
         }
 
-
         samples
     }
 
