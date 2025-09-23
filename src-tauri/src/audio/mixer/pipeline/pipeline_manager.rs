@@ -15,6 +15,7 @@ use tracing::{error, info, warn};
 
 // SPMC queue imports for hardware output connection
 use spmcq::Writer;
+use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 
 use super::{
     input_worker::{InputWorker, InputWorkerStats},
@@ -300,16 +301,50 @@ impl AudioPipeline {
         device_sample_rate: u32,
         chunk_size: usize,
     ) -> Result<()> {
-        self.add_output_device_with_spmc_writer(device_id, device_sample_rate, chunk_size, None)
+        Err(anyhow::anyhow!(
+            "OutputWorker requires an SPMC writer. Use add_output_device_with_spmc_writer_and_tracker instead for device '{}'",
+            device_id
+        ))
     }
 
-    /// Register a new output device with SPMC writer for hardware connection
+    /// Register a new output device with SPMC writer for hardware connection (legacy)
     pub fn add_output_device_with_spmc_writer(
         &mut self,
         device_id: String,
         device_sample_rate: u32,
         chunk_size: usize,
         spmc_writer: Option<Arc<tokio::sync::Mutex<spmcq::Writer<f32>>>>,
+    ) -> Result<()> {
+        if spmc_writer.is_none() {
+            return Err(anyhow::anyhow!(
+                "OutputWorker requires an SPMC writer for device '{}'",
+                device_id
+            ));
+        }
+
+        // Create a dummy queue tracker for legacy compatibility
+        let dummy_queue_tracker = AtomicQueueTracker::new(
+            format!("legacy_{}", device_id),
+            8192, // Default capacity
+        );
+
+        self.add_output_device_with_spmc_writer_and_tracker(
+            device_id,
+            device_sample_rate,
+            chunk_size,
+            spmc_writer,
+            dummy_queue_tracker,
+        )
+    }
+
+    /// Register a new output device with SPMC writer and queue tracker for hardware connection
+    pub fn add_output_device_with_spmc_writer_and_tracker(
+        &mut self,
+        device_id: String,
+        device_sample_rate: u32,
+        chunk_size: usize,
+        spmc_writer: Option<Arc<tokio::sync::Mutex<spmcq::Writer<f32>>>>,
+        queue_tracker: AtomicQueueTracker,
     ) -> Result<()> {
         if self.output_workers.contains_key(&device_id) {
             return Err(anyhow::anyhow!(
@@ -341,6 +376,7 @@ impl AudioPipeline {
                     mixed_rx,
                     Some(spmc_writer),
                     hardware_tx.clone(),
+                    queue_tracker,
                 )
             } else {
                 tracing::info!(
@@ -348,25 +384,30 @@ impl AudioPipeline {
                     "PIPELINE".bright_blue(),
                     device_id
                 );
-                OutputWorker::new_with_spmc_writer(
+                OutputWorker::new_with_spmc_writer_and_tracker(
                     device_id.clone(),
                     device_sample_rate,
                     chunk_size,
                     mixed_rx,
                     Some(spmc_writer),
+                    queue_tracker,
                 )
             }
 
             #[cfg(not(target_os = "macos"))]
-            OutputWorker::new_with_spmc_writer(
+            OutputWorker::new_with_spmc_writer_and_tracker(
                 device_id.clone(),
                 device_sample_rate,
                 chunk_size,
                 mixed_rx,
                 Some(spmc_writer),
+                queue_tracker,
             )
         } else {
-            OutputWorker::new(device_id.clone(), device_sample_rate, chunk_size, mixed_rx)
+            return Err(anyhow::anyhow!(
+                "OutputWorker requires an SPMC writer for device '{}'",
+                device_id
+            ));
         };
 
         // Start the worker if pipeline is running
@@ -405,6 +446,7 @@ impl AudioPipeline {
 
         Ok(())
     }
+
 
     /// Start the complete audio pipeline
     pub async fn start(&mut self) -> Result<()> {

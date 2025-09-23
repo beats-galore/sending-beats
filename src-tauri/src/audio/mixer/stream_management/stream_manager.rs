@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tracing::info;
 
 use tokio::sync::Notify;
+use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 
 // Lock-free audio buffer imports
 use rtrb::Producer;
@@ -155,23 +156,23 @@ impl StreamManager {
         removed
     }
 
-    /// Add CoreAudio output stream with SPMC Reader integration
+
+    /// Add CoreAudio output stream with SPMC reader and queue tracker for advanced monitoring
     #[cfg(target_os = "macos")]
-    pub fn add_coreaudio_output_stream(
+    pub fn add_coreaudio_output_stream_with_tracker(
         &mut self,
         device_id: String,
         coreaudio_device: crate::audio::types::CoreAudioDevice,
         spmc_reader: spmcq::Reader<f32>,
-        output_notifier: Arc<Notify>, // CoreAudio integration - NOW ACTIVE
+        output_notifier: Arc<Notify>,
+        queue_tracker: AtomicQueueTracker,
     ) -> Result<()> {
         info!(
-            "🔊 Creating CoreAudio output stream for device '{}' (ID: {})",
+            "🔊 Creating CoreAudio output stream with queue tracker for device '{}' (ID: {})",
             device_id, coreaudio_device.device_id
         );
 
         // **SPMC INTEGRATION**: Create CoreAudio stream with SPMC reader AND output notifier
-        // Extract values from CoreAudioDevice and use new constructor
-        // **ADAPTIVE AUDIO**: No longer pass sample_rate - it will be detected from device
         let mut coreaudio_stream =
             crate::audio::devices::CoreAudioOutputStream::new_with_spmc_reader_and_notifier(
                 coreaudio_device.device_id,    // AudioDeviceID (u32)
@@ -179,25 +180,23 @@ impl StreamManager {
                 2,                             // channels: u16 (stereo)
                 spmc_reader,                   // **SPMC READER INTEGRATION**
                 output_notifier,               // **OUTPUT NOTIFIER INTEGRATION**
+                queue_tracker,                 // **QUEUE TRACKING INTEGRATION**
             )?;
-
-        // **SPMC READER NOW INTEGRATED**: Stream created with SPMC reader for real audio data
 
         // Start the CoreAudio stream
         coreaudio_stream.start()?;
 
-        // **CRITICAL FIX**: Store the CoreAudio stream to prevent it from being dropped
+        // Store the CoreAudio stream to prevent it from being dropped
         self.coreaudio_streams
             .insert(device_id.clone(), coreaudio_stream);
 
         info!(
-            "🎵 CoreAudio stream started with SPMC queue integration for device '{}'",
+            "🎵 CoreAudio stream started with SPMC queue integration and queue tracking for device '{}'",
             device_id
         );
-        info!("🔒 CoreAudio stream stored in StreamManager to prevent premature cleanup");
 
         info!(
-          "✅ CoreAudio output stream created and started for device '{}' via queue architecture (add_coreaudio_output_stream)",
+          "✅ CoreAudio output stream with queue tracker created and started for device '{}'",
           device_id
       );
         Ok(())

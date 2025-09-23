@@ -19,6 +19,7 @@ use crate::audio::devices::coreaudio_stream::CoreAudioInputStream;
 // Lock-free audio buffer imports
 use rtrb::{Consumer, Producer, RingBuffer};
 use spmcq::{ring_buffer, ReadResult, Reader, Writer};
+use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 
 // Command channel for isolated audio thread communication
 // Cannot derive Debug because Device doesn't implement Debug
@@ -423,6 +424,12 @@ impl IsolatedAudioManager {
         let (spmc_reader, spmc_writer) = spmcq::ring_buffer(buffer_capacity);
         let spmc_writer = Arc::new(Mutex::new(spmc_writer));
 
+        // **QUEUE TRACKING**: Create shared AtomicQueueTracker for this SPMC queue
+        let queue_tracker = AtomicQueueTracker::new(
+            format!("output_{}", device_id),
+            buffer_capacity,
+        );
+
         // Store the SPMC writer for mixer to send audio data
         self.output_spmc_writers
             .insert(device_id.clone(), spmc_writer.clone());
@@ -461,11 +468,12 @@ impl IsolatedAudioManager {
         );
 
         // **PIPELINE INTEGRATION**: Connect output device to AudioPipeline Layer 4 FIRST
-        if let Err(e) = self.audio_pipeline.add_output_device_with_spmc_writer(
+        if let Err(e) = self.audio_pipeline.add_output_device_with_spmc_writer_and_tracker(
             device_id.clone(),
             native_sample_rate,
             chunk_size,
             Some(spmc_writer),
+            queue_tracker.clone(),
         ) {
             error!(
                 "❌ PIPELINE: Failed to connect output device '{}' to Layer 4: {}",
@@ -484,11 +492,12 @@ impl IsolatedAudioManager {
         corrected_coreaudio_device.sample_rate = native_sample_rate;
 
         // Create the hardware CoreAudio stream with SPMC reader using corrected sample rate
-        self.stream_manager.add_coreaudio_output_stream(
+        self.stream_manager.add_coreaudio_output_stream_with_tracker(
             device_id.clone(),
             corrected_coreaudio_device,
             spmc_reader,
             self.global_output_notifier.clone(),
+            queue_tracker.clone_for_consumer(),
         )?;
 
         self.metrics.output_streams = self.output_spmc_writers.len();

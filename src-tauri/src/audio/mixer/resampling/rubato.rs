@@ -662,14 +662,23 @@ impl RubatoSRC {
                 self.output_rate = new_output_rate;
                 self.ratio = new_output_rate / new_input_rate;
 
-                info!(
-                    "🔄 {}: Dynamic ratio adjusted to {:.6} ({}Hz→{}Hz, ramp: {})",
-                    "DYNAMIC_RATIO_ADJUST".green(),
-                    new_ratio,
-                    new_input_rate,
-                    new_output_rate,
-                    ramp
-                );
+                // Rate-limited logging for dynamic adjustments
+                static DYNAMIC_ADJUST_COUNT: std::sync::atomic::AtomicU64 =
+                    std::sync::atomic::AtomicU64::new(0);
+                let adjust_count =
+                    DYNAMIC_ADJUST_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                if adjust_count < 5 || adjust_count % 100 == 0 {
+                    info!(
+                        "🔄 {}: Dynamic ratio adjusted to {:.6} ({}Hz→{}Hz, ramp: {}) [count: {}]",
+                        "DYNAMIC_RATIO_ADJUST".green(),
+                        new_ratio,
+                        new_input_rate,
+                        new_output_rate,
+                        ramp,
+                        adjust_count + 1
+                    );
+                }
 
                 Ok(())
             }

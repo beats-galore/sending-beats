@@ -9,10 +9,11 @@
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{error, info, warn};
+use tracing::{error, info, warn, trace};
 
 use super::queue_types::MixedAudioSamples;
 use crate::audio::mixer::resampling::RubatoSRC;
+use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::utils::calculate_optimal_chunk_size;
 use colored::*;
 
@@ -42,6 +43,9 @@ pub struct OutputWorker {
     // Hardware output integration via SPMC queue
     spmc_writer: Option<Arc<Mutex<Writer<f32>>>>, // Writes to hardware via SPMC queue
 
+    // Queue state tracking for dynamic sample rate adjustment
+    queue_tracker: AtomicQueueTracker,
+
     // Worker thread handle
     worker_handle: Option<tokio::task::JoinHandle<()>>,
 
@@ -51,29 +55,15 @@ pub struct OutputWorker {
 }
 
 impl OutputWorker {
-    /// Create a new output processing worker for a device
-    pub fn new(
-        device_id: String,
-        device_sample_rate: u32,
-        target_chunk_size: usize,
-        mixed_audio_rx: mpsc::UnboundedReceiver<MixedAudioSamples>,
-    ) -> Self {
-        Self::new_with_spmc_writer(
-            device_id,
-            device_sample_rate,
-            target_chunk_size,
-            mixed_audio_rx,
-            None,
-        )
-    }
 
-    /// Create a new output processing worker with SPMC writer for hardware output
-    pub fn new_with_spmc_writer(
+    /// Create a new output processing worker with SPMC writer and queue tracker
+    pub fn new_with_spmc_writer_and_tracker(
         device_id: String,
         device_sample_rate: u32,
         target_chunk_size: usize,
         mixed_audio_rx: mpsc::UnboundedReceiver<MixedAudioSamples>,
         spmc_writer: Option<Arc<Mutex<Writer<f32>>>>,
+        queue_tracker: AtomicQueueTracker,
     ) -> Self {
         let has_hardware_output = spmc_writer.is_some();
         info!(
@@ -92,11 +82,14 @@ impl OutputWorker {
             #[cfg(target_os = "macos")]
             hardware_update_tx: None, // No hardware updates for this constructor
             spmc_writer,
+            queue_tracker,
             worker_handle: None,
             chunks_processed: 0,
             samples_output: 0,
         }
     }
+
+
 
     /// Create a new output processing worker with hardware update channel (macOS only)
     #[cfg(target_os = "macos")]
@@ -107,6 +100,7 @@ impl OutputWorker {
         mixed_audio_rx: mpsc::UnboundedReceiver<MixedAudioSamples>,
         spmc_writer: Option<Arc<Mutex<Writer<f32>>>>,
         hardware_update_tx: mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>,
+        queue_tracker: AtomicQueueTracker,
     ) -> Self {
         let has_hardware_output = spmc_writer.is_some();
         info!(
@@ -124,16 +118,72 @@ impl OutputWorker {
             mixed_audio_rx,
             hardware_update_tx: Some(hardware_update_tx),
             spmc_writer,
+            queue_tracker,
             worker_handle: None,
             chunks_processed: 0,
             samples_output: 0,
         }
     }
 
-    // TODO: call set sample rate if resampler supports it
-    pub fn update_target_mix_rate(&mut self, _target_mix_rate: u32) -> Result<()> {
+    /// Update the target mix rate, using dynamic rate adjustment if supported
+    pub fn update_target_mix_rate(&mut self, target_mix_rate: u32) -> Result<()> {
+        if let Some(ref mut resampler) = self.resampler {
+            // Check if current resampler supports dynamic rate adjustment
+            if resampler.supports_dynamic_sample_rate() {
+                // Use dynamic adjustment - keep same output rate, update input rate
+                let output_rate = self.device_sample_rate as f32;
+                let new_input_rate = target_mix_rate as f32;
+
+                match resampler.set_sample_rates(new_input_rate, output_rate, true) {
+                    Ok(()) => {
+                        info!(
+                            "🎯 {}: Dynamic rate update for {} - {}Hz→{}Hz (ratio: {:.6})",
+                            "DYNAMIC_RATE_UPDATE".cyan(),
+                            self.device_id,
+                            new_input_rate,
+                            output_rate,
+                            output_rate / new_input_rate
+                        );
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        warn!(
+                            "⚠️ {}: Dynamic rate update failed for {}: {}, falling back to recreation",
+                            "DYNAMIC_RATE_FAILED".yellow(),
+                            self.device_id,
+                            e
+                        );
+                        // Fall through to recreation
+                    }
+                }
+            } else {
+                info!(
+                    "🔄 {}: Resampler for {} doesn't support dynamic rates, recreating",
+                    "RESAMPLER_RECREATION".blue(),
+                    self.device_id
+                );
+            }
+        }
+
+        // Fallback: force resampler recreation on next processing cycle
         self.resampler = None;
+        info!(
+            "🔧 {}: Marked resampler for recreation - new mix rate: {}Hz",
+            "RESAMPLER_RESET".blue(),
+            target_mix_rate
+        );
         Ok(())
+    }
+
+
+    /// Get queue tracker for sharing with CoreAudio callback
+    pub fn get_queue_tracker_for_consumer(&self) -> AtomicQueueTracker {
+        self.queue_tracker.clone_for_consumer()
+    }
+
+    /// Get current queue info for dynamic sample rate adjustment
+    pub fn get_queue_info(&self) -> super::super::queue_manager::QueueInfo {
+        self.queue_tracker.get_queue_info()
     }
 
     /// Static helper function to get or initialize resampler in async context
@@ -177,14 +227,6 @@ impl OutputWorker {
                     true, // Use ramping for smooth transitions
                 ) {
                     Ok(()) => {
-                        info!(
-                            "🔄 {}: Dynamic ratio adjustment successful for {} ({} Hz → {} Hz)",
-                            "DYNAMIC_RATE_ADJUST".green(),
-                            device_id,
-                            input_sample_rate,
-                            output_sample_rate
-                        );
-                        // Successfully adjusted, no need to recreate
                     }
                     Err(e) => {
                         info!(
@@ -261,6 +303,7 @@ impl OutputWorker {
         pre_accumulation_buffer: &mut Vec<f32>,
         spmc_writer: &Option<Arc<Mutex<Writer<f32>>>>,
         output_started: &mut bool,
+        queue_tracker: Option<&AtomicQueueTracker>,
     ) -> Vec<f32> {
         // Step 1 & 2: Wait until samples are available, drain all and add to pre accumulator
         pre_accumulation_buffer.extend_from_slice(input_samples);
@@ -409,7 +452,7 @@ impl OutputWorker {
                         chunks_written += 1;
                         Self::adjust_dynamic_sample_rate_static(
                             resampler,
-                            &w,
+                            queue_tracker,
                             input_sample_rate,
                             device_sample_rate,
                             chunk_size,
@@ -453,6 +496,7 @@ impl OutputWorker {
         target_output_count: usize,
         post_accumulation_buffer: &mut Vec<f32>,
         output_started: &mut bool,
+        queue_tracker: Option<&AtomicQueueTracker>,
     ) -> Vec<f32> {
         // Process input immediately, get whatever output is available
         let resampled = Self::process_resampling_static(
@@ -572,6 +616,7 @@ impl OutputWorker {
         let mut mixed_audio_rx =
             std::mem::replace(&mut self.mixed_audio_rx, mpsc::unbounded_channel().1);
         let spmc_writer = self.spmc_writer.clone();
+        let queue_tracker = self.queue_tracker.clone();
 
         // Clone hardware update channel for dynamic buffer size updates
         #[cfg(target_os = "macos")]
@@ -669,6 +714,7 @@ impl OutputWorker {
                             &mut pre_accumulation_buffer,
                             &spmc_writer,
                             &mut pre_output_started,
+                            Some(&queue_tracker),
                         )
                     } else {
                         // **POST-ACCUMULATION**: For upsampling/minor changes, accumulate output
@@ -682,6 +728,7 @@ impl OutputWorker {
                             adaptive_chunk_size,
                             &mut post_accumulation_buffer,
                             &mut post_output_started,
+                            Some(&queue_tracker),
                         )
                     }
                 };
@@ -716,6 +763,26 @@ impl OutputWorker {
                     );
                 }
 
+                // **QUEUE STATE LOGGING**: Log queue occupancy every 1000th call
+                static QUEUE_LOG_COUNT: std::sync::atomic::AtomicU64 =
+                    std::sync::atomic::AtomicU64::new(0);
+                let queue_log_count =
+                    QUEUE_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                if queue_log_count % 1000 == 0 {
+                    let queue_info = queue_tracker.get_queue_info();
+                    info!(
+                        "📊 {}: occupancy={:.1}% ({}/{}) written={} read={} device={}",
+                        "QUEUE_STATE".green(),
+                        queue_info.usage_percent,
+                        queue_info.estimated_occupancy,
+                        queue_info.capacity,
+                        queue_info.total_written,
+                        queue_info.total_read,
+                        device_id
+                    );
+                }
+
                 // **OPTIMIZATION**: If no resampling and chunk size matches, bypass accumulation entirely
                 let mut chunks_sent_this_cycle = 0;
                 let mut total_spmc_duration = std::time::Duration::ZERO;
@@ -724,7 +791,7 @@ impl OutputWorker {
                 if !device_samples.is_empty() {
                     let spmc_write_start = std::time::Instant::now();
                     if let Some(ref spmc_writer) = spmc_writer {
-                        Self::write_to_hardware_spmc(&device_id, &device_samples, spmc_writer)
+                        Self::write_to_hardware_spmc(&device_id, &device_samples, spmc_writer, Some(&queue_tracker))
                             .await;
                     }
                     let spmc_write_duration = spmc_write_start.elapsed();
@@ -834,28 +901,13 @@ impl OutputWorker {
     }
 
     /// Get SPMC queue occupancy information
-    fn get_queue_info(writer: &Writer<f32>) -> QueueInfo {
-        let occupancy = writer.len();
-        let capacity = writer.capacity();
-        let usage_percent = if capacity > 0 {
-            (occupancy as f32 / capacity as f32) * 100.0
-        } else {
-            0.0
-        };
-
-        QueueInfo {
-            occupancy,
-            capacity,
-            usage_percent,
-            available: capacity - occupancy,
-        }
-    }
 
     /// Write audio samples to hardware via SPMC queue
     async fn write_to_hardware_spmc(
         device_id: &str,
         samples: &[f32],
         spmc_writer: &Arc<Mutex<Writer<f32>>>,
+        queue_tracker: Option<&AtomicQueueTracker>,
     ) {
         let lock_start = std::time::Instant::now();
         if let Ok(mut writer) = spmc_writer.try_lock() {
@@ -866,8 +918,12 @@ impl OutputWorker {
                 samples_written += 1;
             }
 
-            // Get queue info for potential use
-            let _queue_info = Self::get_queue_info(&writer);
+            // Record samples written for queue tracking
+            if let Some(tracker) = queue_tracker {
+                tracker.record_samples_written(samples_written);
+            }
+
+            // Queue tracking is now handled by the AtomicQueueTracker
         } else {
             warn!(
                 "⚠️ OUTPUT_WORKER: {} failed to lock SPMC writer, dropping {} samples",
@@ -886,12 +942,12 @@ impl OutputWorker {
     /// - `out_rate_nom`: nominal output sample rate (Hz).
     fn adjust_dynamic_sample_rate_static(
         resampler: &mut Option<RubatoSRC>,
-        spmc_writer: &Arc<Mutex<Writer<f32>>>,
+        queue_tracker: Option<&AtomicQueueTracker>,
         input_sample_rate: u32,
         device_sample_rate: u32,
         chunk_size: usize,
         device_id: &str,
-    ) -> Result<()> {
+    ) {
         let can_adjust_dynamically = if let Some(active_resampler) =
             Self::get_or_initialize_resampler_static(
                 resampler,
@@ -907,32 +963,52 @@ impl OutputWorker {
         };
 
         if !can_adjust_dynamically {
-            Ok(())
+            return;
         }
 
-        let current_queue_details = Self::get_queue_info(spmc_writer);
-        let fill = current_queue_details.occupancy;
-        let capacity = current_queue_details.capacity;
+        // Get queue info from tracker if available, otherwise skip adjustment
+        let (fill, capacity) = if let Some(tracker) = queue_tracker {
+            let queue_info = tracker.get_queue_info();
+            (queue_info.estimated_occupancy, queue_info.capacity)
+        } else {
+            // No queue tracker available - can't do dynamic adjustment
+            trace!(
+                "🎯 {}: No queue tracker available for {} - skipping dynamic adjustment",
+                "DYNAMIC_RATE".yellow(),
+                device_id
+            );
+            return;
+        };
 
         let k: f32 = 1e-4; // proportional gain constant
         let target = (capacity / 2) as f32;
         let error = fill as f32 - target;
 
         // Effective resampling ratio with proportional correction
-        let r_nom = device_sample_rate / input_sample_rate;
+        let r_nom = device_sample_rate as f32 / input_sample_rate as f32;
         let correction = 1.0 + k * (error / target);
         let r_eff = r_nom * correction;
 
-        let new_out_rate = input_sample_rate * r_eff;
+        let new_out_rate = input_sample_rate as f32 * r_eff;
 
-        if let Some(ref mut active_resampler) = Self::get_or_initialize_resampler_static(
+        if let Some(active_resampler) = Self::get_or_initialize_resampler_static(
             resampler,
             input_sample_rate,
             device_sample_rate,
             chunk_size,
             device_id,
         ) {
-            if let Err(err) = resampler.set_sample_rates(input_sample_rate, new_out_rate, true) {
+            trace!(
+                "🎯 {}: Queue-based adjustment for {} - fill: {}/{} ({}%), correction: {:.6}, new_rate: {:.1}Hz",
+                "DYNAMIC_RATE".cyan(),
+                device_id,
+                fill,
+                capacity,
+                (fill as f32 / capacity as f32) * 100.0,
+                correction,
+                new_out_rate
+            );
+            if let Err(err) = active_resampler.set_sample_rates(input_sample_rate as f32, new_out_rate, true) {
                 warn!("⚠️ Drift correction failed: {}", err);
             } else {
                 trace!(

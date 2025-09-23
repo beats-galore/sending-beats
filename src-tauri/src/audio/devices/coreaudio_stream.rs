@@ -1,4 +1,5 @@
 use crate::types::{COMMON_SAMPLE_RATES_HZ, DEFAULT_SAMPLE_RATE};
+use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 #[cfg(target_os = "macos")]
 use anyhow::Result;
 use colored::*;
@@ -182,6 +183,7 @@ struct AudioCallbackContext {
     buffer: Arc<Mutex<Vec<f32>>>,
     spmc_reader: Option<Arc<Mutex<spmcq::Reader<f32>>>>,
     output_notifier: Option<Arc<tokio::sync::Notify>>,
+    queue_tracker: Option<AtomicQueueTracker>,
 }
 
 /// Context struct for CoreAudio input callbacks - matches CPAL architecture exactly
@@ -212,6 +214,8 @@ pub struct CoreAudioOutputStream {
     spmc_reader: Option<Arc<Mutex<spmcq::Reader<f32>>>>,
     // **OUTPUT NOTIFIER**: Notify isolated audio manager when buffer runs low
     output_notifier: Option<Arc<tokio::sync::Notify>>,
+    // **QUEUE TRACKING**: Track samples read for dynamic sample rate adjustment
+    queue_tracker: AtomicQueueTracker,
 }
 
 // Manual Debug implementation to handle the AudioUnit pointer
@@ -239,69 +243,7 @@ unsafe impl Send for CoreAudioOutputStream {}
 
 #[cfg(target_os = "macos")]
 impl CoreAudioOutputStream {
-    pub fn new(
-        device_id: AudioDeviceID,
-        device_name: String,
-        sample_rate: u32,
-        channels: u16,
-    ) -> Result<Self> {
-        info!(
-            "🎧 {} Creating CoreAudio output stream for device: {} (ID: {}, SR: {}, CH: {})",
-            "CORE_AUDIO_OUTPUT".blue(),
-            device_name,
-            device_id,
-            sample_rate,
-            channels
-        );
 
-        let input_buffer = Arc::new(Mutex::new(Vec::new()));
-        let is_running = Arc::new(Mutex::new(false));
-
-        Ok(Self {
-            device_id,
-            device_name,
-            sample_rate,
-            channels,
-            input_buffer,
-            is_running,
-            audio_unit: None,
-            callback_context: Arc::new(AtomicPtr::new(ptr::null_mut())),
-            spmc_reader: None,     // No SPMC reader for legacy constructor
-            output_notifier: None, // No notifier for legacy constructor
-        })
-    }
-
-    /// Create CoreAudio output stream with SPMC reader for lock-free audio processing
-    pub fn new_with_spmc_reader(
-        device_id: AudioDeviceID,
-        device_name: String,
-        channels: u16,
-        spmc_reader: spmcq::Reader<f32>,
-    ) -> Result<Self> {
-        // **ADAPTIVE AUDIO**: Detect device's native sample rate instead of imposing our own
-        let native_sample_rate = get_device_native_sample_rate(device_id)?;
-
-        info!(
-            "🔊 Creating CoreAudio output stream with SPMC reader for device: {} (ID: {}, NATIVE SR: {}, CH: {})",
-            device_name, device_id, native_sample_rate, channels
-        );
-
-        let input_buffer = Arc::new(Mutex::new(Vec::new()));
-        let is_running = Arc::new(Mutex::new(false));
-
-        Ok(Self {
-            device_id,
-            device_name,
-            sample_rate: native_sample_rate, // **ADAPTIVE**: Use detected native rate
-            channels,
-            input_buffer,
-            is_running,
-            audio_unit: None,
-            callback_context: Arc::new(AtomicPtr::new(ptr::null_mut())),
-            spmc_reader: Some(Arc::new(Mutex::new(spmc_reader))), // **SPMC INTEGRATION**
-            output_notifier: None, // No notifier for this constructor
-        })
-    }
 
     /// Create CoreAudio output stream with SPMC reader AND output notifier for event-driven processing
     pub fn new_with_spmc_reader_and_notifier(
@@ -310,6 +252,7 @@ impl CoreAudioOutputStream {
         channels: u16,
         spmc_reader: spmcq::Reader<f32>,
         output_notifier: Arc<tokio::sync::Notify>,
+        queue_tracker: AtomicQueueTracker,
     ) -> Result<Self> {
         // **ADAPTIVE AUDIO**: Detect device's native sample rate instead of imposing our own
         let native_sample_rate = get_device_native_sample_rate(device_id)?;
@@ -333,8 +276,10 @@ impl CoreAudioOutputStream {
             callback_context: Arc::new(AtomicPtr::new(ptr::null_mut())),
             spmc_reader: Some(Arc::new(Mutex::new(spmc_reader))), // **SPMC INTEGRATION**
             output_notifier: Some(output_notifier),               // **EVENT-DRIVEN PROCESSING**
+            queue_tracker,
         })
     }
+
 
     pub fn start(&mut self) -> Result<()> {
         info!(
@@ -432,6 +377,7 @@ impl CoreAudioOutputStream {
             buffer: self.input_buffer.clone(),
             spmc_reader: self.spmc_reader.clone(),
             output_notifier: self.output_notifier.clone(),
+            queue_tracker: Some(self.queue_tracker.clone()),
         };
         let boxed_context = Box::new(context);
         let context_ptr = Box::into_raw(boxed_context);
@@ -805,6 +751,28 @@ extern "C" fn spmc_render_callback(
                                         }
                                     }
                                     break;
+                                }
+                            }
+                        }
+
+                        // **QUEUE TRACKING**: Record samples read for dynamic sample rate adjustment
+                        if let Some(ref queue_tracker) = context.queue_tracker {
+                            queue_tracker.record_samples_read(input_samples.len());
+
+                            // **QUEUE STATE LOGGING**: Log queue occupancy every 1000th callback
+                            unsafe {
+                                if CALLBACK_COUNT % 1000 == 0 {
+                                    let queue_info = queue_tracker.get_queue_info();
+                                    info!(
+                                        "📊 {} [call #{}]: occupancy={:.1}% ({}/{}) written={} read={}",
+                                        "CALLBACK_QUEUE_STATE".green(),
+                                        CALLBACK_COUNT,
+                                        queue_info.usage_percent,
+                                        queue_info.estimated_occupancy,
+                                        queue_info.capacity,
+                                        queue_info.total_written,
+                                        queue_info.total_read
+                                    );
                                 }
                             }
                         }
