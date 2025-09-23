@@ -16,7 +16,7 @@ pub fn calculate_optimal_chunk_size(
     if rate_ratio > 1.05 {
         // Reduce chunk size to next power of 2 down to ensure we get samples every cycle
         let optimal_size = if base_chunk_size >= 1024 {
-            2048 // 1024 → 512 for typical downsampling
+            1024 // 1024 → 512 for typical downsampling
         } else if base_chunk_size >= 512 {
             512 // 512 → 256
         } else {

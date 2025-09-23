@@ -647,6 +647,44 @@ extern "C" fn spmc_render_callback(
     in_number_frames: u32,
     io_data: *mut AudioBufferList,
 ) -> OSStatus {
+    // **CALLBACK TIMING DIAGNOSTICS**: Track callback delays and sync issues
+    static mut LAST_CALLBACK_TIME: Option<std::time::Instant> = None;
+    static mut CALLBACK_COUNT: u64 = 0;
+    static mut TOTAL_DELAY_ACCUMULATION: u64 = 0;
+
+    let callback_start = std::time::Instant::now();
+
+    unsafe {
+        CALLBACK_COUNT += 1;
+
+        if let Some(last_time) = LAST_CALLBACK_TIME {
+            let gap_duration = callback_start.duration_since(last_time);
+            let gap_micros = gap_duration.as_micros() as u64;
+
+            // Expected callback interval at 44.1kHz with typical 1024 frame buffer
+            let expected_interval_micros = (in_number_frames as f64 / 44100.0 * 1_000_000.0) as u64;
+
+            // Track significant delays (>10% deviation from expected)
+            if gap_micros > expected_interval_micros + (expected_interval_micros / 10) {
+                let delay_excess = gap_micros - expected_interval_micros;
+                TOTAL_DELAY_ACCUMULATION += delay_excess;
+
+                if CALLBACK_COUNT % 100 == 0 || delay_excess > 5000 {
+                    // Log every 100 callbacks or >5ms delays
+                    info!("⚠️ {} [call #{}]: Callback delay {} μs (expected {}, excess: {} μs, total excess: {} ms)",
+                        "COREAUDIO_CALLBACK_DELAY".red(),
+                        CALLBACK_COUNT,
+                        gap_micros,
+                        expected_interval_micros,
+                        delay_excess,
+                        TOTAL_DELAY_ACCUMULATION / 1000
+                    );
+                }
+            }
+        }
+
+        LAST_CALLBACK_TIME = Some(callback_start);
+    }
     // Safety checks to prevent crashes
     if _in_ref_con.is_null() || io_data.is_null() || in_number_frames == 0 {
         return -1;
@@ -665,7 +703,40 @@ extern "C" fn spmc_render_callback(
 
         // Try to read from SPMC queue if available
         if let Some(ref spmc_reader_arc) = context.spmc_reader {
+            // **SPMC LOCK DIAGNOSTICS**: Track lock acquisition timing
+            let lock_start = std::time::Instant::now();
             if let Ok(mut spmc_reader) = spmc_reader_arc.try_lock() {
+                let lock_duration = lock_start.elapsed();
+
+                // Track lock contention - warn if lock acquisition takes >500μs
+                static mut LOCK_CONTENTION_COUNT: u64 = 0;
+                static mut TOTAL_LOCK_TIME: u64 = 0;
+
+                unsafe {
+                    let lock_micros = lock_duration.as_micros() as u64;
+                    TOTAL_LOCK_TIME += lock_micros;
+
+                    // **ACTUAL CONTENTION**: Only count when lock takes >500μs (indicating another thread held it)
+                    if lock_micros > 500 {
+                        LOCK_CONTENTION_COUNT += 1;
+                        info!("🔒 {} [call #{}]: ACTUAL contention - lock took {} μs (contentions: {}, total lock time: {} ms)",
+                            "SPMC_LOCK_CONTENTION".red(),
+                            CALLBACK_COUNT,
+                            lock_micros,
+                            LOCK_CONTENTION_COUNT,
+                            TOTAL_LOCK_TIME / 1000
+                        );
+                    } else if CALLBACK_COUNT % 1000 == 0 {
+                        // Periodic status (not contention)
+                        info!("🔒 {} [call #{}]: Lock status - avg {} μs, total {} ms, actual contentions: {}",
+                            "SPMC_LOCK_STATUS".yellow(),
+                            CALLBACK_COUNT,
+                            TOTAL_LOCK_TIME / CALLBACK_COUNT,
+                            TOTAL_LOCK_TIME / 1000,
+                            LOCK_CONTENTION_COUNT
+                        );
+                    }
+                }
                 // Fill audio buffers from SPMC queue
                 if buffer_list.mNumberBuffers > 0 {
                     let audio_buffer = unsafe { &mut *buffer_list.mBuffers.as_mut_ptr() };
@@ -678,6 +749,16 @@ extern "C" fn spmc_render_callback(
 
                         // Collect all available samples from SPMC queue
                         let mut input_samples = Vec::new();
+
+                        // **QUEUE STATE DIAGNOSTICS**: Track sync issues and underruns
+                        static mut QUEUE_READ_START_TIME: Option<std::time::Instant> = None;
+                        static mut TOTAL_QUEUE_UNDERRUNS: u64 = 0;
+                        static mut LAST_QUEUE_SIZE: usize = 0;
+
+                        let queue_read_start = std::time::Instant::now();
+                        unsafe {
+                            QUEUE_READ_START_TIME = Some(queue_read_start);
+                        }
 
                         // **SMART NOTIFICATION**: Shared state for transition detection
                         use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -726,6 +807,42 @@ extern "C" fn spmc_render_callback(
                                     break;
                                 }
                             }
+                        }
+
+                        // **QUEUE SYNC DIAGNOSTICS**: Track underruns and queue health
+                        let queue_read_duration = queue_read_start.elapsed();
+                        let queue_size = input_samples.len();
+
+                        unsafe {
+                            // Track significant underruns (need 1024+ samples, got <512)
+                            if samples_to_fill >= 1024 && queue_size < 512 {
+                                TOTAL_QUEUE_UNDERRUNS += 1;
+                            }
+
+                            // Track dramatic queue size changes (could indicate sync issues)
+                            let size_change = if queue_size > LAST_QUEUE_SIZE {
+                                queue_size - LAST_QUEUE_SIZE
+                            } else {
+                                LAST_QUEUE_SIZE - queue_size
+                            };
+
+                            // Log sync issues every 1000 callbacks or on significant events
+                            if CALLBACK_COUNT % 100 == 0
+                                || queue_read_duration.as_micros() > 1000
+                                || size_change > 2048
+                            {
+                                info!("📊 {} [call #{}]: Queue read {} μs, size {} (Δ{}), need {}, underruns: {}",
+                                    "QUEUE_SYNC_DEBUG".cyan(),
+                                    CALLBACK_COUNT,
+                                    queue_read_duration.as_micros(),
+                                    queue_size,
+                                    if queue_size > LAST_QUEUE_SIZE { format!("+{}", size_change) } else { format!("-{}", size_change) },
+                                    samples_to_fill,
+                                    TOTAL_QUEUE_UNDERRUNS
+                                );
+                            }
+
+                            LAST_QUEUE_SIZE = queue_size;
                         }
 
                         let samples_read = if !input_samples.is_empty() {
@@ -1135,7 +1252,7 @@ impl CoreAudioInputStream {
 
         // **TESTING**: Set input device buffer size to 2048 frames
         // info!("🧪 TESTING: Setting input device buffer to 2048 frames");
-        if let Err(e) = set_device_buffer_frame_size(self.device_id, 512, false) {
+        if let Err(e) = set_device_buffer_frame_size(self.device_id, 128, false) {
             warn!("⚠️ Could not set input buffer size to 2048: {}", e);
         }
 
