@@ -2,9 +2,9 @@
 
 // Core modules for mixer functionality
 pub mod pipeline;
+pub mod queue_manager;
 pub mod resampling;
 pub mod stream_management;
-pub mod queue_manager;
 
 // Re-export stream management types
 pub use stream_management::StreamInfo;

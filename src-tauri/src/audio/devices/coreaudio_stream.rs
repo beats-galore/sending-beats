@@ -1,5 +1,5 @@
-use crate::types::{COMMON_SAMPLE_RATES_HZ, DEFAULT_SAMPLE_RATE};
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
+use crate::types::{COMMON_SAMPLE_RATES_HZ, DEFAULT_SAMPLE_RATE};
 #[cfg(target_os = "macos")]
 use anyhow::Result;
 use colored::*;
@@ -243,8 +243,6 @@ unsafe impl Send for CoreAudioOutputStream {}
 
 #[cfg(target_os = "macos")]
 impl CoreAudioOutputStream {
-
-
     /// Create CoreAudio output stream with SPMC reader AND output notifier for event-driven processing
     pub fn new_with_spmc_reader_and_notifier(
         device_id: AudioDeviceID,
@@ -279,7 +277,6 @@ impl CoreAudioOutputStream {
             queue_tracker,
         })
     }
-
 
     pub fn start(&mut self) -> Result<()> {
         info!(
@@ -711,29 +708,21 @@ extern "C" fn spmc_render_callback(
                         static QUEUE_WAS_EMPTY_LAST_TIME: AtomicBool = AtomicBool::new(true);
                         static TRANSITION_COUNT: AtomicU64 = AtomicU64::new(0);
 
-                        loop {
+                        // Read exactly the number of frames Core Audio requested
+                        let mut samples_needed = in_number_frames as usize * 2;
+                        while samples_needed > 0 {
                             match spmc_reader.read() {
                                 spmcq::ReadResult::Ok(sample) => {
                                     input_samples.push(sample);
+                                    samples_needed -= 1;
                                     // Reset empty state when we have data
                                     QUEUE_WAS_EMPTY_LAST_TIME.store(false, Ordering::Relaxed);
-
-                                    // Prevent unbounded reads
-                                    if input_samples.len() >= 4096 {
-                                        info!(
-                                            "samples greater than 4096, breaking processing loop"
-                                        );
-                                        break;
-                                    }
                                 }
                                 spmcq::ReadResult::Dropout(sample) => {
                                     input_samples.push(sample);
+                                    samples_needed -= 1;
                                     // Reset empty state when we have data (even dropout data)
                                     QUEUE_WAS_EMPTY_LAST_TIME.store(false, Ordering::Relaxed);
-
-                                    if input_samples.len() >= 4096 {
-                                        break;
-                                    }
                                 }
                                 spmcq::ReadResult::Empty => {
                                     // **SMART NOTIFICATION**: Only notify on transition from "had data" to "no data"

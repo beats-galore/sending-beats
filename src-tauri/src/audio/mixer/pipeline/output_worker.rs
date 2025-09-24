@@ -9,11 +9,11 @@
 use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{error, info, warn, trace};
+use tracing::{error, info, trace, warn};
 
 use super::queue_types::MixedAudioSamples;
-use crate::audio::mixer::resampling::RubatoSRC;
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
+use crate::audio::mixer::resampling::RubatoSRC;
 use crate::audio::utils::calculate_optimal_chunk_size;
 use colored::*;
 
@@ -55,7 +55,6 @@ pub struct OutputWorker {
 }
 
 impl OutputWorker {
-
     /// Create a new output processing worker with SPMC writer and queue tracker
     pub fn new_with_spmc_writer_and_tracker(
         device_id: String,
@@ -88,8 +87,6 @@ impl OutputWorker {
             samples_output: 0,
         }
     }
-
-
 
     /// Create a new output processing worker with hardware update channel (macOS only)
     #[cfg(target_os = "macos")]
@@ -175,10 +172,9 @@ impl OutputWorker {
         Ok(())
     }
 
-
     /// Get queue tracker for sharing with CoreAudio callback
     pub fn get_queue_tracker_for_consumer(&self) -> AtomicQueueTracker {
-        self.queue_tracker.clone_for_consumer()
+        self.queue_tracker.clone()
     }
 
     /// Get current queue info for dynamic sample rate adjustment
@@ -226,8 +222,7 @@ impl OutputWorker {
                     output_sample_rate as f32,
                     true, // Use ramping for smooth transitions
                 ) {
-                    Ok(()) => {
-                    }
+                    Ok(()) => {}
                     Err(e) => {
                         info!(
                             "⚠️ {}: Dynamic adjustment failed: {} - falling back to recreation",
@@ -339,52 +334,8 @@ impl OutputWorker {
             );
         }
 
-        // **DELAYED OUTPUT START**: Wait for 2x buffer headroom before starting output
-        if !*output_started {
-            // Get the current maximum input requirement from resampler
-            let max_input_needed = if let Some(active_resampler) =
-                Self::get_or_initialize_resampler_static(
-                    resampler,
-                    input_sample_rate,
-                    device_sample_rate,
-                    chunk_size,
-                    device_id,
-                ) {
-                active_resampler.input_frames_needed(target_output_count / 2) * 2
-            } else {
-                target_output_count
-            };
-
-            let required_buffer_size = max_input_needed * 2; // 2x headroom
-
-            if pre_accumulation_buffer.len() >= required_buffer_size {
-                *output_started = true;
-                info!(
-                    "🚀 {}: Starting output with 2x buffer headroom - accumulated: {}, required: {}, headroom: {:.1}x",
-                    "DELAYED_OUTPUT_START".green(),
-                    pre_accumulation_buffer.len(),
-                    max_input_needed,
-                    pre_accumulation_buffer.len() as f32 / max_input_needed as f32
-                );
-            } else {
-                // Still accumulating, don't process any output yet
-                static ACCUMULATION_LOG_COUNT: std::sync::atomic::AtomicU64 =
-                    std::sync::atomic::AtomicU64::new(0);
-                let accum_count =
-                    ACCUMULATION_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if accum_count % 100 == 0 {
-                    info!(
-                        "⏳ {}: Accumulating buffer before output start - {}/{} samples ({:.1}%)",
-                        "PRE_OUTPUT_ACCUMULATION".yellow(),
-                        pre_accumulation_buffer.len(),
-                        required_buffer_size,
-                        (pre_accumulation_buffer.len() as f32 / required_buffer_size as f32)
-                            * 100.0
-                    );
-                }
-                return Vec::new(); // Return empty, don't start output yet
-            }
-        }
+        // Start output immediately - no delayed start to prevent queue overflow
+        *output_started = true;
 
         let mut chunks_written = 0;
 
@@ -445,20 +396,21 @@ impl OutputWorker {
                 }
 
                 if let Some(ref writer) = spmc_writer {
-                    if let Ok(mut w) = writer.try_lock() {
-                        for &sample in &output_chunk {
-                            w.write(sample);
-                        }
-                        chunks_written += 1;
-                        Self::adjust_dynamic_sample_rate_static(
-                            resampler,
-                            queue_tracker,
-                            input_sample_rate,
-                            device_sample_rate,
-                            chunk_size,
-                            device_id,
-                        );
-                    }
+                    Self::write_samples_to_spmc_sync(
+                        device_id,
+                        &output_chunk,
+                        writer,
+                        queue_tracker,
+                    );
+                    chunks_written += 1;
+                    Self::adjust_dynamic_sample_rate_static(
+                        resampler,
+                        queue_tracker,
+                        input_sample_rate,
+                        device_sample_rate,
+                        chunk_size,
+                        device_id,
+                    );
                 }
             }
         }
@@ -788,11 +740,17 @@ impl OutputWorker {
                 let mut total_spmc_duration = std::time::Duration::ZERO;
 
                 // **STEP 2: SEND PROCESSED SAMPLES TO SPMC QUEUE**
+
                 if !device_samples.is_empty() {
                     let spmc_write_start = std::time::Instant::now();
                     if let Some(ref spmc_writer) = spmc_writer {
-                        Self::write_to_hardware_spmc(&device_id, &device_samples, spmc_writer, Some(&queue_tracker))
-                            .await;
+                        Self::write_to_hardware_spmc(
+                            &device_id,
+                            &device_samples,
+                            spmc_writer,
+                            Some(&queue_tracker),
+                        )
+                        .await;
                     }
                     let spmc_write_duration = spmc_write_start.elapsed();
                     total_spmc_duration += spmc_write_duration;
@@ -902,8 +860,8 @@ impl OutputWorker {
 
     /// Get SPMC queue occupancy information
 
-    /// Write audio samples to hardware via SPMC queue
-    async fn write_to_hardware_spmc(
+    /// Sync helper to write samples to SPMC queue with tracking
+    fn write_samples_to_spmc_sync(
         device_id: &str,
         samples: &[f32],
         spmc_writer: &Arc<Mutex<Writer<f32>>>,
@@ -933,7 +891,17 @@ impl OutputWorker {
         }
     }
 
-    /// Adjusts the active resampler’s output rate to correct drift.
+    /// Write audio samples to hardware via SPMC queue (async wrapper)
+    async fn write_to_hardware_spmc(
+        device_id: &str,
+        samples: &[f32],
+        spmc_writer: &Arc<Mutex<Writer<f32>>>,
+        queue_tracker: Option<&AtomicQueueTracker>,
+    ) {
+        Self::write_samples_to_spmc_sync(device_id, samples, spmc_writer, queue_tracker);
+    }
+
+    /// Adjusts the active resampler's output rate to correct drift.
     ///
     /// # Arguments
     /// - `fill`: current queue fill (frames/samples).
@@ -1008,7 +976,9 @@ impl OutputWorker {
                 correction,
                 new_out_rate
             );
-            if let Err(err) = active_resampler.set_sample_rates(input_sample_rate as f32, new_out_rate, true) {
+            if let Err(err) =
+                active_resampler.set_sample_rates(input_sample_rate as f32, new_out_rate, true)
+            {
                 warn!("⚠️ Drift correction failed: {}", err);
             } else {
                 trace!(

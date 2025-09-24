@@ -1,33 +1,22 @@
 // Queue state tracking for SPMC queues that don't expose occupancy data
+use colored::*;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::collections::HashMap;
 use tokio::sync::mpsc;
-use colored::*;
 use tracing::{info, warn};
 
 /// Commands for updating queue state from different threads
 #[derive(Debug, Clone)]
 pub enum QueueCommand {
     /// Producer wrote samples to queue
-    SamplesWritten {
-        queue_id: String,
-        count: usize,
-    },
+    SamplesWritten { queue_id: String, count: usize },
     /// Consumer read samples from queue
-    SamplesRead {
-        queue_id: String,
-        count: usize,
-    },
+    SamplesRead { queue_id: String, count: usize },
     /// Register a new queue with capacity
-    RegisterQueue {
-        queue_id: String,
-        capacity: usize,
-    },
+    RegisterQueue { queue_id: String, capacity: usize },
     /// Remove queue tracking
-    UnregisterQueue {
-        queue_id: String,
-    },
+    UnregisterQueue { queue_id: String },
 }
 
 /// Queue state information
@@ -141,7 +130,8 @@ impl QueueManager {
                     queue_id,
                     capacity
                 );
-                self.queues.insert(queue_id.clone(), QueueInfo::new(queue_id, capacity));
+                self.queues
+                    .insert(queue_id.clone(), QueueInfo::new(queue_id, capacity));
             }
 
             QueueCommand::UnregisterQueue { queue_id } => {
@@ -186,8 +176,9 @@ impl QueueManager {
 pub struct AtomicQueueTracker {
     pub queue_id: String,
     pub capacity: usize,
-    pub total_written: Arc<AtomicUsize>,
-    pub total_read: Arc<AtomicUsize>,
+    pub current_occupancy: Arc<AtomicUsize>,
+    pub total_written: Arc<AtomicUsize>, // Keep for diagnostics
+    pub total_read: Arc<AtomicUsize>,    // Keep for diagnostics
 }
 
 impl AtomicQueueTracker {
@@ -195,31 +186,56 @@ impl AtomicQueueTracker {
         Self {
             queue_id,
             capacity,
+            current_occupancy: Arc::new(AtomicUsize::new(0)),
             total_written: Arc::new(AtomicUsize::new(0)),
             total_read: Arc::new(AtomicUsize::new(0)),
         }
     }
 
-    /// Record samples written (called from producer thread)
+    /// Record samples written (called from producer thread) - ADD to queue occupancy
     pub fn record_samples_written(&self, count: usize) {
-        self.total_written.fetch_add(count, Ordering::Relaxed);
+        let occupancy_before_add = self.current_occupancy.load(Ordering::Relaxed);
+        self.current_occupancy.fetch_add(count, Ordering::Relaxed);
+        self.total_written.fetch_add(count, Ordering::Relaxed); // Keep for diagnostics
+        let current_occupancy = self.current_occupancy.load(Ordering::Relaxed);
+        println!(
+            "QUEUE_MANAGER_SAMPLES: wrote {} samples, current occupancy: {}, prior: {}",
+            count,
+            current_occupancy,
+            occupancy_before_add
+        );
     }
 
-    /// Record samples read (called from consumer thread)
+    /// Record samples read (called from consumer thread) - SUBTRACT from queue occupancy
     pub fn record_samples_read(&self, count: usize) {
-        self.total_read.fetch_add(count, Ordering::Relaxed);
+        let occupancy_before_add =  self.current_occupancy.load(Ordering::Relaxed);
+        self.current_occupancy.fetch_sub(count, Ordering::Relaxed);
+        self.total_read.fetch_add(count, Ordering::Relaxed); // Keep for diagnostics
+        let current_occupancy = self.current_occupancy.load(Ordering::Relaxed);
+        println!(
+            "QUEUE_MANAGER_SAMPLES: read {} samples, current occupancy: {}, prior: {}",
+            count,
+            current_occupancy,
+            occupancy_before_add
+        );
     }
 
     /// Get current queue info (can be called from any thread)
     pub fn get_queue_info(&self) -> QueueInfo {
         let total_written = self.total_written.load(Ordering::Relaxed);
         let total_read = self.total_read.load(Ordering::Relaxed);
+        let current_occupancy = self.current_occupancy.load(Ordering::Relaxed);
 
-        let occupancy_signed = total_written as i64 - total_read as i64;
-        let estimated_occupancy = (occupancy_signed.max(0) as usize).min(self.capacity);
+        // Clamp occupancy to capacity (can't exceed queue size)
+        let estimated_occupancy = current_occupancy.min(self.capacity);
 
         let usage_percent = (estimated_occupancy as f32 / self.capacity as f32) * 100.0;
         let available = self.capacity.saturating_sub(estimated_occupancy);
+
+        println!(
+            "CURRENT_OCCUPANCY: {}, usage: {}, available: {}",
+            current_occupancy, usage_percent, available
+        );
 
         QueueInfo {
             queue_id: self.queue_id.clone(),
@@ -232,13 +248,4 @@ impl AtomicQueueTracker {
         }
     }
 
-    /// Clone for sharing between threads
-    pub fn clone_for_consumer(&self) -> Self {
-        Self {
-            queue_id: self.queue_id.clone(),
-            capacity: self.capacity,
-            total_written: Arc::clone(&self.total_written),
-            total_read: Arc::clone(&self.total_read),
-        }
-    }
 }

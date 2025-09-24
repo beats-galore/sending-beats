@@ -14,8 +14,8 @@ use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 // SPMC queue imports for hardware output connection
-use spmcq::Writer;
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
+use spmcq::Writer;
 
 use super::{
     input_worker::{InputWorker, InputWorkerStats},
@@ -294,49 +294,6 @@ impl AudioPipeline {
         Ok(())
     }
 
-    /// Register a new output device with the pipeline
-    pub fn add_output_device(
-        &mut self,
-        device_id: String,
-        device_sample_rate: u32,
-        chunk_size: usize,
-    ) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "OutputWorker requires an SPMC writer. Use add_output_device_with_spmc_writer_and_tracker instead for device '{}'",
-            device_id
-        ))
-    }
-
-    /// Register a new output device with SPMC writer for hardware connection (legacy)
-    pub fn add_output_device_with_spmc_writer(
-        &mut self,
-        device_id: String,
-        device_sample_rate: u32,
-        chunk_size: usize,
-        spmc_writer: Option<Arc<tokio::sync::Mutex<spmcq::Writer<f32>>>>,
-    ) -> Result<()> {
-        if spmc_writer.is_none() {
-            return Err(anyhow::anyhow!(
-                "OutputWorker requires an SPMC writer for device '{}'",
-                device_id
-            ));
-        }
-
-        // Create a dummy queue tracker for legacy compatibility
-        let dummy_queue_tracker = AtomicQueueTracker::new(
-            format!("legacy_{}", device_id),
-            8192, // Default capacity
-        );
-
-        self.add_output_device_with_spmc_writer_and_tracker(
-            device_id,
-            device_sample_rate,
-            chunk_size,
-            spmc_writer,
-            dummy_queue_tracker,
-        )
-    }
-
     /// Register a new output device with SPMC writer and queue tracker for hardware connection
     pub fn add_output_device_with_spmc_writer_and_tracker(
         &mut self,
@@ -446,7 +403,6 @@ impl AudioPipeline {
 
         Ok(())
     }
-
 
     /// Start the complete audio pipeline
     pub async fn start(&mut self) -> Result<()> {
