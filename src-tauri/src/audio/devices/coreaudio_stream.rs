@@ -707,62 +707,107 @@ extern "C" fn spmc_render_callback(
                         use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
                         static QUEUE_WAS_EMPTY_LAST_TIME: AtomicBool = AtomicBool::new(true);
                         static TRANSITION_COUNT: AtomicU64 = AtomicU64::new(0);
+                        static FIRST_RUN: AtomicBool = AtomicBool::new(true);
 
-                        // Read exactly the number of frames Core Audio requested
-                        let mut samples_needed = in_number_frames as usize * 2;
-                        while samples_needed > 0 {
-                            match spmc_reader.read() {
-                                spmcq::ReadResult::Ok(sample) => {
-                                    input_samples.push(sample);
-                                    samples_needed -= 1;
-                                    // Reset empty state when we have data
-                                    QUEUE_WAS_EMPTY_LAST_TIME.store(false, Ordering::Relaxed);
+                        let target_samples = in_number_frames as usize * 2;
+
+                        // **FIRST RUN QUEUE DRAIN**: On first callback, drain entire queue and keep only latest chunk_size samples
+                        if FIRST_RUN.swap(false, Ordering::Relaxed) {
+                            let mut all_samples = Vec::new();
+
+                            // Drain the entire queue
+                            loop {
+                                match spmc_reader.read() {
+                                    spmcq::ReadResult::Ok(sample) | spmcq::ReadResult::Dropout(sample) => {
+                                        all_samples.push(sample);
+                                    }
+                                    spmcq::ReadResult::Empty => break,
                                 }
-                                spmcq::ReadResult::Dropout(sample) => {
-                                    input_samples.push(sample);
-                                    samples_needed -= 1;
-                                    // Reset empty state when we have data (even dropout data)
-                                    QUEUE_WAS_EMPTY_LAST_TIME.store(false, Ordering::Relaxed);
+                            }
+
+                            if !all_samples.is_empty() {
+                                let total_drained = all_samples.len();
+
+                                // Take only the last target_samples (most recent audio)
+                                if all_samples.len() >= target_samples {
+                                    input_samples = all_samples.split_off(all_samples.len() - target_samples);
+                                    info!(
+                                        "🚽 {}: First run - drained {} samples, kept latest {} samples",
+                                        "QUEUE_DRAIN".red(),
+                                        total_drained,
+                                        input_samples.len()
+                                    );
+                                } else {
+                                    input_samples = all_samples;
+                                    info!(
+                                        "🚽 {}: First run - drained all {} samples (less than target {})",
+                                        "QUEUE_DRAIN".red(),
+                                        input_samples.len(),
+                                        target_samples
+                                    );
                                 }
-                                spmcq::ReadResult::Empty => {
-                                    // **SMART NOTIFICATION**: Only notify on transition from "had data" to "no data"
-                                    if let Some(ref output_notifier) = context.output_notifier {
-                                        // Only notify when transitioning TO empty (not every time it's empty)
-                                        if !QUEUE_WAS_EMPTY_LAST_TIME.swap(true, Ordering::Relaxed)
-                                        {
-                                            output_notifier.notify_one();
-                                            let count = TRANSITION_COUNT
-                                                .fetch_add(1, Ordering::Relaxed)
-                                                + 1;
-                                            if count <= 10 || count % 1000 == 0 {
-                                                info!("🔔 {}: Queue became empty - notified processing (#{}) ⚡", "OUTPUT_TRANSITION".blue(), count);
+
+                                // **QUEUE TRACKING**: Reset queue occupancy to 0 after complete drain
+                                if let Some(ref queue_tracker) = context.queue_tracker {
+                                    // Reset occupancy to 0 since we drained the entire queue
+                                    queue_tracker.current_occupancy.store(0, std::sync::atomic::Ordering::Relaxed);
+                                    info!(
+                                        "📊 {}: Reset queue occupancy to 0 after draining {} samples",
+                                        "QUEUE_DRAIN_RESET".cyan(),
+                                        total_drained
+                                    );
+                                }
+
+                                QUEUE_WAS_EMPTY_LAST_TIME.store(false, Ordering::Relaxed);
+                            } else {
+                                info!(
+                                    "🚽 {}: First run - queue was already empty",
+                                    "QUEUE_DRAIN".yellow()
+                                );
+                            }
+                        } else {
+                            // **NORMAL OPERATION**: Read exactly the number of frames Core Audio requested
+                            let mut samples_needed = target_samples;
+                            while samples_needed > 0 {
+                                match spmc_reader.read() {
+                                    spmcq::ReadResult::Ok(sample) => {
+                                        input_samples.push(sample);
+                                        samples_needed -= 1;
+                                        // Reset empty state when we have data
+                                        QUEUE_WAS_EMPTY_LAST_TIME.store(false, Ordering::Relaxed);
+                                    }
+                                    spmcq::ReadResult::Dropout(sample) => {
+                                        input_samples.push(sample);
+                                        samples_needed -= 1;
+                                        // Reset empty state when we have data (even dropout data)
+                                        QUEUE_WAS_EMPTY_LAST_TIME.store(false, Ordering::Relaxed);
+                                    }
+                                    spmcq::ReadResult::Empty => {
+                                        // **SMART NOTIFICATION**: Only notify on transition from "had data" to "no data"
+                                        if let Some(ref output_notifier) = context.output_notifier {
+                                            // Only notify when transitioning TO empty (not every time it's empty)
+                                            if !QUEUE_WAS_EMPTY_LAST_TIME.swap(true, Ordering::Relaxed)
+                                            {
+                                                output_notifier.notify_one();
+                                                let count = TRANSITION_COUNT
+                                                    .fetch_add(1, Ordering::Relaxed)
+                                                    + 1;
+                                                if count <= 10 || count % 1000 == 0 {
+                                                    info!("🔔 {}: Queue became empty - notified processing (#{}) ⚡", "OUTPUT_TRANSITION".blue(), count);
+                                                }
                                             }
                                         }
+                                        break;
                                     }
-                                    break;
                                 }
                             }
                         }
 
                         // **QUEUE TRACKING**: Record samples read for dynamic sample rate adjustment
+                        // Skip tracking on first run since we already handled it in the drain logic
                         if let Some(ref queue_tracker) = context.queue_tracker {
-                            queue_tracker.record_samples_read(input_samples.len());
-
-                            // **QUEUE STATE LOGGING**: Log queue occupancy every 1000th callback
-                            unsafe {
-                                if CALLBACK_COUNT % 1000 == 0 {
-                                    let queue_info = queue_tracker.get_queue_info();
-                                    info!(
-                                        "📊 {} [call #{}]: occupancy={:.1}% ({}/{}) written={} read={}",
-                                        "CALLBACK_QUEUE_STATE".green(),
-                                        CALLBACK_COUNT,
-                                        queue_info.usage_percent,
-                                        queue_info.estimated_occupancy,
-                                        queue_info.capacity,
-                                        queue_info.total_written,
-                                        queue_info.total_read
-                                    );
-                                }
+                            if !FIRST_RUN.load(Ordering::Relaxed) {
+                                queue_tracker.record_samples_read(input_samples.len());
                             }
                         }
 
@@ -1209,9 +1254,9 @@ impl CoreAudioInputStream {
 
         // **TESTING**: Set input device buffer size to 2048 frames
         // info!("🧪 TESTING: Setting input device buffer to 2048 frames");
-        if let Err(e) = set_device_buffer_frame_size(self.device_id, 128, false) {
-            warn!("⚠️ Could not set input buffer size to 2048: {}", e);
-        }
+        // if let Err(e) = set_device_buffer_frame_size(self.device_id, 256, false) {
+        //     warn!("⚠️ Could not set input buffer size to 2048: {}", e);
+        // }
 
         // Step 9: Start the Audio Unit
         let status = unsafe { AudioOutputUnitStart(audio_unit) };

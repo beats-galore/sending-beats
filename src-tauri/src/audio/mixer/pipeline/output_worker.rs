@@ -177,11 +177,6 @@ impl OutputWorker {
         self.queue_tracker.clone()
     }
 
-    /// Get current queue info for dynamic sample rate adjustment
-    pub fn get_queue_info(&self) -> super::super::queue_manager::QueueInfo {
-        self.queue_tracker.get_queue_info()
-    }
-
     /// Static helper function to get or initialize resampler in async context
     fn get_or_initialize_resampler_static<'a>(
         resampler: &'a mut Option<RubatoSRC>,
@@ -724,13 +719,14 @@ impl OutputWorker {
                 if queue_log_count % 1000 == 0 {
                     let queue_info = queue_tracker.get_queue_info();
                     info!(
-                        "📊 {}: occupancy={:.1}% ({}/{}) written={} read={} device={}",
+                        "📊 {}: occupancy={:.1}% ({}/{}) adjustment_ratio={} integral_error={} target_fill={} device={}",
                         "QUEUE_STATE".green(),
                         queue_info.usage_percent,
                         queue_info.estimated_occupancy,
                         queue_info.capacity,
-                        queue_info.total_written,
-                        queue_info.total_read,
+                        queue_info.ratio,
+                        queue_info.integral_error,
+                        queue_info.target_fill,
                         device_id
                     );
                 }
@@ -931,13 +927,13 @@ impl OutputWorker {
         };
 
         if !can_adjust_dynamically {
+            println!("adjusting dynamically not supported");
             return;
         }
 
         // Get queue info from tracker if available, otherwise skip adjustment
-        let (fill, capacity) = if let Some(tracker) = queue_tracker {
-            let queue_info = tracker.get_queue_info();
-            (queue_info.estimated_occupancy, queue_info.capacity)
+        let adjusted_ratio = if let Some(tracker) = queue_tracker {
+            tracker.adjust_ratio(input_sample_rate, device_sample_rate)
         } else {
             // No queue tracker available - can't do dynamic adjustment
             trace!(
@@ -948,16 +944,9 @@ impl OutputWorker {
             return;
         };
 
-        let k: f32 = 1e-4; // proportional gain constant
-        let target = (capacity / 2) as f32;
-        let error = fill as f32 - target;
 
-        // Effective resampling ratio with proportional correction
-        let r_nom = device_sample_rate as f32 / input_sample_rate as f32;
-        let correction = 1.0 + k * (error / target);
-        let r_eff = r_nom * correction;
 
-        let new_out_rate = input_sample_rate as f32 * r_eff;
+        let new_out_rate = input_sample_rate as f32 * adjusted_ratio;
 
         if let Some(active_resampler) = Self::get_or_initialize_resampler_static(
             resampler,
@@ -966,28 +955,10 @@ impl OutputWorker {
             chunk_size,
             device_id,
         ) {
-            trace!(
-                "🎯 {}: Queue-based adjustment for {} - fill: {}/{} ({}%), correction: {:.6}, new_rate: {:.1}Hz",
-                "DYNAMIC_RATE".cyan(),
-                device_id,
-                fill,
-                capacity,
-                (fill as f32 / capacity as f32) * 100.0,
-                correction,
-                new_out_rate
-            );
             if let Err(err) =
                 active_resampler.set_sample_rates(input_sample_rate as f32, new_out_rate, true)
             {
                 warn!("⚠️ Drift correction failed: {}", err);
-            } else {
-                trace!(
-                    "🎚 drift correction: fill={}/{} err={:.1} ratio={:.6}",
-                    fill,
-                    capacity,
-                    error,
-                    r_eff
-                );
             }
         }
     }

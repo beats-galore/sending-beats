@@ -417,21 +417,6 @@ impl IsolatedAudioManager {
                 coreaudio_device.device_id,
             )?;
 
-        // Create SPMC queue for this output device using detected native rate
-        let buffer_capacity = (native_sample_rate as usize * 2) / 10; // 100ms of stereo samples
-        let buffer_capacity = buffer_capacity.max(4096).min(16384); // Clamp between 4K-16K samples
-
-        let (spmc_reader, spmc_writer) = spmcq::ring_buffer(buffer_capacity);
-        let spmc_writer = Arc::new(Mutex::new(spmc_writer));
-
-        // **QUEUE TRACKING**: Create shared AtomicQueueTracker for this SPMC queue
-        let queue_tracker =
-            AtomicQueueTracker::new(format!("output_{}", device_id), buffer_capacity);
-
-        // Store the SPMC writer for mixer to send audio data
-        self.output_spmc_writers
-            .insert(device_id.clone(), spmc_writer.clone());
-
         info!(
             "🔧 OUTPUT_DEVICE_RATE: Using detected {} Hz for output device '{}'",
             native_sample_rate, device_id
@@ -456,6 +441,20 @@ impl IsolatedAudioManager {
 
         // Convert frames to samples (frames × channels) - assume stereo for now
         let chunk_size = (actual_buffer_frames * 2) as usize;
+
+        // Create SPMC queue for this output device - 4x the output chunk size
+        let buffer_capacity = chunk_size * 4;
+
+        let (spmc_reader, spmc_writer) = spmcq::ring_buffer(buffer_capacity);
+        let spmc_writer = Arc::new(Mutex::new(spmc_writer));
+
+        // **QUEUE TRACKING**: Create shared AtomicQueueTracker for this SPMC queue
+        let queue_tracker =
+            AtomicQueueTracker::new(format!("output_{}", device_id), buffer_capacity);
+
+        // Store the SPMC writer for mixer to send audio data
+        self.output_spmc_writers
+            .insert(device_id.clone(), spmc_writer.clone());
 
         info!(
             "🎯 {}: Output device '{}' - hardware: {} frames → {} samples (stereo)",
