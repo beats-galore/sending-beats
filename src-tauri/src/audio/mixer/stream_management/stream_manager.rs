@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::info;
 
-use tokio::sync::Notify;
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
+use tokio::sync::Notify;
 
 // Lock-free audio buffer imports
 use rtrb::Producer;
@@ -156,7 +156,6 @@ impl StreamManager {
         removed
     }
 
-
     /// Add CoreAudio output stream with SPMC reader and queue tracker for advanced monitoring
     #[cfg(target_os = "macos")]
     pub fn add_coreaudio_output_stream_with_tracker(
@@ -196,9 +195,9 @@ impl StreamManager {
         );
 
         info!(
-          "✅ CoreAudio output stream with queue tracker created and started for device '{}'",
-          device_id
-      );
+            "✅ CoreAudio output stream with queue tracker created and started for device '{}'",
+            device_id
+        );
         Ok(())
     }
 
