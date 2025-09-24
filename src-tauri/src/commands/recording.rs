@@ -15,74 +15,108 @@ pub async fn start_recording(
     audio_state: State<'_, AudioState>,
     config: RecordingConfig,
 ) -> Result<String, String> {
-    Ok("".to_string())
-    // println!("🎙️ Starting recording with config: {}", config.name);
+    println!("🎙️ Starting recording with config: {}", config.name);
 
-    // // Get audio output receiver from mixer
-    // let mixer_guard = audio_state.mixer.lock().await;
-    // if let Some(ref mixer) = *mixer_guard {
-    //     println!("🔄 Mixer found, getting audio output receiver...");
-    //     let mut audio_rx = mixer.get_audio_output_receiver();
-    //     println!("🔄 Created broadcast receiver successfully");
+    // Step 1: Send command to IsolatedAudioManager to create recording OutputWorker
+    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+    let command = crate::audio::mixer::stream_management::AudioCommand::StartRecording {
+        session_id: config.id.clone(),
+        recording_config: config.clone(),
+        response_tx,
+    };
 
-    //     // Immediately test the receiver to see if it works
-    //     match audio_rx.try_recv() {
-    //         Ok(samples) => println!(
-    //             "🎵 Receiver is working! Got {} samples immediately",
-    //             samples.len()
-    //         ),
-    //         Err(tokio::sync::broadcast::error::TryRecvError::Empty) => {
-    //             println!("📭 Receiver connected but empty (good)")
-    //         }
-    //         Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
-    //             println!("❌ Receiver is CLOSED immediately!")
-    //         }
-    //         Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
-    //             println!("⚠️ Receiver lagged immediately by {} messages", n)
-    //         }
-    //     }
+    if let Err(e) = audio_state.audio_command_tx.send(command).await {
+        return Err(format!("Failed to send recording start command: {}", e));
+    }
 
-    //     println!("🔄 Starting recording service with audio receiver...");
-    //     match recording_state
-    //         .service
-    //         .start_recording(config, audio_rx)
-    //         .await
-    //     {
-    //         Ok(session_id) => {
-    //             println!("✅ Recording started with session ID: {}", session_id);
-    //             Ok(session_id)
-    //         }
-    //         Err(e) => {
-    //             eprintln!("❌ Failed to start recording: {}", e);
-    //             Err(format!("Failed to start recording: {}", e))
-    //         }
-    //     }
-    // } else {
-    //     println!("❌ No mixer available - please create mixer first");
-    //     Err("No mixer available - please create mixer first".to_string())
-    // }
+    // Step 2: Wait for the RTRB consumer from the audio pipeline
+    let recording_consumer = match response_rx.await {
+        Ok(Ok(consumer)) => consumer,
+        Ok(Err(e)) => return Err(format!("Failed to create recording output worker: {}", e)),
+        Err(e) => return Err(format!("Failed to receive response: {}", e)),
+    };
+
+    println!("🔄 Received RTRB consumer from audio pipeline");
+
+    // Step 3: Start recording service with the RTRB consumer
+    match recording_state
+        .service
+        .start_recording(config.clone(), recording_consumer)
+        .await
+    {
+        Ok(session_id) => {
+            println!("✅ Recording started with session ID: {}", session_id);
+            Ok(session_id)
+        }
+        Err(e) => {
+            println!("❌ Failed to start recording service: {}", e);
+
+            // **CLEANUP**: Recording service failed, need to clean up the OutputWorker
+            println!("🧹 Cleaning up OutputWorker after recording service failure...");
+            let (cleanup_tx, cleanup_rx) = tokio::sync::oneshot::channel();
+            let cleanup_command = crate::audio::mixer::stream_management::AudioCommand::StopRecording {
+                session_id: config.id.clone(),
+                response_tx: cleanup_tx,
+            };
+
+            if let Err(cleanup_err) = audio_state.audio_command_tx.send(cleanup_command).await {
+                println!("⚠️ Failed to send cleanup command: {}", cleanup_err);
+            } else {
+                match cleanup_rx.await {
+                    Ok(Ok(())) => println!("✅ OutputWorker cleaned up successfully"),
+                    Ok(Err(cleanup_err)) => println!("⚠️ OutputWorker cleanup failed: {}", cleanup_err),
+                    Err(cleanup_err) => println!("⚠️ Failed to receive cleanup response: {}", cleanup_err),
+                }
+            }
+
+            Err(format!("Failed to start recording: {}", e))
+        }
+    }
 }
 
 #[tauri::command]
 pub async fn stop_recording(
     recording_state: State<'_, RecordingState>,
+    audio_state: State<'_, AudioState>,
 ) -> Result<Option<RecordingHistoryEntry>, String> {
     println!("🛑 Stopping recording...");
 
-    match recording_state.service.stop_recording().await {
-        Ok(history_entry) => {
-            if let Some(ref entry) = history_entry {
-                println!("✅ Recording stopped: {:?}", entry.file_path);
+    // Step 1: Stop the recording service first to cleanly close files
+    let history_entry = match recording_state.service.stop_recording().await {
+        Ok(entry) => {
+            if let Some(ref entry) = entry {
+                println!("✅ Recording service stopped: {:?}", entry.file_path);
             } else {
-                println!("⚠️ No active recording to stop");
+                println!("⚠️ No active recording to stop in service");
             }
-            Ok(history_entry)
+            entry
         }
         Err(e) => {
-            eprintln!("❌ Failed to stop recording: {}", e);
-            Err(format!("Failed to stop recording: {}", e))
+            println!("❌ Failed to stop recording service: {}", e);
+            return Err(format!("Failed to stop recording: {}", e));
+        }
+    };
+
+    // Step 2: Send command to IsolatedAudioManager to clean up the output worker
+    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+    let command = crate::audio::mixer::stream_management::AudioCommand::StopRecording {
+        session_id: "current".to_string(), // Session ID doesn't matter since there's only one recording
+        response_tx,
+    };
+
+    if let Err(e) = audio_state.audio_command_tx.send(command).await {
+        println!("⚠️ Failed to send recording stop command (recording already stopped cleanly): {}", e);
+        // Don't return error here - recording service already stopped successfully
+    } else {
+        // Wait for cleanup completion
+        match response_rx.await {
+            Ok(Ok(())) => println!("✅ Recording output worker cleaned up successfully"),
+            Ok(Err(e)) => println!("⚠️ Recording output worker cleanup failed: {}", e),
+            Err(e) => println!("⚠️ Failed to receive cleanup response: {}", e),
         }
     }
+
+    Ok(history_entry)
 }
 
 #[tauri::command]

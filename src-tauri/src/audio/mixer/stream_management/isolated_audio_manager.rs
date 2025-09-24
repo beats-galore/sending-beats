@@ -59,6 +59,15 @@ pub enum AudioCommand {
     GetAudioMetrics {
         response_tx: oneshot::Sender<AudioMetrics>,
     },
+    StartRecording {
+        session_id: String,
+        recording_config: crate::audio::recording::RecordingConfig,
+        response_tx: oneshot::Sender<Result<rtrb::Consumer<f32>>>,
+    },
+    StopRecording {
+        session_id: String,
+        response_tx: oneshot::Sender<Result<()>>,
+    },
 }
 
 /// Audio System Coordinator - lightweight interface between Tauri commands and audio pipeline
@@ -70,7 +79,7 @@ pub struct IsolatedAudioManager {
     // **HARDWARE**: StreamManager handles CoreAudio hardware streams
     stream_manager: StreamManager,
 
-    // **RTRB BRIDGE**: Connect AudioPipeline outputs to hardware inputs via lock-free queues
+    // **RTRB BRIDGE**: Connect AudioPipeline outputs to devices (hardware + recording) via lock-free queues
     output_rtrb_producers: HashMap<String, Arc<Mutex<Producer<f32>>>>,
 
     // **COMMAND INTERFACE**: Handle Tauri audio commands
@@ -116,7 +125,7 @@ impl IsolatedAudioManager {
             // **HARDWARE**: CoreAudio stream management
             stream_manager: StreamManager::new(),
 
-            // **BRIDGE**: SPMC queues for hardware output
+            // **BRIDGE**: SPMC queues for outputs (hardware + recording)
             output_rtrb_producers: HashMap::new(),
 
             // **INTERFACE**: Command handling
@@ -271,6 +280,21 @@ impl IsolatedAudioManager {
             AudioCommand::GetAudioMetrics { response_tx } => {
                 let metrics = self.get_metrics();
                 let _ = response_tx.send(metrics);
+            }
+            AudioCommand::StartRecording {
+                session_id,
+                recording_config,
+                response_tx,
+            } => {
+                let result = self.handle_start_recording(session_id, recording_config).await;
+                let _ = response_tx.send(result);
+            }
+            AudioCommand::StopRecording {
+                session_id,
+                response_tx,
+            } => {
+                let result = self.handle_stop_recording(session_id).await;
+                let _ = response_tx.send(result);
             }
         }
     }
@@ -546,5 +570,113 @@ impl IsolatedAudioManager {
 
     fn get_metrics(&self) -> AudioMetrics {
         self.metrics.clone()
+    }
+
+    /// Start a recording session by creating an OutputWorker for recording
+    async fn handle_start_recording(
+        &mut self,
+        session_id: String,
+        recording_config: crate::audio::recording::RecordingConfig,
+    ) -> Result<rtrb::Consumer<f32>> {
+        info!(
+            "🎙️ {}: Starting recording session '{}' with format: {}",
+            "RECORDING_COORDINATOR".red(),
+            session_id,
+            recording_config.format.get_format_name()
+        );
+
+        // Check if recording already exists (only one recording allowed at a time)
+        const RECORDING_DEVICE_ID: &str = "recording_output";
+        if self.output_rtrb_producers.contains_key(RECORDING_DEVICE_ID) {
+            return Err(anyhow::anyhow!("Recording already active - only one recording allowed at a time"));
+        }
+
+        // **RTRB SETUP**: Create buffer for AudioPipeline → Recording communication
+        let buffer_capacity = (recording_config.sample_rate as usize * recording_config.channels as usize) / 10; // 100ms buffer
+        let buffer_capacity = buffer_capacity.max(8192).min(32768); // Larger buffer for file I/O
+        let (recording_producer, recording_consumer) = rtrb::RingBuffer::<f32>::new(buffer_capacity);
+
+        info!(
+            "🔧 {}: Created RTRB buffer with {} samples capacity for recording '{}'",
+            "RECORDING_RTRB".red(),
+            buffer_capacity,
+            session_id
+        );
+
+        // **OUTPUT WORKER SETUP**: Create OutputWorker for recording (no hardware output)
+        let queue_tracker = crate::audio::mixer::queue_manager::AtomicQueueTracker::new(
+            RECORDING_DEVICE_ID.to_string(),
+            buffer_capacity,
+        );
+
+        let producer_arc = Arc::new(tokio::sync::Mutex::new(recording_producer));
+
+        // Add recording output worker to the audio pipeline
+        let result = self.audio_pipeline.add_output_device_with_rtrb_producer_and_tracker(
+            RECORDING_DEVICE_ID.to_string(),
+            recording_config.sample_rate,
+            1024, // Default chunk size for recording
+            recording_config.channels,
+            Some(producer_arc.clone()),
+            queue_tracker,
+        );
+
+        match result {
+            Ok(()) => {
+                // Store the producer for cleanup later
+                self.output_rtrb_producers.insert(RECORDING_DEVICE_ID.to_string(), producer_arc);
+
+                info!(
+                    "✅ {}: Recording output worker created for session '{}'",
+                    "RECORDING_COORDINATOR".red(),
+                    session_id
+                );
+
+                // Return the consumer for the recording service
+                Ok(recording_consumer)
+            }
+            Err(e) => {
+                error!(
+                    "❌ {}: Failed to create recording output worker for '{}': {}",
+                    "RECORDING_ERROR".red(),
+                    session_id,
+                    e
+                );
+                Err(e)
+            }
+        }
+    }
+
+    /// Stop a recording session by removing the OutputWorker
+    async fn handle_stop_recording(&mut self, _session_id: String) -> Result<()> {
+        info!(
+            "🛑 {}: Stopping recording session",
+            "RECORDING_COORDINATOR".red()
+        );
+
+        const RECORDING_DEVICE_ID: &str = "recording_output";
+
+        // Remove the OutputWorker from the audio pipeline
+        // This will automatically clean up all resources (RTRB producer, worker thread, etc.)
+        match self.audio_pipeline.remove_output_device(RECORDING_DEVICE_ID).await {
+            Ok(()) => {
+                // Remove from our tracking as well
+                self.output_rtrb_producers.remove(RECORDING_DEVICE_ID);
+
+                info!(
+                    "✅ {}: Recording OutputWorker stopped and removed from pipeline",
+                    "RECORDING_COORDINATOR".red()
+                );
+                Ok(())
+            }
+            Err(e) => {
+                error!(
+                    "❌ {}: Failed to remove recording OutputWorker from pipeline: {}",
+                    "RECORDING_ERROR".red(),
+                    e
+                );
+                Err(e)
+            }
+        }
     }
 }
