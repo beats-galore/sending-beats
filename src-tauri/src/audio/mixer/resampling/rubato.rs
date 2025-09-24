@@ -72,15 +72,17 @@ impl RubatoSRC {
         input_rate: f32,
         output_rate: f32,
         input_frames: usize,
+        channels: usize,
     ) -> Result<Self, String> {
         // **CALCULATE OPTIMAL INPUT CHUNK SIZE**: Similar to R8brain approach
         let resampling_ratio = input_rate / output_rate;
         info!(
-            "🧮 {}: Calculating input chunk for {}Hz→{}Hz input {} frames",
+            "🧮 {}: Calculating input chunk for {}Hz→{}Hz input {} frames, {} channels",
             "FFT_CHUNK_CALC".yellow(),
             input_rate,
             output_rate,
-            input_frames
+            input_frames,
+            channels
         );
         info!(
             "🧮 {}: Ratio {:.3} → raw {} frames",
@@ -95,7 +97,7 @@ impl RubatoSRC {
             output_rate as usize, // sample_rate_output
             input_frames,         // chunk_size_in: calculated input chunk size in frames
             4,                    // sub_chunks: desired number of subchunks for processing
-            2,                    // nbr_channels: number of channels (stereo)
+            channels,             // nbr_channels: dynamic (mono or stereo)
         )
         .map_err(|e| format!("Failed to create FftFixedIn resampler: {}", e))?;
 
@@ -111,14 +113,16 @@ impl RubatoSRC {
         );
 
         // Pre-allocate buffers for zero-allocation processing
-        let input_buffer = vec![vec![0.0; input_frames]; 2]; // 2 channels for stereo
-        let output_buffer = vec![vec![0.0; max_output_frames]; 2]; // Maximum possible output size
+        let input_buffer = vec![vec![0.0; input_frames]; channels]; // Dynamic channel count
+        let output_buffer = vec![vec![0.0; max_output_frames]; channels]; // Maximum possible output size
 
         info!(
-            "📊 {}: Buffer allocation: input {}×2, output {}×2 frames",
+            "📊 {}: Buffer allocation: input {}×{}, output {}×{} frames",
             "FFT_BUFFER_ALLOC".cyan(),
             input_frames,
-            max_output_frames
+            channels,
+            max_output_frames,
+            channels
         );
 
         Ok(Self {
@@ -130,7 +134,7 @@ impl RubatoSRC {
             ratio: output_rate / input_rate,
             input_frames: input_frames,
             output_frames: max_output_frames,
-            reusable_result_buffer: Vec::with_capacity(max_output_frames * 2), // Stereo samples
+            reusable_result_buffer: Vec::with_capacity(max_output_frames * channels), // Dynamic channel samples
         })
     }
 
@@ -148,13 +152,15 @@ impl RubatoSRC {
         input_rate: f32,
         output_rate: f32,
         chunk_size_out: usize,
+        channels: usize,
     ) -> Result<Self, String> {
         info!(
-            "🎯 {}: Creating FftFixedOut resampler {}Hz→{}Hz with {} output frames",
+            "🎯 {}: Creating FftFixedOut resampler {}Hz→{}Hz with {} output frames, {} channels",
             "FFT_FIXED_OUT".green(),
             input_rate,
             output_rate,
-            chunk_size_out
+            chunk_size_out,
+            channels
         );
 
         // Create Rubato's FFT-based fixed output resampler
@@ -163,7 +169,7 @@ impl RubatoSRC {
             output_rate as usize, // sample_rate_output
             chunk_size_out,       // chunk_size_out: fixed output chunk size in frames
             4,                    // sub_chunks: desired number of subchunks for processing
-            2,                    // nbr_channels: number of channels (stereo)
+            channels,             // nbr_channels: dynamic (mono or stereo)
         )
         .map_err(|e| format!("Failed to create FftFixedOut resampler: {}", e))?;
 
@@ -179,8 +185,8 @@ impl RubatoSRC {
         );
 
         // Pre-allocate buffers for zero-allocation processing
-        let input_buffer = vec![vec![0.0; max_input_frames]; 2]; // Maximum possible input size
-        let output_buffer = vec![vec![0.0; chunk_size_out]; 2]; // 2 channels for stereo
+        let input_buffer = vec![vec![0.0; max_input_frames]; channels]; // Maximum possible input size
+        let output_buffer = vec![vec![0.0; chunk_size_out]; channels]; // Dynamic channel count
 
         Ok(Self {
             resampler: ResamplerWrapper::FixedOutput(resampler),
@@ -191,7 +197,7 @@ impl RubatoSRC {
             ratio: output_rate / input_rate,
             input_frames: max_input_frames,
             output_frames: chunk_size_out,
-            reusable_result_buffer: Vec::with_capacity(chunk_size_out * 2), // Stereo samples
+            reusable_result_buffer: Vec::with_capacity(chunk_size_out * channels), // Dynamic channel samples
         })
     }
 
@@ -209,15 +215,17 @@ impl RubatoSRC {
         input_rate: f32,
         output_rate: f32,
         chunk_size_out: usize,
+        channels: usize,
     ) -> Result<Self, String> {
         let resample_ratio = output_rate as f64 / input_rate as f64;
 
         info!(
-            "🎯 {}: Creating SincFixedOut resampler {}Hz→{}Hz with {} output frames (ratio: {:.6})",
+            "🎯 {}: Creating SincFixedOut resampler {}Hz→{}Hz with {} output frames, {} channels (ratio: {:.6})",
             "SINC_FIXED_OUT".magenta(),
             input_rate,
             output_rate,
             chunk_size_out,
+            channels,
             resample_ratio
         );
 
@@ -239,7 +247,7 @@ impl RubatoSRC {
             max_resample_ratio_relative, // ±5% adjustment range
             sinc_params,                 // Interpolation parameters
             chunk_size_out,              // Fixed output chunk size in frames
-            2,                           // nbr_channels: stereo
+            channels,                    // nbr_channels: dynamic (mono or stereo)
         )
         .map_err(|e| format!("Failed to create SincFixedOut resampler: {}", e))?;
 
@@ -255,14 +263,16 @@ impl RubatoSRC {
         );
 
         // Pre-allocate buffers for zero-allocation processing
-        let input_buffer = vec![vec![0.0; max_input_frames]; 2]; // Maximum possible input size
-        let output_buffer = vec![vec![0.0; chunk_size_out]; 2]; // 2 channels for stereo
+        let input_buffer = vec![vec![0.0; max_input_frames]; channels]; // Maximum possible input size
+        let output_buffer = vec![vec![0.0; chunk_size_out]; channels]; // Dynamic channel count
 
         info!(
-            "📊 {}: Buffer allocation: input {}×2, output {}×2 frames",
+            "📊 {}: Buffer allocation: input {}×{}, output {}×{} frames",
             "SINC_BUFFER_ALLOC".cyan(),
             max_input_frames,
-            chunk_size_out
+            channels,
+            chunk_size_out,
+            channels
         );
 
         Ok(Self {
@@ -274,7 +284,7 @@ impl RubatoSRC {
             ratio: output_rate / input_rate,
             input_frames: max_input_frames,
             output_frames: chunk_size_out,
-            reusable_result_buffer: Vec::with_capacity(chunk_size_out * 2), // Stereo samples
+            reusable_result_buffer: Vec::with_capacity(chunk_size_out * channels), // Dynamic channel samples
         })
     }
 

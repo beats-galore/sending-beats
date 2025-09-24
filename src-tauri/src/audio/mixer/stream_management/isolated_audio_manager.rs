@@ -473,6 +473,7 @@ impl IsolatedAudioManager {
                 device_id.clone(),
                 native_sample_rate,
                 chunk_size,
+                output_channels, // Pass the actual output device channel count
                 Some(spmc_writer),
                 queue_tracker.clone(),
             )

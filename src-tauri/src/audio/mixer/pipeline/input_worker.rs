@@ -92,6 +92,7 @@ impl InputWorker {
         device_sample_rate: u32,
         target_sample_rate: u32,
         _chunk_size: usize, // Input device chunk size (unused with RubatoSRC)
+        channels: u16,      // Channel count for resampler configuration
         device_id: &str,
     ) -> Option<&'a mut RubatoSRC> {
         let sample_rate_difference = (device_sample_rate as f32 - target_sample_rate as f32).abs();
@@ -114,12 +115,13 @@ impl InputWorker {
             // **MATCHING OUTPUT_WORKER**: Use same RubatoSRC configuration as output_worker
             // For input, we need to use sinc_fixed_output but we need the original channel count
             // The channel count should be determined dynamically based on the actual input device
-            let frames_per_chunk = 256; // Standard input chunk size
+            let frames_per_chunk = _chunk_size / channels as usize; // Convert samples to frames
 
-            match RubatoSRC::new_sinc_fixed_output(
+            match RubatoSRC::new_fft_fixed_input(
                 device_sample_rate as f32,
                 target_sample_rate as f32,
-                frames_per_chunk, // frames (will be converted to samples internally)
+                frames_per_chunk, // Input frames from hardware buffer size
+                channels as usize, // dynamic channel count
             ) {
                 Ok(new_resampler) => {
                     info!(
@@ -230,6 +232,7 @@ impl InputWorker {
                         device_sample_rate,
                         target_sample_rate,
                         chunk_size,
+                        channels, // Original input device channel count (before conversion)
                         &device_id,
                     ) {
                     // Resample using the active resampler (on original channel format)
