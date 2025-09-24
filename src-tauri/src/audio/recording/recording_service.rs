@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, warn};
+use colored::Colorize;
 
 use super::encoders::EncoderFactory;
 use super::filename_generation::{FilenameGenerator, FilenameTemplates};
@@ -127,11 +128,11 @@ impl RecordingService {
         Ok(recovered_files)
     }
 
-    /// Start a new recording with the given configuration and audio receiver
+    /// Start a new recording with the given configuration and RTRB consumer
     pub async fn start_recording(
         &self,
         config: RecordingConfig,
-        mut audio_rx: tokio::sync::broadcast::Receiver<Vec<f32>>,
+        rtrb_consumer: rtrb::Consumer<f32>,
     ) -> Result<String> {
         // Validate configuration
         config.validate()?;
@@ -151,60 +152,89 @@ impl RecordingService {
             *active_id = Some(session_id.clone());
         }
 
-        // Spawn audio processing task to continuously read samples and write to recording
+        // Spawn audio processing task to continuously read samples from RTRB and write to recording
         let writer_manager = Arc::clone(&self.writer_manager);
         let processing_session_id = session_id.clone();
+        let mut consumer = rtrb_consumer;
         tokio::spawn(async move {
             info!(
-                "🎵 Starting audio processing loop for session: {}",
+                "🎵 {}: Starting RTRB consumer loop for session: {}",
+                "RECORDING_RTRB_CONSUMER".red(),
                 processing_session_id
             );
             let mut sample_count = 0u64;
             let mut batch_count = 0u64;
+            let mut sample_buffer = Vec::with_capacity(4096); // Buffer for collecting samples
 
-            while let Ok(samples) = audio_rx.recv().await {
-                batch_count += 1;
-                sample_count += samples.len() as u64;
+            loop {
+                sample_buffer.clear();
 
-                // Log first few batches to see if we're getting audio, then every 100 batches
-                if batch_count <= 5 || batch_count % 100 == 0 {
-                    info!(
-                        "🎵 Processing batch #{}, samples received: {}, total samples: {}",
-                        batch_count,
-                        samples.len(),
-                        sample_count
-                    );
+                // **RTRB DRAIN STRATEGY**: Collect available samples into buffer
+                loop {
+                    match consumer.pop() {
+                        Ok(sample) => {
+                            sample_buffer.push(sample);
+                            // Limit buffer size to prevent excessive memory usage
+                            if sample_buffer.len() >= 4096 {
+                                break;
+                            }
+                        }
+                        Err(_) => break, // No more samples available
+                    }
                 }
 
-                // Process the audio samples for this recording session
-                match writer_manager
-                    .process_samples(&processing_session_id, &samples)
-                    .await
-                {
-                    Ok(should_continue) => {
-                        if !should_continue {
-                            info!(
-                                "🛑 Auto-stop triggered for session: {}",
-                                processing_session_id
+                // Process collected samples if any
+                if !sample_buffer.is_empty() {
+                    batch_count += 1;
+                    sample_count += sample_buffer.len() as u64;
+
+                    // Log first few batches to see if we're getting audio, then every 100 batches
+                    if batch_count <= 5 || batch_count % 100 == 0 {
+                        info!(
+                            "🎵 {}: Processing batch #{}, samples received: {}, total samples: {}",
+                            "RECORDING_RTRB_BATCH".red(),
+                            batch_count,
+                            sample_buffer.len(),
+                            sample_count
+                        );
+                    }
+
+                    // Process the audio samples for this recording session
+                    match writer_manager
+                        .process_samples(&processing_session_id, &sample_buffer)
+                        .await
+                    {
+                        Ok(should_continue) => {
+                            if !should_continue {
+                                info!(
+                                    "🛑 {}: Auto-stop triggered for session: {}",
+                                    "RECORDING_AUTO_STOP".red(),
+                                    processing_session_id
+                                );
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            error!(
+                                "❌ {}: Failed to process audio samples for session {}: {}",
+                                "RECORDING_WRITE_ERROR".red(),
+                                processing_session_id, e
+                            );
+                            error!(
+                                "❌ Error occurred at batch #{}, total samples processed: {}",
+                                batch_count, sample_count
                             );
                             break;
                         }
                     }
-                    Err(e) => {
-                        error!(
-                            "❌ Failed to process audio samples for session {}: {}",
-                            processing_session_id, e
-                        );
-                        error!(
-                            "❌ Error occurred at batch #{}, total samples processed: {}",
-                            batch_count, sample_count
-                        );
-                        break;
-                    }
+                } else {
+                    // No samples available, yield CPU briefly
+                    tokio::time::sleep(std::time::Duration::from_micros(100)).await;
                 }
             }
 
-            info!("🔚 Audio processing loop ended for session: {} (processed {} batches, {} total samples)", 
+            info!("🔚 {}: RTRB consumer loop ended for session: {} (processed {} batches, {} total samples)",
+                  "RECORDING_RTRB_CONSUMER".red(),
                   processing_session_id, batch_count, sample_count);
         });
 
