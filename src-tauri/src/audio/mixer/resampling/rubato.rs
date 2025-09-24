@@ -668,15 +668,16 @@ impl RubatoSRC {
                 let adjust_count =
                     DYNAMIC_ADJUST_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-                if adjust_count < 5 || adjust_count % 100 == 0 {
+                let should_log = adjust_count % 1000 == 0;
+
+                if should_log {
                     info!(
-                        "🔄 {}: Dynamic ratio adjusted to {:.6} ({}Hz→{}Hz, ramp: {}) [count: {}]",
+                        "🔄 {}: Dynamic ratio adjusted to {:.6} ({}Hz→{}Hz, ramp: {})",
                         "DYNAMIC_RATIO_ADJUST".green(),
                         new_ratio,
                         new_input_rate,
                         new_output_rate,
-                        ramp,
-                        adjust_count + 1
+                        ramp
                     );
                 }
 
