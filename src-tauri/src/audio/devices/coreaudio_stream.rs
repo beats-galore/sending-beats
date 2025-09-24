@@ -1084,13 +1084,36 @@ impl CoreAudioInputStream {
             ));
         }
 
+        // **DYNAMIC CHANNEL DETECTION**: Get actual device channel count
+        let detected_channels = device_format.mChannelsPerFrame as u16;
+
         info!(
             "🔍 DEVICE NATIVE FORMAT: SR: {}, Channels: {}, Format: 0x{:x}, Flags: 0x{:x}",
             device_format.mSampleRate,
-            device_format.mChannelsPerFrame,
+            detected_channels,
             device_format.mFormatID,
             device_format.mFormatFlags
         );
+
+        // **CHANNEL VALIDATION**: Warn if detected channels don't match expected
+        if detected_channels != self.channels {
+            warn!(
+                "⚠️ {}: Channel mismatch for device '{}' - expected: {}, detected: {}. Using detected value.",
+                "CHANNEL_MISMATCH".yellow(),
+                self.device_name,
+                self.channels,
+                detected_channels
+            );
+            // Update the struct to use the detected channel count
+            self.channels = detected_channels;
+        } else {
+            info!(
+                "✅ {}: Channel count validated for device '{}': {} channels",
+                "CHANNEL_VALIDATION".green(),
+                self.device_name,
+                detected_channels
+            );
+        }
 
         // Only set format on OUTPUT scope of input unit (data coming FROM the device)
         // Use the device's native format to avoid -10865 errors

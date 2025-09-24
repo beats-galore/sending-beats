@@ -439,8 +439,9 @@ impl IsolatedAudioManager {
                 512
             });
 
-        // Convert frames to samples (frames × channels) - assume stereo for now
-        let chunk_size = (actual_buffer_frames * 2) as usize;
+        // **DYNAMIC CHANNEL DETECTION**: Get actual channel count from output device instead of assuming stereo
+        let output_channels = coreaudio_device.channels; // Use actual channel count from device
+        let chunk_size = (actual_buffer_frames * output_channels as u32) as usize;
 
         // Create SPMC queue for this output device - 4x the output chunk size
         let buffer_capacity = chunk_size * 4;
@@ -457,11 +458,12 @@ impl IsolatedAudioManager {
             .insert(device_id.clone(), spmc_writer.clone());
 
         info!(
-            "🎯 {}: Output device '{}' - hardware: {} frames → {} samples (stereo)",
+            "🎯 {}: Output device '{}' - hardware: {} frames → {} samples ({} channels)",
             "CHUNK_SIZE_CALCULATION".green(),
             device_id,
             actual_buffer_frames,
-            chunk_size
+            chunk_size,
+            output_channels
         );
 
         // **PIPELINE INTEGRATION**: Connect output device to AudioPipeline Layer 4 FIRST

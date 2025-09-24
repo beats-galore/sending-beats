@@ -14,8 +14,7 @@ use tracing::{error, info, warn};
 
 use super::queue_types::ProcessedAudioSamples;
 use crate::audio::effects::AudioEffectsChain;
-use crate::audio::mixer::resampling::SamplerateSRC;
-use samplerate_rs::ConverterType;
+use crate::audio::mixer::resampling::RubatoSRC;
 
 /// Input processing worker for a specific device
 pub struct InputWorker {
@@ -26,7 +25,7 @@ pub struct InputWorker {
     chunk_size: usize, // Input device chunk size (for resampler)
 
     // Audio processing components
-    resampler: Option<SamplerateSRC>,
+    resampler: Option<RubatoSRC>,
     effects_chain: AudioEffectsChain,
 
     // **DIRECT RTRB**: Read directly from hardware RTRB queue
@@ -45,6 +44,16 @@ pub struct InputWorker {
 }
 
 impl InputWorker {
+    /// Convert mono audio samples to stereo by duplicating each sample to both channels
+    fn convert_mono_to_stereo(mono_samples: &[f32], _device_id: &str) -> Vec<f32> {
+        let mut stereo_samples = Vec::with_capacity(mono_samples.len() * 2);
+        for &mono_sample in mono_samples {
+            stereo_samples.push(mono_sample); // Left channel
+            stereo_samples.push(mono_sample); // Right channel (duplicate)
+        }
+        stereo_samples
+    }
+
     /// Create a new input processing worker that reads directly from RTRB
     pub fn new_with_rtrb(
         device_id: String,
@@ -79,12 +88,12 @@ impl InputWorker {
     /// Static helper function to get or initialize resampler in async context
     /// This can be used in the worker thread where we don't have access to &mut self
     fn get_or_initialize_resampler_static<'a>(
-        resampler: &'a mut Option<SamplerateSRC>,
+        resampler: &'a mut Option<RubatoSRC>,
         device_sample_rate: u32,
         target_sample_rate: u32,
-        chunk_size: usize, // Input device chunk size
+        _chunk_size: usize, // Input device chunk size (unused with RubatoSRC)
         device_id: &str,
-    ) -> Option<&'a mut SamplerateSRC> {
+    ) -> Option<&'a mut RubatoSRC> {
         let sample_rate_difference = (device_sample_rate as f32 - target_sample_rate as f32).abs();
 
         // No resampling needed if rates are close (within 1 Hz)
@@ -92,23 +101,29 @@ impl InputWorker {
             return None;
         }
 
-        // Check if resampler exists and has the correct target rate
+        // Check if resampler exists and has the correct rates
         let needs_recreation = if let Some(ref existing_resampler) = resampler {
-            existing_resampler.output_rate != target_sample_rate
+            existing_resampler.input_rate() != device_sample_rate
+                || existing_resampler.output_rate() != target_sample_rate
         } else {
             true // No resampler exists
         };
 
         // Create or recreate resampler if needed
         if needs_recreation {
-            match SamplerateSRC::new(
-                device_sample_rate,
-                target_sample_rate,
-                ConverterType::SincMediumQuality, // Good balance of quality and performance
+            // **MATCHING OUTPUT_WORKER**: Use same RubatoSRC configuration as output_worker
+            // For input, we need to use sinc_fixed_output but we need the original channel count
+            // The channel count should be determined dynamically based on the actual input device
+            let frames_per_chunk = 256; // Standard input chunk size
+
+            match RubatoSRC::new_sinc_fixed_output(
+                device_sample_rate as f32,
+                target_sample_rate as f32,
+                frames_per_chunk, // frames (will be converted to samples internally)
             ) {
                 Ok(new_resampler) => {
                     info!(
-                        "🔄 {}: {} resampler for {} ({} Hz → {} Hz)",
+                        "🔄 {}: {} resampler for {} ({} Hz → {} Hz, ratio: {:.3})",
                         "INPUT_RESAMPLER".green(),
                         if resampler.is_some() {
                             "Recreated"
@@ -117,7 +132,8 @@ impl InputWorker {
                         },
                         device_id,
                         device_sample_rate,
-                        target_sample_rate
+                        target_sample_rate,
+                        new_resampler.ratio()
                     );
                     *resampler = Some(new_resampler);
                 }
@@ -207,7 +223,7 @@ impl InputWorker {
                 let processing_start = std::time::Instant::now();
                 let original_samples_len = samples.len();
 
-                // Step 1: Resample to target sample rate if needed
+                // Step 1: Resample to target sample rate if needed (more efficient with original mono data)
                 let resampled_samples = if let Some(active_resampler) =
                     Self::get_or_initialize_resampler_static(
                         &mut resampler,
@@ -216,23 +232,45 @@ impl InputWorker {
                         chunk_size,
                         &device_id,
                     ) {
-                    // Resample using the active resampler
+                    // Resample using the active resampler (on original channel format)
                     active_resampler.convert(&samples)
                 } else {
                     // No resampling needed or resampler creation failed
                     samples.clone()
                 };
 
-                // Step 2: Apply per-input effects (EQ, compressor, etc.)
-                let mut effects_processed = resampled_samples;
+                // Step 2: Mono-to-stereo conversion (after resampling, before effects)
+                let channel_converted_samples = if channels == 1 {
+                    // Log once for the first conversion using a simple atomic boolean
+                    static FIRST_MONO_CONVERSION_LOGGED: std::sync::atomic::AtomicBool =
+                        std::sync::atomic::AtomicBool::new(false);
+
+                    if !FIRST_MONO_CONVERSION_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                        info!(
+                            "🔄 {}: Mono microphone detected for '{}' - converting to stereo for effects processing",
+                            "MONO_TO_STEREO_INIT".cyan(),
+                            device_id
+                        );
+                    }
+                    Self::convert_mono_to_stereo(&resampled_samples, &device_id)
+                } else {
+                    // Already stereo, use as-is
+                    resampled_samples
+                };
+
+                // Update channels to stereo for downstream processing (effects expect stereo)
+                let processing_channels = if channels == 1 { 2 } else { channels };
+
+                // Step 3: Apply per-input effects (EQ, compressor, etc.) - now on stereo data
+                let mut effects_processed = channel_converted_samples;
                 effects_chain.process(&mut effects_processed);
 
-                // Step 3: Send processed audio to mixing layer
+                // Step 4: Send processed audio to mixing layer
                 let samples_to_send = effects_processed.len();
                 let processed_audio = ProcessedAudioSamples {
                     device_id: device_id.clone(),
                     samples: effects_processed,
-                    channels,
+                    channels: processing_channels, // Use converted channel count (stereo)
                     timestamp: std::time::Instant::now(),
                     effects_applied: true,
                 };
