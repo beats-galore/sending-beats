@@ -129,7 +129,7 @@ pub async fn safe_switch_input_device(
                 device_id: new_device_id,
                 coreaudio_device_id: coreaudio_device.device_id,
                 device_name: coreaudio_device.name,
-                channels: 2,
+                channels: coreaudio_device.channels,
                 producer,
                 input_notifier: std::sync::Arc::new(tokio::sync::Notify::new()),
                 response_tx,
@@ -239,7 +239,7 @@ pub async fn add_input_stream(
                 device_id: device_id.clone(),
                 coreaudio_device_id: coreaudio_device.device_id,
                 device_name: coreaudio_device.name.clone(),
-                channels: 2, // stereo
+                channels: coreaudio_device.channels, // stereo
                 producer,
                 input_notifier: std::sync::Arc::new(tokio::sync::Notify::new()),
                 response_tx,

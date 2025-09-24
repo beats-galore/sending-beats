@@ -29,13 +29,13 @@ pub struct AudioInputStream {
 }
 
 impl AudioInputStream {
-    pub fn new(device_id: String, device_name: String, sample_rate: u32) -> Result<Self> {
+    pub fn new(device_id: String, device_name: String, sample_rate: u32, channels: u16) -> Result<Self> {
         // Calculate optimal chunk size based on sample rate for low latency (5-10ms target)
         let optimal_chunk_size = (sample_rate as f32 * 0.005) as usize; // 5ms default
         let clamped_chunk_size = optimal_chunk_size.max(64).min(1024); // Clamp between 64-1024 samples
 
         // Create RTRB ring buffer with capacity for ~100ms of audio (larger buffer for burst handling)
-        let buffer_capacity = (sample_rate as usize * 2) / 10; // 100ms of stereo samples
+        let buffer_capacity = (sample_rate as usize * channels as usize) / 10; // 100ms of audio for actual channel count
         let buffer_capacity = buffer_capacity.max(4096).min(16384); // Clamp between 4K-16K samples
 
         let (producer, consumer) = RingBuffer::<f32>::new(buffer_capacity);
@@ -47,7 +47,7 @@ impl AudioInputStream {
             device_id,
             device_name,
             sample_rate,
-            channels: 2, // Fixed: Match stereo hardware (BlackHole 2CH)
+            channels, // Use dynamic channel count from parameter
             audio_buffer_consumer,
             audio_buffer_producer,
             effects_chain,

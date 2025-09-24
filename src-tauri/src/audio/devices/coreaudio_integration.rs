@@ -15,6 +15,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 #[cfg(target_os = "macos")]
 use tracing::{info, warn};
+#[cfg(target_os = "macos")]
+use colored::Colorize;
 
 #[cfg(target_os = "macos")]
 use core_foundation::base::TCFType;
@@ -202,6 +204,9 @@ impl CoreAudioIntegration {
                 .await
                 .unwrap_or(false);
 
+            // **DYNAMIC CHANNEL DETECTION**: Get actual input channel count from device
+            let input_channels = self.get_device_channel_count(device_id, true).await;
+
             device_infos.push(AudioDeviceInfo {
                 id: input_device_id,
                 name: device_name.clone(),
@@ -209,7 +214,7 @@ impl CoreAudioIntegration {
                 is_output: false,
                 is_default: is_default_input,
                 supported_sample_rates: crate::types::SUPPORTED_SAMPLE_RATES_HZ.to_vec(), // Prioritize 48kHz to match system default
-                supported_channels: vec![2], // Assume stereo
+                supported_channels: vec![input_channels], // Use detected channel count
                 host_api: "CoreAudio (Direct)".to_string(),
             });
         }
@@ -222,6 +227,9 @@ impl CoreAudioIntegration {
                 .await
                 .unwrap_or(false);
 
+            // **DYNAMIC CHANNEL DETECTION**: Get actual output channel count from device
+            let output_channels = self.get_device_channel_count(device_id, false).await;
+
             device_infos.push(AudioDeviceInfo {
                 id: output_device_id,
                 name: device_name.clone(),
@@ -229,7 +237,7 @@ impl CoreAudioIntegration {
                 is_output: true,
                 is_default: is_default_output,
                 supported_sample_rates: crate::types::SUPPORTED_SAMPLE_RATES_HZ.to_vec(), // Prioritize 48kHz to match system default
-                supported_channels: vec![2], // Assume stereo
+                supported_channels: vec![output_channels], // Use detected channel count
                 host_api: "CoreAudio (Direct)".to_string(),
             });
         }
@@ -426,11 +434,14 @@ impl CoreAudioIntegration {
                     "Creating CoreAudio handle for device {} (ID: {})",
                     device_info.name, device_id
                 );
+                // **DYNAMIC CHANNEL COUNT**: Use the detected channel count from device_info
+                let channels = device_info.supported_channels.get(0).copied().unwrap_or(2);
+
                 Ok(AudioDeviceHandle::CoreAudio(CoreAudioDevice {
                     device_id,
                     name: device_info.name.clone(),
                     sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
-                    channels: 2,  // Default stereo
+                    channels, // Use detected channel count
                     stream: None, // Stream will be created when needed
                 }))
             }
@@ -441,6 +452,75 @@ impl CoreAudioIntegration {
                 );
                 Err(e)
             }
+        }
+    }
+
+    /// Detect the actual channel count for a CoreAudio device
+    /// This queries the device's native stream format to get the real channel count
+    async fn get_device_channel_count(&self, device_id: AudioDeviceID, is_input: bool) -> u16 {
+        use coreaudio_sys::{
+            kAudioDevicePropertyStreamFormat, kAudioObjectPropertyElementMaster,
+            kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput,
+            AudioObjectGetPropertyDataSize, AudioObjectGetPropertyData,
+            AudioObjectPropertyAddress, AudioStreamBasicDescription,
+        };
+        use std::mem;
+        use std::os::raw::c_void;
+        use std::ptr;
+
+        let scope = if is_input {
+            kAudioObjectPropertyScopeInput
+        } else {
+            kAudioObjectPropertyScopeOutput
+        };
+
+        let property_address = AudioObjectPropertyAddress {
+            mSelector: kAudioDevicePropertyStreamFormat,
+            mScope: scope,
+            mElement: kAudioObjectPropertyElementMaster,
+        };
+
+        let mut device_format = AudioStreamBasicDescription {
+            mSampleRate: 0.0,
+            mFormatID: 0,
+            mFormatFlags: 0,
+            mBytesPerPacket: 0,
+            mFramesPerPacket: 0,
+            mBytesPerFrame: 0,
+            mChannelsPerFrame: 0,
+            mBitsPerChannel: 0,
+            mReserved: 0,
+        };
+
+        let mut size = mem::size_of::<AudioStreamBasicDescription>() as u32;
+
+        let status = unsafe {
+            AudioObjectGetPropertyData(
+                device_id,
+                &property_address,
+                0,
+                ptr::null_mut(),
+                &mut size,
+                &mut device_format as *mut _ as *mut c_void,
+            )
+        };
+
+        if status == 0 {
+            let channels = device_format.mChannelsPerFrame as u16;
+            info!(
+                "🔍 {}: Detected {} channels for CoreAudio device ID {}",
+                "CHANNEL_DETECTION".blue(),
+                channels,
+                device_id
+            );
+            channels
+        } else {
+            warn!(
+                "⚠️ {}: Failed to detect channel count for device ID {}, defaulting to stereo",
+                "CHANNEL_DETECTION_FAILED".yellow(),
+                device_id
+            );
+            2 // Default to stereo if detection fails
         }
     }
 }

@@ -300,6 +300,7 @@ impl AudioPipeline {
         device_id: String,
         device_sample_rate: u32,
         chunk_size: usize,
+        channels: u16, // Output device channel count (mono/stereo/etc)
         spmc_writer: Option<Arc<tokio::sync::Mutex<spmcq::Writer<f32>>>>,
         queue_tracker: AtomicQueueTracker,
     ) -> Result<()> {
@@ -330,6 +331,7 @@ impl AudioPipeline {
                     device_id.clone(),
                     device_sample_rate,
                     chunk_size,
+                    channels, // Output device channel count
                     mixed_rx,
                     Some(spmc_writer),
                     hardware_tx.clone(),
@@ -345,6 +347,7 @@ impl AudioPipeline {
                     device_id.clone(),
                     device_sample_rate,
                     chunk_size,
+                    channels, // Output device channel count
                     mixed_rx,
                     Some(spmc_writer),
                     queue_tracker,
@@ -356,6 +359,7 @@ impl AudioPipeline {
                 device_id.clone(),
                 device_sample_rate,
                 chunk_size,
+                channels, // Output device channel count
                 mixed_rx,
                 Some(spmc_writer),
                 queue_tracker,

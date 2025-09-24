@@ -24,6 +24,7 @@ use spmcq::Writer;
 pub struct OutputWorker {
     device_id: String,
     pub device_sample_rate: u32, // Target device sample rate (e.g., 44.1kHz)
+    channels: u16, // Output device channel count (mono/stereo/etc)
 
     // Audio processing components
     resampler: Option<RubatoSRC>,
@@ -60,6 +61,7 @@ impl OutputWorker {
         device_id: String,
         device_sample_rate: u32,
         target_chunk_size: usize,
+        channels: u16, // Output device channel count (mono/stereo/etc)
         mixed_audio_rx: mpsc::UnboundedReceiver<MixedAudioSamples>,
         spmc_writer: Option<Arc<Mutex<Writer<f32>>>>,
         queue_tracker: AtomicQueueTracker,
@@ -73,6 +75,7 @@ impl OutputWorker {
         Self {
             device_id,
             device_sample_rate,
+            channels,
             resampler: None,
             sample_buffer: Vec::new(),
             target_chunk_size,
@@ -94,6 +97,7 @@ impl OutputWorker {
         device_id: String,
         device_sample_rate: u32,
         target_chunk_size: usize,
+        channels: u16, // Output device channel count (mono/stereo/etc)
         mixed_audio_rx: mpsc::UnboundedReceiver<MixedAudioSamples>,
         spmc_writer: Option<Arc<Mutex<Writer<f32>>>>,
         hardware_update_tx: mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>,
@@ -108,6 +112,7 @@ impl OutputWorker {
         Self {
             device_id,
             device_sample_rate,
+            channels,
             resampler: None,
             sample_buffer: Vec::new(),
             target_chunk_size,
@@ -238,6 +243,7 @@ impl OutputWorker {
                 input_sample_rate as f32,
                 output_sample_rate as f32,
                 chunk_size / 2,
+                2, // Output workers process stereo from mixing → convert to device channels later
             ) {
                 // match RubatoSRC::new_fft_fixed_input(
                 //     input_sample_rate as f32,
