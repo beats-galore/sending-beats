@@ -718,7 +718,8 @@ extern "C" fn spmc_render_callback(
                             // Drain the entire queue
                             loop {
                                 match spmc_reader.read() {
-                                    spmcq::ReadResult::Ok(sample) | spmcq::ReadResult::Dropout(sample) => {
+                                    spmcq::ReadResult::Ok(sample)
+                                    | spmcq::ReadResult::Dropout(sample) => {
                                         all_samples.push(sample);
                                     }
                                     spmcq::ReadResult::Empty => break,
@@ -730,7 +731,8 @@ extern "C" fn spmc_render_callback(
 
                                 // Take only the last target_samples (most recent audio)
                                 if all_samples.len() >= target_samples {
-                                    input_samples = all_samples.split_off(all_samples.len() - target_samples);
+                                    input_samples =
+                                        all_samples.split_off(all_samples.len() - target_samples);
                                     info!(
                                         "🚽 {}: First run - drained {} samples, kept latest {} samples",
                                         "QUEUE_DRAIN".red(),
@@ -750,7 +752,9 @@ extern "C" fn spmc_render_callback(
                                 // **QUEUE TRACKING**: Reset queue occupancy to 0 after complete drain
                                 if let Some(ref queue_tracker) = context.queue_tracker {
                                     // Reset occupancy to 0 since we drained the entire queue
-                                    queue_tracker.current_occupancy.store(0, std::sync::atomic::Ordering::Relaxed);
+                                    queue_tracker
+                                        .current_occupancy
+                                        .store(0, std::sync::atomic::Ordering::Relaxed);
                                     info!(
                                         "📊 {}: Reset queue occupancy to 0 after draining {} samples",
                                         "QUEUE_DRAIN_RESET".cyan(),
@@ -786,7 +790,8 @@ extern "C" fn spmc_render_callback(
                                         // **SMART NOTIFICATION**: Only notify on transition from "had data" to "no data"
                                         if let Some(ref output_notifier) = context.output_notifier {
                                             // Only notify when transitioning TO empty (not every time it's empty)
-                                            if !QUEUE_WAS_EMPTY_LAST_TIME.swap(true, Ordering::Relaxed)
+                                            if !QUEUE_WAS_EMPTY_LAST_TIME
+                                                .swap(true, Ordering::Relaxed)
                                             {
                                                 output_notifier.notify_one();
                                                 let count = TRANSITION_COUNT
@@ -1251,12 +1256,6 @@ impl CoreAudioInputStream {
                 status
             ));
         }
-
-        // **TESTING**: Set input device buffer size to 2048 frames
-        // info!("🧪 TESTING: Setting input device buffer to 2048 frames");
-        // if let Err(e) = set_device_buffer_frame_size(self.device_id, 256, false) {
-        //     warn!("⚠️ Could not set input buffer size to 2048: {}", e);
-        // }
 
         // Step 9: Start the Audio Unit
         let status = unsafe { AudioOutputUnitStart(audio_unit) };

@@ -1,10 +1,10 @@
 // Queue state tracking for SPMC queues that don't expose occupancy data
 use colored::*;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering, AtomicU32};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{info, warn, trace};
+use tracing::{info, trace, warn};
 
 /// Queue state information
 #[derive(Debug, Clone)]
@@ -88,7 +88,12 @@ pub struct AtomicQueueTracker {
 impl AtomicQueueTracker {
     pub fn new(queue_id: String, capacity: usize) -> Self {
         let target = capacity as f32 * 0.5; // aim for half-full
-        info!("{}: creating queue tracker for device {}, capacity {}", "ATOMIC_QUEUE_TRACKER".on_purple().white(), queue_id, capacity);
+        info!(
+            "{}: creating queue tracker for device {}, capacity {}",
+            "ATOMIC_QUEUE_TRACKER".on_purple().white(),
+            queue_id,
+            capacity
+        );
         Self {
             queue_id,
             capacity,
@@ -96,8 +101,8 @@ impl AtomicQueueTracker {
             target_fill: target,
             integral_error: Arc::new(AtomicU32::new(0.0f32.to_bits())), // Store 0.0 as bits
             last_ratio: Arc::new(AtomicU32::new(1.0f32.to_bits())),     // Store 1.0 as bits
-            kp: 0.0005,       // proportional gain (tune!)
-            ki: 0.000001,     // integral gain (tune!)
+            kp: 0.0005,                                                 // proportional gain (tune!)
+            ki: 0.000001,                                               // integral gain (tune!)
             max_ratio_adjust: 0.01, // max ±1% ratio change per update
         }
     }
@@ -111,7 +116,8 @@ impl AtomicQueueTracker {
         let samples_to_add = count.min(available_space);
 
         if samples_to_add > 0 {
-            self.current_occupancy.fetch_add(samples_to_add, Ordering::Relaxed);
+            self.current_occupancy
+                .fetch_add(samples_to_add, Ordering::Relaxed);
         }
     }
 
@@ -122,7 +128,8 @@ impl AtomicQueueTracker {
         // Prevent underflow - only subtract what's actually available
         let samples_to_subtract = count.min(occupancy_before_sub);
         if samples_to_subtract > 0 {
-            self.current_occupancy.fetch_sub(samples_to_subtract, Ordering::Relaxed);
+            self.current_occupancy
+                .fetch_sub(samples_to_subtract, Ordering::Relaxed);
         }
     }
 
@@ -146,7 +153,7 @@ impl AtomicQueueTracker {
             available,
             integral_error: f32::from_bits(self.integral_error.load(Ordering::Relaxed)),
             ratio: f32::from_bits(self.last_ratio.load(Ordering::Relaxed)),
-            target_fill: self.target_fill
+            target_fill: self.target_fill,
         }
     }
 
@@ -161,10 +168,10 @@ impl AtomicQueueTracker {
 
         // PI control - update integral error
         let new_integral_error = current_integral_error + error;
-        self.integral_error.store(new_integral_error.to_bits(), Ordering::Relaxed);
+        self.integral_error
+            .store(new_integral_error.to_bits(), Ordering::Relaxed);
 
-        let mut correction =
-            self.kp * (error / target) + self.ki * (new_integral_error / target);
+        let mut correction = self.kp * (error / target) + self.ki * (new_integral_error / target);
 
         // Clamp to max ±1%
         if correction > self.max_ratio_adjust {
@@ -180,5 +187,4 @@ impl AtomicQueueTracker {
         self.last_ratio.store(r_eff.to_bits(), Ordering::Relaxed);
         r_eff
     }
-
 }

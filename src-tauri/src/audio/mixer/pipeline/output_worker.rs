@@ -944,8 +944,6 @@ impl OutputWorker {
             return;
         };
 
-
-
         let new_out_rate = input_sample_rate as f32 * adjusted_ratio;
 
         if let Some(active_resampler) = Self::get_or_initialize_resampler_static(
