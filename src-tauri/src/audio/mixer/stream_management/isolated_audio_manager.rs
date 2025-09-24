@@ -19,7 +19,6 @@ use crate::audio::devices::coreaudio_stream::CoreAudioInputStream;
 // Lock-free audio buffer imports
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use rtrb::{Consumer, Producer, RingBuffer};
-use spmcq::{ring_buffer, ReadResult, Reader, Writer};
 
 // Command channel for isolated audio thread communication
 // Cannot derive Debug because Device doesn't implement Debug
@@ -71,8 +70,8 @@ pub struct IsolatedAudioManager {
     // **HARDWARE**: StreamManager handles CoreAudio hardware streams
     stream_manager: StreamManager,
 
-    // **SPMC BRIDGE**: Connect AudioPipeline outputs to hardware inputs
-    output_spmc_writers: HashMap<String, Arc<Mutex<Writer<f32>>>>,
+    // **RTRB BRIDGE**: Connect AudioPipeline outputs to hardware inputs via lock-free queues
+    output_rtrb_producers: HashMap<String, Arc<Mutex<Producer<f32>>>>,
 
     // **COMMAND INTERFACE**: Handle Tauri audio commands
     command_rx: mpsc::Receiver<AudioCommand>,
@@ -118,7 +117,7 @@ impl IsolatedAudioManager {
             stream_manager: StreamManager::new(),
 
             // **BRIDGE**: SPMC queues for hardware output
-            output_spmc_writers: HashMap::new(),
+            output_rtrb_producers: HashMap::new(),
 
             // **INTERFACE**: Command handling
             command_rx,
@@ -443,19 +442,20 @@ impl IsolatedAudioManager {
         let output_channels = coreaudio_device.channels; // Use actual channel count from device
         let chunk_size = (actual_buffer_frames * output_channels as u32) as usize;
 
-        // Create SPMC queue for this output device - 4x the output chunk size
+        // **SIMPLIFIED QUEUE**: Create RTRB ring buffer for this output device - 4x the output chunk size
+        // Since each output worker serves only one device, we don't need SPMC complexity
         let buffer_capacity = chunk_size * 4;
 
-        let (spmc_reader, spmc_writer) = spmcq::ring_buffer(buffer_capacity);
-        let spmc_writer = Arc::new(Mutex::new(spmc_writer));
+        let (rtrb_producer, rtrb_consumer) = rtrb::RingBuffer::<f32>::new(buffer_capacity);
+        let rtrb_producer = Arc::new(Mutex::new(rtrb_producer));
 
         // **QUEUE TRACKING**: Create shared AtomicQueueTracker for this SPMC queue
         let queue_tracker =
             AtomicQueueTracker::new(format!("output_{}", device_id), buffer_capacity);
 
-        // Store the SPMC writer for mixer to send audio data
-        self.output_spmc_writers
-            .insert(device_id.clone(), spmc_writer.clone());
+        // Store the RTRB producer for mixer to send audio data
+        self.output_rtrb_producers
+            .insert(device_id.clone(), rtrb_producer.clone());
 
         info!(
             "🎯 {}: Output device '{}' - hardware: {} frames → {} samples ({} channels)",
@@ -469,12 +469,12 @@ impl IsolatedAudioManager {
         // **PIPELINE INTEGRATION**: Connect output device to AudioPipeline Layer 4 FIRST
         if let Err(e) = self
             .audio_pipeline
-            .add_output_device_with_spmc_writer_and_tracker(
+            .add_output_device_with_rtrb_producer_and_tracker(
                 device_id.clone(),
                 native_sample_rate,
                 chunk_size,
                 output_channels, // Pass the actual output device channel count
-                Some(spmc_writer),
+                Some(rtrb_producer.clone()),
                 queue_tracker.clone(),
             )
         {
@@ -494,19 +494,19 @@ impl IsolatedAudioManager {
         let mut corrected_coreaudio_device = coreaudio_device;
         corrected_coreaudio_device.sample_rate = native_sample_rate;
 
-        // Create the hardware CoreAudio stream with SPMC reader using corrected sample rate
+        // Create the hardware CoreAudio stream with RTRB consumer using corrected sample rate
         self.stream_manager
             .add_coreaudio_output_stream_with_tracker(
                 device_id.clone(),
                 corrected_coreaudio_device,
-                spmc_reader,
+                rtrb_consumer,
                 self.global_output_notifier.clone(),
                 queue_tracker.clone(),
             )?;
 
-        self.metrics.output_streams = self.output_spmc_writers.len();
+        self.metrics.output_streams = self.output_rtrb_producers.len();
         info!(
-          "✅ CoreAudio output stream created and started for device '{}' with direct SPMC connection",
+          "✅ CoreAudio output stream created and started for device '{}' with direct RTRB connection",
           device_id
       );
         Ok(())

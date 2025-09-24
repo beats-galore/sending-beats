@@ -120,7 +120,7 @@ impl InputWorker {
             match RubatoSRC::new_fft_fixed_input(
                 device_sample_rate as f32,
                 target_sample_rate as f32,
-                frames_per_chunk, // Input frames from hardware buffer size
+                frames_per_chunk,  // Input frames from hardware buffer size
                 channels as usize, // dynamic channel count
             ) {
                 Ok(new_resampler) => {
@@ -248,7 +248,9 @@ impl InputWorker {
                     static FIRST_MONO_CONVERSION_LOGGED: std::sync::atomic::AtomicBool =
                         std::sync::atomic::AtomicBool::new(false);
 
-                    if !FIRST_MONO_CONVERSION_LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    if !FIRST_MONO_CONVERSION_LOGGED
+                        .swap(true, std::sync::atomic::Ordering::Relaxed)
+                    {
                         info!(
                             "🔄 {}: Mono microphone detected for '{}' - converting to stereo for effects processing",
                             "MONO_TO_STEREO_INIT".cyan(),

@@ -162,7 +162,7 @@ impl StreamManager {
         &mut self,
         device_id: String,
         coreaudio_device: crate::audio::types::CoreAudioDevice,
-        spmc_reader: spmcq::Reader<f32>,
+        rtrb_consumer: rtrb::Consumer<f32>,
         output_notifier: Arc<Notify>,
         queue_tracker: AtomicQueueTracker,
     ) -> Result<()> {
@@ -171,13 +171,13 @@ impl StreamManager {
             device_id, coreaudio_device.device_id
         );
 
-        // **SPMC INTEGRATION**: Create CoreAudio stream with SPMC reader AND output notifier
+        // **RTRB INTEGRATION**: Create CoreAudio stream with RTRB consumer AND output notifier
         let mut coreaudio_stream =
-            crate::audio::devices::CoreAudioOutputStream::new_with_spmc_reader_and_notifier(
+            crate::audio::devices::CoreAudioOutputStream::new_with_rtrb_consumer_and_notifier(
                 coreaudio_device.device_id,    // AudioDeviceID (u32)
                 coreaudio_device.name.clone(), // String
-                2,                             // channels: u16 (stereo)
-                spmc_reader,                   // **SPMC READER INTEGRATION**
+                coreaudio_device.channels,     // Use actual device channel count (dynamic)
+                rtrb_consumer,                 // **RTRB CONSUMER INTEGRATION**
                 output_notifier,               // **OUTPUT NOTIFIER INTEGRATION**
                 queue_tracker,                 // **QUEUE TRACKING INTEGRATION**
             )?;

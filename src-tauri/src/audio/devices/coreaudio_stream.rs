@@ -177,11 +177,11 @@ use std::sync::{
 /// - Atomic pointer swapping for callback context management
 /// - Input buffer access through Arc<Mutex<Vec<f32>>> for thread safety
 
-/// Context struct for CoreAudio render callbacks - contains both buffer and SPMC reader
+/// Context struct for CoreAudio render callbacks - contains both buffer and RTRB consumer
 #[cfg(target_os = "macos")]
 struct AudioCallbackContext {
     buffer: Arc<Mutex<Vec<f32>>>,
-    spmc_reader: Option<Arc<Mutex<spmcq::Reader<f32>>>>,
+    rtrb_consumer: Option<Arc<Mutex<rtrb::Consumer<f32>>>>,
     output_notifier: Option<Arc<tokio::sync::Notify>>,
     queue_tracker: Option<AtomicQueueTracker>,
     channels: u16, // Output device channel count (mono/stereo/etc)
@@ -211,8 +211,8 @@ pub struct CoreAudioOutputStream {
     audio_unit: Option<AudioUnit>,
     // **NEW CONTEXT ARCHITECTURE**: Context with both buffer and SPMC reader
     callback_context: Arc<AtomicPtr<AudioCallbackContext>>,
-    // **SPMC INTEGRATION**: Reader for lock-free audio data from processing pipeline
-    spmc_reader: Option<Arc<Mutex<spmcq::Reader<f32>>>>,
+    // **RTRB INTEGRATION**: Consumer for lock-free audio data from processing pipeline
+    rtrb_consumer: Option<Arc<Mutex<rtrb::Consumer<f32>>>>,
     // **OUTPUT NOTIFIER**: Notify isolated audio manager when buffer runs low
     output_notifier: Option<Arc<tokio::sync::Notify>>,
     // **QUEUE TRACKING**: Track samples read for dynamic sample rate adjustment
@@ -244,12 +244,12 @@ unsafe impl Send for CoreAudioOutputStream {}
 
 #[cfg(target_os = "macos")]
 impl CoreAudioOutputStream {
-    /// Create CoreAudio output stream with SPMC reader AND output notifier for event-driven processing
-    pub fn new_with_spmc_reader_and_notifier(
+    /// Create CoreAudio output stream with RTRB consumer AND output notifier for event-driven processing
+    pub fn new_with_rtrb_consumer_and_notifier(
         device_id: AudioDeviceID,
         device_name: String,
         channels: u16,
-        spmc_reader: spmcq::Reader<f32>,
+        rtrb_consumer: rtrb::Consumer<f32>,
         output_notifier: Arc<tokio::sync::Notify>,
         queue_tracker: AtomicQueueTracker,
     ) -> Result<Self> {
@@ -257,7 +257,7 @@ impl CoreAudioOutputStream {
         let native_sample_rate = get_device_native_sample_rate(device_id)?;
 
         info!(
-            "🔊 Creating CoreAudio output stream with SPMC reader AND notifier for device: {} (ID: {}, NATIVE SR: {}, CH: {})",
+            "🔊 Creating CoreAudio output stream with RTRB consumer AND notifier for device: {} (ID: {}, NATIVE SR: {}, CH: {})",
             device_name, device_id, native_sample_rate, channels
         );
 
@@ -273,8 +273,8 @@ impl CoreAudioOutputStream {
             is_running,
             audio_unit: None,
             callback_context: Arc::new(AtomicPtr::new(ptr::null_mut())),
-            spmc_reader: Some(Arc::new(Mutex::new(spmc_reader))), // **SPMC INTEGRATION**
-            output_notifier: Some(output_notifier),               // **EVENT-DRIVEN PROCESSING**
+            rtrb_consumer: Some(Arc::new(Mutex::new(rtrb_consumer))), // **RTRB INTEGRATION**
+            output_notifier: Some(output_notifier),                   // **EVENT-DRIVEN PROCESSING**
             queue_tracker,
         })
     }
@@ -373,7 +373,7 @@ impl CoreAudioOutputStream {
         // Step 6: Set up render callback with new AudioCallbackContext
         let context = AudioCallbackContext {
             buffer: self.input_buffer.clone(),
-            spmc_reader: self.spmc_reader.clone(),
+            rtrb_consumer: self.rtrb_consumer.clone(),
             output_notifier: self.output_notifier.clone(),
             queue_tracker: Some(self.queue_tracker.clone()),
             channels: self.channels, // Pass actual output device channel count
@@ -393,7 +393,7 @@ impl CoreAudioOutputStream {
 
         // **SPMC INTEGRATION**: Always use SPMC callback for real audio processing
         let callback = AURenderCallbackStruct {
-            inputProc: Some(spmc_render_callback),
+            inputProc: Some(rtrb_render_callback),
             inputProcRefCon: context_ptr as *mut c_void,
         };
 
@@ -584,7 +584,7 @@ fn fill_buffers_with_silence(buffer_list: &mut AudioBufferList, _frames_needed: 
 /// SPMC render callback (sends to output device) function for CoreAudio Audio Unit with lock-free queue reading
 /// This callback reads directly from the SPMC queue for real-time audio output
 #[cfg(target_os = "macos")]
-extern "C" fn spmc_render_callback(
+extern "C" fn rtrb_render_callback(
     _in_ref_con: *mut c_void,
     _io_action_flags: *mut AudioUnitRenderActionFlags,
     _in_time_stamp: *const AudioTimeStamp,
@@ -647,10 +647,10 @@ extern "C" fn spmc_render_callback(
         let frames_needed = in_number_frames as usize;
 
         // Try to read from SPMC queue if available
-        if let Some(ref spmc_reader_arc) = context.spmc_reader {
+        if let Some(ref rtrb_consumer_arc) = context.rtrb_consumer {
             // **SPMC LOCK DIAGNOSTICS**: Track lock acquisition timing
             let lock_start = std::time::Instant::now();
-            if let Ok(mut spmc_reader) = spmc_reader_arc.try_lock() {
+            if let Ok(mut rtrb_consumer) = rtrb_consumer_arc.try_lock() {
                 let lock_duration = lock_start.elapsed();
 
                 // Track lock contention - warn if lock acquisition takes >500μs
@@ -690,7 +690,8 @@ extern "C" fn spmc_render_callback(
                     if !output_data.is_null() && audio_buffer.mDataByteSize > 0 {
                         let total_samples =
                             (audio_buffer.mDataByteSize as usize) / std::mem::size_of::<f32>();
-                        let samples_to_fill = total_samples.min(frames_needed * context.channels as usize);
+                        let samples_to_fill =
+                            total_samples.min(frames_needed * context.channels as usize);
 
                         // Collect all available samples from SPMC queue
                         let mut input_samples = Vec::new();
@@ -719,12 +720,11 @@ extern "C" fn spmc_render_callback(
 
                             // Drain the entire queue
                             loop {
-                                match spmc_reader.read() {
-                                    spmcq::ReadResult::Ok(sample)
-                                    | spmcq::ReadResult::Dropout(sample) => {
+                                match rtrb_consumer.pop() {
+                                    Ok(sample) => {
                                         all_samples.push(sample);
                                     }
-                                    spmcq::ReadResult::Empty => break,
+                                    Err(_) => break, // Queue empty
                                 }
                             }
 
@@ -775,20 +775,15 @@ extern "C" fn spmc_render_callback(
                             // **NORMAL OPERATION**: Read exactly the number of frames Core Audio requested
                             let mut samples_needed = target_samples;
                             while samples_needed > 0 {
-                                match spmc_reader.read() {
-                                    spmcq::ReadResult::Ok(sample) => {
+                                match rtrb_consumer.pop() {
+                                    Ok(sample) => {
                                         input_samples.push(sample);
                                         samples_needed -= 1;
                                         // Reset empty state when we have data
                                         QUEUE_WAS_EMPTY_LAST_TIME.store(false, Ordering::Relaxed);
                                     }
-                                    spmcq::ReadResult::Dropout(sample) => {
-                                        input_samples.push(sample);
-                                        samples_needed -= 1;
-                                        // Reset empty state when we have data (even dropout data)
-                                        QUEUE_WAS_EMPTY_LAST_TIME.store(false, Ordering::Relaxed);
-                                    }
-                                    spmcq::ReadResult::Empty => {
+                                    Err(_) => {
+                                        // Queue empty
                                         // **SMART NOTIFICATION**: Only notify on transition from "had data" to "no data"
                                         if let Some(ref output_notifier) = context.output_notifier {
                                             // Only notify when transitioning TO empty (not every time it's empty)
