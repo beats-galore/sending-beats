@@ -184,6 +184,7 @@ struct AudioCallbackContext {
     spmc_reader: Option<Arc<Mutex<spmcq::Reader<f32>>>>,
     output_notifier: Option<Arc<tokio::sync::Notify>>,
     queue_tracker: Option<AtomicQueueTracker>,
+    channels: u16, // Output device channel count (mono/stereo/etc)
 }
 
 /// Context struct for CoreAudio input callbacks - matches CPAL architecture exactly
@@ -375,6 +376,7 @@ impl CoreAudioOutputStream {
             spmc_reader: self.spmc_reader.clone(),
             output_notifier: self.output_notifier.clone(),
             queue_tracker: Some(self.queue_tracker.clone()),
+            channels: self.channels, // Pass actual output device channel count
         };
         let boxed_context = Box::new(context);
         let context_ptr = Box::into_raw(boxed_context);
@@ -688,7 +690,7 @@ extern "C" fn spmc_render_callback(
                     if !output_data.is_null() && audio_buffer.mDataByteSize > 0 {
                         let total_samples =
                             (audio_buffer.mDataByteSize as usize) / std::mem::size_of::<f32>();
-                        let samples_to_fill = total_samples.min(frames_needed * 2); // 2 channels
+                        let samples_to_fill = total_samples.min(frames_needed * context.channels as usize);
 
                         // Collect all available samples from SPMC queue
                         let mut input_samples = Vec::new();

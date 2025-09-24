@@ -315,26 +315,27 @@ impl RubatoSRC {
         // Handle the conversion differently based on resampler type
         match &mut self.resampler {
             ResamplerWrapper::FixedInput(resampler) => {
-                // FftFixedIn requires exactly the configured input frame count
-                let input_frames = input_samples.len() / 2; // Each frame has L+R samples
+                let channels = self.input_buffer.len();
+                let input_frames = input_samples.len() / channels;
 
                 // Ensure we have exactly the required input frames, pad with zeros if needed
                 let frames_to_process = self.input_frames;
 
-                // Clear the input buffer
-                for i in 0..frames_to_process {
-                    self.input_buffer[0][i] = 0.0;
-                    self.input_buffer[1][i] = 0.0;
+                // Clear the input buffer (dynamic channel count)
+                for channel in 0..channels {
+                    for i in 0..frames_to_process {
+                        self.input_buffer[channel][i] = 0.0;
+                    }
                 }
 
-                // De-interleave input samples: LRLRLR... -> L...L, R...R
-                // Fill actual data up to available frames, pad with zeros if needed
+                // **DYNAMIC DE-INTERLEAVING**: Handle mono or stereo input
                 let frames_available = input_frames.min(frames_to_process);
                 for frame in 0..frames_available {
-                    if frame * 2 + 1 < input_samples.len() {
-                        self.input_buffer[0][frame] = input_samples[frame * 2]; // Left channel
-                        self.input_buffer[1][frame] = input_samples[frame * 2 + 1];
-                        // Right channel
+                    for channel in 0..channels {
+                        let sample_index = frame * channels + channel;
+                        if sample_index < input_samples.len() {
+                            self.input_buffer[channel][frame] = input_samples[sample_index];
+                        }
                     }
                 }
 
@@ -347,16 +348,17 @@ impl RubatoSRC {
 
                 match process_result {
                     Ok((_input_frames_used, output_frames_generated)) => {
-                        // Interleave output: L...L, R...R -> LRLRLR...
+                        // **DYNAMIC RE-INTERLEAVING**: Handle mono or stereo output
+                        let channels = self.output_buffer.len();
                         self.reusable_result_buffer.clear();
                         self.reusable_result_buffer
-                            .reserve(output_frames_generated * 2);
+                            .reserve(output_frames_generated * channels);
 
                         for frame in 0..output_frames_generated {
-                            self.reusable_result_buffer
-                                .push(self.output_buffer[0][frame]); // Left
-                            self.reusable_result_buffer
-                                .push(self.output_buffer[1][frame]); // Right
+                            for channel in 0..channels {
+                                self.reusable_result_buffer
+                                    .push(self.output_buffer[channel][frame]);
+                            }
                         }
 
                         self.reusable_result_buffer.clone()
@@ -372,7 +374,8 @@ impl RubatoSRC {
                 }
             }
             ResamplerWrapper::FixedOutput(resampler) => {
-                let input_frames = input_samples.len() / 2; // Each frame has L+R samples
+                let channels = self.input_buffer.len();
+                let input_frames = input_samples.len() / channels;
 
                 // FftFixedOut requires exactly the number of frames it asks for
                 let required_frames = resampler.input_frames_next();
@@ -391,27 +394,28 @@ impl RubatoSRC {
                 // Use exactly the required number of frames
                 let frames_to_process = required_frames;
 
-                // Clear the input buffer up to required frames
-                for i in 0..frames_to_process {
-                    self.input_buffer[0][i] = 0.0;
-                    self.input_buffer[1][i] = 0.0;
-                }
-
-                // De-interleave input samples: LRLRLR... -> L...L, R...R
-                // Use exactly the required frames
-                for frame in 0..frames_to_process {
-                    if frame * 2 + 1 < input_samples.len() {
-                        self.input_buffer[0][frame] = input_samples[frame * 2]; // Left channel
-                        self.input_buffer[1][frame] = input_samples[frame * 2 + 1];
-                        // Right channel
+                // Clear the input buffer up to required frames (dynamic channel count)
+                for channel in 0..channels {
+                    for i in 0..frames_to_process {
+                        self.input_buffer[channel][i] = 0.0;
                     }
                 }
 
-                // Prepare input slices for exactly the required frames
-                let input_slices = [
-                    &self.input_buffer[0][..frames_to_process],
-                    &self.input_buffer[1][..frames_to_process],
-                ];
+                // **DYNAMIC DE-INTERLEAVING**: Handle mono or stereo input
+                for frame in 0..frames_to_process {
+                    for channel in 0..channels {
+                        let sample_index = frame * channels + channel;
+                        if sample_index < input_samples.len() {
+                            self.input_buffer[channel][frame] = input_samples[sample_index];
+                        }
+                    }
+                }
+
+                // **DYNAMIC INPUT SLICES**: Prepare slices for all channels
+                let mut input_slices: Vec<&[f32]> = Vec::with_capacity(channels);
+                for channel in 0..channels {
+                    input_slices.push(&self.input_buffer[channel][..frames_to_process]);
+                }
 
                 // Perform resampling using FftFixedOut
                 let process_result =
@@ -448,16 +452,17 @@ impl RubatoSRC {
                         }
 
                         // FftFixedOut should always generate exactly the configured output frames
-                        // Interleave output: L...L, R...R -> LRLRLR...
+                        // **DYNAMIC RE-INTERLEAVING**: Handle mono or stereo output
+                        let channels = self.output_buffer.len();
                         self.reusable_result_buffer.clear();
                         self.reusable_result_buffer
-                            .reserve(output_frames_generated * 2);
+                            .reserve(output_frames_generated * channels);
 
                         for frame in 0..output_frames_generated {
-                            self.reusable_result_buffer
-                                .push(self.output_buffer[0][frame]); // Left
-                            self.reusable_result_buffer
-                                .push(self.output_buffer[1][frame]); // Right
+                            for channel in 0..channels {
+                                self.reusable_result_buffer
+                                    .push(self.output_buffer[channel][frame]);
+                            }
                         }
 
                         self.reusable_result_buffer.clone()
@@ -473,7 +478,8 @@ impl RubatoSRC {
                 }
             }
             ResamplerWrapper::SincFixedOutput(resampler) => {
-                let input_frames = input_samples.len() / 2; // Each frame has L+R samples
+                let channels = self.input_buffer.len();
+                let input_frames = input_samples.len() / channels;
 
                 // SincFixedOut requires exactly the number of frames it asks for
                 let required_frames = resampler.input_frames_next();
@@ -492,27 +498,28 @@ impl RubatoSRC {
                 // Use exactly the required number of frames
                 let frames_to_process = required_frames;
 
-                // Clear the input buffer up to required frames
-                for i in 0..frames_to_process {
-                    self.input_buffer[0][i] = 0.0;
-                    self.input_buffer[1][i] = 0.0;
-                }
-
-                // De-interleave input samples: LRLRLR... -> L...L, R...R
-                // Use exactly the required frames
-                for frame in 0..frames_to_process {
-                    if frame * 2 + 1 < input_samples.len() {
-                        self.input_buffer[0][frame] = input_samples[frame * 2]; // Left channel
-                        self.input_buffer[1][frame] = input_samples[frame * 2 + 1];
-                        // Right channel
+                // Clear the input buffer up to required frames (dynamic channel count)
+                for channel in 0..channels {
+                    for i in 0..frames_to_process {
+                        self.input_buffer[channel][i] = 0.0;
                     }
                 }
 
-                // Prepare input slices for exactly the required frames
-                let input_slices = [
-                    &self.input_buffer[0][..frames_to_process],
-                    &self.input_buffer[1][..frames_to_process],
-                ];
+                // **DYNAMIC DE-INTERLEAVING**: Handle mono or stereo input
+                for frame in 0..frames_to_process {
+                    for channel in 0..channels {
+                        let sample_index = frame * channels + channel;
+                        if sample_index < input_samples.len() {
+                            self.input_buffer[channel][frame] = input_samples[sample_index];
+                        }
+                    }
+                }
+
+                // **DYNAMIC INPUT SLICES**: Prepare slices for all channels
+                let mut input_slices: Vec<&[f32]> = Vec::with_capacity(channels);
+                for channel in 0..channels {
+                    input_slices.push(&self.input_buffer[channel][..frames_to_process]);
+                }
 
                 // Perform resampling using SincFixedOut
                 let process_result =
@@ -549,16 +556,17 @@ impl RubatoSRC {
                         }
 
                         // SincFixedOut should always generate exactly the configured output frames
-                        // Interleave output: L...L, R...R -> LRLRLR...
+                        // **DYNAMIC CHANNEL RE-INTERLEAVING**: Interleave all channels
+                        let channels = self.output_buffer.len();
                         self.reusable_result_buffer.clear();
                         self.reusable_result_buffer
-                            .reserve(output_frames_generated * 2);
+                            .reserve(output_frames_generated * channels);
 
                         for frame in 0..output_frames_generated {
-                            self.reusable_result_buffer
-                                .push(self.output_buffer[0][frame]); // Left
-                            self.reusable_result_buffer
-                                .push(self.output_buffer[1][frame]); // Right
+                            for channel in 0..channels {
+                                self.reusable_result_buffer
+                                    .push(self.output_buffer[channel][frame]);
+                            }
                         }
 
                         self.reusable_result_buffer.clone()

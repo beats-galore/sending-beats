@@ -239,9 +239,9 @@ impl InputWorker {
                     active_resampler.convert(&samples)
                 } else {
                     // No resampling needed or resampler creation failed
+                    // WHy do we need to clone?
                     samples.clone()
                 };
-
                 // Step 2: Mono-to-stereo conversion (after resampling, before effects)
                 let channel_converted_samples = if channels == 1 {
                     // Log once for the first conversion using a simple atomic boolean
@@ -255,9 +255,29 @@ impl InputWorker {
                             device_id
                         );
                     }
-                    Self::convert_mono_to_stereo(&resampled_samples, &device_id)
+                    let converted = Self::convert_mono_to_stereo(&resampled_samples, &device_id);
+
+                    // Debug logging for first few conversions
+                    if samples_processed <= 3 {
+                        info!(
+                            "🔄 {}: {} mono samples ({} channels) → {} stereo samples",
+                            "MONO_TO_STEREO_DEBUG".cyan(),
+                            resampled_samples.len(),
+                            channels,
+                            converted.len()
+                        );
+                    }
+                    converted
                 } else {
                     // Already stereo, use as-is
+                    if samples_processed <= 3 {
+                        info!(
+                            "🔄 {}: Device already has {} channels, no conversion needed ({} samples)",
+                            "STEREO_PASSTHROUGH_DEBUG".cyan(),
+                            channels,
+                            resampled_samples.len()
+                        );
+                    }
                     resampled_samples
                 };
 

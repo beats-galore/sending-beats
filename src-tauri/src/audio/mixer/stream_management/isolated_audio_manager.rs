@@ -300,7 +300,7 @@ impl IsolatedAudioManager {
             )?;
 
         // **RTRB SETUP**: Create buffer for hardware → AudioPipeline communication
-        let buffer_capacity = (native_sample_rate as usize * 2) / 10; // 100ms stereo
+        let buffer_capacity = (native_sample_rate as usize * channels as usize) / 10; // 100ms for actual channel count
         let buffer_capacity = buffer_capacity.max(4096).min(16384);
         let (coreaudio_producer, audio_input_consumer) =
             rtrb::RingBuffer::<f32>::new(buffer_capacity);
