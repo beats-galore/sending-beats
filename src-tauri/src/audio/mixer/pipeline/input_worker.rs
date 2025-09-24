@@ -14,7 +14,8 @@ use tracing::{error, info, warn};
 
 use super::queue_types::ProcessedAudioSamples;
 use crate::audio::effects::AudioEffectsChain;
-use crate::audio::mixer::sample_rate_converter::RubatoSRC;
+use crate::audio::mixer::resampling::SamplerateSRC;
+use samplerate_rs::ConverterType;
 
 /// Input processing worker for a specific device
 pub struct InputWorker {
@@ -25,7 +26,7 @@ pub struct InputWorker {
     chunk_size: usize, // Input device chunk size (for resampler)
 
     // Audio processing components
-    resampler: Option<RubatoSRC>,
+    resampler: Option<SamplerateSRC>,
     effects_chain: AudioEffectsChain,
 
     // **DIRECT RTRB**: Read directly from hardware RTRB queue
@@ -78,12 +79,12 @@ impl InputWorker {
     /// Static helper function to get or initialize resampler in async context
     /// This can be used in the worker thread where we don't have access to &mut self
     fn get_or_initialize_resampler_static<'a>(
-        resampler: &'a mut Option<RubatoSRC>,
+        resampler: &'a mut Option<SamplerateSRC>,
         device_sample_rate: u32,
         target_sample_rate: u32,
         chunk_size: usize, // Input device chunk size
         device_id: &str,
-    ) -> Option<&'a mut RubatoSRC> {
+    ) -> Option<&'a mut SamplerateSRC> {
         let sample_rate_difference = (device_sample_rate as f32 - target_sample_rate as f32).abs();
 
         // No resampling needed if rates are close (within 1 Hz)
@@ -93,17 +94,17 @@ impl InputWorker {
 
         // Check if resampler exists and has the correct target rate
         let needs_recreation = if let Some(ref existing_resampler) = resampler {
-            existing_resampler.output_rate != target_sample_rate as f32
+            existing_resampler.output_rate != target_sample_rate
         } else {
             true // No resampler exists
         };
 
         // Create or recreate resampler if needed
         if needs_recreation {
-            match RubatoSRC::new_fft_fixed_input(
-                device_sample_rate as f32,
-                target_sample_rate as f32,
-                chunk_size, // Use actual input device chunk size
+            match SamplerateSRC::new(
+                device_sample_rate,
+                target_sample_rate,
+                ConverterType::SincMediumQuality, // Good balance of quality and performance
             ) {
                 Ok(new_resampler) => {
                     info!(

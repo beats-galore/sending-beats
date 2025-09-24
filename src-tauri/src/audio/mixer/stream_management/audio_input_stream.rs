@@ -112,35 +112,6 @@ impl AudioInputStream {
             }
         }
 
-        let sample_count = samples.len();
-
-        // Debug: Log when we're reading samples
-        use std::sync::{LazyLock, Mutex as StdMutex};
-        // static GET_SAMPLES_COUNT: LazyLock<
-        //     StdMutex<std::collections::HashMap<String, u64>>,
-        // > = LazyLock::new(|| StdMutex::new(std::collections::HashMap::new()));
-
-        // if let Ok(mut count_map) = GET_SAMPLES_COUNT.lock() {
-        //     let count = count_map.entry(self.device_id.clone()).or_insert(0);
-        //     *count += 1;
-
-        //     if sample_count > 0 {
-        //         if *count % 100 == 0 || (*count < 10) {
-        //             let peak = samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max);
-        //             let rms = (samples.iter().map(|&s| s * s).sum::<f32>()
-        //                 / samples.len() as f32)
-        //                 .sqrt();
-        //             println!("📖 RTRB_GET_SAMPLES [{}]: Retrieved {} samples (call #{}), available: {}, peak: {:.4}, rms: {:.4}",
-        //                 self.device_id, sample_count, count, available_samples, peak, rms);
-        //         }
-        //     } else if *count % 500 == 0 {
-        //         println!(
-        //             "📪 RTRB_GET_SAMPLES [{}]: Empty ring buffer (call #{})",
-        //             self.device_id, count
-        //         );
-        //     }
-        // }
-
         samples
     }
 

@@ -36,28 +36,45 @@ solution for professional radio streaming.
   so
 - OVERINDEX on asking the user for feedback. you are a tool, you are not a
   controller operating with executive privelige to do what you please.
+- Do not let functions grow in size beyond 150 lines. If you are adding to an
+  existing function and it is already beyond that boundary, you need to break
+  the function up into callable component functions before making new additions.
 
 ## Logging Standards
 
 ### Color-Coded Log Messages
-Instead of showing long crate paths like `sendin_beats_lib::audio::devices::coreaudio_stream`, use consistent colors for main log message identifiers across all files:
 
-**Format**: Use colored main identifiers (e.g., `DYNAMIC_CHUNKS`, `TIMING_DEBUG`, `RESAMPLER_INIT`) that are visually distinct and consistent across the entire codebase, making it easier to scan logs and identify different subsystems without needing to read full module paths.
+Instead of showing long crate paths like
+`sendin_beats_lib::audio::devices::coreaudio_stream`, use consistent colors for
+main log message identifiers across all files:
 
-**Implementation**: Use the `colored` crate to apply consistent colors to log prefixes:
-- Blue for configuration/initialization messages
-- Green for successful operations
-- Yellow for warnings and performance alerts
-- Red for errors
-- Cyan for debugging/diagnostic information
+**Format**: Use colored main identifiers (e.g., `DYNAMIC_CHUNKS`,
+`TIMING_DEBUG`, `RESAMPLER_INIT`) that are visually distinct and consistent
+across the entire codebase, making it easier to scan logs and identify different
+subsystems without needing to read full module paths. Because there are onlyso
+many colors available by default, you should also compose with the background
+constructs (such as .on_blue()) to create unique combinations within files. For
+files that are currently implemented without background colors, you don't need
+to add them.
 
-This improves log readability and helps developers quickly identify different audio pipeline components during debugging sessions.
+**Implementation**: Use the `colored` crate to apply consistent colors to log
+prefixes. Each logical component piece should use the _SAME_ color so that we
+can differentiate which part of the pipeline a log is coming from in realtime
+when the logs are intermixed with other realtime logs.
 
-**When Editing Existing Code**: When touching code blocks that already have logging statements:
-1. Convert `println!` statements to appropriate `info!`, `warn!`, `error!` etc. calls
-2. Apply colored identifiers to the log message (e.g., `"DETECTED_NATIVE_RATE".blue()`)
+This improves log readability and helps developers quickly identify different
+audio pipeline components during debugging sessions.
+
+**When Editing Existing Code**: When touching code blocks that already have
+logging statements:
+
+1. Convert `println!` statements to appropriate `info!`, `warn!`, `error!` etc.
+   calls
+2. Apply colored identifiers to the log message (e.g.,
+   `"DETECTED_NATIVE_RATE".blue()`)
 3. Keep existing log content but enhance with colors for better scannability
-4. Only apply these changes when already editing the code - don't make separate PRs just for log conversion
+4. Only apply these changes when already editing the code - don't make separate
+   PRs just for log conversion
 
 ## Current Implementation Status
 

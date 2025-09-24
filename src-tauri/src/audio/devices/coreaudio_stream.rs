@@ -1,24 +1,23 @@
 use crate::types::{COMMON_SAMPLE_RATES_HZ, DEFAULT_SAMPLE_RATE};
+use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 #[cfg(target_os = "macos")]
 use anyhow::Result;
 use colored::*;
-use colored::*;
 use coreaudio_sys::{
     kAudioDevicePropertyBufferFrameSize, kAudioDevicePropertyNominalSampleRate,
-    kAudioDevicePropertyStreamFormat, kAudioFormatFlagIsFloat, kAudioFormatFlagIsNonInterleaved,
-    kAudioFormatFlagIsPacked, kAudioFormatLinearPCM, kAudioObjectPropertyElementMaster,
-    kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput,
-    kAudioOutputUnitProperty_CurrentDevice, kAudioOutputUnitProperty_EnableIO,
-    kAudioOutputUnitProperty_SetInputCallback, kAudioUnitManufacturer_Apple,
-    kAudioUnitProperty_SetRenderCallback, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Global,
-    kAudioUnitScope_Input, kAudioUnitScope_Output, kAudioUnitSubType_HALOutput,
-    kAudioUnitType_Output, AURenderCallbackStruct, AudioBufferList, AudioComponentDescription,
-    AudioComponentFindNext, AudioComponentInstanceDispose, AudioComponentInstanceNew,
-    AudioDeviceID, AudioObjectGetPropertyData, AudioObjectPropertyAddress,
-    AudioObjectSetPropertyData, AudioOutputUnitStart, AudioOutputUnitStop,
-    AudioStreamBasicDescription, AudioTimeStamp, AudioUnit, AudioUnitGetProperty,
-    AudioUnitInitialize, AudioUnitRender, AudioUnitRenderActionFlags, AudioUnitSetProperty,
-    AudioUnitUninitialize, OSStatus,
+    kAudioDevicePropertyStreamFormat, kAudioFormatFlagIsFloat, kAudioFormatFlagIsPacked,
+    kAudioFormatLinearPCM, kAudioObjectPropertyElementMaster, kAudioObjectPropertyScopeInput,
+    kAudioObjectPropertyScopeOutput, kAudioOutputUnitProperty_CurrentDevice,
+    kAudioOutputUnitProperty_EnableIO, kAudioOutputUnitProperty_SetInputCallback,
+    kAudioUnitManufacturer_Apple, kAudioUnitProperty_SetRenderCallback,
+    kAudioUnitProperty_StreamFormat, kAudioUnitScope_Global, kAudioUnitScope_Input,
+    kAudioUnitScope_Output, kAudioUnitSubType_HALOutput, kAudioUnitType_Output,
+    AURenderCallbackStruct, AudioBufferList, AudioComponentDescription, AudioComponentFindNext,
+    AudioComponentInstanceDispose, AudioComponentInstanceNew, AudioDeviceID,
+    AudioObjectGetPropertyData, AudioObjectPropertyAddress, AudioObjectSetPropertyData,
+    AudioOutputUnitStart, AudioOutputUnitStop, AudioStreamBasicDescription, AudioTimeStamp,
+    AudioUnit, AudioUnitGetProperty, AudioUnitInitialize, AudioUnitRender,
+    AudioUnitRenderActionFlags, AudioUnitSetProperty, AudioUnitUninitialize, OSStatus,
 };
 use std::os::raw::c_void;
 use std::ptr;
@@ -184,6 +183,7 @@ struct AudioCallbackContext {
     buffer: Arc<Mutex<Vec<f32>>>,
     spmc_reader: Option<Arc<Mutex<spmcq::Reader<f32>>>>,
     output_notifier: Option<Arc<tokio::sync::Notify>>,
+    queue_tracker: Option<AtomicQueueTracker>,
 }
 
 /// Context struct for CoreAudio input callbacks - matches CPAL architecture exactly
@@ -214,6 +214,8 @@ pub struct CoreAudioOutputStream {
     spmc_reader: Option<Arc<Mutex<spmcq::Reader<f32>>>>,
     // **OUTPUT NOTIFIER**: Notify isolated audio manager when buffer runs low
     output_notifier: Option<Arc<tokio::sync::Notify>>,
+    // **QUEUE TRACKING**: Track samples read for dynamic sample rate adjustment
+    queue_tracker: AtomicQueueTracker,
 }
 
 // Manual Debug implementation to handle the AudioUnit pointer
@@ -241,69 +243,7 @@ unsafe impl Send for CoreAudioOutputStream {}
 
 #[cfg(target_os = "macos")]
 impl CoreAudioOutputStream {
-    pub fn new(
-        device_id: AudioDeviceID,
-        device_name: String,
-        sample_rate: u32,
-        channels: u16,
-    ) -> Result<Self> {
-        info!(
-            "🎧 {} Creating CoreAudio output stream for device: {} (ID: {}, SR: {}, CH: {})",
-            "CORE_AUDIO_OUTPUT".blue(),
-            device_name,
-            device_id,
-            sample_rate,
-            channels
-        );
 
-        let input_buffer = Arc::new(Mutex::new(Vec::new()));
-        let is_running = Arc::new(Mutex::new(false));
-
-        Ok(Self {
-            device_id,
-            device_name,
-            sample_rate,
-            channels,
-            input_buffer,
-            is_running,
-            audio_unit: None,
-            callback_context: Arc::new(AtomicPtr::new(ptr::null_mut())),
-            spmc_reader: None,     // No SPMC reader for legacy constructor
-            output_notifier: None, // No notifier for legacy constructor
-        })
-    }
-
-    /// Create CoreAudio output stream with SPMC reader for lock-free audio processing
-    pub fn new_with_spmc_reader(
-        device_id: AudioDeviceID,
-        device_name: String,
-        channels: u16,
-        spmc_reader: spmcq::Reader<f32>,
-    ) -> Result<Self> {
-        // **ADAPTIVE AUDIO**: Detect device's native sample rate instead of imposing our own
-        let native_sample_rate = get_device_native_sample_rate(device_id)?;
-
-        info!(
-            "🔊 Creating CoreAudio output stream with SPMC reader for device: {} (ID: {}, NATIVE SR: {}, CH: {})",
-            device_name, device_id, native_sample_rate, channels
-        );
-
-        let input_buffer = Arc::new(Mutex::new(Vec::new()));
-        let is_running = Arc::new(Mutex::new(false));
-
-        Ok(Self {
-            device_id,
-            device_name,
-            sample_rate: native_sample_rate, // **ADAPTIVE**: Use detected native rate
-            channels,
-            input_buffer,
-            is_running,
-            audio_unit: None,
-            callback_context: Arc::new(AtomicPtr::new(ptr::null_mut())),
-            spmc_reader: Some(Arc::new(Mutex::new(spmc_reader))), // **SPMC INTEGRATION**
-            output_notifier: None, // No notifier for this constructor
-        })
-    }
 
     /// Create CoreAudio output stream with SPMC reader AND output notifier for event-driven processing
     pub fn new_with_spmc_reader_and_notifier(
@@ -312,6 +252,7 @@ impl CoreAudioOutputStream {
         channels: u16,
         spmc_reader: spmcq::Reader<f32>,
         output_notifier: Arc<tokio::sync::Notify>,
+        queue_tracker: AtomicQueueTracker,
     ) -> Result<Self> {
         // **ADAPTIVE AUDIO**: Detect device's native sample rate instead of imposing our own
         let native_sample_rate = get_device_native_sample_rate(device_id)?;
@@ -335,8 +276,10 @@ impl CoreAudioOutputStream {
             callback_context: Arc::new(AtomicPtr::new(ptr::null_mut())),
             spmc_reader: Some(Arc::new(Mutex::new(spmc_reader))), // **SPMC INTEGRATION**
             output_notifier: Some(output_notifier),               // **EVENT-DRIVEN PROCESSING**
+            queue_tracker,
         })
     }
+
 
     pub fn start(&mut self) -> Result<()> {
         info!(
@@ -434,6 +377,7 @@ impl CoreAudioOutputStream {
             buffer: self.input_buffer.clone(),
             spmc_reader: self.spmc_reader.clone(),
             output_notifier: self.output_notifier.clone(),
+            queue_tracker: Some(self.queue_tracker.clone()),
         };
         let boxed_context = Box::new(context);
         let context_ptr = Box::into_raw(boxed_context);
@@ -649,6 +593,44 @@ extern "C" fn spmc_render_callback(
     in_number_frames: u32,
     io_data: *mut AudioBufferList,
 ) -> OSStatus {
+    // **CALLBACK TIMING DIAGNOSTICS**: Track callback delays and sync issues
+    static mut LAST_CALLBACK_TIME: Option<std::time::Instant> = None;
+    static mut CALLBACK_COUNT: u64 = 0;
+    static mut TOTAL_DELAY_ACCUMULATION: u64 = 0;
+
+    let callback_start = std::time::Instant::now();
+
+    unsafe {
+        CALLBACK_COUNT += 1;
+
+        if let Some(last_time) = LAST_CALLBACK_TIME {
+            let gap_duration = callback_start.duration_since(last_time);
+            let gap_micros = gap_duration.as_micros() as u64;
+
+            // Expected callback interval at 44.1kHz with typical 1024 frame buffer
+            let expected_interval_micros = (in_number_frames as f64 / 44100.0 * 1_000_000.0) as u64;
+
+            // Track significant delays (>10% deviation from expected)
+            if gap_micros > expected_interval_micros + (expected_interval_micros / 10) {
+                let delay_excess = gap_micros - expected_interval_micros;
+                TOTAL_DELAY_ACCUMULATION += delay_excess;
+
+                if CALLBACK_COUNT % 100 == 0 || delay_excess > 5000 {
+                    // Log every 100 callbacks or >5ms delays
+                    info!("⚠️ {} [call #{}]: Callback delay {} μs (expected {}, excess: {} μs, total excess: {} ms)",
+                        "COREAUDIO_CALLBACK_DELAY".red(),
+                        CALLBACK_COUNT,
+                        gap_micros,
+                        expected_interval_micros,
+                        delay_excess,
+                        TOTAL_DELAY_ACCUMULATION / 1000
+                    );
+                }
+            }
+        }
+
+        LAST_CALLBACK_TIME = Some(callback_start);
+    }
     // Safety checks to prevent crashes
     if _in_ref_con.is_null() || io_data.is_null() || in_number_frames == 0 {
         return -1;
@@ -667,7 +649,40 @@ extern "C" fn spmc_render_callback(
 
         // Try to read from SPMC queue if available
         if let Some(ref spmc_reader_arc) = context.spmc_reader {
+            // **SPMC LOCK DIAGNOSTICS**: Track lock acquisition timing
+            let lock_start = std::time::Instant::now();
             if let Ok(mut spmc_reader) = spmc_reader_arc.try_lock() {
+                let lock_duration = lock_start.elapsed();
+
+                // Track lock contention - warn if lock acquisition takes >500μs
+                static mut LOCK_CONTENTION_COUNT: u64 = 0;
+                static mut TOTAL_LOCK_TIME: u64 = 0;
+
+                unsafe {
+                    let lock_micros = lock_duration.as_micros() as u64;
+                    TOTAL_LOCK_TIME += lock_micros;
+
+                    // **ACTUAL CONTENTION**: Only count when lock takes >500μs (indicating another thread held it)
+                    if lock_micros > 500 {
+                        LOCK_CONTENTION_COUNT += 1;
+                        info!("🔒 {} [call #{}]: ACTUAL contention - lock took {} μs (contentions: {}, total lock time: {} ms)",
+                            "SPMC_LOCK_CONTENTION".red(),
+                            CALLBACK_COUNT,
+                            lock_micros,
+                            LOCK_CONTENTION_COUNT,
+                            TOTAL_LOCK_TIME / 1000
+                        );
+                    } else if CALLBACK_COUNT % 1000 == 0 {
+                        // Periodic status (not contention)
+                        info!("🔒 {} [call #{}]: Lock status - avg {} μs, total {} ms, actual contentions: {}",
+                            "SPMC_LOCK_STATUS".yellow(),
+                            CALLBACK_COUNT,
+                            TOTAL_LOCK_TIME / CALLBACK_COUNT,
+                            TOTAL_LOCK_TIME / 1000,
+                            LOCK_CONTENTION_COUNT
+                        );
+                    }
+                }
                 // Fill audio buffers from SPMC queue
                 if buffer_list.mNumberBuffers > 0 {
                     let audio_buffer = unsafe { &mut *buffer_list.mBuffers.as_mut_ptr() };
@@ -680,6 +695,16 @@ extern "C" fn spmc_render_callback(
 
                         // Collect all available samples from SPMC queue
                         let mut input_samples = Vec::new();
+
+                        // **QUEUE STATE DIAGNOSTICS**: Track sync issues and underruns
+                        static mut QUEUE_READ_START_TIME: Option<std::time::Instant> = None;
+                        static mut TOTAL_QUEUE_UNDERRUNS: u64 = 0;
+                        static mut LAST_QUEUE_SIZE: usize = 0;
+
+                        let queue_read_start = std::time::Instant::now();
+                        unsafe {
+                            QUEUE_READ_START_TIME = Some(queue_read_start);
+                        }
 
                         // **SMART NOTIFICATION**: Shared state for transition detection
                         use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -728,6 +753,64 @@ extern "C" fn spmc_render_callback(
                                     break;
                                 }
                             }
+                        }
+
+                        // **QUEUE TRACKING**: Record samples read for dynamic sample rate adjustment
+                        if let Some(ref queue_tracker) = context.queue_tracker {
+                            queue_tracker.record_samples_read(input_samples.len());
+
+                            // **QUEUE STATE LOGGING**: Log queue occupancy every 1000th callback
+                            unsafe {
+                                if CALLBACK_COUNT % 1000 == 0 {
+                                    let queue_info = queue_tracker.get_queue_info();
+                                    info!(
+                                        "📊 {} [call #{}]: occupancy={:.1}% ({}/{}) written={} read={}",
+                                        "CALLBACK_QUEUE_STATE".green(),
+                                        CALLBACK_COUNT,
+                                        queue_info.usage_percent,
+                                        queue_info.estimated_occupancy,
+                                        queue_info.capacity,
+                                        queue_info.total_written,
+                                        queue_info.total_read
+                                    );
+                                }
+                            }
+                        }
+
+                        // **QUEUE SYNC DIAGNOSTICS**: Track underruns and queue health
+                        let queue_read_duration = queue_read_start.elapsed();
+                        let queue_size = input_samples.len();
+
+                        unsafe {
+                            // Track significant underruns (need 1024+ samples, got <512)
+                            if samples_to_fill >= 1024 && queue_size < 512 {
+                                TOTAL_QUEUE_UNDERRUNS += 1;
+                            }
+
+                            // Track dramatic queue size changes (could indicate sync issues)
+                            let size_change = if queue_size > LAST_QUEUE_SIZE {
+                                queue_size - LAST_QUEUE_SIZE
+                            } else {
+                                LAST_QUEUE_SIZE - queue_size
+                            };
+
+                            // Log sync issues every 1000 callbacks or on significant events
+                            if CALLBACK_COUNT % 100 == 0
+                                || queue_read_duration.as_micros() > 1000
+                                || size_change > 2048
+                            {
+                                info!("📊 {} [call #{}]: Queue read {} μs, size {} (Δ{}), need {}, underruns: {}",
+                                    "QUEUE_SYNC_DEBUG".cyan(),
+                                    CALLBACK_COUNT,
+                                    queue_read_duration.as_micros(),
+                                    queue_size,
+                                    if queue_size > LAST_QUEUE_SIZE { format!("+{}", size_change) } else { format!("-{}", size_change) },
+                                    samples_to_fill,
+                                    TOTAL_QUEUE_UNDERRUNS
+                                );
+                            }
+
+                            LAST_QUEUE_SIZE = queue_size;
                         }
 
                         let samples_read = if !input_samples.is_empty() {
@@ -1135,6 +1218,12 @@ impl CoreAudioInputStream {
             ));
         }
 
+        // **TESTING**: Set input device buffer size to 2048 frames
+        // info!("🧪 TESTING: Setting input device buffer to 2048 frames");
+        if let Err(e) = set_device_buffer_frame_size(self.device_id, 128, false) {
+            warn!("⚠️ Could not set input buffer size to 2048: {}", e);
+        }
+
         // Step 9: Start the Audio Unit
         let status = unsafe { AudioOutputUnitStart(audio_unit) };
         if status != 0 {
@@ -1302,11 +1391,27 @@ extern "C" fn coreaudio_input_callback(
             audio_data
         } else {
             // Check for specific errors to understand what's wrong
-            match render_status {
-                -10863 => info!("🔴 AudioUnitRender: kAudioUnitErr_CannotDoInCurrentContext - check format/timing"),
-                -10865 => info!("🔴 AudioUnitRender: kAudioUnitErr_PropertyNotWritable - check configuration"),
-                -10866 => info!("🔴 AudioUnitRender: kAudioUnitErr_CannotDoInCurrentContext - invalid format"),
-                _ => info!("🔴 AudioUnitRender failed with status {}", render_status),
+            static mut ERROR_COUNT: u64 = 0;
+            static mut LAST_ERROR_TIME: Option<std::time::Instant> = None;
+
+            unsafe {
+                ERROR_COUNT += 1;
+                let now = std::time::Instant::now();
+                let should_log = if let Some(last_time) = LAST_ERROR_TIME {
+                    now.duration_since(last_time).as_secs() >= 5 // Log every 5 seconds max
+                } else {
+                    true
+                };
+
+                if should_log || ERROR_COUNT <= 3 {
+                    LAST_ERROR_TIME = Some(now);
+                    match render_status {
+                        -10863 => info!("🔴 AudioUnitRender: kAudioUnitErr_CannotDoInCurrentContext - check format/timing (count: {})", ERROR_COUNT),
+                        -10865 => info!("🔴 AudioUnitRender: kAudioUnitErr_PropertyNotWritable - check configuration (count: {})", ERROR_COUNT),
+                        -10866 => info!("🔴 AudioUnitRender: kAudioUnitErr_CannotDoInCurrentContext - invalid format (count: {})", ERROR_COUNT),
+                        _ => info!("🔴 AudioUnitRender failed with status {} (count: {})", render_status, ERROR_COUNT),
+                    }
+                }
             }
             vec![0.0f32; total_samples]
         };
