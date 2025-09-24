@@ -10,7 +10,6 @@ use tokio::sync::{mpsc, oneshot, Mutex, Notify};
 
 // Lock-free audio buffer imports
 use rtrb::{Consumer, Producer, RingBuffer};
-use spmcq::{ring_buffer, ReadResult, Reader, Writer};
 
 // Audio stream management structures
 #[derive(Debug)]
@@ -29,7 +28,12 @@ pub struct AudioInputStream {
 }
 
 impl AudioInputStream {
-    pub fn new(device_id: String, device_name: String, sample_rate: u32, channels: u16) -> Result<Self> {
+    pub fn new(
+        device_id: String,
+        device_name: String,
+        sample_rate: u32,
+        channels: u16,
+    ) -> Result<Self> {
         // Calculate optimal chunk size based on sample rate for low latency (5-10ms target)
         let optimal_chunk_size = (sample_rate as f32 * 0.005) as usize; // 5ms default
         let clamped_chunk_size = optimal_chunk_size.max(64).min(1024); // Clamp between 64-1024 samples

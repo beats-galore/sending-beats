@@ -8,6 +8,8 @@
 #[cfg(target_os = "macos")]
 use anyhow::Result;
 #[cfg(target_os = "macos")]
+use colored::Colorize;
+#[cfg(target_os = "macos")]
 use std::collections::HashMap;
 #[cfg(target_os = "macos")]
 use std::sync::Arc;
@@ -15,8 +17,6 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 #[cfg(target_os = "macos")]
 use tracing::{info, warn};
-#[cfg(target_os = "macos")]
-use colored::Colorize;
 
 #[cfg(target_os = "macos")]
 use core_foundation::base::TCFType;
@@ -441,7 +441,7 @@ impl CoreAudioIntegration {
                     device_id,
                     name: device_info.name.clone(),
                     sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
-                    channels, // Use detected channel count
+                    channels,     // Use detected channel count
                     stream: None, // Stream will be created when needed
                 }))
             }
@@ -461,8 +461,8 @@ impl CoreAudioIntegration {
         use coreaudio_sys::{
             kAudioDevicePropertyStreamFormat, kAudioObjectPropertyElementMaster,
             kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput,
-            AudioObjectGetPropertyDataSize, AudioObjectGetPropertyData,
-            AudioObjectPropertyAddress, AudioStreamBasicDescription,
+            AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize, AudioObjectPropertyAddress,
+            AudioStreamBasicDescription,
         };
         use std::mem;
         use std::os::raw::c_void;

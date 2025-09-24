@@ -17,14 +17,14 @@ use crate::audio::mixer::resampling::RubatoSRC;
 use crate::audio::utils::calculate_optimal_chunk_size;
 use colored::*;
 
-// SPMC queue imports for hardware output
-use spmcq::Writer;
+// RTRB queue imports for hardware output
+use rtrb::Producer;
 
 /// Output processing worker for a specific device
 pub struct OutputWorker {
     device_id: String,
     pub device_sample_rate: u32, // Target device sample rate (e.g., 44.1kHz)
-    channels: u16, // Output device channel count (mono/stereo/etc)
+    channels: u16,               // Output device channel count (mono/stereo/etc)
 
     // Audio processing components
     resampler: Option<RubatoSRC>,
@@ -41,8 +41,8 @@ pub struct OutputWorker {
     #[cfg(target_os = "macos")]
     hardware_update_tx: Option<mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>>,
 
-    // Hardware output integration via SPMC queue
-    spmc_writer: Option<Arc<Mutex<Writer<f32>>>>, // Writes to hardware via SPMC queue
+    // Hardware output integration via RTRB queue
+    rtrb_producer: Option<Arc<Mutex<Producer<f32>>>>, // Writes to hardware via RTRB queue
 
     // Queue state tracking for dynamic sample rate adjustment
     queue_tracker: AtomicQueueTracker,
@@ -56,17 +56,17 @@ pub struct OutputWorker {
 }
 
 impl OutputWorker {
-    /// Create a new output processing worker with SPMC writer and queue tracker
-    pub fn new_with_spmc_writer_and_tracker(
+    /// Create a new output processing worker with RTRB producer and queue tracker
+    pub fn new_with_rtrb_producer_and_tracker(
         device_id: String,
         device_sample_rate: u32,
         target_chunk_size: usize,
         channels: u16, // Output device channel count (mono/stereo/etc)
         mixed_audio_rx: mpsc::UnboundedReceiver<MixedAudioSamples>,
-        spmc_writer: Option<Arc<Mutex<Writer<f32>>>>,
+        rtrb_producer: Option<Arc<Mutex<Producer<f32>>>>,
         queue_tracker: AtomicQueueTracker,
     ) -> Self {
-        let has_hardware_output = spmc_writer.is_some();
+        let has_hardware_output = rtrb_producer.is_some();
         info!(
             "🔊 OUTPUT_WORKER: Creating worker for device '{}' ({} Hz, {} sample chunks, hardware: {})",
             device_id, device_sample_rate, target_chunk_size, has_hardware_output
@@ -83,7 +83,7 @@ impl OutputWorker {
             mixed_audio_rx,
             #[cfg(target_os = "macos")]
             hardware_update_tx: None, // No hardware updates for this constructor
-            spmc_writer,
+            rtrb_producer: rtrb_producer,
             queue_tracker,
             worker_handle: None,
             chunks_processed: 0,
@@ -99,11 +99,11 @@ impl OutputWorker {
         target_chunk_size: usize,
         channels: u16, // Output device channel count (mono/stereo/etc)
         mixed_audio_rx: mpsc::UnboundedReceiver<MixedAudioSamples>,
-        spmc_writer: Option<Arc<Mutex<Writer<f32>>>>,
+        rtrb_producer: Option<Arc<Mutex<Producer<f32>>>>,
         hardware_update_tx: mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>,
         queue_tracker: AtomicQueueTracker,
     ) -> Self {
-        let has_hardware_output = spmc_writer.is_some();
+        let has_hardware_output = rtrb_producer.is_some();
         info!(
             "🔊 OUTPUT_WORKER: Creating worker with hardware updates for device '{}' ({} Hz, {} sample chunks, hardware: {})",
             device_id, device_sample_rate, target_chunk_size, has_hardware_output
@@ -119,7 +119,7 @@ impl OutputWorker {
             accumulation_buffer: Vec::with_capacity(target_chunk_size * 2), // Pre-allocate for efficiency
             mixed_audio_rx,
             hardware_update_tx: Some(hardware_update_tx),
-            spmc_writer,
+            rtrb_producer: rtrb_producer,
             queue_tracker,
             worker_handle: None,
             chunks_processed: 0,
@@ -297,7 +297,7 @@ impl OutputWorker {
         input_samples: &[f32],
         target_output_count: usize,
         pre_accumulation_buffer: &mut Vec<f32>,
-        spmc_writer: &Option<Arc<Mutex<Writer<f32>>>>,
+        rtrb_producer: &Option<Arc<Mutex<Producer<f32>>>>,
         output_started: &mut bool,
         queue_tracker: Option<&AtomicQueueTracker>,
     ) -> Vec<f32> {
@@ -378,7 +378,7 @@ impl OutputWorker {
                 target_output_count,
             );
 
-            // Write to SPMC: Immediately write to keep queue fed
+            // Write to RTRB: Immediately write to keep queue fed
             if !output_chunk.is_empty() {
                 static OUTPUT_CHUNK_WRITE_COUNT: std::sync::atomic::AtomicU64 =
                     std::sync::atomic::AtomicU64::new(0);
@@ -387,8 +387,8 @@ impl OutputWorker {
 
                 if chunk_write_count < 10 || chunk_write_count % 100 == 0 {
                     info!(
-                    "🔄 {}: Chunked processing wrote {} samples ({} remaining) directly to SPMC, {} input frames needed",
-                    "CHUNKS_WRITTEN_TO_SPMC".on_blue().yellow(),
+                    "🔄 {}: Chunked processing wrote {} samples ({} remaining) directly to RTRB, {} input frames needed",
+                    "CHUNKS_WRITTEN_TO_RTRB".on_blue().yellow(),
                     output_chunk.len(),
                     pre_accumulation_buffer.len(),
                     current_input_needed
@@ -396,8 +396,8 @@ impl OutputWorker {
                 );
                 }
 
-                if let Some(ref writer) = spmc_writer {
-                    Self::write_samples_to_spmc_sync(
+                if let Some(ref writer) = rtrb_producer {
+                    Self::write_samples_to_rtrb_sync(
                         device_id,
                         &output_chunk,
                         writer,
@@ -424,7 +424,7 @@ impl OutputWorker {
 
             if chunk_count < 10 || chunk_count % 100 == 0 || chunks_written > 1 {
                 info!(
-                    "🔄 {}: Chunked processing wrote {} chunks directly to SPMC ({}Hz→{}Hz)",
+                    "🔄 {}: Chunked processing wrote {} chunks directly to RTRB ({}Hz→{}Hz)",
                     "PRE_ACCUM_CHUNKS".on_blue().yellow(),
                     chunks_written,
                     input_sample_rate,
@@ -433,7 +433,7 @@ impl OutputWorker {
             }
         }
 
-        // Return empty since we already wrote to SPMC queue
+        // Return empty since we already wrote to RTRB queue
         // This avoids double-writing in the main loop
         Vec::new()
     }
@@ -568,7 +568,7 @@ impl OutputWorker {
         // Take ownership of receiver and SPMC writer for the worker thread
         let mut mixed_audio_rx =
             std::mem::replace(&mut self.mixed_audio_rx, mpsc::unbounded_channel().1);
-        let spmc_writer = self.spmc_writer.clone();
+        let rtrb_producer = self.rtrb_producer.clone();
         let queue_tracker = self.queue_tracker.clone();
 
         // Clone hardware update channel for dynamic buffer size updates
@@ -665,7 +665,7 @@ impl OutputWorker {
                             &mixed_audio.samples,
                             adaptive_chunk_size,
                             &mut pre_accumulation_buffer,
-                            &spmc_writer,
+                            &rtrb_producer,
                             &mut pre_output_started,
                             Some(&queue_tracker),
                         )
@@ -739,23 +739,23 @@ impl OutputWorker {
 
                 // **OPTIMIZATION**: If no resampling and chunk size matches, bypass accumulation entirely
                 let mut chunks_sent_this_cycle = 0;
-                let mut total_spmc_duration = std::time::Duration::ZERO;
+                let mut total_rtrb_duration = std::time::Duration::ZERO;
 
-                // **STEP 2: SEND PROCESSED SAMPLES TO SPMC QUEUE**
+                // **STEP 2: SEND PROCESSED SAMPLES TO RTRB QUEUE**
 
                 if !device_samples.is_empty() {
-                    let spmc_write_start = std::time::Instant::now();
-                    if let Some(ref spmc_writer) = spmc_writer {
-                        Self::write_to_hardware_spmc(
+                    let rtrb_write_start = std::time::Instant::now();
+                    if let Some(ref rtrb_producer) = rtrb_producer {
+                        Self::write_to_hardware_rtrb(
                             &device_id,
                             &device_samples,
-                            spmc_writer,
+                            rtrb_producer,
                             Some(&queue_tracker),
                         )
                         .await;
                     }
-                    let spmc_write_duration = spmc_write_start.elapsed();
-                    total_spmc_duration += spmc_write_duration;
+                    let rtrb_write_duration = rtrb_write_start.elapsed();
+                    total_rtrb_duration += rtrb_write_duration;
 
                     chunks_processed += 1;
                     chunks_sent_this_cycle += 1;
@@ -796,7 +796,7 @@ impl OutputWorker {
                         "N/A".to_string()
                     };
 
-                    info!("⏱️  {} [{}]: gap_since_last={}, input={}→{} samples, 🔄resample={}μs, chunks_sent={}, spmc={}μs, total={}μs (FFT_FIXED_IN)",
+                    info!("⏱️  {} [{}]: gap_since_last={}, input={}→{} samples, 🔄resample={}μs, chunks_sent={}, rtrb={}μs, total={}μs (FFT_FIXED_IN)",
                         "OUTPUT_TIMING".purple(),
                         device_id,
                         time_between,
@@ -804,7 +804,7 @@ impl OutputWorker {
                         device_samples.len(),
                         resample_duration.as_micros(),
                         chunks_sent_this_cycle,
-                        total_spmc_duration.as_micros(),
+                        total_rtrb_duration.as_micros(),
                         processing_duration.as_micros()
                     );
                 }
@@ -815,12 +815,12 @@ impl OutputWorker {
                 let count = OUTPUT_WORKER_COUNT.fetch_add(1, Ordering::Relaxed);
                 if processing_duration.as_micros() > 500 && (count <= 3 || count % 1000 == 0) {
                     warn!(
-                        "🐌 {}: {} SLOW processing: {}μs (🔄resample: {}μs, spmc: {}μs) [FFT_FIXED_IN]",
+                        "🐌 {}: {} SLOW processing: {}μs (🔄resample: {}μs, rtrb: {}μs) [FFT_FIXED_IN]",
                         "OUTPUT_WORKER_SLOW".bright_red(),
                         device_id,
                         processing_duration.as_micros(),
                         resample_duration.as_micros(),
-                        total_spmc_duration.as_micros()
+                        total_rtrb_duration.as_micros()
                     );
                 }
             }
@@ -860,22 +860,43 @@ impl OutputWorker {
         Ok(())
     }
 
-    /// Get SPMC queue occupancy information
+    /// Get RTRB queue occupancy information
 
-    /// Sync helper to write samples to SPMC queue with tracking
-    fn write_samples_to_spmc_sync(
+    /// Sync helper to write samples to RTRB queue with tracking
+    fn write_samples_to_rtrb_sync(
         device_id: &str,
         samples: &[f32],
-        spmc_writer: &Arc<Mutex<Writer<f32>>>,
+        rtrb_producer: &Arc<Mutex<Producer<f32>>>,
         queue_tracker: Option<&AtomicQueueTracker>,
     ) {
         let lock_start = std::time::Instant::now();
-        if let Ok(mut writer) = spmc_writer.try_lock() {
+        if let Ok(mut producer) = rtrb_producer.try_lock() {
             let lock_duration = lock_start.elapsed();
+
+            // **RTRB BULK WRITE**: Use efficient chunk writing
             let mut samples_written = 0;
-            for &sample in samples {
-                writer.write(sample);
-                samples_written += 1;
+            let mut remaining = samples;
+
+            while !remaining.is_empty() && samples_written < samples.len() {
+                let chunk_size = remaining.len().min(producer.slots());
+                if chunk_size == 0 {
+                    // Ring buffer is full, drop remaining samples
+                    warn!(
+                        "⚠️ OUTPUT_WORKER: {} RTRB queue full, dropping {} remaining samples",
+                        device_id,
+                        remaining.len()
+                    );
+                    break;
+                }
+
+                let chunk = &remaining[..chunk_size];
+                for &sample in chunk {
+                    if producer.push(sample).is_err() {
+                        break;
+                    }
+                    samples_written += 1;
+                }
+                remaining = &remaining[chunk_size..];
             }
 
             // Record samples written for queue tracking
@@ -886,21 +907,21 @@ impl OutputWorker {
             // Queue tracking is now handled by the AtomicQueueTracker
         } else {
             warn!(
-                "⚠️ OUTPUT_WORKER: {} failed to lock SPMC writer, dropping {} samples",
+                "⚠️ OUTPUT_WORKER: {} failed to lock RTRB producer, dropping {} samples",
                 device_id,
                 samples.len()
             );
         }
     }
 
-    /// Write audio samples to hardware via SPMC queue (async wrapper)
-    async fn write_to_hardware_spmc(
+    /// Write audio samples to hardware via RTRB queue (async wrapper)
+    async fn write_to_hardware_rtrb(
         device_id: &str,
         samples: &[f32],
-        spmc_writer: &Arc<Mutex<Writer<f32>>>,
+        rtrb_producer: &Arc<Mutex<Producer<f32>>>,
         queue_tracker: Option<&AtomicQueueTracker>,
     ) {
-        Self::write_samples_to_spmc_sync(device_id, samples, spmc_writer, queue_tracker);
+        Self::write_samples_to_rtrb_sync(device_id, samples, rtrb_producer, queue_tracker);
     }
 
     /// Adjusts the active resampler's output rate to correct drift.
