@@ -1,14 +1,21 @@
 ## Template for New Bugs
 
-### Filename
+### File with github issues
 
-Format the filename with snake case, i.e.
-`<high>_<level>_<bug>_<description>.md`
+Apply labels:
+
+- feature area:
+  - broadcasting
+  - recording
+  - audio
+  - audio_effects
+  - audio_devices
+- Add ui for UI only
+- All should have "bug" label
+- Choose from low_priority, medium_priority, high_priority
 
 ### Bug Title
 
-**Status**: [UNRESOLVED/IN_PROGRESS/RESOLVED]  
-**Priority**: [High/Medium/Low]  
 **Date Discovered**: YYYY-MM-DD
 
 **Description**: Clear description of the issue

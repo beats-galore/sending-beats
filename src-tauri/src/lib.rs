@@ -17,9 +17,8 @@ pub mod commands;
 pub use audio::{
     get_device_monitoring_stats as get_monitoring_stats_impl, AudioChannel, AudioConfigFactory,
     AudioDatabase, AudioDeviceInfo, AudioDeviceManager, AudioEventBus, AudioMetrics, ChannelConfig,
-    Compressor, DeviceMonitorStats, EQBand, FilePlayerService, Limiter, MasterLevelData,
-    MixerConfig, OutputRouteConfig, PeakDetector, RmsDetector, ThreeBandEqualizer, VULevelData,
-    VirtualMixer,
+    Compressor, DeviceMonitorStats, EQBand, FilePlayerService, Limiter, MixerConfig, PeakDetector,
+    RmsDetector, ThreeBandEqualizer, VULevelData, VirtualMixer,
 };
 // Re-export application audio types
 pub use audio::tap::{ApplicationAudioError, ProcessInfo, TapStats};
@@ -140,7 +139,29 @@ pub fn run() {
         let database = match AudioDatabase::new(&database_path).await {
             Ok(db) => Arc::new(db),
             Err(e) => {
-                eprintln!("Failed to initialize database: {}", e);
+                eprintln!(
+                    "🚫 Failed to initialize database at {}",
+                    database_path.display()
+                );
+                eprintln!("💥 Error: {}", e);
+
+                // Print the full error chain for maximum detail
+                let mut source = e.source();
+                let mut level = 1;
+                while let Some(err) = source {
+                    eprintln!("  {}. Caused by: {}", level, err);
+                    source = err.source();
+                    level += 1;
+                }
+
+                eprintln!("🔧 Troubleshooting tips:");
+                eprintln!(
+                    "  - Check database file permissions at: {}",
+                    database_path.display()
+                );
+                eprintln!("  - Verify migration files in src-tauri/migrations/ are valid SQL");
+                eprintln!("  - Ensure no other process is using the database file");
+
                 std::process::exit(1);
             }
         };
@@ -261,10 +282,10 @@ pub fn run() {
             get_channel_effects,
             get_dj_mixer_config,
             // Debug commands
-            get_recent_vu_levels,
-            get_recent_master_levels,
-            save_channel_config,
-            load_channel_configs,
+            // get_recent_vu_levels,     // TODO: Implement with new schema
+            // get_recent_master_levels, // TODO: Implement with new schema
+            // save_channel_config,      // TODO: Implement with new schema
+            // load_channel_configs,     // TODO: Implement with new schema
             cleanup_old_levels,
             set_debug_log_config,
             get_debug_log_config,
