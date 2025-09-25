@@ -13,6 +13,7 @@ pub struct AudioMixerConfiguration {
     pub configuration_type: String, // 'reusable' or 'session'
     pub session_active: bool,       // Only one configuration can be active at a time
     pub reusable_configuration_id: Option<Uuid>, // Self-referential for session configs
+    pub is_default: bool, // Only one reusable configuration can be default
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -29,6 +30,7 @@ impl AudioMixerConfiguration {
             configuration_type,
             session_active: false,
             reusable_configuration_id: None,
+            is_default: false,
             created_at: now,
             updated_at: now,
             deleted_at: None,
@@ -49,8 +51,8 @@ impl AudioMixerConfiguration {
     pub async fn save(&self, pool: &SqlitePool) -> Result<()> {
         sqlx::query(
             "INSERT INTO audio_mixer_configurations
-             (id, name, description, configuration_type, session_active, reusable_configuration_id, created_at, updated_at, deleted_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             (id, name, description, configuration_type, session_active, reusable_configuration_id, is_default, created_at, updated_at, deleted_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(self.id.to_string())
         .bind(&self.name)
@@ -58,6 +60,7 @@ impl AudioMixerConfiguration {
         .bind(&self.configuration_type)
         .bind(self.session_active)
         .bind(self.reusable_configuration_id.map(|id| id.to_string()))
+        .bind(self.is_default)
         .bind(self.created_at)
         .bind(self.updated_at)
         .bind(self.deleted_at)
@@ -73,7 +76,7 @@ impl AudioMixerConfiguration {
 
         sqlx::query(
             "UPDATE audio_mixer_configurations
-             SET name = ?, description = ?, configuration_type = ?, session_active = ?, reusable_configuration_id = ?, updated_at = ?
+             SET name = ?, description = ?, configuration_type = ?, session_active = ?, reusable_configuration_id = ?, is_default = ?, updated_at = ?
              WHERE id = ? AND deleted_at IS NULL",
         )
         .bind(&self.name)
@@ -81,6 +84,7 @@ impl AudioMixerConfiguration {
         .bind(&self.configuration_type)
         .bind(self.session_active)
         .bind(self.reusable_configuration_id.map(|id| id.to_string()))
+        .bind(self.is_default)
         .bind(self.updated_at)
         .bind(self.id.to_string())
         .execute(pool)
@@ -111,7 +115,7 @@ impl AudioMixerConfiguration {
         let config = sqlx::query_as::<_, Self>(
             "SELECT id as \"id: Uuid\", name, description, configuration_type,
              session_active, reusable_configuration_id as \"reusable_configuration_id: Option<Uuid>\",
-             created_at, updated_at, deleted_at
+             is_default, created_at, updated_at, deleted_at
              FROM audio_mixer_configurations
              WHERE id = ? AND deleted_at IS NULL",
         )
@@ -127,7 +131,7 @@ impl AudioMixerConfiguration {
         let configs = sqlx::query_as::<_, Self>(
             "SELECT id as \"id: Uuid\", name, description, configuration_type,
              session_active, reusable_configuration_id as \"reusable_configuration_id: Option<Uuid>\",
-             created_at, updated_at, deleted_at
+             is_default, created_at, updated_at, deleted_at
              FROM audio_mixer_configurations
              WHERE deleted_at IS NULL
              ORDER BY created_at DESC",
@@ -143,7 +147,7 @@ impl AudioMixerConfiguration {
         let configs = sqlx::query_as::<_, Self>(
             "SELECT id as \"id: Uuid\", name, description, configuration_type,
              session_active, reusable_configuration_id as \"reusable_configuration_id: Option<Uuid>\",
-             created_at, updated_at, deleted_at
+             is_default, created_at, updated_at, deleted_at
              FROM audio_mixer_configurations
              WHERE configuration_type = ? AND deleted_at IS NULL
              ORDER BY created_at DESC",
@@ -170,7 +174,7 @@ impl AudioMixerConfiguration {
         let config = sqlx::query_as::<_, Self>(
             "SELECT id as \"id: Uuid\", name, description, configuration_type,
              session_active, reusable_configuration_id as \"reusable_configuration_id: Option<Uuid>\",
-             created_at, updated_at, deleted_at
+             is_default, created_at, updated_at, deleted_at
              FROM audio_mixer_configurations
              WHERE session_active = TRUE AND deleted_at IS NULL
              LIMIT 1",
@@ -229,6 +233,7 @@ impl AudioMixerConfiguration {
             configuration_type: "session".to_string(),
             session_active: true,
             reusable_configuration_id: Some(reusable_id),
+            is_default: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
             deleted_at: None,
