@@ -484,15 +484,18 @@ src/
 
 ### Database Design Principles
 
-The application uses SQLite with a structured migration system following these key principles:
+The application uses SQLite with a structured migration system following these
+key principles:
 
 #### 1. UUID Primary Keys
+
 - **ALL** tables use UUID primary keys (never use string IDs)
 - Use `VARCHAR(36) PRIMARY KEY` type in SQL migrations (enforces UUID length)
 - In Rust code, use `uuid::Uuid` type for all ID fields
 - SQLx automatically converts between `uuid::Uuid` and `VARCHAR(36)` in SQLite
 
 #### 2. Timestamp Columns (Required for ALL tables)
+
 ```sql
 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -500,31 +503,37 @@ deleted_at TIMESTAMP WITH TIME ZONE NULL
 ```
 
 #### 3. Soft Delete Pattern
+
 - Use `deleted_at` column instead of hard deletes
 - When querying, always filter `WHERE deleted_at IS NULL` for active records
 - To "delete", set `deleted_at = CURRENT_TIMESTAMP`
 
 #### 4. Text Fields for Enums
+
 - **NEVER** create database-level enums or constraints for enum-like fields
 - Always use `TEXT` type even if it represents an application enum
 - Application-level validation handles enum constraints
 
 #### 5. Index Strategy
-- Add indexes on foreign key columns: `CREATE INDEX idx_tablename_foreign_key_id ON table_name(foreign_key_id);`
+
+- Add indexes on foreign key columns:
+  `CREATE INDEX idx_tablename_foreign_key_id ON table_name(foreign_key_id);`
 - Add indexes on commonly queried columns (created_at, updated_at, etc.)
-- Add composite indexes for complex queries: `CREATE INDEX idx_table_status_created ON table_name(status, created_at);`
+- Add composite indexes for complex queries:
+  `CREATE INDEX idx_table_status_created ON table_name(status, created_at);`
 
 ### Migration File Structure
 
 Migration files should follow this naming pattern with timestamp prefixes:
-- `YYYYMMDD_HHMMSS_initial_schema.sql` - Core tables and base structure
-- `YYYYMMDD_HHMMSS_audio_devices.sql` - Audio device configuration tables
-- `YYYYMMDD_HHMMSS_audio_effects.sql` - Audio effects and processing tables
-- `YYYYMMDD_HHMMSS_audio_levels.sql` - VU meter and level tracking tables
-- `YYYYMMDD_HHMMSS_recordings.sql` - Recording system tables
-- `YYYYMMDD_HHMMSS_broadcasts.sql` - Broadcasting/streaming tables
 
-Example: `20250925_160001_initial_schema.sql`
+- `YYYYMMDDHHMMSS_initial_schema.sql` - Core tables and base structure
+- `YYYYMMDDHHMMSS_audio_devices.sql` - Audio device configuration tables
+- `YYYYMMDDHHMMSS_audio_effects.sql` - Audio effects and processing tables
+- `YYYYMMDDHHMMSS_audio_levels.sql` - VU meter and level tracking tables
+- `YYYYMMDDHHMMSS_recordings.sql` - Recording system tables
+- `YYYYMMDDHHMMSS_broadcasts.sql` - Broadcasting/streaming tables
+
+Example: `20250925160001_initial_schema.sql`
 
 ### Database Commands
 
@@ -571,7 +580,8 @@ CREATE INDEX idx_example_active ON example_table(deleted_at) WHERE deleted_at IS
 
 ### Keeping Database Schema & Rust Types in Sync
 
-**CRITICAL**: When making database schema changes, you MUST update the corresponding Rust types in the `src-tauri/src/db/` module.
+**CRITICAL**: When making database schema changes, you MUST update the
+corresponding Rust types in the `src-tauri/src/db/` module.
 
 #### Database Module Structure
 
@@ -592,10 +602,14 @@ src-tauri/src/db/
 
 When you modify a database table:
 
-1. **Update Migration**: Create/modify the appropriate `YYYYMMDD_HHMMSS_*.sql` migration file
-2. **Update Rust Struct**: Modify the corresponding struct in the appropriate `src-tauri/src/db/*.rs` file
-3. **Update Query Methods**: Ensure all `sqlx::query_as` calls include proper type annotations
-4. **Test Migration**: Run the application to ensure migrations apply successfully
+1. **Update Migration**: Create/modify the appropriate `YYYYMMDD_HHMMSS_*.sql`
+   migration file
+2. **Update Rust Struct**: Modify the corresponding struct in the appropriate
+   `src-tauri/src/db/*.rs` file
+3. **Update Query Methods**: Ensure all `sqlx::query_as` calls include proper
+   type annotations
+4. **Test Migration**: Run the application to ensure migrations apply
+   successfully
 
 #### Type Annotation Requirements
 
@@ -621,14 +635,18 @@ let config = sqlx::query_as::<_, AudioMixerConfiguration>(
 
 #### Common Pitfalls
 
-- **Missing UUID type annotations**: Always use `id as \"id: Uuid\"` in SELECT queries
-- **Forgetting soft delete filters**: Always include `WHERE deleted_at IS NULL` for active records
+- **Missing UUID type annotations**: Always use `id as \"id: Uuid\"` in SELECT
+  queries
+- **Forgetting soft delete filters**: Always include `WHERE deleted_at IS NULL`
+  for active records
 - **Inconsistent field types**: Ensure Rust field types match SQL column types
-- **Missing foreign key relationships**: Update both migration FKs and Rust struct relationships
+- **Missing foreign key relationships**: Update both migration FKs and Rust
+  struct relationships
 
 #### Error Handling
 
 The database initialization now provides detailed error information:
+
 - Full error chain with root cause analysis
 - Migration file validation and listing
 - Connection testing to isolate issues
