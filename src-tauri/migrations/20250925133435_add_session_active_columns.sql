@@ -9,12 +9,6 @@ ADD COLUMN session_active BOOLEAN DEFAULT FALSE NOT NULL;
 ALTER TABLE audio_mixer_configurations
 ADD COLUMN reusable_configuration_id VARCHAR(36) NULL;
 
--- Add foreign key constraint for reusable_configuration_id
-ALTER TABLE audio_mixer_configurations
-ADD CONSTRAINT fk_reusable_config
-FOREIGN KEY (reusable_configuration_id)
-REFERENCES audio_mixer_configurations(id);
-
 -- Add indexes for the new columns
 CREATE INDEX idx_mixer_config_session_active ON audio_mixer_configurations(session_active) WHERE session_active = TRUE AND deleted_at IS NULL;
 CREATE INDEX idx_mixer_config_reusable_ref ON audio_mixer_configurations(reusable_configuration_id) WHERE reusable_configuration_id IS NOT NULL AND deleted_at IS NULL;

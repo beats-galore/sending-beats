@@ -11,7 +11,7 @@ pub struct AudioMixerConfiguration {
     pub name: String,
     pub description: Option<String>,
     pub configuration_type: String, // 'reusable' or 'session'
-    pub session_active: bool, // Only one configuration can be active at a time
+    pub session_active: bool,       // Only one configuration can be active at a time
     pub reusable_configuration_id: Option<Uuid>, // Self-referential for session configs
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
@@ -217,7 +217,8 @@ impl AudioMixerConfiguration {
         session_name: Option<String>,
     ) -> Result<Self> {
         // Get the reusable configuration
-        let reusable = Self::find_by_id(pool, reusable_id).await?
+        let reusable = Self::find_by_id(pool, reusable_id)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("Reusable configuration not found"))?;
 
         // Create new session configuration
