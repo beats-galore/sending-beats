@@ -8,6 +8,8 @@ export type AudioMixerConfiguration = {
   name: string;
   description?: string;
   configurationType: 'reusable' | 'session'; // Will be camelCase after serde conversion
+  sessionActive: boolean; // Only one configuration can be active at a time
+  reusableConfigurationId?: Uuid<AudioMixerConfiguration>; // Self-referential for session configs
   createdAt: Timestamp; // ISO timestamp
   updatedAt: Timestamp; // ISO timestamp
   deletedAt?: Timestamp; // ISO timestamp, null for active records
