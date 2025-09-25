@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use base64::Engine;
+use colored::*;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -39,7 +40,7 @@ pub struct IcecastSourceClient {
 }
 
 /// Audio format configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AudioFormat {
     pub sample_rate: u32,
     pub channels: u16,
@@ -47,7 +48,7 @@ pub struct AudioFormat {
     pub codec: AudioCodec,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum AudioCodec {
     Mp3,
     Aac,
@@ -346,6 +347,79 @@ impl IcecastStreamManager {
                 .await
                 .context("Failed to send stop command")?;
         }
+        Ok(())
+    }
+
+    /// Start streaming with an RTRB consumer from the audio pipeline
+    pub async fn start_streaming_with_consumer(
+        &mut self,
+        rtrb_consumer: rtrb::Consumer<f32>,
+    ) -> Result<()> {
+        info!("🎯 Starting Icecast streaming with RTRB consumer");
+
+        // TODO: Implement the actual RTRB consumer reading and audio encoding
+        // This is where we need to:
+        // 1. Spawn a task to continuously read from rtrb_consumer
+        // 2. Encode the audio samples to MP3/AAC
+        // 3. Send encoded data to the Icecast server
+
+        // For now, just start the normal streaming to establish the connection
+        if let Some(control_tx) = &self.control_tx {
+            control_tx
+                .send(StreamControl::Start)
+                .await
+                .context("Failed to send start command")?;
+        }
+
+        // Spawn the RTRB consumer task
+        let mut consumer = rtrb_consumer;
+        tokio::spawn(async move {
+            info!("🎵 {}: Starting RTRB consumer loop for Icecast streaming", "ICECAST_RTRB_CONSUMER".blue());
+            let mut sample_count = 0u64;
+            let mut batch_count = 0u64;
+            let mut sample_buffer = Vec::with_capacity(4096);
+
+            loop {
+                sample_buffer.clear();
+
+                // Collect available samples from RTRB queue
+                loop {
+                    match consumer.pop() {
+                        Ok(sample) => {
+                            sample_buffer.push(sample);
+                            if sample_buffer.len() >= 4096 {
+                                break;
+                            }
+                        }
+                        Err(_) => break, // No more samples available
+                    }
+                }
+
+                if !sample_buffer.is_empty() {
+                    batch_count += 1;
+                    sample_count += sample_buffer.len() as u64;
+
+                    // Log first few batches to see if we're getting audio
+                    if batch_count <= 5 || batch_count % 100 == 0 {
+                        info!(
+                            "🎵 {}: Processing batch #{}, samples received: {}, total samples: {}",
+                            "ICECAST_RTRB_BATCH".blue(),
+                            batch_count,
+                            sample_buffer.len(),
+                            sample_count
+                        );
+                    }
+
+                    // TODO: Encode samples to MP3/AAC and send to Icecast
+                    // For now, just acknowledge we're receiving audio
+                } else {
+                    // No samples available, yield CPU briefly
+                    tokio::time::sleep(std::time::Duration::from_micros(100)).await;
+                }
+            }
+        });
+
+        info!("✅ Started Icecast streaming with RTRB consumer");
         Ok(())
     }
 
