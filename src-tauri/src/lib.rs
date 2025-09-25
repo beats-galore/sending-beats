@@ -32,6 +32,7 @@ use tracing_subscriber::prelude::*;
 use commands::application_audio::*;
 use commands::audio_devices::*;
 use commands::audio_effects::*;
+use commands::configurations::*;
 use commands::debug::*;
 use commands::file_player::*;
 use commands::icecast::*;
@@ -348,7 +349,16 @@ pub fn run() {
             select_recording_directory,
             get_metadata_presets,
             get_recording_presets,
-            update_recording_metadata
+            update_recording_metadata,
+            // Configuration commands
+            get_reusable_configurations,
+            get_active_session_configuration,
+            create_session_from_reusable,
+            save_session_to_reusable,
+            save_session_as_new_reusable,
+            get_configuration_by_id,
+            create_reusable_configuration,
+            get_configured_audio_devices_by_config
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -7,7 +7,7 @@ export type AsCreationAttributes<
     updatedAt: Timestamp;
     deletedAt?: Timestamp;
   },
-> = Omit<Timestamp, 'id' | 'createdAt' | 'updatedAt' | 'deletedAt'>;
+> = Omit<T, 'id' | 'createdAt' | 'updatedAt' | 'deletedAt'>;
 
 export type AsUpdateAttributes<
   T extends {
