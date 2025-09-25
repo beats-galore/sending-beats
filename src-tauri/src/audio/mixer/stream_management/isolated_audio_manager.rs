@@ -286,7 +286,9 @@ impl IsolatedAudioManager {
                 recording_config,
                 response_tx,
             } => {
-                let result = self.handle_start_recording(session_id, recording_config).await;
+                let result = self
+                    .handle_start_recording(session_id, recording_config)
+                    .await;
                 let _ = response_tx.send(result);
             }
             AudioCommand::StopRecording {
@@ -588,13 +590,17 @@ impl IsolatedAudioManager {
         // Check if recording already exists (only one recording allowed at a time)
         const RECORDING_DEVICE_ID: &str = "recording_output";
         if self.output_rtrb_producers.contains_key(RECORDING_DEVICE_ID) {
-            return Err(anyhow::anyhow!("Recording already active - only one recording allowed at a time"));
+            return Err(anyhow::anyhow!(
+                "Recording already active - only one recording allowed at a time"
+            ));
         }
 
         // **RTRB SETUP**: Create buffer for AudioPipeline → Recording communication
-        let buffer_capacity = (recording_config.sample_rate as usize * recording_config.channels as usize) / 10; // 100ms buffer
+        let buffer_capacity =
+            (recording_config.sample_rate as usize * recording_config.channels as usize) / 10; // 100ms buffer
         let buffer_capacity = buffer_capacity.max(8192).min(32768); // Larger buffer for file I/O
-        let (recording_producer, recording_consumer) = rtrb::RingBuffer::<f32>::new(buffer_capacity);
+        let (recording_producer, recording_consumer) =
+            rtrb::RingBuffer::<f32>::new(buffer_capacity);
 
         info!(
             "🔧 {}: Created RTRB buffer with {} samples capacity for recording '{}'",
@@ -612,19 +618,22 @@ impl IsolatedAudioManager {
         let producer_arc = Arc::new(tokio::sync::Mutex::new(recording_producer));
 
         // Add recording output worker to the audio pipeline
-        let result = self.audio_pipeline.add_output_device_with_rtrb_producer_and_tracker(
-            RECORDING_DEVICE_ID.to_string(),
-            recording_config.sample_rate,
-            1024, // Default chunk size for recording
-            recording_config.channels,
-            Some(producer_arc.clone()),
-            queue_tracker,
-        );
+        let result = self
+            .audio_pipeline
+            .add_output_device_with_rtrb_producer_and_tracker(
+                RECORDING_DEVICE_ID.to_string(),
+                recording_config.sample_rate,
+                1024, // Default chunk size for recording
+                recording_config.channels,
+                Some(producer_arc.clone()),
+                queue_tracker,
+            );
 
         match result {
             Ok(()) => {
                 // Store the producer for cleanup later
-                self.output_rtrb_producers.insert(RECORDING_DEVICE_ID.to_string(), producer_arc);
+                self.output_rtrb_producers
+                    .insert(RECORDING_DEVICE_ID.to_string(), producer_arc);
 
                 info!(
                     "✅ {}: Recording output worker created for session '{}'",
@@ -658,7 +667,11 @@ impl IsolatedAudioManager {
 
         // Remove the OutputWorker from the audio pipeline
         // This will automatically clean up all resources (RTRB producer, worker thread, etc.)
-        match self.audio_pipeline.remove_output_device(RECORDING_DEVICE_ID).await {
+        match self
+            .audio_pipeline
+            .remove_output_device(RECORDING_DEVICE_ID)
+            .await
+        {
             Ok(()) => {
                 // Remove from our tracking as well
                 self.output_rtrb_producers.remove(RECORDING_DEVICE_ID);

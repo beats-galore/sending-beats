@@ -6,11 +6,11 @@
 // different recording subsystems.
 
 use anyhow::Result;
+use colored::Colorize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, warn};
-use colored::Colorize;
 
 use super::encoders::EncoderFactory;
 use super::filename_generation::{FilenameGenerator, FilenameTemplates};
@@ -218,7 +218,8 @@ impl RecordingService {
                             error!(
                                 "❌ {}: Failed to process audio samples for session {}: {}",
                                 "RECORDING_WRITE_ERROR".red(),
-                                processing_session_id, e
+                                processing_session_id,
+                                e
                             );
                             error!(
                                 "❌ Error occurred at batch #{}, total samples processed: {}",

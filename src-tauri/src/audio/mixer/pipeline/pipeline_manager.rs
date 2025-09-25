@@ -16,7 +16,6 @@ use tracing::{error, info, warn};
 // SPMC queue imports for hardware output connection
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 
-
 use super::{
     input_worker::{InputWorker, InputWorkerStats},
     mixing_layer::{MixingLayer, MixingLayerStats},
