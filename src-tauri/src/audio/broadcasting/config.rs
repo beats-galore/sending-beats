@@ -1,7 +1,7 @@
 use super::icecast_source::{AudioCodec, AudioFormat};
 use crate::types::DEFAULT_SAMPLE_RATE;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StreamingServiceConfig {
     /// Icecast server configuration
     pub server_host: String,

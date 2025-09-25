@@ -68,6 +68,15 @@ pub enum AudioCommand {
         session_id: String,
         response_tx: oneshot::Sender<Result<()>>,
     },
+    StartIcecast {
+        stream_id: String,
+        config: crate::audio::broadcasting::StreamingServiceConfig,
+        response_tx: oneshot::Sender<Result<rtrb::Consumer<f32>>>,
+    },
+    StopIcecast {
+        stream_id: String,
+        response_tx: oneshot::Sender<Result<()>>,
+    },
 }
 
 /// Audio System Coordinator - lightweight interface between Tauri commands and audio pipeline
@@ -296,6 +305,23 @@ impl IsolatedAudioManager {
                 response_tx,
             } => {
                 let result = self.handle_stop_recording(session_id).await;
+                let _ = response_tx.send(result);
+            }
+            AudioCommand::StartIcecast {
+                stream_id,
+                config,
+                response_tx,
+            } => {
+                let result = self
+                    .handle_start_icecast(stream_id, config)
+                    .await;
+                let _ = response_tx.send(result);
+            }
+            AudioCommand::StopIcecast {
+                stream_id,
+                response_tx,
+            } => {
+                let result = self.handle_stop_icecast(stream_id).await;
                 let _ = response_tx.send(result);
             }
         }
@@ -686,6 +712,124 @@ impl IsolatedAudioManager {
                 error!(
                     "❌ {}: Failed to remove recording OutputWorker from pipeline: {}",
                     "RECORDING_ERROR".red(),
+                    e
+                );
+                Err(e)
+            }
+        }
+    }
+
+    /// Start an Icecast streaming session by creating an OutputWorker for streaming
+    async fn handle_start_icecast(
+        &mut self,
+        stream_id: String,
+        config: crate::audio::broadcasting::StreamingServiceConfig,
+    ) -> Result<rtrb::Consumer<f32>> {
+        info!(
+            "📡 {}: Starting Icecast stream '{}' to {}:{}{}",
+            "ICECAST_COORDINATOR".blue(),
+            stream_id,
+            config.server_host,
+            config.server_port,
+            config.mount_point
+        );
+
+        // Use a unique device ID for each Icecast stream
+        let icecast_device_id = format!("icecast_output_{}", stream_id);
+
+        // Check if stream already exists
+        if self.output_rtrb_producers.contains_key(&icecast_device_id) {
+            return Err(anyhow::anyhow!(
+                "Icecast stream '{}' is already running",
+                stream_id
+            ));
+        }
+
+        // **RTRB QUEUE**: Create ring buffer for audio data transport
+        let buffer_size = 4096 * 16; // 16x larger buffer for network streaming
+        let (streaming_producer, streaming_consumer) = rtrb::RingBuffer::<f32>::new(buffer_size);
+        let producer_arc = Arc::new(Mutex::new(streaming_producer));
+
+        // **QUEUE TRACKING**: Create queue tracker for dynamic sample rate adjustment
+        let queue_tracker = AtomicQueueTracker::new(
+            format!("icecast_{}", stream_id), // Unique queue ID
+            buffer_size, // Capacity
+        );
+
+        // Add streaming output worker to the audio pipeline using the audio format from config
+        let result = self
+            .audio_pipeline
+            .add_output_device_with_rtrb_producer_and_tracker(
+                icecast_device_id.clone(),
+                config.audio_format.sample_rate,
+                1024, // Default chunk size for streaming
+                config.audio_format.channels,
+                Some(producer_arc.clone()),
+                queue_tracker,
+            );
+
+        match result {
+            Ok(()) => {
+                // Store the producer for cleanup later
+                self.output_rtrb_producers
+                    .insert(icecast_device_id, producer_arc);
+
+                info!(
+                    "✅ {}: Icecast output worker created for stream '{}' ({}kbps, {}Hz)",
+                    "ICECAST_COORDINATOR".blue(),
+                    stream_id,
+                    config.audio_format.bitrate,
+                    config.audio_format.sample_rate
+                );
+
+                // Return the consumer for the Icecast service
+                Ok(streaming_consumer)
+            }
+            Err(e) => {
+                error!(
+                    "❌ {}: Failed to create Icecast output worker for '{}': {}",
+                    "ICECAST_ERROR".red(),
+                    stream_id,
+                    e
+                );
+                Err(e)
+            }
+        }
+    }
+
+    /// Stop an Icecast streaming session by removing the OutputWorker
+    async fn handle_stop_icecast(&mut self, stream_id: String) -> Result<()> {
+        info!(
+            "🛑 {}: Stopping Icecast stream '{}'",
+            "ICECAST_COORDINATOR".blue(),
+            stream_id
+        );
+
+        let icecast_device_id = format!("icecast_output_{}", stream_id);
+
+        // Remove the OutputWorker from the audio pipeline
+        // This will automatically clean up all resources (RTRB producer, worker thread, etc.)
+        match self
+            .audio_pipeline
+            .remove_output_device(&icecast_device_id)
+            .await
+        {
+            Ok(()) => {
+                // Remove from our tracking as well
+                self.output_rtrb_producers.remove(&icecast_device_id);
+
+                info!(
+                    "✅ {}: Icecast OutputWorker stopped and removed from pipeline for stream '{}'",
+                    "ICECAST_COORDINATOR".blue(),
+                    stream_id
+                );
+                Ok(())
+            }
+            Err(e) => {
+                error!(
+                    "❌ {}: Failed to remove Icecast OutputWorker from pipeline for '{}': {}",
+                    "ICECAST_ERROR".red(),
+                    stream_id,
                     e
                 );
                 Err(e)

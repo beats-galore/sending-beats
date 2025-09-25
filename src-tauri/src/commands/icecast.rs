@@ -1,5 +1,6 @@
 use crate::AudioState;
 use tauri::State;
+use crate::audio::broadcasting::config::StreamingServiceConfig;
 
 // ================================================================================================
 // ENHANCED ICECAST STREAMING COMMANDS
@@ -75,37 +76,110 @@ pub async fn initialize_icecast_streaming(
 }
 
 #[tauri::command]
-pub async fn start_icecast_streaming() -> Result<String, String> {
-    use crate::audio::broadcasting::service::start_streaming;
+pub async fn start_icecast_streaming(
+    audio_state: State<'_, AudioState>,
+    config: StreamingServiceConfig,
+) -> Result<String, String> {
+    println!("🎯 Starting Icecast streaming with config to {}:{}{}",
+             config.server_host, config.server_port, config.mount_point);
 
-    println!("🎯 Starting Icecast streaming...");
+    // Step 1: Send command to IsolatedAudioManager to create Icecast OutputWorker
+    let stream_id = uuid::Uuid::new_v4().to_string();
+    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+    let command = crate::audio::mixer::stream_management::AudioCommand::StartIcecast {
+        stream_id: stream_id.clone(),
+        config: config.clone(),
+        response_tx,
+    };
 
-    match start_streaming().await {
+    if let Err(e) = audio_state.audio_command_tx.send(command).await {
+        return Err(format!("Failed to send Icecast start command: {}", e));
+    }
+
+    // Step 2: Wait for the RTRB consumer from the audio pipeline
+    let icecast_consumer = match response_rx.await {
+        Ok(Ok(consumer)) => consumer,
+        Ok(Err(e)) => return Err(format!("Failed to create Icecast output worker: {}", e)),
+        Err(e) => return Err(format!("Failed to receive response: {}", e)),
+    };
+
+    println!("🔄 Received RTRB consumer from audio pipeline");
+
+    // Step 3: Start Icecast streaming service with the RTRB consumer
+    use crate::audio::broadcasting::service::start_streaming_with_consumer;
+
+    match start_streaming_with_consumer(config, icecast_consumer).await {
         Ok(()) => {
-            println!("✅ Icecast streaming started successfully");
-            Ok("Streaming started successfully".to_string())
+            println!("✅ Icecast streaming started with stream ID: {}", stream_id);
+            Ok(format!("Streaming started successfully with stream ID: {}", stream_id))
         }
         Err(e) => {
-            eprintln!("❌ Failed to start streaming: {}", e);
+            println!("❌ Failed to start Icecast streaming service: {}", e);
+
+            // **CLEANUP**: Icecast service failed, need to clean up the OutputWorker
+            println!("🧹 Cleaning up OutputWorker after Icecast service failure...");
+            let (cleanup_tx, cleanup_rx) = tokio::sync::oneshot::channel();
+            let cleanup_command = crate::audio::mixer::stream_management::AudioCommand::StopIcecast {
+                stream_id: stream_id.clone(),
+                response_tx: cleanup_tx,
+            };
+
+            if let Err(cleanup_err) = audio_state.audio_command_tx.send(cleanup_command).await {
+                println!("⚠️ Failed to send cleanup command: {}", cleanup_err);
+            } else {
+                match cleanup_rx.await {
+                    Ok(Ok(())) => println!("✅ OutputWorker cleaned up successfully"),
+                    Ok(Err(cleanup_err)) => println!("⚠️ Failed to cleanup OutputWorker: {}", cleanup_err),
+                    Err(cleanup_err) => println!("⚠️ Failed to receive cleanup response: {}", cleanup_err),
+                }
+            }
+
             Err(format!("Failed to start streaming: {}", e))
         }
     }
 }
 
 #[tauri::command]
-pub async fn stop_icecast_streaming() -> Result<String, String> {
+pub async fn stop_icecast_streaming(
+    audio_state: State<'_, AudioState>,
+    stream_id: String,
+) -> Result<String, String> {
+    println!("🛑 Stopping Icecast streaming for stream: {}", stream_id);
+
+    // Step 1: Stop the Icecast streaming service first
     use crate::audio::broadcasting::service::stop_streaming;
 
-    println!("🛑 Stopping Icecast streaming...");
-
     match stop_streaming().await {
-        Ok(()) => {
-            println!("✅ Icecast streaming stopped successfully");
-            Ok("Streaming stopped successfully".to_string())
+        Ok(()) => println!("✅ Icecast streaming service stopped"),
+        Err(e) => {
+            println!("⚠️ Error stopping Icecast service (continuing with cleanup): {}", e);
+        }
+    }
+
+    // Step 2: Send command to IsolatedAudioManager to remove Icecast OutputWorker
+    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+    let command = crate::audio::mixer::stream_management::AudioCommand::StopIcecast {
+        stream_id: stream_id.clone(),
+        response_tx,
+    };
+
+    if let Err(e) = audio_state.audio_command_tx.send(command).await {
+        return Err(format!("Failed to send Icecast stop command: {}", e));
+    }
+
+    // Step 3: Wait for confirmation that OutputWorker is cleaned up
+    match response_rx.await {
+        Ok(Ok(())) => {
+            println!("✅ Icecast streaming stopped completely for stream: {}", stream_id);
+            Ok(format!("Streaming stopped successfully for stream: {}", stream_id))
+        }
+        Ok(Err(e)) => {
+            println!("❌ Failed to stop Icecast output worker: {}", e);
+            Err(format!("Failed to stop streaming: {}", e))
         }
         Err(e) => {
-            eprintln!("❌ Failed to stop streaming: {}", e);
-            Err(format!("Failed to stop streaming: {}", e))
+            println!("❌ Failed to receive stop response: {}", e);
+            Err(format!("Failed to receive stop confirmation: {}", e))
         }
     }
 }

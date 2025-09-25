@@ -37,6 +37,15 @@ pub async fn start_streaming() -> Result<()> {
     service.start_streaming().await
 }
 
+/// Start streaming with an RTRB consumer from the audio pipeline
+pub async fn start_streaming_with_consumer(
+    config: StreamingServiceConfig,
+    rtrb_consumer: rtrb::Consumer<f32>,
+) -> Result<()> {
+    let service = get_streaming_service().await;
+    service.start_streaming_with_consumer(config, rtrb_consumer).await
+}
+
 /// Stop streaming
 pub async fn stop_streaming() -> Result<()> {
     let service = get_streaming_service().await;

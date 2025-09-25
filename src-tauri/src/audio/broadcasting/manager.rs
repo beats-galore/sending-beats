@@ -235,6 +235,51 @@ impl StreamingService {
         Ok(())
     }
 
+    /// Start streaming with an RTRB consumer from the audio pipeline
+    pub async fn start_streaming_with_consumer(
+        &self,
+        config: StreamingServiceConfig,
+        rtrb_consumer: rtrb::Consumer<f32>,
+    ) -> Result<()> {
+        info!("🎯 Starting streaming with RTRB consumer from audio pipeline...");
+
+        // Initialize with the provided config first
+        self.initialize(config).await?;
+
+        // Update state
+        {
+            let mut state = self.state.lock().await;
+            state.is_running = true;
+            state.start_time = Some(Instant::now());
+            state.reconnect_attempts = 0;
+            state.last_error = None;
+            state.should_auto_reconnect = true;
+        }
+
+        // Start Icecast manager with the RTRB consumer
+        if let Some(ref mut icecast_manager) = *self.icecast_manager.lock().await {
+            icecast_manager.start_streaming_with_consumer(rtrb_consumer).await?;
+
+            // Update connection state
+            {
+                let mut state = self.state.lock().await;
+                state.is_connected = true;
+                state.is_streaming = true;
+                state.last_connection_time = Some(Instant::now());
+                state.connection_health.last_heartbeat = Some(Instant::now());
+                state.connection_health.consecutive_failures = 0;
+            }
+
+            // Start connection monitor
+            self.start_connection_monitor().await;
+        } else {
+            return Err(anyhow::anyhow!("Icecast manager not initialized"));
+        }
+
+        info!("✅ Streaming started successfully with RTRB consumer");
+        Ok(())
+    }
+
     /// Update stream metadata
     pub async fn update_metadata(&self, title: String, artist: String) -> Result<()> {
         info!("📝 Updating stream metadata: {} - {}", artist, title);

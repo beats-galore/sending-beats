@@ -11,5 +11,5 @@ pub use super::utils::{
     connect_streaming_to_mixer, create_stream_bitrate_preset, get_available_bitrates,
     get_current_stream_bitrate, get_streaming_service, get_streaming_status,
     get_variable_bitrate_settings, initialize_streaming, set_stream_bitrate,
-    set_variable_bitrate_streaming, start_streaming, stop_streaming, update_stream_metadata,
+    set_variable_bitrate_streaming, start_streaming, start_streaming_with_consumer, stop_streaming, update_stream_metadata,
 };
