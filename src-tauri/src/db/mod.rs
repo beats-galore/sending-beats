@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use std::error::Error;
 use std::path::Path;
-use serde::{Deserialize, Serialize};
 
 // Re-export all table modules
 pub mod audio_device_levels;

@@ -17,9 +17,8 @@ pub mod commands;
 pub use audio::{
     get_device_monitoring_stats as get_monitoring_stats_impl, AudioChannel, AudioConfigFactory,
     AudioDatabase, AudioDeviceInfo, AudioDeviceManager, AudioEventBus, AudioMetrics, ChannelConfig,
-    Compressor, DeviceMonitorStats, EQBand, FilePlayerService, Limiter,
-    MixerConfig, PeakDetector, RmsDetector, ThreeBandEqualizer, VULevelData,
-    VirtualMixer,
+    Compressor, DeviceMonitorStats, EQBand, FilePlayerService, Limiter, MixerConfig, PeakDetector,
+    RmsDetector, ThreeBandEqualizer, VULevelData, VirtualMixer,
 };
 // Re-export application audio types
 pub use audio::tap::{ApplicationAudioError, ProcessInfo, TapStats};
