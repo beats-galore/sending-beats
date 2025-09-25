@@ -23,7 +23,7 @@
     "rust:fmt": "cargo fmt --manifest-path ./src-tauri/Cargo.toml",
     "rust:fmt:check": "cargo fmt --manifest-path ./src-tauri/Cargo.toml -- --check",
     "rust:clippy": "cargo clippy --all-targets --all-features  --manifest-path ./src-tauri/Cargo.toml",
-    "migration": "node -e \"const desc = process.argv[2] || 'migration'; const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14); console.log('Creating migration:', `src-tauri/migrations/${timestamp}_${desc}.sql`); require('fs').writeFileSync(`src-tauri/migrations/${timestamp}_${desc}.sql`, '-- ' + desc.replace(/_/g, ' ') + '\\n\\n')\"",
+    "migration": "node -e \"const desc = process.argv[2] || 'migration'; const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14); console.log('Creating migration:', \\`src-tauri/migrations/\\${timestamp}_\\${desc}.sql\\`); require('fs').writeFileSync(\\`src-tauri/migrations/\\${timestamp}_\\${desc}.sql\\`, '-- ' + desc.replace(/_/g, ' ') + '\\\\n\\\\n')\"",
     "quality": "turbo run quality",
     "quality:fix": "turbo run quality:fix",
     "pre-commit": "turbo run pre-commit",
