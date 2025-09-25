@@ -1,12 +1,12 @@
 import { Card, Select, Stack, Badge, Text, Alert, Loader, Center } from '@mantine/core';
 import { IconCheck, IconAlertCircle } from '@tabler/icons-react';
-import { useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 
 import { useConfigurationStore } from '../stores/mixer-store';
 
 type ConfigurationSelectorProps = {
   onConfigurationSelect?: (configId: string) => void;
-}
+};
 
 export const ConfigurationSelector = ({ onConfigurationSelect }: ConfigurationSelectorProps) => {
   const {
@@ -24,12 +24,15 @@ export const ConfigurationSelector = ({ onConfigurationSelect }: ConfigurationSe
     void loadConfigurations();
   }, [loadConfigurations]);
 
-  const handleConfigurationSelect = async (configId: string | null) => {
-    if (!configId) return;
+  const handleConfigurationSelect = useCallback(
+    async (configId: string | null) => {
+      if (!configId) return;
 
-    await selectConfiguration(configId);
-    onConfigurationSelect?.(configId);
-  };
+      await selectConfiguration(configId);
+      onConfigurationSelect?.(configId);
+    },
+    [onConfigurationSelect, selectConfiguration]
+  );
 
   const selectData = reusableConfigurations.map((config) => ({
     value: config.id,
@@ -37,27 +40,18 @@ export const ConfigurationSelector = ({ onConfigurationSelect }: ConfigurationSe
     description: config.description,
   }));
 
+  // Find the currently selected value based on active session's linked reusable config
+  const selectedValue = activeSession?.reusableConfigurationId || null;
+
   return (
     <Card withBorder p="md">
       <Stack gap="sm">
-        {/* Active Session Display */}
-        {activeSession && (
-          <Badge
-            leftSection={<IconCheck size={14} />}
-            color="green"
-            variant="light"
-            size="lg"
-            fullWidth
-          >
-            Active: {activeSession.name}
-          </Badge>
-        )}
-
         {/* Configuration Selector */}
         <Select
           label="Load Configuration"
           placeholder="Select a reusable configuration..."
           data={selectData}
+          value={selectedValue}
           searchable
           clearable
           disabled={isLoading}

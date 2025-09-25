@@ -1,28 +1,28 @@
 use anyhow::{Context, Result};
+use sea_orm::{Database, DatabaseConnection, ConnectOptions};
 use serde::{Deserialize, Serialize};
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use std::error::Error;
 use std::path::Path;
+use std::time::Duration;
 
-// Re-export all table modules
+// Legacy SQLx table modules (keeping for VU levels and other non-migrated tables)
 pub mod audio_device_levels;
-pub mod audio_effects;
-pub mod audio_mixer_configurations;
 pub mod broadcasts;
-pub mod configured_audio_devices;
 pub mod recordings;
 
-// Re-export types for convenience
+// SeaORM services
+pub mod seaorm_services;
+
+// Re-export only legacy types that are still needed
 pub use audio_device_levels::*;
-pub use audio_effects::*;
-pub use audio_mixer_configurations::*;
 pub use broadcasts::*;
-pub use configured_audio_devices::*;
 pub use recordings::*;
 
 /// SQLite-based database manager for audio system
 pub struct AudioDatabase {
     pool: SqlitePool,
+    sea_orm_db: DatabaseConnection,
     retention_seconds: i64,
 }
 
@@ -97,12 +97,27 @@ impl AudioDatabase {
 
         println!("✅ Database migrations completed successfully");
 
+        // Create SeaORM connection
+        println!("🌊 Initializing SeaORM connection...");
+        let mut opt = ConnectOptions::new(database_url.clone());
+        opt.max_connections(10)
+            .min_connections(1)
+            .connect_timeout(Duration::from_secs(8))
+            .idle_timeout(Duration::from_secs(8));
+
+        let sea_orm_db = Database::connect(opt)
+            .await
+            .context("Failed to create SeaORM connection")?;
+
+        println!("✅ SeaORM connection established");
+
         // Set default VU retention to 60 seconds
         let retention_seconds = 60;
         println!("📊 VU level retention set to {} seconds", retention_seconds);
 
         Ok(Self {
             pool,
+            sea_orm_db,
             retention_seconds,
         })
     }
@@ -110,6 +125,11 @@ impl AudioDatabase {
     /// Get database connection pool for advanced queries
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+
+    /// Get SeaORM database connection
+    pub fn sea_orm(&self) -> &DatabaseConnection {
+        &self.sea_orm_db
     }
 
     /// Cleanup old VU level data to prevent database growth

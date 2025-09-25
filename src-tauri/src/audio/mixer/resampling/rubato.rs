@@ -4,7 +4,6 @@ use rubato::{
     FftFixedIn, FftFixedOut, Resampler as RubatoResampler, SincFixedOut,
     SincInterpolationParameters, SincInterpolationType,
 };
-use samplerate_rs::{convert, ConverterType};
 use tracing::info;
 /// Sample Rate Converter for Dynamic Audio Buffer Conversion
 ///

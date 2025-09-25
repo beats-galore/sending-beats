@@ -33,7 +33,7 @@ pub use effects::{
 
 pub use mixer::stream_management::VirtualMixer;
 
-pub use crate::db::{AudioDatabase, AudioDeviceConfig, AudioEventBus, ChannelConfig, VULevelData};
+pub use crate::db::{AudioDatabase, AudioEventBus, VULevelData};
 
 pub use broadcasting::{
     create_streaming_bridge, AudioEncoder, AudioStreamingBridge, IcecastSourceClient, IcecastStats,

@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod db;
+pub mod entities;
 pub mod log;
 pub mod types;
 
@@ -16,7 +17,7 @@ pub mod commands;
 // Re-export audio types for testing and external use
 pub use audio::{
     get_device_monitoring_stats as get_monitoring_stats_impl, AudioChannel, AudioConfigFactory,
-    AudioDatabase, AudioDeviceInfo, AudioDeviceManager, AudioEventBus, AudioMetrics, ChannelConfig,
+    AudioDatabase, AudioDeviceInfo, AudioDeviceManager, AudioEventBus, AudioMetrics,
     Compressor, DeviceMonitorStats, EQBand, FilePlayerService, Limiter, MixerConfig, PeakDetector,
     RmsDetector, ThreeBandEqualizer, VULevelData, VirtualMixer,
 };
