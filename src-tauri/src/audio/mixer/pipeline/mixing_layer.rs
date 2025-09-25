@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 use super::queue_types::{MixedAudioSamples, ProcessedAudioSamples};
+use super::temporal_sync_buffer::TemporalSyncBuffer;
 use crate::audio::mixer::stream_management::virtual_mixer::VirtualMixer;
 use colored::*;
 
@@ -154,7 +155,11 @@ impl MixingLayer {
             );
 
             let mut mix_cycles = 0u64;
-            let mut available_samples = HashMap::new();
+            let mut cleanup_cycle_count = 0u64;
+
+            // **TEMPORAL SYNCHRONIZATION**: Initialize temporal sync buffer
+            // 25ms sync window allows for typical hardware callback timing variations
+            let mut temporal_buffer = TemporalSyncBuffer::new(25, 10); // 25ms window, max 10 samples per device
 
             // **PERFORMANCE FIX**: Pre-allocate reusable vectors outside the loop
             let mut input_samples_for_mixer: Vec<(String, &[f32])> = Vec::with_capacity(8);
@@ -188,25 +193,35 @@ impl MixingLayer {
                 }
                 let command_duration = command_start.elapsed();
 
-                // Step 1: Collect available samples from all input streams
+                // **TEMPORAL SYNC STEP 1**: Collect samples and add to temporal buffer
                 let collection_start = std::time::Instant::now();
-                available_samples.clear();
                 for (device_id, receiver) in processed_input_receivers.iter_mut() {
                     // Non-blocking receive - get whatever samples are available
                     while let Ok(processed_audio) = receiver.try_recv() {
-                        available_samples.insert(device_id.clone(), processed_audio);
+                        temporal_buffer.add_samples(device_id.clone(), processed_audio);
                         mixed_something = true;
                     }
                 }
                 let collection_duration = collection_start.elapsed();
 
-                // Step 2: Mix available samples if we have any
-                let mixing_duration = if mixed_something && !available_samples.is_empty() {
+                // **TEMPORAL SYNC STEP 2**: Extract synchronized samples from buffer
+                let sync_start = std::time::Instant::now();
+                let synchronized_samples = temporal_buffer.extract_synchronized_samples();
+                let sync_duration = sync_start.elapsed();
+
+                // Periodic cleanup to prevent memory bloat (every 1000 cycles ≈ 20 seconds)
+                cleanup_cycle_count += 1;
+                if cleanup_cycle_count % 1000 == 0 {
+                    temporal_buffer.cleanup_old_samples();
+                }
+
+                // **TEMPORAL SYNC STEP 3**: Mix synchronized samples if we have any
+                let mixing_duration = if !synchronized_samples.is_empty() {
                     let mixing_start = std::time::Instant::now();
 
-                    // **PERFORMANCE FIX**: Use original approach but accept one allocation per cycle
+                    // **TEMPORAL SYNC FIX**: Use synchronized samples instead of raw available samples
                     let prep_start = std::time::Instant::now();
-                    let input_samples_for_mixer: Vec<(String, &[f32])> = available_samples
+                    let input_samples_for_mixer: Vec<(String, &[f32])> = synchronized_samples
                         .iter()
                         .map(|(device_id, processed_audio)| {
                             (device_id.clone(), processed_audio.samples.as_slice())
@@ -258,9 +273,9 @@ impl MixingLayer {
 
                         // Rate-limited logging (only when we actually mixed something)
                         if mix_cycles <= 5 || mix_cycles % 1000 == 0 {
-                            info!("🎵 {}: VirtualMixer mixed {} inputs ({} samples) and sent to {} outputs (cycle #{}, took {}μs)",
-                                  "MIXING_LAYER_WORKER".yellow(),
-                                  active_inputs, samples_count, mixed_output_senders.len(), mix_cycles, total_mixing_duration.as_micros());
+                            info!("🎵 {}: TEMPORAL SYNC mixed {} inputs ({} samples) and sent to {} outputs (cycle #{}, sync took {}μs, total {}μs)",
+                                  "MIXING_LAYER_TEMPORAL".cyan(),
+                                  active_inputs, samples_count, mixed_output_senders.len(), mix_cycles, sync_duration.as_micros(), total_mixing_duration.as_micros());
                         }
 
                         // Performance monitoring with detailed breakdown (only when we actually mixed something)
@@ -289,11 +304,12 @@ impl MixingLayer {
                 // Log full cycle breakdown for very slow cycles
                 if cycle_duration.as_micros() > 2000 {
                     warn!(
-                        "⏱️ {}: Very slow cycle: total {}μs (commands: {}μs, collection: {}μs, mixing: {}μs)",
-                        "MIXING_CYCLE_BREAKDOWN".yellow(),
+                        "⏱️ {}: Very slow cycle: total {}μs (commands: {}μs, collection: {}μs, sync: {}μs, mixing: {}μs)",
+                        "TEMPORAL_CYCLE_BREAKDOWN".yellow(),
                         cycle_duration.as_micros(),
                         command_duration.as_micros(),
                         collection_duration.as_micros(),
+                        sync_duration.as_micros(),
                         mixing_duration.as_micros()
                     );
                 }

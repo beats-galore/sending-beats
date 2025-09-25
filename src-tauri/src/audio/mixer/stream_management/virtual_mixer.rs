@@ -96,6 +96,7 @@ impl VirtualMixer {
             let mixing_start = std::time::Instant::now();
             let mut active_channels = 0;
 
+            // **GAIN STAGING FIX**: First pass - accumulate samples and count active channels
             for (device_id, samples) in input_samples.iter() {
                 if !samples.is_empty() {
                     active_channels += 1;
@@ -115,13 +116,47 @@ impl VirtualMixer {
                     // **CRITICAL FIX**: Safe buffer size matching to prevent crashes
                     let mix_length = buffer.len().min(stereo_samples.len());
 
-                    // Add samples with bounds checking
+                    // **GAIN STAGING FIX**: Accumulate samples (will normalize after counting all channels)
                     for i in 0..mix_length {
                         if i < buffer.len() && i < stereo_samples.len() {
                             buffer[i] += stereo_samples[i];
                         }
                     }
                 }
+            }
+
+            // **PROFESSIONAL MIXING FIX**: Use RMS-based dynamic gain staging instead of simple division
+            if active_channels > 1 {
+                // Calculate RMS (Root Mean Square) to determine actual audio energy
+                let sum_of_squares: f32 = buffer.iter().map(|&s| s * s).sum();
+                let rms = (sum_of_squares / buffer.len() as f32).sqrt();
+
+                // Only apply gain reduction if we actually have significant signal energy
+                // Professional standard: -18dBFS RMS ≈ 0.125 linear scale
+                const PROFESSIONAL_RMS_TARGET: f32 = 0.125;
+
+                if rms > PROFESSIONAL_RMS_TARGET {
+                    // Apply gentle compression instead of hard division
+                    // Use a soft-knee approach that preserves quiet signals
+                    let compression_ratio = (PROFESSIONAL_RMS_TARGET / rms).sqrt(); // Soft compression
+                    let gain_reduction = compression_ratio.max(0.7); // Limit max reduction to 30%
+
+                    for sample in buffer.iter_mut() {
+                        *sample *= gain_reduction;
+                    }
+
+                    // Log when we apply significant gain reduction
+                    if gain_reduction < 0.9 {
+                        info!(
+                            "🎛️ {}: Applied dynamic gain reduction {:.2} (RMS: {:.3}, channels: {})",
+                            "PROFESSIONAL_MIXING".bright_yellow(),
+                            gain_reduction,
+                            rms,
+                            active_channels
+                        );
+                    }
+                }
+                // If RMS is low (quiet signals), no gain reduction - preserve dynamics!
             }
 
             let mixing_loop_duration = mixing_start.elapsed();
