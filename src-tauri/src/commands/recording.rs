@@ -54,18 +54,23 @@ pub async fn start_recording(
             // **CLEANUP**: Recording service failed, need to clean up the OutputWorker
             println!("🧹 Cleaning up OutputWorker after recording service failure...");
             let (cleanup_tx, cleanup_rx) = tokio::sync::oneshot::channel();
-            let cleanup_command = crate::audio::mixer::stream_management::AudioCommand::StopRecording {
-                session_id: config.id.clone(),
-                response_tx: cleanup_tx,
-            };
+            let cleanup_command =
+                crate::audio::mixer::stream_management::AudioCommand::StopRecording {
+                    session_id: config.id.clone(),
+                    response_tx: cleanup_tx,
+                };
 
             if let Err(cleanup_err) = audio_state.audio_command_tx.send(cleanup_command).await {
                 println!("⚠️ Failed to send cleanup command: {}", cleanup_err);
             } else {
                 match cleanup_rx.await {
                     Ok(Ok(())) => println!("✅ OutputWorker cleaned up successfully"),
-                    Ok(Err(cleanup_err)) => println!("⚠️ OutputWorker cleanup failed: {}", cleanup_err),
-                    Err(cleanup_err) => println!("⚠️ Failed to receive cleanup response: {}", cleanup_err),
+                    Ok(Err(cleanup_err)) => {
+                        println!("⚠️ OutputWorker cleanup failed: {}", cleanup_err)
+                    }
+                    Err(cleanup_err) => {
+                        println!("⚠️ Failed to receive cleanup response: {}", cleanup_err)
+                    }
                 }
             }
 
@@ -105,7 +110,10 @@ pub async fn stop_recording(
     };
 
     if let Err(e) = audio_state.audio_command_tx.send(command).await {
-        println!("⚠️ Failed to send recording stop command (recording already stopped cleanly): {}", e);
+        println!(
+            "⚠️ Failed to send recording stop command (recording already stopped cleanly): {}",
+            e
+        );
         // Don't return error here - recording service already stopped successfully
     } else {
         // Wait for cleanup completion
