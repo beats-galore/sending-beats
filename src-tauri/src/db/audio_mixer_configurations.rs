@@ -5,11 +5,14 @@ use uuid::Uuid;
 
 /// Audio mixer configuration - parent mapping table
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
 pub struct AudioMixerConfiguration {
     pub id: Uuid,
     pub name: String,
     pub description: Option<String>,
     pub configuration_type: String, // 'reusable' or 'session'
+    pub session_active: bool, // Only one configuration can be active at a time
+    pub reusable_configuration_id: Option<Uuid>, // Self-referential for session configs
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -24,6 +27,8 @@ impl AudioMixerConfiguration {
             name,
             description: None,
             configuration_type,
+            session_active: false,
+            reusable_configuration_id: None,
             created_at: now,
             updated_at: now,
             deleted_at: None,
@@ -44,13 +49,15 @@ impl AudioMixerConfiguration {
     pub async fn save(&self, pool: &SqlitePool) -> Result<()> {
         sqlx::query(
             "INSERT INTO audio_mixer_configurations
-             (id, name, description, configuration_type, created_at, updated_at, deleted_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+             (id, name, description, configuration_type, session_active, reusable_configuration_id, created_at, updated_at, deleted_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(self.id.to_string())
         .bind(&self.name)
         .bind(&self.description)
         .bind(&self.configuration_type)
+        .bind(self.session_active)
+        .bind(self.reusable_configuration_id.map(|id| id.to_string()))
         .bind(self.created_at)
         .bind(self.updated_at)
         .bind(self.deleted_at)
@@ -66,12 +73,14 @@ impl AudioMixerConfiguration {
 
         sqlx::query(
             "UPDATE audio_mixer_configurations
-             SET name = ?, description = ?, configuration_type = ?, updated_at = ?
+             SET name = ?, description = ?, configuration_type = ?, session_active = ?, reusable_configuration_id = ?, updated_at = ?
              WHERE id = ? AND deleted_at IS NULL",
         )
         .bind(&self.name)
         .bind(&self.description)
         .bind(&self.configuration_type)
+        .bind(self.session_active)
+        .bind(self.reusable_configuration_id.map(|id| id.to_string()))
         .bind(self.updated_at)
         .bind(self.id.to_string())
         .execute(pool)
@@ -101,6 +110,7 @@ impl AudioMixerConfiguration {
     pub async fn find_by_id(pool: &SqlitePool, id: Uuid) -> Result<Option<Self>> {
         let config = sqlx::query_as::<_, Self>(
             "SELECT id as \"id: Uuid\", name, description, configuration_type,
+             session_active, reusable_configuration_id as \"reusable_configuration_id: Option<Uuid>\",
              created_at, updated_at, deleted_at
              FROM audio_mixer_configurations
              WHERE id = ? AND deleted_at IS NULL",
@@ -116,6 +126,7 @@ impl AudioMixerConfiguration {
     pub async fn list_all(pool: &SqlitePool) -> Result<Vec<Self>> {
         let configs = sqlx::query_as::<_, Self>(
             "SELECT id as \"id: Uuid\", name, description, configuration_type,
+             session_active, reusable_configuration_id as \"reusable_configuration_id: Option<Uuid>\",
              created_at, updated_at, deleted_at
              FROM audio_mixer_configurations
              WHERE deleted_at IS NULL
@@ -131,6 +142,7 @@ impl AudioMixerConfiguration {
     pub async fn list_by_type(pool: &SqlitePool, config_type: &str) -> Result<Vec<Self>> {
         let configs = sqlx::query_as::<_, Self>(
             "SELECT id as \"id: Uuid\", name, description, configuration_type,
+             session_active, reusable_configuration_id as \"reusable_configuration_id: Option<Uuid>\",
              created_at, updated_at, deleted_at
              FROM audio_mixer_configurations
              WHERE configuration_type = ? AND deleted_at IS NULL
@@ -151,5 +163,80 @@ impl AudioMixerConfiguration {
     /// List only session configurations
     pub async fn list_sessions(pool: &SqlitePool) -> Result<Vec<Self>> {
         Self::list_by_type(pool, "session").await
+    }
+
+    /// Get the currently active session configuration
+    pub async fn get_active_session(pool: &SqlitePool) -> Result<Option<Self>> {
+        let config = sqlx::query_as::<_, Self>(
+            "SELECT id as \"id: Uuid\", name, description, configuration_type,
+             session_active, reusable_configuration_id as \"reusable_configuration_id: Option<Uuid>\",
+             created_at, updated_at, deleted_at
+             FROM audio_mixer_configurations
+             WHERE session_active = TRUE AND deleted_at IS NULL
+             LIMIT 1",
+        )
+        .fetch_optional(pool)
+        .await?;
+
+        Ok(config)
+    }
+
+    /// Set this configuration as the active session (deactivates all others)
+    pub async fn set_as_active_session(&mut self, pool: &SqlitePool) -> Result<()> {
+        // First, deactivate all other sessions
+        sqlx::query(
+            "UPDATE audio_mixer_configurations
+             SET session_active = FALSE, updated_at = ?
+             WHERE session_active = TRUE AND deleted_at IS NULL",
+        )
+        .bind(chrono::Utc::now())
+        .execute(pool)
+        .await?;
+
+        // Then activate this one
+        self.session_active = true;
+        self.updated_at = chrono::Utc::now();
+
+        sqlx::query(
+            "UPDATE audio_mixer_configurations
+             SET session_active = TRUE, updated_at = ?
+             WHERE id = ? AND deleted_at IS NULL",
+        )
+        .bind(self.updated_at)
+        .bind(self.id.to_string())
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Create a new session configuration from a reusable one
+    pub async fn create_session_from_reusable(
+        pool: &SqlitePool,
+        reusable_id: Uuid,
+        session_name: Option<String>,
+    ) -> Result<Self> {
+        // Get the reusable configuration
+        let reusable = Self::find_by_id(pool, reusable_id).await?
+            .ok_or_else(|| anyhow::anyhow!("Reusable configuration not found"))?;
+
+        // Create new session configuration
+        let mut session = Self {
+            id: Uuid::new_v4(),
+            name: session_name.unwrap_or_else(|| format!("{} (Session)", reusable.name)),
+            description: reusable.description.clone(),
+            configuration_type: "session".to_string(),
+            session_active: true,
+            reusable_configuration_id: Some(reusable_id),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            deleted_at: None,
+        };
+
+        // Set as active session and save
+        session.set_as_active_session(pool).await?;
+        session.save(pool).await?;
+
+        Ok(session)
     }
 }

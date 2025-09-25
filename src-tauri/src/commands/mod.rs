@@ -2,6 +2,7 @@
 pub mod application_audio;
 pub mod audio_devices;
 pub mod audio_effects;
+pub mod configurations;
 pub mod debug;
 pub mod file_player;
 pub mod icecast;
@@ -13,6 +14,7 @@ pub mod streaming;
 pub use application_audio::*;
 pub use audio_devices::*;
 pub use audio_effects::*;
+pub use configurations::*;
 pub use debug::*;
 pub use file_player::*;
 pub use icecast::*;
