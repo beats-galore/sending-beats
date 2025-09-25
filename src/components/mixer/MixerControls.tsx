@@ -1,37 +1,76 @@
 // Mixer control buttons (Add Channel) - No start/stop needed for always-running mixer
-import { Group, Button } from '@mantine/core';
-import { IconPlus, IconBug, IconBugOff } from '@tabler/icons-react';
-import { invoke } from '@tauri-apps/api/core';
-import { memo, useState, useEffect } from 'react';
+import { Group, Button, Stack, Grid } from '@mantine/core';
+import { IconPlus, IconBug } from '@tabler/icons-react';
+import { memo, useState } from 'react';
 
 import { useMixerControls } from '../../hooks';
+import { ConfigurationSelector } from '../ConfigurationSelector';
+import { ConfigurationSaver } from '../ConfigurationSaver';
+import { SaveAsNewConfiguration } from '../SaveAsNewConfiguration';
 import { DebugLogModal } from '../DebugLogModal';
 
 export const MixerControls = memo(() => {
   const { isReady, onAddChannel } = useMixerControls();
   const [showDebugModal, setShowDebugModal] = useState(false);
 
-  return (
-    <Group>
-      <Button
-        leftSection={<IconPlus size={16} />}
-        onClick={onAddChannel}
-        disabled={!isReady}
-        variant="outline"
-      >
-        Add Channel
-      </Button>
+  const handleConfigurationSelect = (configId: string) => {
+    console.log('Configuration selected:', configId);
+    // TODO: Refresh mixer UI or trigger reload
+  };
 
-      <Button
-        leftSection={<IconBug size={16} />}
-        onClick={() => setShowDebugModal(true)}
-        variant="filled"
-        color="yellow"
-        size="sm"
-      >
-        Set debug config
-      </Button>
-      <DebugLogModal opened={showDebugModal} onClose={() => setShowDebugModal(false)} />
-    </Group>
+  const handleConfigurationSaved = () => {
+    console.log('Configuration saved');
+    // TODO: Show success notification
+  };
+
+  const handleConfigurationCreated = () => {
+    console.log('New configuration created');
+    // TODO: Show success notification and refresh list
+  };
+
+  return (
+    <Stack gap="md">
+      {/* Configuration Controls */}
+      <Grid>
+        <Grid.Col span={{ base: 12, md: 4 }}>
+          <ConfigurationSelector
+            onConfigurationSelect={handleConfigurationSelect}
+          />
+        </Grid.Col>
+        <Grid.Col span={{ base: 12, md: 4 }}>
+          <ConfigurationSaver
+            onConfigurationSaved={handleConfigurationSaved}
+          />
+        </Grid.Col>
+        <Grid.Col span={{ base: 12, md: 4 }}>
+          <SaveAsNewConfiguration
+            onConfigurationCreated={handleConfigurationCreated}
+          />
+        </Grid.Col>
+      </Grid>
+
+      {/* Mixer Action Controls */}
+      <Group>
+        <Button
+          leftSection={<IconPlus size={16} />}
+          onClick={onAddChannel}
+          disabled={!isReady}
+          variant="outline"
+        >
+          Add Channel
+        </Button>
+
+        <Button
+          leftSection={<IconBug size={16} />}
+          onClick={() => setShowDebugModal(true)}
+          variant="filled"
+          color="yellow"
+          size="sm"
+        >
+          Set debug config
+        </Button>
+        <DebugLogModal opened={showDebugModal} onClose={() => setShowDebugModal(false)} />
+      </Group>
+    </Stack>
   );
 });
