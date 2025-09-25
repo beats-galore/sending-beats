@@ -43,9 +43,7 @@ pub async fn create_session_from_reusable(
 
 /// Save the current session configuration back to its reusable configuration
 #[tauri::command]
-pub async fn save_session_to_reusable(
-    state: State<'_, AudioState>,
-) -> Result<(), String> {
+pub async fn save_session_to_reusable(state: State<'_, AudioState>) -> Result<(), String> {
     let pool = state.database.pool();
 
     // Get the active session
@@ -55,7 +53,8 @@ pub async fn save_session_to_reusable(
         .ok_or_else(|| "No active session found".to_string())?;
 
     // Get the reusable configuration it's linked to
-    let reusable_id = active_session.reusable_configuration_id
+    let reusable_id = active_session
+        .reusable_configuration_id
         .ok_or_else(|| "Active session is not linked to a reusable configuration".to_string())?;
 
     let mut reusable_config = AudioMixerConfiguration::find_by_id(pool, reusable_id)
@@ -68,7 +67,8 @@ pub async fn save_session_to_reusable(
     reusable_config.description = active_session.description.clone();
 
     // Update the reusable configuration
-    reusable_config.update(pool)
+    reusable_config
+        .update(pool)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -106,14 +106,13 @@ pub async fn save_session_as_new_reusable(
     };
 
     // Save the new reusable configuration
-    new_reusable.save(pool)
-        .await
-        .map_err(|e| e.to_string())?;
+    new_reusable.save(pool).await.map_err(|e| e.to_string())?;
 
     // Update the active session to point to this new reusable config
     let mut updated_session = active_session;
     updated_session.reusable_configuration_id = Some(new_reusable.id);
-    updated_session.update(pool)
+    updated_session
+        .update(pool)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -154,7 +153,8 @@ pub async fn create_reusable_configuration(
         deleted_at: None,
     };
 
-    config.save(state.database.pool())
+    config
+        .save(state.database.pool())
         .await
         .map_err(|e| e.to_string())?;
 
@@ -173,4 +173,3 @@ pub async fn get_configured_audio_devices_by_config(
         .await
         .map_err(|e| e.to_string())
 }
-

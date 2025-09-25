@@ -1,8 +1,9 @@
+import { invoke } from '@tauri-apps/api/core';
 import React, { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api';
+
 import type { AudioMixerConfiguration } from '../types/db/audio-mixer-configurations.types';
 
-interface ConfigurationSaverProps {
+type ConfigurationSaverProps = {
   onConfigurationSaved?: (config: AudioMixerConfiguration) => void;
   className?: string;
 }
