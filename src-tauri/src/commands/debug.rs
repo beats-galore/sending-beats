@@ -1,4 +1,4 @@
-use crate::{AudioState, ChannelConfig, DeviceMonitorStats, VULevelData};
+use crate::{AudioState, DeviceMonitorStats, VULevelData};
 use tauri::State;
 
 // Debug control commands

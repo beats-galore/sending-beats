@@ -354,11 +354,49 @@ export const useMixerStore = create<MixerStore>()(
           invoke<AudioMixerConfiguration | null>('get_active_session_configuration'),
         ]);
 
-        set({
-          reusableConfigurations: reusable,
-          activeSession: active,
-          isLoadingConfigurations: false,
-        });
+        // If no active session, auto-select the default configuration
+        if (!active && reusable.length > 0) {
+          const defaultConfig = reusable.find(config => config.isDefault);
+          if (defaultConfig) {
+            console.log(`🔄 No active session found, auto-selecting default configuration: ${defaultConfig.name}`);
+
+            // Create session from default configuration
+            try {
+              const newSession = await invoke<AudioMixerConfiguration>('create_session_from_reusable', {
+                reusableId: defaultConfig.id,
+                sessionName: undefined,
+              });
+
+              set({
+                reusableConfigurations: reusable,
+                activeSession: newSession,
+                isLoadingConfigurations: false,
+              });
+            } catch (sessionError) {
+              console.error('Failed to auto-select default configuration:', sessionError);
+              // Fall back to just loading the configurations without active session
+              set({
+                reusableConfigurations: reusable,
+                activeSession: active,
+                isLoadingConfigurations: false,
+              });
+            }
+          } else {
+            // No default configuration found, just load what we have
+            set({
+              reusableConfigurations: reusable,
+              activeSession: active,
+              isLoadingConfigurations: false,
+            });
+          }
+        } else {
+          // Active session exists or no reusable configs, proceed normally
+          set({
+            reusableConfigurations: reusable,
+            activeSession: active,
+            isLoadingConfigurations: false,
+          });
+        }
       } catch (error) {
         set({
           configurationError: error instanceof Error ? error.message : 'Failed to load configurations',

@@ -507,12 +507,6 @@ impl CoreAudioIntegration {
 
         if status == 0 {
             let channels = device_format.mChannelsPerFrame as u16;
-            info!(
-                "🔍 {}: Detected {} channels for CoreAudio device ID {}",
-                "CHANNEL_DETECTION".blue(),
-                channels,
-                device_id
-            );
             channels
         } else {
             warn!(

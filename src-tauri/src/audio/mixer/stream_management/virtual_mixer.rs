@@ -4,7 +4,6 @@
 // management, including adding/removing input/output streams, device switching,
 // and stream configuration operations.
 
-use super::super::resampling::SamplerateSRC;
 use super::stream_manager::StreamInfo;
 use anyhow::{Context, Result};
 use colored::*;
@@ -14,18 +13,14 @@ use tracing::{error, info, warn};
 
 #[derive(Debug)]
 pub struct VirtualMixer {
-    // **LOCK-FREE ARCHITECTURE**: Per-device resamplers with individual locks
-    // This eliminates HashMap-level contention - multiple devices can resample in parallel
-    pub input_resamplers: HashMap<String, Arc<Mutex<SamplerateSRC>>>,
-    pub output_resamplers: HashMap<String, Arc<Mutex<SamplerateSRC>>>,
+
 }
 
 impl VirtualMixer {
     /// Create a new virtual mixer with lock-free resampler architecture
     pub async fn new() -> anyhow::Result<Self> {
         Ok(Self {
-            input_resamplers: HashMap::new(),
-            output_resamplers: HashMap::new(),
+
         })
     }
 

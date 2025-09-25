@@ -1,7 +1,5 @@
-use crate::db::{
-    audio_mixer_configurations::AudioMixerConfiguration,
-    configured_audio_devices::ConfiguredAudioDevice,
-};
+use crate::db::seaorm_services::{AudioMixerConfigurationService, ConfiguredAudioDeviceService};
+use crate::entities::{audio_mixer_configuration, configured_audio_device};
 use crate::AudioState;
 use anyhow::Result;
 use tauri::State;
@@ -11,20 +9,82 @@ use uuid::Uuid;
 #[tauri::command]
 pub async fn get_reusable_configurations(
     state: State<'_, AudioState>,
-) -> Result<Vec<AudioMixerConfiguration>, String> {
-    AudioMixerConfiguration::list_reusable(state.database.pool())
-        .await
-        .map_err(|e| e.to_string())
+) -> Result<Vec<audio_mixer_configuration::Model>, String> {
+    tracing::info!("🔍 get_reusable_configurations: Starting query...");
+
+    match AudioMixerConfigurationService::list_reusable(state.database.sea_orm()).await {
+        Ok(configs) => {
+            tracing::info!("✅ get_reusable_configurations: Found {} configurations", configs.len());
+            for config in &configs {
+                tracing::debug!("  - {}: {} ({})", config.id, config.name, config.configuration_type);
+            }
+            Ok(configs)
+        }
+        Err(e) => {
+            tracing::error!("❌ get_reusable_configurations: Database error: {}", e);
+            Err(e.to_string())
+        }
+    }
 }
 
 /// Get the currently active session configuration
+/// If no active session exists, creates one from the default configuration
 #[tauri::command]
 pub async fn get_active_session_configuration(
     state: State<'_, AudioState>,
-) -> Result<Option<AudioMixerConfiguration>, String> {
-    AudioMixerConfiguration::get_active_session(state.database.pool())
-        .await
-        .map_err(|e| e.to_string())
+) -> Result<Option<audio_mixer_configuration::Model>, String> {
+    tracing::info!("🔍 get_active_session_configuration: Starting query...");
+
+    match AudioMixerConfigurationService::get_active_session(state.database.sea_orm()).await {
+        Ok(session) => {
+            match session {
+                Some(config) => {
+                    tracing::info!("✅ get_active_session_configuration: Found active session: {} ({})", config.name, config.id);
+                    Ok(Some(config))
+                }
+                None => {
+                    tracing::info!("ℹ️ get_active_session_configuration: No active session found, looking for default configuration...");
+
+                    // Try to find a default configuration to copy
+                    match AudioMixerConfigurationService::get_default_configuration(state.database.sea_orm()).await {
+                        Ok(Some(default_config)) => {
+                            tracing::info!("🔄 Creating active session from default configuration: {} ({})", default_config.name, default_config.id);
+
+                            let default_uuid = uuid::Uuid::parse_str(&default_config.id)
+                                .map_err(|e| format!("Invalid UUID in default config: {}", e))?;
+
+                            match AudioMixerConfigurationService::create_session_from_reusable(
+                                state.database.sea_orm(),
+                                default_uuid,
+                                Some(format!("{} (Active Session)", default_config.name))
+                            ).await {
+                                Ok(new_session) => {
+                                    tracing::info!("✅ Created active session from default: {} ({})", new_session.name, new_session.id);
+                                    Ok(Some(new_session))
+                                }
+                                Err(e) => {
+                                    tracing::error!("❌ Failed to create session from default: {}", e);
+                                    Err(e.to_string())
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            tracing::warn!("⚠️ No default configuration found, returning None");
+                            Ok(None)
+                        }
+                        Err(e) => {
+                            tracing::error!("❌ Error looking for default configuration: {}", e);
+                            Err(e.to_string())
+                        }
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("❌ get_active_session_configuration: Database error: {}", e);
+            Err(e.to_string())
+        }
+    }
 }
 
 /// Create a new session from a reusable configuration
@@ -33,10 +93,10 @@ pub async fn create_session_from_reusable(
     reusable_id: String,
     session_name: Option<String>,
     state: State<'_, AudioState>,
-) -> Result<AudioMixerConfiguration, String> {
+) -> Result<audio_mixer_configuration::Model, String> {
     let uuid = Uuid::parse_str(&reusable_id).map_err(|e| e.to_string())?;
 
-    AudioMixerConfiguration::create_session_from_reusable(state.database.pool(), uuid, session_name)
+    AudioMixerConfigurationService::create_session_from_reusable(state.database.sea_orm(), uuid, session_name)
         .await
         .map_err(|e| e.to_string())
 }
@@ -44,37 +104,9 @@ pub async fn create_session_from_reusable(
 /// Save the current session configuration back to its reusable configuration
 #[tauri::command]
 pub async fn save_session_to_reusable(state: State<'_, AudioState>) -> Result<(), String> {
-    let pool = state.database.pool();
-
-    // Get the active session
-    let mut active_session = AudioMixerConfiguration::get_active_session(pool)
+    AudioMixerConfigurationService::save_session_to_reusable(state.database.sea_orm())
         .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "No active session found".to_string())?;
-
-    // Get the reusable configuration it's linked to
-    let reusable_id = active_session
-        .reusable_configuration_id
-        .ok_or_else(|| "Active session is not linked to a reusable configuration".to_string())?;
-
-    let mut reusable_config = AudioMixerConfiguration::find_by_id(pool, reusable_id)
-        .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "Linked reusable configuration not found".to_string())?;
-
-    // Copy session data to reusable config (excluding session-specific fields)
-    reusable_config.name = active_session.name.clone();
-    reusable_config.description = active_session.description.clone();
-
-    // Update the reusable configuration
-    reusable_config
-        .update(pool)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    // TODO: Also copy related audio devices, effects, etc.
-
-    Ok(())
+        .map_err(|e| e.to_string())
 }
 
 /// Save the current session as a new reusable configuration
@@ -83,43 +115,10 @@ pub async fn save_session_as_new_reusable(
     name: String,
     description: Option<String>,
     state: State<'_, AudioState>,
-) -> Result<AudioMixerConfiguration, String> {
-    let pool = state.database.pool();
-
-    // Get the active session
-    let active_session = AudioMixerConfiguration::get_active_session(pool)
+) -> Result<audio_mixer_configuration::Model, String> {
+    AudioMixerConfigurationService::save_session_as_new_reusable(state.database.sea_orm(), name, description)
         .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "No active session found".to_string())?;
-
-    // Create new reusable configuration based on session
-    let mut new_reusable = AudioMixerConfiguration {
-        id: Uuid::new_v4(),
-        name,
-        description,
-        configuration_type: "reusable".to_string(),
-        session_active: false,
-        reusable_configuration_id: None,
-        is_default: false,
-        created_at: chrono::Utc::now(),
-        updated_at: chrono::Utc::now(),
-        deleted_at: None,
-    };
-
-    // Save the new reusable configuration
-    new_reusable.save(pool).await.map_err(|e| e.to_string())?;
-
-    // Update the active session to point to this new reusable config
-    let mut updated_session = active_session;
-    updated_session.reusable_configuration_id = Some(new_reusable.id);
-    updated_session
-        .update(pool)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    // TODO: Also copy related audio devices, effects, etc.
-
-    Ok(new_reusable)
+        .map_err(|e| e.to_string())
 }
 
 /// Get a configuration by ID
@@ -127,10 +126,10 @@ pub async fn save_session_as_new_reusable(
 pub async fn get_configuration_by_id(
     id: String,
     state: State<'_, AudioState>,
-) -> Result<Option<AudioMixerConfiguration>, String> {
+) -> Result<Option<audio_mixer_configuration::Model>, String> {
     let uuid = Uuid::parse_str(&id).map_err(|e| e.to_string())?;
 
-    AudioMixerConfiguration::find_by_id(state.database.pool(), uuid)
+    AudioMixerConfigurationService::find_by_id(state.database.sea_orm(), uuid)
         .await
         .map_err(|e| e.to_string())
 }
@@ -141,26 +140,10 @@ pub async fn create_reusable_configuration(
     name: String,
     description: Option<String>,
     state: State<'_, AudioState>,
-) -> Result<AudioMixerConfiguration, String> {
-    let mut config = AudioMixerConfiguration {
-        id: Uuid::new_v4(),
-        name,
-        description,
-        configuration_type: "reusable".to_string(),
-        session_active: false,
-        reusable_configuration_id: None,
-        is_default: false,
-        created_at: chrono::Utc::now(),
-        updated_at: chrono::Utc::now(),
-        deleted_at: None,
-    };
-
-    config
-        .save(state.database.pool())
+) -> Result<audio_mixer_configuration::Model, String> {
+    AudioMixerConfigurationService::create_reusable_configuration(state.database.sea_orm(), name, description)
         .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(config)
+        .map_err(|e| e.to_string())
 }
 
 /// Get configured audio devices by configuration ID
@@ -168,10 +151,10 @@ pub async fn create_reusable_configuration(
 pub async fn get_configured_audio_devices_by_config(
     configuration_id: String,
     state: State<'_, AudioState>,
-) -> Result<Vec<ConfiguredAudioDevice>, String> {
+) -> Result<Vec<configured_audio_device::Model>, String> {
     let uuid = Uuid::parse_str(&configuration_id).map_err(|e| e.to_string())?;
 
-    ConfiguredAudioDevice::list_for_configuration(state.database.pool(), uuid)
+    ConfiguredAudioDeviceService::list_for_configuration(state.database.sea_orm(), uuid)
         .await
         .map_err(|e| e.to_string())
 }

@@ -44,8 +44,6 @@ cpal = "0.15"              # Cross-platform audio I/O
 rtrb = "0.2"               # Real-time ring buffer
 spmcq = "0.1"              # Single Producer Multiple Consumer queue for output distribution
 rubato = "0.16.2"            # High-quality sample rate conversion
-samplerate-rs = "0.1.0"      # libsamplerate C2Rust transpiled version (no CMake needed)
-r8brain-rs = "0.3"           # Professional audio resampler with continuous interpolation
 rustfft = "6.2"            # Fast Fourier Transform for spectrum analysis
 sysinfo = "0.30"           # System process enumeration for application audio capture
 
@@ -61,6 +59,7 @@ symphonia-codec-vorbis = "0.5"
 
 # Database and storage
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "chrono", "migrate", "uuid"] }
+sea-orm = { version = "1.0", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros", "with-chrono"] }
 crossbeam = "0.8"          # Lock-free data structures for audio threading
 
 # Platform-specific audio system integration
