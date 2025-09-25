@@ -1,12 +1,20 @@
 ## Template for New Refactors
 
-Format the filename with snake case,
-i.e.`<high>_<level>_<refactor>_<description>.md`
+### File with github issues
+
+Apply labels:
+
+- feature area:
+  - broadcasting
+  - recording
+  - audio
+  - audio_effects
+  - audio_devices
+- Add ui for UI only
+- All should have "enhancement" label
 
 ### Refactor Title
 
-**Status**: [PLANNED/IN_PROGRESS/COMPLETED]  
-**Priority**: [High/Medium/Low]  
 **Date Identified**: YYYY-MM-DD
 
 **Description**: Clear description of what needs to be refactored and why

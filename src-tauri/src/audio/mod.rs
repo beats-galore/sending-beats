@@ -34,8 +34,7 @@ pub use effects::{
 pub use mixer::stream_management::VirtualMixer;
 
 pub use crate::db::{
-    AudioDatabase, AudioDeviceConfig, AudioEventBus, ChannelConfig, MasterLevelData,
-    OutputRouteConfig, VULevelData,
+    AudioDatabase, AudioDeviceConfig, AudioEventBus, ChannelConfig, VULevelData,
 };
 
 pub use broadcasting::{

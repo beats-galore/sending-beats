@@ -374,7 +374,10 @@ impl IcecastStreamManager {
         // Spawn the RTRB consumer task
         let mut consumer = rtrb_consumer;
         tokio::spawn(async move {
-            info!("🎵 {}: Starting RTRB consumer loop for Icecast streaming", "ICECAST_RTRB_CONSUMER".blue());
+            info!(
+                "🎵 {}: Starting RTRB consumer loop for Icecast streaming",
+                "ICECAST_RTRB_CONSUMER".blue()
+            );
             let mut sample_count = 0u64;
             let mut batch_count = 0u64;
             let mut sample_buffer = Vec::with_capacity(4096);

@@ -312,9 +312,7 @@ impl IsolatedAudioManager {
                 config,
                 response_tx,
             } => {
-                let result = self
-                    .handle_start_icecast(stream_id, config)
-                    .await;
+                let result = self.handle_start_icecast(stream_id, config).await;
                 let _ = response_tx.send(result);
             }
             AudioCommand::StopIcecast {
@@ -753,7 +751,7 @@ impl IsolatedAudioManager {
         // **QUEUE TRACKING**: Create queue tracker for dynamic sample rate adjustment
         let queue_tracker = AtomicQueueTracker::new(
             format!("icecast_{}", stream_id), // Unique queue ID
-            buffer_size, // Capacity
+            buffer_size,                      // Capacity
         );
 
         // Add streaming output worker to the audio pipeline using the audio format from config

@@ -43,7 +43,9 @@ pub async fn start_streaming_with_consumer(
     rtrb_consumer: rtrb::Consumer<f32>,
 ) -> Result<()> {
     let service = get_streaming_service().await;
-    service.start_streaming_with_consumer(config, rtrb_consumer).await
+    service
+        .start_streaming_with_consumer(config, rtrb_consumer)
+        .await
 }
 
 /// Stop streaming

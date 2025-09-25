@@ -1,6 +1,6 @@
+use crate::audio::broadcasting::config::StreamingServiceConfig;
 use crate::AudioState;
 use tauri::State;
-use crate::audio::broadcasting::config::StreamingServiceConfig;
 
 // ================================================================================================
 // ENHANCED ICECAST STREAMING COMMANDS
@@ -80,8 +80,10 @@ pub async fn start_icecast_streaming(
     audio_state: State<'_, AudioState>,
     config: StreamingServiceConfig,
 ) -> Result<String, String> {
-    println!("🎯 Starting Icecast streaming with config to {}:{}{}",
-             config.server_host, config.server_port, config.mount_point);
+    println!(
+        "🎯 Starting Icecast streaming with config to {}:{}{}",
+        config.server_host, config.server_port, config.mount_point
+    );
 
     // Step 1: Send command to IsolatedAudioManager to create Icecast OutputWorker
     let stream_id = uuid::Uuid::new_v4().to_string();
@@ -111,7 +113,10 @@ pub async fn start_icecast_streaming(
     match start_streaming_with_consumer(config, icecast_consumer).await {
         Ok(()) => {
             println!("✅ Icecast streaming started with stream ID: {}", stream_id);
-            Ok(format!("Streaming started successfully with stream ID: {}", stream_id))
+            Ok(format!(
+                "Streaming started successfully with stream ID: {}",
+                stream_id
+            ))
         }
         Err(e) => {
             println!("❌ Failed to start Icecast streaming service: {}", e);
@@ -119,18 +124,23 @@ pub async fn start_icecast_streaming(
             // **CLEANUP**: Icecast service failed, need to clean up the OutputWorker
             println!("🧹 Cleaning up OutputWorker after Icecast service failure...");
             let (cleanup_tx, cleanup_rx) = tokio::sync::oneshot::channel();
-            let cleanup_command = crate::audio::mixer::stream_management::AudioCommand::StopIcecast {
-                stream_id: stream_id.clone(),
-                response_tx: cleanup_tx,
-            };
+            let cleanup_command =
+                crate::audio::mixer::stream_management::AudioCommand::StopIcecast {
+                    stream_id: stream_id.clone(),
+                    response_tx: cleanup_tx,
+                };
 
             if let Err(cleanup_err) = audio_state.audio_command_tx.send(cleanup_command).await {
                 println!("⚠️ Failed to send cleanup command: {}", cleanup_err);
             } else {
                 match cleanup_rx.await {
                     Ok(Ok(())) => println!("✅ OutputWorker cleaned up successfully"),
-                    Ok(Err(cleanup_err)) => println!("⚠️ Failed to cleanup OutputWorker: {}", cleanup_err),
-                    Err(cleanup_err) => println!("⚠️ Failed to receive cleanup response: {}", cleanup_err),
+                    Ok(Err(cleanup_err)) => {
+                        println!("⚠️ Failed to cleanup OutputWorker: {}", cleanup_err)
+                    }
+                    Err(cleanup_err) => {
+                        println!("⚠️ Failed to receive cleanup response: {}", cleanup_err)
+                    }
                 }
             }
 
@@ -152,7 +162,10 @@ pub async fn stop_icecast_streaming(
     match stop_streaming().await {
         Ok(()) => println!("✅ Icecast streaming service stopped"),
         Err(e) => {
-            println!("⚠️ Error stopping Icecast service (continuing with cleanup): {}", e);
+            println!(
+                "⚠️ Error stopping Icecast service (continuing with cleanup): {}",
+                e
+            );
         }
     }
 
@@ -170,8 +183,14 @@ pub async fn stop_icecast_streaming(
     // Step 3: Wait for confirmation that OutputWorker is cleaned up
     match response_rx.await {
         Ok(Ok(())) => {
-            println!("✅ Icecast streaming stopped completely for stream: {}", stream_id);
-            Ok(format!("Streaming stopped successfully for stream: {}", stream_id))
+            println!(
+                "✅ Icecast streaming stopped completely for stream: {}",
+                stream_id
+            );
+            Ok(format!(
+                "Streaming stopped successfully for stream: {}",
+                stream_id
+            ))
         }
         Ok(Err(e)) => {
             println!("❌ Failed to stop Icecast output worker: {}", e);

@@ -258,7 +258,9 @@ impl StreamingService {
 
         // Start Icecast manager with the RTRB consumer
         if let Some(ref mut icecast_manager) = *self.icecast_manager.lock().await {
-            icecast_manager.start_streaming_with_consumer(rtrb_consumer).await?;
+            icecast_manager
+                .start_streaming_with_consumer(rtrb_consumer)
+                .await?;
 
             // Update connection state
             {
