@@ -3,6 +3,8 @@ import isEqual from 'fast-deep-equal';
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 
+import { invoke } from '@tauri-apps/api/core';
+
 import { mixerService, audioService } from '../services';
 import { MixerState, DEFAULT_CHANNEL } from '../types';
 import { updateArrayItems } from '../utils/store-helpers';
@@ -15,6 +17,7 @@ import type {
   ChannelLevels,
   ChannelUpdate,
 } from '../types';
+import type { AudioMixerConfiguration } from '../types/db/audio-mixer-configurations.types';
 
 type MixerStore = {
   // State
@@ -25,12 +28,26 @@ type MixerStore = {
   masterLevels: MasterLevels;
   channelLevels: ChannelLevels;
 
+  // Configuration Management State
+  reusableConfigurations: AudioMixerConfiguration[];
+  activeSession: AudioMixerConfiguration | null;
+  isLoadingConfigurations: boolean;
+  configurationError: string | null;
+
   // Actions
   initializeMixer: () => Promise<void>;
   addChannel: () => Promise<void>;
   updateChannel: (channelId: number, updates: ChannelUpdate) => Promise<void>;
   updateMasterGain: (gain: number) => Promise<void>;
   updateMasterOutputDevice: (deviceId: string) => Promise<void>;
+
+  // Configuration Management Actions
+  loadConfigurations: () => Promise<void>;
+  selectConfiguration: (configId: string) => Promise<void>;
+  saveSessionToReusable: () => Promise<void>;
+  saveSessionAsNewReusable: (name: string, description?: string) => Promise<void>;
+  clearConfigurationError: () => void;
+  setConfigurationError: (error: string) => void;
 
   // Real-time data updates
   updateChannelLevels: (levels: Record<number, [number, number, number, number]>) => void;
@@ -59,6 +76,12 @@ export const useMixerStore = create<MixerStore>()(
       right: { peak_level: 0, rms_level: 0 },
     },
     channelLevels: {},
+
+    // Configuration Management Initial State
+    reusableConfigurations: [],
+    activeSession: null,
+    isLoadingConfigurations: false,
+    configurationError: null,
 
     // Initialize mixer (now automatically starts - always-running mode)
     initializeMixer: async () => {
@@ -319,5 +342,120 @@ export const useMixerStore = create<MixerStore>()(
         return Object.keys(newState).length > 0 ? newState : {};
       });
     },
+
+    // Configuration Management Actions
+    // Load both reusable configurations and active session
+    loadConfigurations: async () => {
+      set({ isLoadingConfigurations: true, configurationError: null });
+
+      try {
+        const [reusable, active] = await Promise.all([
+          invoke<AudioMixerConfiguration[]>('get_reusable_configurations'),
+          invoke<AudioMixerConfiguration | null>('get_active_session_configuration'),
+        ]);
+
+        set({
+          reusableConfigurations: reusable,
+          activeSession: active,
+          isLoadingConfigurations: false,
+        });
+      } catch (error) {
+        set({
+          configurationError: error instanceof Error ? error.message : 'Failed to load configurations',
+          isLoadingConfigurations: false,
+        });
+      }
+    },
+
+    // Select a reusable configuration and create new session
+    selectConfiguration: async (configId: string) => {
+      set({ isLoadingConfigurations: true, configurationError: null });
+
+      try {
+        const newSession = await invoke<AudioMixerConfiguration>('create_session_from_reusable', {
+          reusableId: configId,
+          sessionName: undefined,
+        });
+
+        set({
+          activeSession: newSession,
+          isLoadingConfigurations: false,
+        });
+      } catch (error) {
+        set({
+          configurationError: error instanceof Error ? error.message : 'Failed to select configuration',
+          isLoadingConfigurations: false,
+        });
+      }
+    },
+
+    // Save current session back to its linked reusable configuration
+    saveSessionToReusable: async () => {
+      const { activeSession } = get();
+
+      if (!activeSession?.reusableConfigurationId) {
+        set({ configurationError: 'Active session is not linked to a reusable configuration' });
+        return;
+      }
+
+      set({ isLoadingConfigurations: true, configurationError: null });
+
+      try {
+        await invoke('save_session_to_reusable');
+
+        // Reload configurations to get updated data
+        await get().loadConfigurations();
+
+        set({ isLoadingConfigurations: false });
+      } catch (error) {
+        set({
+          configurationError: error instanceof Error ? error.message : 'Failed to save configuration',
+          isLoadingConfigurations: false,
+        });
+      }
+    },
+
+    // Save current session as a new reusable configuration
+    saveSessionAsNewReusable: async (name: string, description?: string) => {
+      set({ isLoadingConfigurations: true, configurationError: null });
+
+      try {
+        const newReusable = await invoke<AudioMixerConfiguration>('save_session_as_new_reusable', {
+          name,
+          description: description || undefined,
+        });
+
+        // Reload configurations to include the new one and get updated session
+        await get().loadConfigurations();
+
+        set({ isLoadingConfigurations: false });
+      } catch (error) {
+        set({
+          configurationError: error instanceof Error ? error.message : 'Failed to save new configuration',
+          isLoadingConfigurations: false,
+        });
+      }
+    },
+
+    // Configuration error handling
+    clearConfigurationError: () => set({ configurationError: null }),
+    setConfigurationError: (error: string) => set({ configurationError: error }),
   }))
 );
+
+// Export selector hook for configuration management
+export const useConfigurationStore = () => {
+  const store = useMixerStore();
+  return {
+    reusableConfigurations: store.reusableConfigurations,
+    activeSession: store.activeSession,
+    isLoading: store.isLoadingConfigurations,
+    error: store.configurationError,
+    loadConfigurations: store.loadConfigurations,
+    selectConfiguration: store.selectConfiguration,
+    saveSessionToReusable: store.saveSessionToReusable,
+    saveSessionAsNewReusable: store.saveSessionAsNewReusable,
+    clearError: store.clearConfigurationError,
+    setError: store.setConfigurationError,
+  };
+};
