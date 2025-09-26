@@ -1,4 +1,3 @@
-// Professional channel strip component - Compressed horizontal layout
 import {
   Paper,
   Group,
@@ -28,6 +27,7 @@ import { memo, useCallback, useMemo, useState, useEffect } from 'react';
 
 import { useMixerState, useAudioDevices, useChannelLevels, useApplicationAudio } from '../../hooks';
 import { audioService } from '../../services';
+import { useConfigurationStore } from '../../stores/mixer-store';
 
 import { ChannelEffects } from './ChannelEffects';
 import { ChannelVUMeter } from './ChannelVUMeter';
@@ -114,6 +114,7 @@ const useStyles = createStyles(() => ({
       justifyContent: 'center !important',
     },
   },
+
 }));
 
 const AVAILABLE_EFFECTS = [
@@ -129,18 +130,22 @@ type ChannelStripProps = {
 export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
   const { classes } = useStyles();
 
-  const {
-    toggleChannelMute,
-    toggleChannelSolo,
-    setChannelInputDevice,
-    updateChannelGain,
-    updateChannelPan,
-  } = useMixerState();
+  const { toggleChannelMute, toggleChannelSolo, updateChannelGain, updateChannelPan } =
+    useMixerState();
 
   const { inputDevices, refreshDevices } = useAudioDevices();
+  const { activeSession } = useConfigurationStore();
   const applicationAudio = useApplicationAudio();
 
   const levels = useChannelLevels(channel.id);
+
+  // Find the configured input device for this channel from the active session
+  const configuredInputDevice = useMemo(() => {
+    if (!activeSession?.configured_devices) return null;
+    return activeSession.configured_devices.find(
+      (device) => device.channel_number === channel.id && device.is_input
+    );
+  }, [activeSession, channel.id]);
 
   // State for expandable sections
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -160,7 +165,7 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
         console.error('Failed to load channel effects:', error);
       }
     };
-    loadActiveEffects();
+    void loadActiveEffects();
   }, [channel.id]);
 
   const handleMuteToggle = useCallback(() => {
@@ -173,25 +178,38 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
 
   const handleInputDeviceChange = useCallback(
     async (deviceId: string | null) => {
-      console.log(`🔧 FRONTEND: handleInputDeviceChange called for channel ${channel.id} with deviceId:`, deviceId);
+      console.log(
+        `🔧 FRONTEND: handleInputDeviceChange called for channel ${channel.id} with deviceId:`,
+        deviceId
+      );
       if (deviceId) {
+        // Check if trying to select an unavailable device
+        const isDeviceAvailable = inputDevices.some(device => device.id === deviceId);
+        if (!isDeviceAvailable && !deviceId.startsWith('app-')) {
+          console.warn(`⚠️ Attempted to select unavailable device: ${deviceId}`);
+          // Could show a toast notification here in the future
+          return;
+        }
+
         try {
-          console.log(`🔧 FRONTEND: Calling setChannelInputDevice(${channel.id}, ${deviceId})`);
-          await setChannelInputDevice(channel.id, deviceId);
-          console.debug(`✅ Channel ${channel.id} input device set to: ${deviceId}`);
+          // Use the audioService switchInputStream method which handles database sync
+          const currentDeviceId = configuredInputDevice?.device_identifier || null;
+          console.log(`🔧 FRONTEND: Switching input device: ${currentDeviceId} → ${deviceId}`);
+          await audioService.switchInputStream(currentDeviceId, deviceId);
+          console.debug(`✅ Channel ${channel.id} input device switched to: ${deviceId}`);
         } catch (error) {
-          console.error(`❌ Failed to set input device for channel ${channel.id}:`, error);
+          console.error(`❌ Failed to switch input device for channel ${channel.id}:`, error);
         }
       } else {
         console.log(`🔧 FRONTEND: deviceId is null, not setting input device`);
       }
     },
-    [channel.id, setChannelInputDevice]
+    [channel.id, configuredInputDevice, inputDevices]
   );
 
   const handleGainChange = useCallback(
     (gain: number) => {
-      updateChannelGain(channel.id, gain);
+      void updateChannelGain(channel.id, gain);
     },
     [channel.id, updateChannelGain]
   );
@@ -241,6 +259,19 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
       label: device.name.length > 20 ? `${device.name.substring(0, 20)}...` : device.name,
     }));
 
+    // Add configured device if it's not in the available devices list (missing/unplugged)
+    if (configuredInputDevice) {
+      const isDeviceAvailable = inputDevices.some(device => device.id === configuredInputDevice.device_identifier);
+      if (!isDeviceAvailable) {
+        const deviceName = configuredInputDevice.device_name || configuredInputDevice.device_identifier;
+        hardwareOptions.unshift({
+          value: configuredInputDevice.device_identifier,
+          label: `${deviceName} (unavailable)`,
+          disabled: true, // Disable the option so it can't be selected
+        });
+      }
+    }
+
     const appOptions = applicationAudio.knownApps.map((app) => ({
       value: `app-${app.pid}`,
       label: app.name.length > 20 ? `${app.name.substring(0, 20)}...` : app.name,
@@ -250,6 +281,7 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
       hardware: hardwareOptions.length,
       applications: appOptions.length,
       totalKnownApps: applicationAudio.knownApps.length,
+      configuredInputDevice,
     });
 
     // Mantine Select expects grouped data in a different format
@@ -267,7 +299,7 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
     }
     // No apps available, just return flat array
     return hardwareOptions;
-  }, [inputDevices, applicationAudio.knownApps]);
+  }, [inputDevices, applicationAudio.knownApps, configuredInputDevice]);
 
   return (
     <Stack gap={0}>
@@ -283,7 +315,7 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
                 <Select
                   size="xs"
                   placeholder="No Input"
-                  value={channel.input_device_id ?? null}
+                  value={configuredInputDevice?.device_identifier ?? null}
                   onChange={handleInputDeviceChange}
                   data={inputDeviceOptions}
                   className={`${classes.inputSelect} ${classes.customSelectInput}`}

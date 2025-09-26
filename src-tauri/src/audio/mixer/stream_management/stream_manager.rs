@@ -18,28 +18,6 @@ pub struct AudioMetrics {
     pub average_latency_ms: f32,
 }
 
-/// Information about current stream state
-#[derive(Debug, Clone)]
-pub struct StreamInfo {
-    pub input_streams: usize,
-    pub output_streams: usize,
-    pub active_devices: std::collections::HashSet<String>,
-}
-
-impl StreamInfo {
-    pub fn new() -> Self {
-        Self {
-            input_streams: 0,
-            output_streams: 0,
-            active_devices: std::collections::HashSet::new(),
-        }
-    }
-
-    pub fn has_active_streams(&self) -> bool {
-        self.input_streams > 0 || self.output_streams > 0
-    }
-}
-
 pub struct StreamManager {
     #[cfg(target_os = "macos")]
     coreaudio_streams: HashMap<String, crate::audio::devices::CoreAudioOutputStream>,
@@ -199,6 +177,14 @@ impl StreamManager {
             device_id
         );
         Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    pub fn has_input_stream(&self, device_id: &str) -> bool {
+        self.coreaudio_input_streams.contains_key(device_id)
+    }
+    #[cfg(target_os = "macos")]
+    pub fn has_output_stream(&self, device_id: &str) -> bool {
+        self.coreaudio_streams.contains_key(device_id)
     }
 
     /// Update hardware buffer size for a CoreAudio output stream

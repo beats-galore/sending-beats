@@ -10,6 +10,7 @@ import {
   useAudioMetrics,
   useAudioDevices,
 } from '../../hooks';
+import { useConfigurationStore } from '../../stores/mixer-store';
 import { audioService } from '../../services';
 import { VUMeter, AudioSlider } from '../ui';
 
@@ -26,6 +27,15 @@ export const MasterSection = memo(() => {
   const masterLevels = useMasterLevels();
   const metrics = useAudioMetrics();
   const { outputDevices, refreshDevices } = useAudioDevices();
+  const { activeSession } = useConfigurationStore();
+
+  // Find the configured output device from the active session
+  const configuredOutputDevice = useMemo(() => {
+    if (!activeSession?.configured_devices) return null;
+    return activeSession.configured_devices.find(
+      (device) => !device.is_input // Output devices have is_input = false
+    );
+  }, [activeSession]);
 
   const handleOutputDeviceChange = useCallback(
     async (deviceId: string) => {
@@ -64,11 +74,26 @@ export const MasterSection = memo(() => {
 
     // Return unique devices only
     const uniqueDevices = Array.from(deviceMap.values());
-    return uniqueDevices.map((device) => ({
+    const options = uniqueDevices.map((device) => ({
       value: device.id,
       label: device.name + (device.is_default ? ' (Default)' : ''),
     }));
-  }, [outputDevices]);
+
+    // Add configured output device if it's not in the available devices list (missing/unplugged)
+    if (configuredOutputDevice) {
+      const isDeviceAvailable = outputDevices.some(device => device.id === configuredOutputDevice.device_identifier);
+      if (!isDeviceAvailable) {
+        const deviceName = configuredOutputDevice.device_name || configuredOutputDevice.device_identifier;
+        options.unshift({
+          value: configuredOutputDevice.device_identifier,
+          label: `${deviceName} (unavailable)`,
+          disabled: true, // Disable the option so it can't be selected
+        });
+      }
+    }
+
+    return options;
+  }, [outputDevices, configuredOutputDevice]);
 
   return (
     <Paper p="lg" withBorder radius="md">
@@ -154,7 +179,7 @@ export const MasterSection = memo(() => {
                 <Select
                   placeholder="Select output device..."
                   data={outputDeviceOptions}
-                  value={mixerConfig?.master_output_device_id || null}
+                  value={configuredOutputDevice?.device_identifier || null}
                   onChange={(value) => value && handleOutputDeviceChange(value)}
                 />
               </Stack>

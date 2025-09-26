@@ -191,6 +191,7 @@ impl AudioMixerConfigurationService {
                 channel_format: Set(original_device.channel_format),
                 is_virtual: Set(original_device.is_virtual),
                 is_input: Set(original_device.is_input),
+                channel_number: Set(original_device.channel_number), // Copy channel assignment
                 configuration_id: Set(session_id.to_string()), // Link to new session
                 created_at: Set(now),
                 updated_at: Set(now),
@@ -368,6 +369,7 @@ impl AudioMixerConfigurationService {
                 channel_format: Set(original_device.channel_format),
                 is_virtual: Set(original_device.is_virtual),
                 is_input: Set(original_device.is_input),
+                channel_number: Set(original_device.channel_number), // Copy channel assignment
                 configuration_id: Set(reusable_id.clone()), // Link to reusable config
                 created_at: Set(now),
                 updated_at: Set(now),
@@ -510,6 +512,7 @@ impl AudioMixerConfigurationService {
                 channel_format: Set(original_device.channel_format),
                 is_virtual: Set(original_device.is_virtual),
                 is_input: Set(original_device.is_input),
+                channel_number: Set(original_device.channel_number), // Copy channel assignment
                 configuration_id: Set(new_reusable_id.to_string()), // Link to new reusable config
                 created_at: Set(now),
                 updated_at: Set(now),

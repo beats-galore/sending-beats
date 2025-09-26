@@ -6,8 +6,6 @@ pub mod queue_manager;
 pub mod resampling;
 pub mod stream_management;
 
-// Re-export stream management types
-pub use stream_management::StreamInfo;
 
 // Re-export pipeline types
 pub use pipeline::AudioPipeline;

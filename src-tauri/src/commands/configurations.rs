@@ -346,6 +346,7 @@ pub async fn create_device_configuration(
         }),
         is_virtual: sea_orm::Set(is_virtual),
         is_input: sea_orm::Set(is_input),
+        channel_number: sea_orm::Set(0), // Default to channel 0, will be updated when assigned to mixer channel
         configuration_id: sea_orm::Set(session_config.id.clone()),
         created_at: sea_orm::Set(now),
         updated_at: sea_orm::Set(now),

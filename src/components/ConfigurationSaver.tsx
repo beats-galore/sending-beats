@@ -38,7 +38,7 @@ export const ConfigurationSaver = ({ onConfigurationSaved }: ConfigurationSaverP
     }
   };
 
-  const canSaveToReusable = activeSession?.reusableConfigurationId != null;
+  const canSaveToReusable = activeSession?.configuration?.reusableConfigurationId != null;
 
   if (!activeSession) {
     return (
@@ -61,12 +61,12 @@ export const ConfigurationSaver = ({ onConfigurationSaved }: ConfigurationSaverP
           size="lg"
           fullWidth
         >
-          Current: {activeSession.name}
+          Current: {activeSession.configuration.name}
         </Badge>
 
-        {activeSession.description && (
+        {activeSession.configuration.description && (
           <Text size="xs" c="dimmed" ta="center">
-            {activeSession.description}
+            {activeSession.configuration.description}
           </Text>
         )}
 

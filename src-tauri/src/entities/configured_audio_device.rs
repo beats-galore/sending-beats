@@ -13,6 +13,7 @@ pub struct Model {
     pub channel_format: String,
     pub is_virtual: bool,
     pub is_input: bool,
+    pub channel_number: i32,
     pub configuration_id: String,
     pub created_at: ChronoDateTimeUtc,
     pub updated_at: ChronoDateTimeUtc,

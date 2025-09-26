@@ -4,7 +4,6 @@
 // management, including adding/removing input/output streams, device switching,
 // and stream configuration operations.
 
-use super::stream_manager::StreamInfo;
 use anyhow::{Context, Result};
 use colored::*;
 use std::collections::HashMap;

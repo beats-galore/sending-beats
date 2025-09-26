@@ -33,6 +33,7 @@ type MixerStore = {
   activeSession: CompleteConfigurationData | null;
   isLoadingConfigurations: boolean;
   configurationError: string | null;
+  restoringDevicesForSession: string | null; // session ID currently being restored
 
   // Actions
   initializeMixer: () => Promise<void>;
@@ -81,6 +82,7 @@ export const useMixerStore = create<MixerStore>()(
     activeSession: null,
     isLoadingConfigurations: false,
     configurationError: null,
+    restoringDevicesForSession: null,
 
     // Initialize mixer (now automatically starts - always-running mode)
     initializeMixer: async () => {
@@ -230,6 +232,12 @@ export const useMixerStore = create<MixerStore>()(
       }
 
       try {
+        // Check if already using this output device - no-op to prevent unnecessary stream restart
+        if (config.master_output_device_id === deviceId) {
+          console.debug(`📋 Output device no-op: already using device ${deviceId}`);
+          return;
+        }
+
         // Update backend first
         await audioService.setOutputStream(deviceId);
 
@@ -374,10 +382,7 @@ export const useMixerStore = create<MixerStore>()(
                 isLoadingConfigurations: false,
               });
 
-              // Restore devices from the new session
-              if (newSession.configured_devices?.length) {
-                await get().restoreDevicesFromSession(newSession);
-              }
+              // Device restoration will be handled after the configuration loading is complete
             } catch (sessionError) {
               console.error('Failed to auto-select default configuration:', sessionError);
               // Fall back to just loading the configurations without active session
@@ -405,8 +410,15 @@ export const useMixerStore = create<MixerStore>()(
         }
 
         // After successfully loading configurations, restore devices from active session
+        // Only restore if not already restoring/restored for this session
         const currentState = get();
-        if (currentState.activeSession?.configured_devices) {
+        const sessionId = currentState.activeSession?.configuration.id;
+        const shouldRestore = sessionId &&
+                             currentState.activeSession?.configured_devices?.length &&
+                             !currentState.activeSession.devicesRestored &&
+                             currentState.restoringDevicesForSession !== sessionId;
+
+        if (shouldRestore) {
           await get().restoreDevicesFromSession(currentState.activeSession);
         }
       } catch (error) {
@@ -433,10 +445,7 @@ export const useMixerStore = create<MixerStore>()(
           isLoadingConfigurations: false,
         });
 
-        // Restore devices from the selected configuration
-        if (newSession.configured_devices?.length) {
-          await get().restoreDevicesFromSession(newSession);
-        }
+        // Mark that devices need restoration (will be handled by loadConfigurations after this)
       } catch (error) {
         set({
           configurationError:
@@ -450,7 +459,7 @@ export const useMixerStore = create<MixerStore>()(
     saveSessionToReusable: async () => {
       const { activeSession } = get();
 
-      if (!activeSession?.reusableConfigurationId) {
+      if (!activeSession?.configuration?.reusableConfigurationId) {
         set({ configurationError: 'Active session is not linked to a reusable configuration' });
         return;
       }
@@ -502,10 +511,22 @@ export const useMixerStore = create<MixerStore>()(
 
     // Restore devices from session configuration (call existing device management methods)
     restoreDevicesFromSession: async (sessionConfig: CompleteConfigurationData) => {
+      const sessionId = sessionConfig.configuration.id;
+
+      // Check if already restoring/restored this session
+      const currentState = get();
+      if (currentState.restoringDevicesForSession === sessionId || sessionConfig.devicesRestored) {
+        console.log(`📋 Device restoration already in progress or completed for session: ${sessionId}`);
+        return;
+      }
+
       if (!sessionConfig.configured_devices?.length) {
         console.log('📋 No configured devices to restore in session');
         return;
       }
+
+      // Set loading state to prevent concurrent restoration
+      set({ restoringDevicesForSession: sessionId });
 
       console.log(
         `🔄 Restoring ${sessionConfig.configured_devices.length} devices from session: ${sessionConfig.configuration.name}`
@@ -520,14 +541,11 @@ export const useMixerStore = create<MixerStore>()(
 
           try {
             if (device.is_input) {
-              // Restore input device
-              await audioService.addInputStream(device.device_identifier);
+              // Restore input device using switchInputStream (null -> deviceId)
+              await audioService.switchInputStream(null, device.device_identifier);
             } else {
-              // Restore output device
-              await audioService.addOutputDevice(
-                device.device_identifier,
-                device.device_name || 'Unknown Device'
-              );
+              // Restore output device using setOutputStream
+              await audioService.setOutputStream(device.device_identifier);
             }
 
             console.log(`✅ Successfully restored device: ${device.device_identifier}`);
@@ -544,10 +562,20 @@ export const useMixerStore = create<MixerStore>()(
         }
 
         console.log('🎉 Device restoration completed');
+
+        // Mark devices as restored and clear loading state
+        set((state) => ({
+          activeSession: state.activeSession ? {
+            ...state.activeSession,
+            devicesRestored: true
+          } : null,
+          restoringDevicesForSession: null
+        }));
       } catch (error) {
         console.error('❌ Failed to restore devices from session:', error);
         set({
-          configurationError: error instanceof Error ? error.message : 'Failed to restore devices'
+          configurationError: error instanceof Error ? error.message : 'Failed to restore devices',
+          restoringDevicesForSession: null // Clear loading state on error
         });
       }
     },
