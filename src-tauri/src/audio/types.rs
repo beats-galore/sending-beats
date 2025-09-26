@@ -189,22 +189,22 @@ impl AudioConfigFactory {
             buffer_size: 256, // ~5.3ms latency at 48kHz
             channels: vec![
                 AudioChannel {
-                    id: 1,
+                    id: 0,
                     name: "Deck A".to_string(),
                     ..Default::default()
                 },
                 AudioChannel {
-                    id: 2,
+                    id: 1,
                     name: "Deck B".to_string(),
                     ..Default::default()
                 },
                 AudioChannel {
-                    id: 3,
+                    id: 2,
                     name: "Microphone".to_string(),
                     ..Default::default()
                 },
                 AudioChannel {
-                    id: 4,
+                    id: 3,
                     name: "System Audio".to_string(),
                     ..Default::default()
                 },

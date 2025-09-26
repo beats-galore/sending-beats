@@ -587,12 +587,12 @@ impl RecordingWriterManager {
 
                 Ok(RecordingStatus {
                     is_recording: active_count > 0,
-                    is_paused: false, // Simplified for now
-                    session: None,    // Would need more complex logic to get session safely
+                    is_paused: false,
+                    session: None,
                     active_writers_count: active_count,
-                    available_space_gb, // **RESTORED**: Real disk space
-                    total_recordings: self.history.try_lock().map(|h| h.len()).unwrap_or(0), // **RESTORED**: Count from history
-                    active_recordings, // **RESTORED**: Frontend expects this
+                    available_space_gb,
+                    total_recordings: self.history.try_lock().map(|h| h.len()).unwrap_or(0),
+                    active_recordings,
                 })
             }
             Err(_) => Ok(RecordingStatus::default()),
@@ -642,9 +642,9 @@ impl RecordingWriterManager {
             is_paused: session.as_ref().map(|s| s.is_paused).unwrap_or(false),
             session,
             active_writers_count: active_count,
-            available_space_gb, // **RESTORED**: Real disk space
-            total_recordings: self.history.lock().await.len(), // **RESTORED**: Count from history
-            active_recordings,  // **RESTORED**: Frontend expects this
+            available_space_gb,
+            total_recordings: self.history.lock().await.len(),
+            active_recordings,
         })
     }
 

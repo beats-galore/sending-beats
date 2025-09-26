@@ -26,11 +26,6 @@ export const audioService = {
     return invoke<[number, number, number, number]>('get_master_levels');
   },
 
-  // Stream management
-  async addInputStream(deviceId: string): Promise<void> {
-    return invoke('add_input_stream', { deviceId });
-  },
-
   async removeInputStream(deviceId: string): Promise<void> {
     return invoke('remove_input_stream', { deviceId });
   },
@@ -105,23 +100,6 @@ export const audioService = {
       channelId,
       thresholdDb: options.thresholdDb,
       enabled: options.enabled,
-    });
-  },
-
-  // Multiple output device management
-  async addOutputDevice(
-    deviceId: string,
-    deviceName: string,
-    options?: {
-      gain?: number;
-      isMonitor?: boolean;
-    }
-  ): Promise<void> {
-    return invoke('add_output_device', {
-      deviceId,
-      deviceName,
-      gain: options?.gain,
-      isMonitor: options?.isMonitor,
     });
   },
 

@@ -39,6 +39,8 @@ solution for professional radio streaming.
 - Do not let functions grow in size beyond 150 lines. If you are adding to an
   existing function and it is already beyond that boundary, you need to break
   the function up into callable component functions before making new additions.
+- Do not use the word "professional" to describe things when adding comments,
+  writing code, writing documentation, filing bugs, etc.
 
 ## Coding guidelines
 

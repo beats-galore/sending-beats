@@ -262,13 +262,11 @@ pub fn run() {
             get_device_health,
             get_all_device_health,
             report_device_error,
-            add_input_stream,
             remove_input_stream,
             set_output_stream,
             start_device_monitoring,
             get_device_monitoring_stats,
             // Mixer commands
-            add_output_device,
             remove_output_device,
             update_output_device,
             // CoreAudio specific commands

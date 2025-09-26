@@ -87,6 +87,14 @@ pub async fn safe_switch_input_device(
     old_device_id: Option<String>,
     new_device_id: String,
 ) -> Result<(), String> {
+    // Check if switching to the same device - no-op to prevent unnecessary stream restart
+    if let Some(ref old_id) = old_device_id {
+        if old_id == &new_device_id {
+            tracing::info!("📋 Device switch no-op: already using device {}", new_device_id);
+            return Ok(());
+        }
+    }
+
     // Remove old device if specified
     if let Some(old_id) = old_device_id {
         if !old_id.trim().is_empty() {
@@ -203,6 +211,9 @@ pub async fn safe_switch_output_device(
     audio_state: State<'_, AudioState>,
     new_device_id: String,
 ) -> Result<(), String> {
+    // Note: Duplicate output device detection is handled at client level in mixer store
+    tracing::info!("🔊 Switching to output device: {}", new_device_id);
+
     // Get device handle using device manager
     let device_manager = audio_state.device_manager.lock().await;
     let device_handle = device_manager
@@ -270,109 +281,6 @@ pub async fn safe_switch_output_device(
             Ok(())
         }
         Ok(Err(e)) => Err(format!("Failed to set output device: {}", e)),
-        Err(_) => Err("Audio system did not respond".to_string()),
-    }
-}
-
-// Audio stream management commands
-#[tauri::command]
-pub async fn add_input_stream(
-    audio_state: State<'_, AudioState>,
-    device_id: String,
-) -> Result<(), String> {
-    // **CRASH FIX**: Validate device ID
-    if device_id.trim().is_empty() {
-        return Err("Device ID cannot be empty".to_string());
-    }
-    if device_id.len() > 256 {
-        return Err("Device ID too long".to_string());
-    }
-
-    // **STREAMLINED ARCHITECTURE**: Bypass VirtualMixer and send command directly to IsolatedAudioManager
-    println!(
-        "🎤 Adding input stream directly via AudioCommand: {}",
-        device_id
-    );
-
-    // Get device handle using device manager
-    let device_manager = audio_state.device_manager.lock().await;
-    let device_handle = device_manager
-        .find_audio_device(&device_id, true) // true = input device
-        .await
-        .map_err(|e| format!("Failed to find input device {}: {}", device_id, e))?;
-
-    // Extract device information for database sync before consuming device_handle
-    let device_info = match &device_handle {
-        #[cfg(target_os = "macos")]
-        crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => Some((
-            coreaudio_device.name.clone(),
-            coreaudio_device.sample_rate,
-            coreaudio_device.channels,
-        )),
-        #[cfg(not(target_os = "macos"))]
-        _ => None,
-    };
-
-    // Create command based on device type
-    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-
-    let command = match device_handle {
-        #[cfg(target_os = "macos")]
-        crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => {
-            // Create RTRB producer/consumer pair that IsolatedAudioManager expects
-            // The IsolatedAudioManager will create its own pair internally, but we need to provide one for the command
-            let buffer_capacity = 8192; // Default buffer size
-            let (producer, _consumer) = rtrb::RingBuffer::<f32>::new(buffer_capacity);
-
-            crate::audio::mixer::stream_management::AudioCommand::AddCoreAudioInputStream {
-                device_id: device_id.clone(),
-                coreaudio_device_id: coreaudio_device.device_id,
-                device_name: coreaudio_device.name.clone(),
-                channels: coreaudio_device.channels, // stereo
-                producer,
-                input_notifier: std::sync::Arc::new(tokio::sync::Notify::new()),
-                response_tx,
-            }
-        }
-        #[cfg(not(target_os = "macos"))]
-        _ => return Err("Unsupported device type for this platform".to_string()),
-    };
-
-    // Send command to isolated audio thread
-    if let Err(e) = audio_state.audio_command_tx.send(command).await {
-        let error_msg = format!("Audio system not available - failed to send command: {}", e);
-        tracing::error!("{}", error_msg);
-        return Err(error_msg);
-    }
-
-    // Wait for response from isolated audio thread
-    match response_rx.await {
-        Ok(Ok(())) => {
-            println!(
-                "✅ Successfully added input stream via direct command: {}",
-                device_id
-            );
-
-            // Sync with database: create configured_audio_device entry
-            if let Some((device_name, sample_rate, channels)) = device_info {
-                if let Err(e) = crate::commands::configurations::create_device_configuration(
-                    &audio_state,
-                    &device_id,
-                    &device_name,
-                    sample_rate as i32,
-                    channels as u32,
-                    true, // is_input
-                    device_id.contains("BlackHole") || device_id.contains("SoundflowerBed"),
-                )
-                .await
-                {
-                    tracing::warn!("Failed to create device configuration in database: {}", e);
-                }
-            }
-
-            Ok(())
-        }
-        Ok(Err(e)) => Err(format!("Failed to add input stream: {}", e)),
         Err(_) => Err("Audio system did not respond".to_string()),
     }
 }
@@ -511,91 +419,6 @@ pub async fn start_device_monitoring(audio_state: State<'_, AudioState>) -> Resu
 pub async fn get_device_monitoring_stats() -> Result<Option<crate::DeviceMonitorStats>, String> {
     use crate::get_monitoring_stats_impl;
     Ok(get_monitoring_stats_impl().await)
-}
-
-// Multiple output device management commands
-#[tauri::command]
-pub async fn add_output_device(
-    audio_state: State<'_, crate::AudioState>,
-    device_id: String,
-    device_name: String,
-    gain: Option<f32>,
-    is_monitor: Option<bool>,
-) -> Result<(), String> {
-    // NEW ARCHITECTURE: Use command queue instead of direct mixer access
-
-    // Get the device handle using the device manager
-    let device_manager = audio_state.device_manager.lock().await;
-    let device_handle = device_manager
-        .find_audio_device(&device_id, false)
-        .await
-        .map_err(|e| format!("Failed to find output device {}: {}", device_id, e))?;
-
-    // Extract device information for database sync before consuming device_handle
-    let device_info = match &device_handle {
-        #[cfg(target_os = "macos")]
-        crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => Some((
-            coreaudio_device.name.clone(),
-            coreaudio_device.sample_rate,
-            coreaudio_device.channels,
-        )),
-        #[cfg(not(target_os = "macos"))]
-        _ => None,
-    };
-
-    // Send appropriate command based on device type
-    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-
-    let command = match device_handle {
-        #[cfg(target_os = "macos")]
-        crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => {
-            crate::audio::mixer::stream_management::AudioCommand::AddCoreAudioOutputStream {
-                device_id: device_id.clone(),
-                coreaudio_device,
-                response_tx,
-            }
-        }
-        #[cfg(not(target_os = "macos"))]
-        _ => return Err("Unsupported device type for this platform".to_string()),
-    };
-
-    // Send command to isolated audio thread
-    if let Err(e) = audio_state.audio_command_tx.send(command).await {
-        let error_msg = format!("Audio system not available - failed to send command: {}", e);
-        tracing::error!("{}", error_msg);
-        return Err(error_msg);
-    }
-
-    // Wait for response from isolated audio thread
-    match response_rx.await {
-        Ok(Ok(())) => {
-            println!("✅ Added output device via command queue: {}", device_id);
-
-            // Sync with database: create configured_audio_device entry
-            if let Some((device_name, sample_rate, channels)) = device_info {
-                if let Err(e) = crate::commands::configurations::create_device_configuration(
-                    &audio_state,
-                    &device_id,
-                    &device_name,
-                    sample_rate as i32,
-                    channels as u32,
-                    false, // is_input
-                    device_id.contains("BlackHole") || device_id.contains("SoundflowerBed"),
-                )
-                .await
-                {
-                    tracing::warn!(
-                        "Failed to create output device configuration in database: {}",
-                        e
-                    );
-                }
-            }
-
-            Ok(())
-        }
-        Ok(Err(e)) => Err(format!("Failed to add output device: {}", e)),
-        Err(_) => Err("Audio system did not respond".to_string()),
-    }
 }
 
 #[tauri::command]

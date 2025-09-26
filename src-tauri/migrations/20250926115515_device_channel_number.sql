@@ -1,0 +1,1 @@
+alter table configured_audio_devices add column channel_number numeric not null default 0;

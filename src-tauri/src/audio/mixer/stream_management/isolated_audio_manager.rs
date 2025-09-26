@@ -337,6 +337,17 @@ impl IsolatedAudioManager {
         producer: Producer<f32>,
         input_notifier: Arc<Notify>,
     ) -> Result<()> {
+        // Check if input stream is already active by checking with the stream manager
+        // Note: StreamManager tracks active CoreAudio input streams internally
+        if self.stream_manager.has_input_stream(&device_id) {
+            info!(
+                "📋 {}: Input device '{}' already active, skipping duplicate creation",
+                "DUPLICATE_INPUT_SKIP".yellow(),
+                device_id
+            );
+            return Ok(());
+        }
+
         info!(
             "🎤 AUDIO_COORDINATOR: Adding CoreAudio input stream for device '{}' (ID: {})",
             device_id, coreaudio_device_id
@@ -455,6 +466,16 @@ impl IsolatedAudioManager {
         device_id: String,
         coreaudio_device: crate::audio::types::CoreAudioDevice,
     ) -> Result<()> {
+        // Check if output device is already active - prevent unnecessary stream restart
+        if self.output_rtrb_producers.contains_key(&device_id) {
+            info!(
+                "📋 {}: Output device '{}' already active, skipping duplicate creation",
+                "DUPLICATE_OUTPUT_SKIP".yellow(),
+                device_id
+            );
+            return Ok(());
+        }
+
         info!(
             "🔊 Creating CoreAudio output stream for device '{}' (ID: {})",
             device_id, coreaudio_device.device_id
