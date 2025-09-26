@@ -40,19 +40,35 @@ solution for professional radio streaming.
   existing function and it is already beyond that boundary, you need to break
   the function up into callable component functions before making new additions.
 
+## Coding guidelines
+
+- **Do not overcomment**: The user directing you to change something in your
+  code does not require you to comment that you did it. Comments should only be
+  for function signatures (if necessary) or complex logic
+- **Module imports**: You should always put your imports at the top of the file.
+  Do not inline imports they make the code much harder to read.
+
 ## TypeScript & React Best Practices
 
 ### Component Design Principles
 
-- **Single Responsibility Principle**: Each component should have one clear purpose and responsibility. If a component handles multiple concerns, split it into smaller, focused components.
+- **Single Responsibility Principle**: Each component should have one clear
+  purpose and responsibility. If a component handles multiple concerns, split it
+  into smaller, focused components.
 
-- **Component Size Limit**: Components should never exceed 200 lines of code. Single files should never contain more than one component export.
+- **Component Size Limit**: Components should never exceed 200 lines of code.
+  Single files should never contain more than one component export.
 
-- **Prop Passing Strategy**: Only pass through props if absolutely necessary. In most instances, it is sufficient to pass IDs through and fetch related data from the store prior to injection into stateless components. This reduces prop drilling and makes components more maintainable.
+- **Prop Passing Strategy**: Only pass through props if absolutely necessary. In
+  most instances, it is sufficient to pass IDs through and fetch related data
+  from the store prior to injection into stateless components. This reduces prop
+  drilling and makes components more maintainable.
 
 ### TypeScript Guidelines
 
-- **Type Definitions**: Don't ever use interfaces, prefer type literals with unions and intersections:
+- **Type Definitions**: Don't ever use interfaces, prefer type literals with
+  unions and intersections:
+
   ```typescript
   // ✅ Preferred
   type UserConfig = {
@@ -69,11 +85,13 @@ solution for professional radio streaming.
   }
   ```
 
-- **Enum Type Fields**: When defining enum-type fields, always create a constant array with proper typing:
+- **Enum Type Fields**: When defining enum-type fields, always create a constant
+  array with proper typing:
+
   ```typescript
   // ✅ Preferred pattern
   const AudioFormat = ['mp3', 'wav', 'flac'] as const;
-  type AudioFormat = typeof AudioFormat[number];
+  type AudioFormat = (typeof AudioFormat)[number];
 
   // Usage in validation
   const isValidFormat = (format: string): format is AudioFormat => {
@@ -81,7 +99,9 @@ solution for professional radio streaming.
   };
   ```
 
-- **Avoid `any` at All Costs**: If considering using `any`, think about whether you can use generics instead, or if `unknown` is more appropriate:
+- **Avoid `any` at All Costs**: If considering using `any`, think about whether
+  you can use generics instead, or if `unknown` is more appropriate:
+
   ```typescript
   // ✅ Use generics for type safety
   const processData = <T>(data: T): ProcessedData<T> => {
@@ -96,10 +116,15 @@ solution for professional radio streaming.
   };
 
   // ❌ Never use any
-  const processData = (data: any) => { /* ... */ };
+  const processData = (data: any) => {
+    /* ... */
+  };
   ```
 
-- **Avoid Casting**: Casting is a terrible pattern and should only ever be done by the user, never by the agent. Use type guards and proper type narrowing instead:
+- **Avoid Casting**: Casting is a terrible pattern and should only ever be done
+  by the user, never by the agent. Use type guards and proper type narrowing
+  instead:
+
   ```typescript
   // ✅ Type guards
   const isString = (value: unknown): value is string => {
@@ -118,17 +143,28 @@ solution for professional radio streaming.
 
 ### Module Organization
 
-- **No Default Exports**: Never use default exports unless otherwise directed. Always use named exports for better IDE support and refactoring:
+- **No Default Exports**: Never use default exports unless otherwise directed.
+  Always use named exports for better IDE support and refactoring:
+
   ```typescript
   // ✅ Named exports
-  export const ConfigurationSelector = () => { /* ... */ };
-  export const ConfigurationSaver = () => { /* ... */ };
+  export const ConfigurationSelector = () => {
+    /* ... */
+  };
+  export const ConfigurationSaver = () => {
+    /* ... */
+  };
 
   // ❌ Default exports
   export default ConfigurationSelector;
   ```
 
-- **Import Directly from File Paths**: Don't create index.ts files that just re-export things. Import directly from the file paths on the frontend:
+- **Import Directly from File Paths**: Don't create index.ts files that just
+  re-export things. You should never re-export _anything_. Type imports can't
+  create dependency cycles because they do not exist runtime so there is no
+  point in doing this, it just makes it more complicated to follow through to
+  the actual definitions. Import directly from the file paths on the frontend:
+
   ```typescript
   // ✅ Direct imports
   import { ConfigurationSelector } from '../components/ConfigurationSelector';
@@ -140,7 +176,10 @@ solution for professional radio streaming.
 
 ### State Management
 
-- **ID-Based Data Flow**: Pass entity IDs through props and fetch the full data objects from the store within components. This reduces unnecessary re-renders and keeps components decoupled:
+- **ID-Based Data Flow**: Pass entity IDs through props and fetch the full data
+  objects from the store within components. This reduces unnecessary re-renders
+  and keeps components decoupled:
+
   ```typescript
   // ✅ Pass ID, fetch data internally
   type ConfigSelectorProps = {
@@ -148,8 +187,11 @@ solution for professional radio streaming.
     onSelect: (configId: string) => void;
   };
 
-  const ConfigSelector = ({ activeConfigId, onSelect }: ConfigSelectorProps) => {
-    const config = useConfigStore(state =>
+  const ConfigSelector = ({
+    activeConfigId,
+    onSelect,
+  }: ConfigSelectorProps) => {
+    const config = useConfigStore((state) =>
       activeConfigId ? state.getById(activeConfigId) : null
     );
     // ...
@@ -164,7 +206,9 @@ solution for professional radio streaming.
 
 ### Error Handling
 
-- **Strict Type Safety**: Use proper error types instead of throwing generic errors:
+- **Strict Type Safety**: Use proper error types instead of throwing generic
+  errors:
+
   ```typescript
   // ✅ Typed errors
   type ConfigError =
@@ -172,12 +216,15 @@ solution for professional radio streaming.
     | { type: 'validation_failed'; field: string }
     | { type: 'network_error'; message: string };
 
-  const loadConfig = async (id: string): Promise<Result<Config, ConfigError>> => {
+  const loadConfig = async (
+    id: string
+  ): Promise<Result<Config, ConfigError>> => {
     // ...
   };
   ```
 
-These practices ensure type safety, maintainability, and consistent code organization across the React frontend.
+These practices ensure type safety, maintainability, and consistent code
+organization across the React frontend.
 
 ## Logging Standards
 

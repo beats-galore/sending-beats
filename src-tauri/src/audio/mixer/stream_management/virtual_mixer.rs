@@ -12,16 +12,12 @@ use std::sync::{atomic::Ordering, Arc, Mutex};
 use tracing::{error, info, warn};
 
 #[derive(Debug)]
-pub struct VirtualMixer {
-
-}
+pub struct VirtualMixer {}
 
 impl VirtualMixer {
     /// Create a new virtual mixer with lock-free resampler architecture
     pub async fn new() -> anyhow::Result<Self> {
-        Ok(Self {
-
-        })
+        Ok(Self {})
     }
 
     /// Professional audio mixing utility with stereo processing, smart gain management, and level calculation

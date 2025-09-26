@@ -34,14 +34,14 @@ export const ConfigurationSelector = ({ onConfigurationSelect }: ConfigurationSe
     [onConfigurationSelect, selectConfiguration]
   );
 
-  const selectData = reusableConfigurations.map((config) => ({
-    value: config.id,
-    label: config.name,
-    description: config.description,
+  const selectData = reusableConfigurations.map((completeData) => ({
+    value: completeData.configuration.id,
+    label: completeData.configuration.name,
+    description: completeData.configuration.description,
   }));
 
   // Find the currently selected value based on active session's linked reusable config
-  const selectedValue = activeSession?.reusableConfigurationId || null;
+  const selectedValue = activeSession?.configuration.reusableConfigurationId || null;
 
   return (
     <Card withBorder p="md">
