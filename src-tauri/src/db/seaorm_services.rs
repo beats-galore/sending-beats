@@ -1,7 +1,9 @@
-use crate::entities::{audio_mixer_configuration, configured_audio_device, audio_effects_default, audio_effects_custom};
+use crate::entities::{
+    audio_effects_custom, audio_effects_default, audio_mixer_configuration, configured_audio_device,
+};
 use anyhow::Result;
 use sea_orm::*;
-use sea_orm::{Set, prelude::Expr};
+use sea_orm::{prelude::Expr, Set};
 use uuid::Uuid;
 
 /// SeaORM-based service for audio mixer configurations
@@ -9,7 +11,9 @@ pub struct AudioMixerConfigurationService;
 
 impl AudioMixerConfigurationService {
     /// Get all reusable configurations
-    pub async fn list_reusable(db: &DatabaseConnection) -> Result<Vec<audio_mixer_configuration::Model>> {
+    pub async fn list_reusable(
+        db: &DatabaseConnection,
+    ) -> Result<Vec<audio_mixer_configuration::Model>> {
         let configs = audio_mixer_configuration::Entity::find()
             .filter(audio_mixer_configuration::Column::ConfigurationType.eq("reusable"))
             .filter(audio_mixer_configuration::Column::DeletedAt.is_null())
@@ -21,7 +25,9 @@ impl AudioMixerConfigurationService {
     }
 
     /// Get the currently active session configuration
-    pub async fn get_active_session(db: &DatabaseConnection) -> Result<Option<audio_mixer_configuration::Model>> {
+    pub async fn get_active_session(
+        db: &DatabaseConnection,
+    ) -> Result<Option<audio_mixer_configuration::Model>> {
         let config = audio_mixer_configuration::Entity::find()
             .filter(audio_mixer_configuration::Column::SessionActive.eq(true))
             .filter(audio_mixer_configuration::Column::DeletedAt.is_null())
@@ -32,7 +38,10 @@ impl AudioMixerConfigurationService {
     }
 
     /// Find configuration by ID
-    pub async fn find_by_id(db: &DatabaseConnection, id: Uuid) -> Result<Option<audio_mixer_configuration::Model>> {
+    pub async fn find_by_id(
+        db: &DatabaseConnection,
+        id: Uuid,
+    ) -> Result<Option<audio_mixer_configuration::Model>> {
         let config = audio_mixer_configuration::Entity::find_by_id(id.to_string())
             .filter(audio_mixer_configuration::Column::DeletedAt.is_null())
             .one(db)
@@ -42,10 +51,26 @@ impl AudioMixerConfigurationService {
     }
 
     /// Get the default configuration (marked with is_default = true)
-    pub async fn get_default_configuration(db: &DatabaseConnection) -> Result<Option<audio_mixer_configuration::Model>> {
+    pub async fn get_default_configuration(
+        db: &DatabaseConnection,
+    ) -> Result<Option<audio_mixer_configuration::Model>> {
         let config = audio_mixer_configuration::Entity::find()
             .filter(audio_mixer_configuration::Column::IsDefault.eq(true))
             .filter(audio_mixer_configuration::Column::DeletedAt.is_null())
+            .one(db)
+            .await?;
+
+        Ok(config)
+    }
+
+    /// Get the most recent session configuration (regardless of active status)
+    pub async fn get_most_recent_session(
+        db: &DatabaseConnection,
+    ) -> Result<Option<audio_mixer_configuration::Model>> {
+        let config = audio_mixer_configuration::Entity::find()
+            .filter(audio_mixer_configuration::Column::ConfigurationType.eq("session"))
+            .filter(audio_mixer_configuration::Column::DeletedAt.is_null())
+            .order_by_desc(audio_mixer_configuration::Column::UpdatedAt)
             .one(db)
             .await?;
 
@@ -59,16 +84,28 @@ impl AudioMixerConfigurationService {
 
         // Deactivate all other sessions
         audio_mixer_configuration::Entity::update_many()
-            .col_expr(audio_mixer_configuration::Column::SessionActive, Expr::value(false))
-            .col_expr(audio_mixer_configuration::Column::UpdatedAt, Expr::current_timestamp().into())
+            .col_expr(
+                audio_mixer_configuration::Column::SessionActive,
+                Expr::value(false),
+            )
+            .col_expr(
+                audio_mixer_configuration::Column::UpdatedAt,
+                Expr::current_timestamp().into(),
+            )
             .filter(audio_mixer_configuration::Column::SessionActive.eq(true))
             .exec(&txn)
             .await?;
 
         // Activate the specified configuration
         audio_mixer_configuration::Entity::update_many()
-            .col_expr(audio_mixer_configuration::Column::SessionActive, Expr::value(true))
-            .col_expr(audio_mixer_configuration::Column::UpdatedAt, Expr::current_timestamp().into())
+            .col_expr(
+                audio_mixer_configuration::Column::SessionActive,
+                Expr::value(true),
+            )
+            .col_expr(
+                audio_mixer_configuration::Column::UpdatedAt,
+                Expr::current_timestamp().into(),
+            )
             .filter(audio_mixer_configuration::Column::Id.eq(config_id.to_string()))
             .exec(&txn)
             .await?;
@@ -84,7 +121,10 @@ impl AudioMixerConfigurationService {
         reusable_id: Uuid,
         session_name: Option<String>,
     ) -> Result<audio_mixer_configuration::Model> {
-        tracing::info!("🔄 Creating session from reusable configuration: {}", reusable_id);
+        tracing::info!(
+            "🔄 Creating session from reusable configuration: {}",
+            reusable_id
+        );
 
         // Get the reusable configuration
         let reusable = Self::find_by_id(db, reusable_id)
@@ -113,8 +153,14 @@ impl AudioMixerConfigurationService {
 
         // Deactivate all other sessions first
         audio_mixer_configuration::Entity::update_many()
-            .col_expr(audio_mixer_configuration::Column::SessionActive, Expr::value(false))
-            .col_expr(audio_mixer_configuration::Column::UpdatedAt, Expr::current_timestamp().into())
+            .col_expr(
+                audio_mixer_configuration::Column::SessionActive,
+                Expr::value(false),
+            )
+            .col_expr(
+                audio_mixer_configuration::Column::UpdatedAt,
+                Expr::current_timestamp().into(),
+            )
             .filter(audio_mixer_configuration::Column::SessionActive.eq(true))
             .exec(&txn)
             .await?;
@@ -122,7 +168,11 @@ impl AudioMixerConfigurationService {
         // Insert new session
         let session_model = session_active_model.insert(&txn).await?;
 
-        tracing::info!("✅ Created session configuration: {} ({})", session_model.name, session_model.id);
+        tracing::info!(
+            "✅ Created session configuration: {} ({})",
+            session_model.name,
+            session_model.id
+        );
 
         // Copy related configured audio devices
         let audio_devices = configured_audio_device::Entity::find()
@@ -148,7 +198,10 @@ impl AudioMixerConfigurationService {
             };
 
             new_device.insert(&txn).await?;
-            tracing::debug!("✅ Copied audio device: {} -> new device", original_device.id);
+            tracing::debug!(
+                "✅ Copied audio device: {} -> new device",
+                original_device.id
+            );
         }
 
         // Copy related AudioEffectsDefault settings
@@ -173,7 +226,10 @@ impl AudioMixerConfigurationService {
             };
 
             new_default.insert(&txn).await?;
-            tracing::debug!("✅ Copied audio default: {} -> new default", original_default.id);
+            tracing::debug!(
+                "✅ Copied audio default: {} -> new default",
+                original_default.id
+            );
         }
 
         // Copy related AudioEffectsCustom
@@ -196,7 +252,10 @@ impl AudioMixerConfigurationService {
             };
 
             new_effect.insert(&txn).await?;
-            tracing::debug!("✅ Copied audio effect: {} -> new effect", original_effect.id);
+            tracing::debug!(
+                "✅ Copied audio effect: {} -> new effect",
+                original_effect.id
+            );
         }
 
         txn.commit().await?;
@@ -213,9 +272,9 @@ impl AudioMixerConfigurationService {
             .ok_or_else(|| anyhow::anyhow!("No active session found"))?;
 
         // Get the reusable configuration it's linked to
-        let reusable_id = active_session
-            .reusable_configuration_id
-            .ok_or_else(|| anyhow::anyhow!("Active session is not linked to a reusable configuration"))?;
+        let reusable_id = active_session.reusable_configuration_id.ok_or_else(|| {
+            anyhow::anyhow!("Active session is not linked to a reusable configuration")
+        })?;
 
         let reusable_uuid = Uuid::parse_str(&reusable_id)
             .map_err(|e| anyhow::anyhow!("Invalid UUID format: {}", e))?;
@@ -231,7 +290,155 @@ impl AudioMixerConfigurationService {
 
         reusable_active.update(db).await?;
 
-        // TODO: Also copy related audio devices, effects, etc. back to reusable config
+        tracing::info!(
+            "✅ Updated reusable configuration basic info: {} ({})",
+            active_session.name,
+            reusable_id
+        );
+
+        // Start transaction to replace all related models
+        let txn = db.begin().await?;
+
+        // 1. First, soft delete all existing related models from the reusable configuration
+        let now = chrono::Utc::now();
+
+        // Soft delete existing configured_audio_devices
+        configured_audio_device::Entity::update_many()
+            .col_expr(
+                configured_audio_device::Column::DeletedAt,
+                Expr::val(now).into(),
+            )
+            .col_expr(
+                configured_audio_device::Column::UpdatedAt,
+                Expr::current_timestamp().into(),
+            )
+            .filter(configured_audio_device::Column::ConfigurationId.eq(&reusable_id))
+            .filter(configured_audio_device::Column::DeletedAt.is_null())
+            .exec(&txn)
+            .await?;
+
+        // Soft delete existing audio_effects_default
+        audio_effects_default::Entity::update_many()
+            .col_expr(
+                audio_effects_default::Column::DeletedAt,
+                Expr::val(now).into(),
+            )
+            .col_expr(
+                audio_effects_default::Column::UpdatedAt,
+                Expr::current_timestamp().into(),
+            )
+            .filter(audio_effects_default::Column::ConfigurationId.eq(&reusable_id))
+            .filter(audio_effects_default::Column::DeletedAt.is_null())
+            .exec(&txn)
+            .await?;
+
+        // Soft delete existing audio_effects_custom
+        audio_effects_custom::Entity::update_many()
+            .col_expr(
+                audio_effects_custom::Column::DeletedAt,
+                Expr::val(now).into(),
+            )
+            .col_expr(
+                audio_effects_custom::Column::UpdatedAt,
+                Expr::current_timestamp().into(),
+            )
+            .filter(audio_effects_custom::Column::ConfigurationId.eq(&reusable_id))
+            .filter(audio_effects_custom::Column::DeletedAt.is_null())
+            .exec(&txn)
+            .await?;
+
+        tracing::info!("✅ Soft deleted existing related models from reusable configuration");
+
+        // 2. Copy all related models from the active session to the reusable configuration
+
+        // Copy configured_audio_devices from session to reusable
+        let session_devices = configured_audio_device::Entity::find()
+            .filter(configured_audio_device::Column::ConfigurationId.eq(&active_session.id))
+            .filter(configured_audio_device::Column::DeletedAt.is_null())
+            .all(&txn)
+            .await?;
+
+        for original_device in session_devices {
+            let new_device = configured_audio_device::ActiveModel {
+                id: Set(Uuid::new_v4().to_string()),
+                device_identifier: Set(original_device.device_identifier),
+                device_name: Set(original_device.device_name),
+                sample_rate: Set(original_device.sample_rate),
+                buffer_size: Set(original_device.buffer_size),
+                channel_format: Set(original_device.channel_format),
+                is_virtual: Set(original_device.is_virtual),
+                is_input: Set(original_device.is_input),
+                configuration_id: Set(reusable_id.clone()), // Link to reusable config
+                created_at: Set(now),
+                updated_at: Set(now),
+                deleted_at: Set(None),
+            };
+
+            new_device.insert(&txn).await?;
+            tracing::debug!(
+                "✅ Copied audio device: {} -> reusable config",
+                original_device.id
+            );
+        }
+
+        // Copy audio_effects_default from session to reusable
+        let session_defaults = audio_effects_default::Entity::find()
+            .filter(audio_effects_default::Column::ConfigurationId.eq(&active_session.id))
+            .filter(audio_effects_default::Column::DeletedAt.is_null())
+            .all(&txn)
+            .await?;
+
+        for original_default in session_defaults {
+            let new_default = audio_effects_default::ActiveModel {
+                id: Set(Uuid::new_v4().to_string()),
+                device_id: Set(original_default.device_id),
+                configuration_id: Set(reusable_id.clone()), // Link to reusable config
+                gain: Set(original_default.gain),
+                pan: Set(original_default.pan),
+                muted: Set(original_default.muted),
+                solo: Set(original_default.solo),
+                created_at: Set(now),
+                updated_at: Set(now),
+                deleted_at: Set(None),
+            };
+
+            new_default.insert(&txn).await?;
+            tracing::debug!(
+                "✅ Copied audio default: {} -> reusable config",
+                original_default.id
+            );
+        }
+
+        // Copy audio_effects_custom from session to reusable
+        let session_effects = audio_effects_custom::Entity::find()
+            .filter(audio_effects_custom::Column::ConfigurationId.eq(&active_session.id))
+            .filter(audio_effects_custom::Column::DeletedAt.is_null())
+            .all(&txn)
+            .await?;
+
+        for original_effect in session_effects {
+            let new_effect = audio_effects_custom::ActiveModel {
+                id: Set(Uuid::new_v4().to_string()),
+                device_id: Set(original_effect.device_id),
+                configuration_id: Set(reusable_id.clone()), // Link to reusable config
+                effect_type: Set(original_effect.effect_type),
+                parameters: Set(original_effect.parameters),
+                created_at: Set(now),
+                updated_at: Set(now),
+                deleted_at: Set(None),
+            };
+
+            new_effect.insert(&txn).await?;
+            tracing::debug!(
+                "✅ Copied audio effect: {} -> reusable config",
+                original_effect.id
+            );
+        }
+
+        txn.commit().await?;
+        tracing::info!(
+            "✅ Successfully saved session back to reusable configuration with all related data"
+        );
 
         Ok(())
     }
@@ -269,15 +476,111 @@ impl AudioMixerConfigurationService {
 
         let new_reusable_model = new_reusable.insert(&txn).await?;
 
+        // Store session ID before moving active_session
+        let active_session_id = active_session.id.clone();
+
         // Update the active session to point to this new reusable config
         let mut updated_session: audio_mixer_configuration::ActiveModel = active_session.into();
         updated_session.reusable_configuration_id = Set(Some(new_reusable_id.to_string()));
         updated_session.updated_at = Set(now);
         updated_session.update(&txn).await?;
 
-        txn.commit().await?;
+        tracing::info!(
+            "✅ Created new reusable configuration: {} ({})",
+            new_reusable_model.name,
+            new_reusable_model.id
+        );
 
-        // TODO: Also copy related audio devices, effects, etc.
+        // Copy all related models from the active session to the new reusable configuration
+
+        // Copy configured_audio_devices from session to new reusable
+        let session_devices = configured_audio_device::Entity::find()
+            .filter(configured_audio_device::Column::ConfigurationId.eq(&active_session_id))
+            .filter(configured_audio_device::Column::DeletedAt.is_null())
+            .all(&txn)
+            .await?;
+
+        for original_device in session_devices {
+            let new_device = configured_audio_device::ActiveModel {
+                id: Set(Uuid::new_v4().to_string()),
+                device_identifier: Set(original_device.device_identifier),
+                device_name: Set(original_device.device_name),
+                sample_rate: Set(original_device.sample_rate),
+                buffer_size: Set(original_device.buffer_size),
+                channel_format: Set(original_device.channel_format),
+                is_virtual: Set(original_device.is_virtual),
+                is_input: Set(original_device.is_input),
+                configuration_id: Set(new_reusable_id.to_string()), // Link to new reusable config
+                created_at: Set(now),
+                updated_at: Set(now),
+                deleted_at: Set(None),
+            };
+
+            new_device.insert(&txn).await?;
+            tracing::debug!(
+                "✅ Copied audio device: {} -> new reusable config",
+                original_device.id
+            );
+        }
+
+        // Copy audio_effects_default from session to new reusable
+        let session_defaults = audio_effects_default::Entity::find()
+            .filter(audio_effects_default::Column::ConfigurationId.eq(&active_session_id))
+            .filter(audio_effects_default::Column::DeletedAt.is_null())
+            .all(&txn)
+            .await?;
+
+        for original_default in session_defaults {
+            let new_default = audio_effects_default::ActiveModel {
+                id: Set(Uuid::new_v4().to_string()),
+                device_id: Set(original_default.device_id),
+                configuration_id: Set(new_reusable_id.to_string()), // Link to new reusable config
+                gain: Set(original_default.gain),
+                pan: Set(original_default.pan),
+                muted: Set(original_default.muted),
+                solo: Set(original_default.solo),
+                created_at: Set(now),
+                updated_at: Set(now),
+                deleted_at: Set(None),
+            };
+
+            new_default.insert(&txn).await?;
+            tracing::debug!(
+                "✅ Copied audio default: {} -> new reusable config",
+                original_default.id
+            );
+        }
+
+        // Copy audio_effects_custom from session to new reusable
+        let session_effects = audio_effects_custom::Entity::find()
+            .filter(audio_effects_custom::Column::ConfigurationId.eq(&active_session_id))
+            .filter(audio_effects_custom::Column::DeletedAt.is_null())
+            .all(&txn)
+            .await?;
+
+        for original_effect in session_effects {
+            let new_effect = audio_effects_custom::ActiveModel {
+                id: Set(Uuid::new_v4().to_string()),
+                device_id: Set(original_effect.device_id),
+                configuration_id: Set(new_reusable_id.to_string()), // Link to new reusable config
+                effect_type: Set(original_effect.effect_type),
+                parameters: Set(original_effect.parameters),
+                created_at: Set(now),
+                updated_at: Set(now),
+                deleted_at: Set(None),
+            };
+
+            new_effect.insert(&txn).await?;
+            tracing::debug!(
+                "✅ Copied audio effect: {} -> new reusable config",
+                original_effect.id
+            );
+        }
+
+        txn.commit().await?;
+        tracing::info!(
+            "✅ Successfully saved session as new reusable configuration with all related data"
+        );
 
         Ok(new_reusable_model)
     }

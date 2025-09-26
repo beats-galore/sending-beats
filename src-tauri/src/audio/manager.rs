@@ -202,7 +202,6 @@ impl ApplicationAudioManager {
         )
         .await?;
 
-        // NOW start capturing from the application
         let audio_receiver = self.start_capturing_app(pid).await?;
 
         // Bridge the audio to the pre-registered stream

@@ -4,10 +4,10 @@ import { IconPlus, IconBug } from '@tabler/icons-react';
 import { memo, useState } from 'react';
 
 import { useMixerControls } from '../../hooks';
-import { ConfigurationSelector } from '../ConfigurationSelector';
 import { ConfigurationSaver } from '../ConfigurationSaver';
-import { SaveAsNewConfiguration } from '../SaveAsNewConfiguration';
+import { ConfigurationSelector } from '../ConfigurationSelector';
 import { DebugLogModal } from '../DebugLogModal';
+import { SaveAsNewConfiguration } from '../SaveAsNewConfiguration';
 
 export const MixerControls = memo(() => {
   const { isReady, onAddChannel } = useMixerControls();

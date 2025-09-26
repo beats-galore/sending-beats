@@ -87,3 +87,15 @@ export type MixerOperationResult = {
   success: boolean;
   error?: string;
 };
+
+// Complete configuration data types for backend integration
+import type { AudioEffectsDefault, AudioEffectsCustom } from './db/audio-effects.types';
+import type { AudioMixerConfiguration } from './db/audio-mixer-configurations.types';
+import type { ConfiguredAudioDevice } from './db/configured-audio-devices.types';
+
+export type CompleteConfigurationData = {
+  configuration: AudioMixerConfiguration;
+  configured_devices: ConfiguredAudioDevice[];
+  audio_effects_default: AudioEffectsDefault[];
+  audio_effects_custom: AudioEffectsCustom[];
+};

@@ -10,7 +10,7 @@ pub struct Model {
     pub configuration_id: String,
     #[sea_orm(column_name = "type")]
     pub effect_type: String,
-    pub parameters: String,  // JSON string
+    pub parameters: String, // JSON string
     pub created_at: ChronoDateTimeUtc,
     pub updated_at: ChronoDateTimeUtc,
     pub deleted_at: Option<ChronoDateTimeUtc>,

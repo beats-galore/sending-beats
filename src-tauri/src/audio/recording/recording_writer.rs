@@ -313,13 +313,13 @@ impl RecordingWriter {
                 None
             },
             active_writers_count: if self.is_writing { 1 } else { 0 },
-            available_space_gb,  // **RESTORED**: Real disk space checking
-            total_recordings: 1, // **RESTORED**: This writer represents 1 recording
+            available_space_gb,
+            total_recordings: 1,
             active_recordings: if self.is_writing {
                 vec![self.session.id.clone()]
             } else {
                 vec![]
-            }, // **RESTORED**: Frontend expects this
+            },
         }
     }
 

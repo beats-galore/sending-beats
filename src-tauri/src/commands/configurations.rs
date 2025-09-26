@@ -2,11 +2,11 @@ use crate::db::seaorm_services::{AudioMixerConfigurationService, ConfiguredAudio
 use crate::entities::{audio_mixer_configuration, configured_audio_device};
 use crate::AudioState;
 use anyhow::Result;
-use sea_orm::{EntityTrait, ColumnTrait, QueryFilter, Set, ActiveModelTrait};
+use colored::*;
 use sea_orm::prelude::*;
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 use tauri::State;
 use uuid::Uuid;
-use colored::*;
 
 /// Get all reusable configurations
 #[tauri::command]
@@ -17,12 +17,20 @@ pub async fn get_reusable_configurations(
 
     match AudioMixerConfigurationService::list_reusable(state.database.sea_orm()).await {
         Ok(configs) => {
-            tracing::info!("✅ get_reusable_configurations: Found {} configurations", configs.len());
+            tracing::info!(
+                "✅ get_reusable_configurations: Found {} configurations",
+                configs.len()
+            );
 
             // Get complete data for each configuration
             let mut complete_configs = Vec::new();
             for config in configs {
-                tracing::debug!("  - {}: {} ({})", config.id, config.name, config.configuration_type);
+                tracing::debug!(
+                    "  - {}: {} ({})",
+                    config.id,
+                    config.name,
+                    config.configuration_type
+                );
                 let complete_data = get_complete_configuration_data(&state, config).await?;
                 complete_configs.push(complete_data);
             }
@@ -47,7 +55,11 @@ pub async fn get_active_session_configuration(
     // First, check for an active session
     match AudioMixerConfigurationService::get_active_session(state.database.sea_orm()).await {
         Ok(Some(active_config)) => {
-            tracing::info!("✅ get_active_session_configuration: Found active session: {} ({})", active_config.name, active_config.id);
+            tracing::info!(
+                "✅ get_active_session_configuration: Found active session: {} ({})",
+                active_config.name,
+                active_config.id
+            );
 
             // Get complete configuration data with all related tables (READ ONLY - no device restoration)
             let complete_data = get_complete_configuration_data(&state, active_config).await?;
@@ -66,8 +78,11 @@ pub async fn get_active_session_configuration(
     // If no active session, check for the most recent session
     match AudioMixerConfigurationService::get_most_recent_session(state.database.sea_orm()).await {
         Ok(Some(recent_config)) => {
-            tracing::info!("✅ get_active_session_configuration: Found recent session: {} ({})", recent_config.name, recent_config.id);
-
+            tracing::info!(
+                "✅ get_active_session_configuration: Found recent session: {} ({})",
+                recent_config.name,
+                recent_config.id
+            );
 
             let complete_data = get_complete_configuration_data(&state, recent_config).await?;
 
@@ -76,9 +91,17 @@ pub async fn get_active_session_configuration(
         Ok(None) => {
             tracing::info!("ℹ️ No sessions found, looking for default configuration to copy...");
 
-            match AudioMixerConfigurationService::get_default_configuration(state.database.sea_orm()).await {
+            match AudioMixerConfigurationService::get_default_configuration(
+                state.database.sea_orm(),
+            )
+            .await
+            {
                 Ok(Some(default_config)) => {
-                    tracing::info!("🔄 Creating session from default configuration: {} ({})", default_config.name, default_config.id);
+                    tracing::info!(
+                        "🔄 Creating session from default configuration: {} ({})",
+                        default_config.name,
+                        default_config.id
+                    );
 
                     let default_uuid = uuid::Uuid::parse_str(&default_config.id)
                         .map_err(|e| format!("Invalid UUID in default config: {}", e))?;
@@ -86,13 +109,20 @@ pub async fn get_active_session_configuration(
                     match AudioMixerConfigurationService::create_session_from_reusable(
                         state.database.sea_orm(),
                         default_uuid,
-                        Some(format!("{} (Session)", default_config.name))
-                    ).await {
+                        Some(format!("{} (Session)", default_config.name)),
+                    )
+                    .await
+                    {
                         Ok(new_session) => {
-                            tracing::info!("✅ Created session from default: {} ({})", new_session.name, new_session.id);
+                            tracing::info!(
+                                "✅ Created session from default: {} ({})",
+                                new_session.name,
+                                new_session.id
+                            );
 
                             // Get complete configuration data for the new session
-                            let complete_data = get_complete_configuration_data(&state, new_session).await?;
+                            let complete_data =
+                                get_complete_configuration_data(&state, new_session).await?;
 
                             Ok(Some(complete_data))
                         }
@@ -128,9 +158,13 @@ pub async fn create_session_from_reusable(
 ) -> Result<audio_mixer_configuration::Model, String> {
     let uuid = Uuid::parse_str(&reusable_id).map_err(|e| e.to_string())?;
 
-    AudioMixerConfigurationService::create_session_from_reusable(state.database.sea_orm(), uuid, session_name)
-        .await
-        .map_err(|e| e.to_string())
+    AudioMixerConfigurationService::create_session_from_reusable(
+        state.database.sea_orm(),
+        uuid,
+        session_name,
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Save the current session configuration back to its reusable configuration
@@ -148,9 +182,13 @@ pub async fn save_session_as_new_reusable(
     description: Option<String>,
     state: State<'_, AudioState>,
 ) -> Result<audio_mixer_configuration::Model, String> {
-    AudioMixerConfigurationService::save_session_as_new_reusable(state.database.sea_orm(), name, description)
-        .await
-        .map_err(|e| e.to_string())
+    AudioMixerConfigurationService::save_session_as_new_reusable(
+        state.database.sea_orm(),
+        name,
+        description,
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Get a configuration by ID
@@ -173,9 +211,13 @@ pub async fn create_reusable_configuration(
     description: Option<String>,
     state: State<'_, AudioState>,
 ) -> Result<audio_mixer_configuration::Model, String> {
-    AudioMixerConfigurationService::create_reusable_configuration(state.database.sea_orm(), name, description)
-        .await
-        .map_err(|e| e.to_string())
+    AudioMixerConfigurationService::create_reusable_configuration(
+        state.database.sea_orm(),
+        name,
+        description,
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Get configured audio devices by configuration ID
@@ -204,15 +246,25 @@ pub async fn create_device_configuration(
     is_virtual: bool,
 ) -> Result<(), String> {
     // Get the active session configuration
-    let session_config = match AudioMixerConfigurationService::get_active_session(state.database.sea_orm()).await {
+    let session_config = match AudioMixerConfigurationService::get_active_session(
+        state.database.sea_orm(),
+    )
+    .await
+    {
         Ok(Some(config)) => config,
         Ok(None) => {
             // No active session, try to get most recent or create from default
-            match AudioMixerConfigurationService::get_most_recent_session(state.database.sea_orm()).await {
+            match AudioMixerConfigurationService::get_most_recent_session(state.database.sea_orm())
+                .await
+            {
                 Ok(Some(recent_config)) => recent_config,
                 Ok(None) => {
                     // Try to create session from default
-                    match AudioMixerConfigurationService::get_default_configuration(state.database.sea_orm()).await {
+                    match AudioMixerConfigurationService::get_default_configuration(
+                        state.database.sea_orm(),
+                    )
+                    .await
+                    {
                         Ok(Some(default_config)) => {
                             let default_uuid = uuid::Uuid::parse_str(&default_config.id)
                                 .map_err(|e| format!("Invalid UUID in default config: {}", e))?;
@@ -220,31 +272,38 @@ pub async fn create_device_configuration(
                             AudioMixerConfigurationService::create_session_from_reusable(
                                 state.database.sea_orm(),
                                 default_uuid,
-                                Some(format!("{} (Session)", default_config.name))
-                            ).await.map_err(|e| e.to_string())?
-                        },
+                                Some(format!("{} (Session)", default_config.name)),
+                            )
+                            .await
+                            .map_err(|e| e.to_string())?
+                        }
                         Ok(None) => {
                             tracing::warn!("No session or default configuration found, cannot create device configuration");
                             return Ok(()); // Don't fail if no session
-                        },
+                        }
                         Err(e) => return Err(e.to_string()),
                     }
-                },
+                }
                 Err(e) => return Err(e.to_string()),
             }
-        },
+        }
         Err(e) => return Err(e.to_string()),
     };
 
     // Check for duplicate device by device_identifier in this configuration
     tracing::info!(
         "{}: Checking for existing device with identifier: {} in config: {}",
-        "DUPLICATE_CHECK".on_blue().magenta(), device_id, session_config.id
+        "DUPLICATE_CHECK".on_blue().magenta(),
+        device_id,
+        session_config.id
     );
 
     let existing_device = crate::entities::configured_audio_device::Entity::find()
         .filter(crate::entities::configured_audio_device::Column::DeviceIdentifier.eq(device_id))
-        .filter(crate::entities::configured_audio_device::Column::ConfigurationId.eq(&session_config.id))
+        .filter(
+            crate::entities::configured_audio_device::Column::ConfigurationId
+                .eq(&session_config.id),
+        )
         .filter(crate::entities::configured_audio_device::Column::DeletedAt.is_null())
         .one(state.database.sea_orm())
         .await
@@ -253,14 +312,21 @@ pub async fn create_device_configuration(
     if let Some(existing) = existing_device {
         tracing::info!(
             "{}: Device already exists with identifier: {} ({}), skipping creation",
-            "DUPLICATE_FOUND".on_blue().magenta(), device_id, existing.id
+            "DUPLICATE_FOUND".on_blue().magenta(),
+            device_id,
+            existing.id
         );
         return Ok(()); // Device already exists, skip creation
     }
 
     tracing::info!(
         "{}: Creating device configuration for {} ({}): device_id={}, is_input={}, channels={}",
-        "CREATE_DEVICE".on_blue().magenta(), device_name, device_id, device_id, is_input, channels
+        "CREATE_DEVICE".on_blue().magenta(),
+        device_name,
+        device_id,
+        device_id,
+        is_input,
+        channels
     );
 
     let now = chrono::Utc::now();
@@ -273,7 +339,11 @@ pub async fn create_device_configuration(
         device_name: sea_orm::Set(Some(device_name.to_string())),
         sample_rate: sea_orm::Set(sample_rate),
         buffer_size: sea_orm::Set(Some(8192)), // Default buffer size
-        channel_format: sea_orm::Set(if channels == 1 { "mono".to_string() } else { "stereo".to_string() }),
+        channel_format: sea_orm::Set(if channels == 1 {
+            "mono".to_string()
+        } else {
+            "stereo".to_string()
+        }),
         is_virtual: sea_orm::Set(is_virtual),
         is_input: sea_orm::Set(is_input),
         configuration_id: sea_orm::Set(session_config.id.clone()),
@@ -285,15 +355,19 @@ pub async fn create_device_configuration(
     // Insert device configuration
     match device_entry.insert(state.database.sea_orm()).await {
         Ok(device_model) => {
-            tracing::info!("✅ Created configured_audio_device: {} ({})", device_model.device_name.as_deref().unwrap_or("Unknown"), device_model.id);
+            tracing::info!(
+                "✅ Created configured_audio_device: {} ({})",
+                device_model.device_name.as_deref().unwrap_or("Unknown"),
+                device_model.id
+            );
 
             // Create corresponding audio_effects_default entry
             let effects_entry = crate::entities::audio_effects_default::ActiveModel {
                 id: sea_orm::Set(uuid::Uuid::new_v4().to_string()),
                 device_id: sea_orm::Set(device_model.id.clone()),
                 configuration_id: sea_orm::Set(session_config.id.clone()),
-                gain: sea_orm::Set(1.0),   // Default gain (0dB)
-                pan: sea_orm::Set(0.0),    // Center pan
+                gain: sea_orm::Set(1.0), // Default gain (0dB)
+                pan: sea_orm::Set(0.0),  // Center pan
                 muted: sea_orm::Set(false),
                 solo: sea_orm::Set(false),
                 created_at: sea_orm::Set(now),
@@ -303,7 +377,10 @@ pub async fn create_device_configuration(
 
             match effects_entry.insert(state.database.sea_orm()).await {
                 Ok(effects_model) => {
-                    tracing::info!("✅ Created audio_effects_default for device: {}", effects_model.device_id);
+                    tracing::info!(
+                        "✅ Created audio_effects_default for device: {}",
+                        effects_model.device_id
+                    );
                     Ok(())
                 }
                 Err(e) => {
@@ -330,20 +407,32 @@ pub async fn remove_device_configuration(
 
     // Soft delete configured_audio_device entries
     match crate::entities::configured_audio_device::Entity::update_many()
-        .col_expr(crate::entities::configured_audio_device::Column::DeletedAt, Expr::val(now).into())
-        .col_expr(crate::entities::configured_audio_device::Column::UpdatedAt, Expr::val(now).into())
+        .col_expr(
+            crate::entities::configured_audio_device::Column::DeletedAt,
+            Expr::val(now).into(),
+        )
+        .col_expr(
+            crate::entities::configured_audio_device::Column::UpdatedAt,
+            Expr::val(now).into(),
+        )
         .filter(crate::entities::configured_audio_device::Column::DeviceIdentifier.eq(device_id))
         .filter(crate::entities::configured_audio_device::Column::DeletedAt.is_null())
         .exec(state.database.sea_orm())
         .await
     {
         Ok(result) => {
-            tracing::info!("✅ Soft deleted {} configured_audio_device entries", result.rows_affected);
+            tracing::info!(
+                "✅ Soft deleted {} configured_audio_device entries",
+                result.rows_affected
+            );
 
             // For now, we'll find device IDs manually and then soft delete effects
             // This is a simpler approach that avoids complex subquery issues
             let device_configs = crate::entities::configured_audio_device::Entity::find()
-                .filter(crate::entities::configured_audio_device::Column::DeviceIdentifier.eq(device_id))
+                .filter(
+                    crate::entities::configured_audio_device::Column::DeviceIdentifier
+                        .eq(device_id),
+                )
                 .filter(crate::entities::configured_audio_device::Column::DeletedAt.is_null())
                 .all(state.database.sea_orm())
                 .await;
@@ -352,9 +441,18 @@ pub async fn remove_device_configuration(
                 Ok(configs) => {
                     for config in configs {
                         let _ = crate::entities::audio_effects_default::Entity::update_many()
-                            .col_expr(crate::entities::audio_effects_default::Column::DeletedAt, Expr::val(now).into())
-                            .col_expr(crate::entities::audio_effects_default::Column::UpdatedAt, Expr::val(now).into())
-                            .filter(crate::entities::audio_effects_default::Column::DeviceId.eq(&config.id))
+                            .col_expr(
+                                crate::entities::audio_effects_default::Column::DeletedAt,
+                                Expr::val(now).into(),
+                            )
+                            .col_expr(
+                                crate::entities::audio_effects_default::Column::UpdatedAt,
+                                Expr::val(now).into(),
+                            )
+                            .filter(
+                                crate::entities::audio_effects_default::Column::DeviceId
+                                    .eq(&config.id),
+                            )
                             .exec(state.database.sea_orm())
                             .await;
                     }
@@ -373,13 +471,12 @@ pub async fn remove_device_configuration(
     }
 }
 
-
 /// Information about a loaded configuration for UI synchronization
 #[derive(Debug, serde::Serialize)]
 pub struct LoadedConfigurationInfo {
     pub configuration_id: String,
     pub configuration_name: String,
-    pub loaded_input_devices: Vec<String>,  // Device IDs that were added as inputs
+    pub loaded_input_devices: Vec<String>, // Device IDs that were added as inputs
     pub loaded_output_devices: Vec<String>, // Device IDs that were added as outputs
     pub channels_with_devices: Vec<(u32, Option<String>)>, // (channel_id, input_device_id)
 }
@@ -398,11 +495,20 @@ async fn get_complete_configuration_data(
     state: &State<'_, AudioState>,
     config: crate::entities::audio_mixer_configuration::Model,
 ) -> Result<CompleteConfigurationData, String> {
-    tracing::info!("{}: Fetching data for config: {} ({})", "CONFIG_DATA_FETCH".on_blue().magenta(), config.name, config.id);
+    tracing::info!(
+        "{}: Fetching data for config: {} ({})",
+        "CONFIG_DATA_FETCH".on_blue().magenta(),
+        config.name,
+        config.id
+    );
     let config_uuid = Uuid::parse_str(&config.id).map_err(|e| e.to_string())?;
 
     // Get configured devices
-    tracing::info!("{}: Querying configured devices for config ID: {}", "DEVICE_QUERY".on_blue().magenta(), config.id);
+    tracing::info!(
+        "{}: Querying configured devices for config ID: {}",
+        "DEVICE_QUERY".on_blue().magenta(),
+        config.id
+    );
     let configured_devices = crate::entities::configured_audio_device::Entity::find()
         .filter(crate::entities::configured_audio_device::Column::ConfigurationId.eq(&config.id))
         .filter(crate::entities::configured_audio_device::Column::DeletedAt.is_null())
@@ -410,9 +516,15 @@ async fn get_complete_configuration_data(
         .await
         .map_err(|e| e.to_string())?;
 
-    tracing::info!("{}: Found {} configured devices in get_complete_configuration_data", "DEVICE_COUNT".on_blue().magenta(), configured_devices.len());
+    tracing::info!(
+        "{}: Found {} configured devices in get_complete_configuration_data",
+        "DEVICE_COUNT".on_blue().magenta(),
+        configured_devices.len()
+    );
     for device in &configured_devices {
-        tracing::info!("  {}: Device: {} ({}) - Input: {}", "DEVICE_DETAIL".on_blue().magenta(),
+        tracing::info!(
+            "  {}: Device: {} ({}) - Input: {}",
+            "DEVICE_DETAIL".on_blue().magenta(),
             device.device_name.as_deref().unwrap_or("Unknown"),
             device.device_identifier,
             device.is_input
@@ -420,7 +532,11 @@ async fn get_complete_configuration_data(
     }
 
     // Get audio effects default
-    tracing::info!("{}: Querying audio_effects_default for config ID: {}", "EFFECTS_QUERY".on_blue().magenta(), config.id);
+    tracing::info!(
+        "{}: Querying audio_effects_default for config ID: {}",
+        "EFFECTS_QUERY".on_blue().magenta(),
+        config.id
+    );
     let audio_effects_default = crate::entities::audio_effects_default::Entity::find()
         .filter(crate::entities::audio_effects_default::Column::ConfigurationId.eq(&config.id))
         .filter(crate::entities::audio_effects_default::Column::DeletedAt.is_null())
@@ -428,10 +544,18 @@ async fn get_complete_configuration_data(
         .await
         .map_err(|e| e.to_string())?;
 
-    tracing::info!("{}: Found {} default effects in get_complete_configuration_data", "EFFECTS_DEFAULT".on_blue().magenta(), audio_effects_default.len());
+    tracing::info!(
+        "{}: Found {} default effects in get_complete_configuration_data",
+        "EFFECTS_DEFAULT".on_blue().magenta(),
+        audio_effects_default.len()
+    );
 
     // Get audio effects custom
-    tracing::info!("{}: Querying audio_effects_custom for config ID: {}", "EFFECTS_QUERY".on_blue().magenta(), config.id);
+    tracing::info!(
+        "{}: Querying audio_effects_custom for config ID: {}",
+        "EFFECTS_QUERY".on_blue().magenta(),
+        config.id
+    );
     let audio_effects_custom = crate::entities::audio_effects_custom::Entity::find()
         .filter(crate::entities::audio_effects_custom::Column::ConfigurationId.eq(&config.id))
         .filter(crate::entities::audio_effects_custom::Column::DeletedAt.is_null())
@@ -439,7 +563,11 @@ async fn get_complete_configuration_data(
         .await
         .map_err(|e| e.to_string())?;
 
-    tracing::info!("{}: Found {} custom effects in get_complete_configuration_data", "EFFECTS_CUSTOM".on_blue().magenta(), audio_effects_custom.len());
+    tracing::info!(
+        "{}: Found {} custom effects in get_complete_configuration_data",
+        "EFFECTS_CUSTOM".on_blue().magenta(),
+        audio_effects_custom.len()
+    );
 
     Ok(CompleteConfigurationData {
         configuration: config,
@@ -448,4 +576,3 @@ async fn get_complete_configuration_data(
         audio_effects_custom,
     })
 }
-

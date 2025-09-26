@@ -881,11 +881,11 @@ impl OutputWorker {
                 let chunk_size = remaining.len().min(producer.slots());
                 if chunk_size == 0 {
                     // Ring buffer is full, drop remaining samples
-                    warn!(
-                        "⚠️ OUTPUT_WORKER: {} RTRB queue full, dropping {} remaining samples",
-                        device_id,
-                        remaining.len()
-                    );
+                    // warn!(
+                    //     "⚠️ OUTPUT_WORKER: {} RTRB queue full, dropping {} remaining samples",
+                    //     device_id,
+                    //     remaining.len()
+                    // );
                     break;
                 }
 

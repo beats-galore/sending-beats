@@ -93,7 +93,7 @@ pub async fn safe_switch_input_device(
             let (response_tx, response_rx) = tokio::sync::oneshot::channel();
             let remove_command =
                 crate::audio::mixer::stream_management::AudioCommand::RemoveInputStream {
-                    device_id: old_id,
+                    device_id: old_id.clone(),
                     response_tx,
                 };
 
@@ -107,6 +107,18 @@ pub async fn safe_switch_input_device(
             }
 
             let _ = response_rx.await; // Don't fail on remove errors
+
+            // Sync with database: remove old device configuration
+            if let Err(e) =
+                crate::commands::configurations::remove_device_configuration(&audio_state, &old_id)
+                    .await
+            {
+                tracing::warn!(
+                    "Failed to remove old device configuration from database: {}",
+                    e
+                );
+                // Don't fail the command if database sync fails
+            }
         }
     }
 
@@ -117,6 +129,18 @@ pub async fn safe_switch_input_device(
         .await
         .map_err(|e| format!("Failed to find input device {}: {}", new_device_id, e))?;
 
+    // Extract device information for database sync before consuming device_handle
+    let device_info = match &device_handle {
+        #[cfg(target_os = "macos")]
+        crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => Some((
+            coreaudio_device.name.clone(),
+            coreaudio_device.sample_rate,
+            coreaudio_device.channels,
+        )),
+        #[cfg(not(target_os = "macos"))]
+        _ => None,
+    };
+
     // Create command based on device type
     let buffer_capacity = 8192;
     let (producer, _consumer) = rtrb::RingBuffer::<f32>::new(buffer_capacity);
@@ -126,9 +150,9 @@ pub async fn safe_switch_input_device(
         #[cfg(target_os = "macos")]
         crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => {
             crate::audio::mixer::stream_management::AudioCommand::AddCoreAudioInputStream {
-                device_id: new_device_id,
+                device_id: new_device_id.clone(),
                 coreaudio_device_id: coreaudio_device.device_id,
-                device_name: coreaudio_device.name,
+                device_name: coreaudio_device.name.clone(),
                 channels: coreaudio_device.channels,
                 producer,
                 input_notifier: std::sync::Arc::new(tokio::sync::Notify::new()),
@@ -148,7 +172,27 @@ pub async fn safe_switch_input_device(
 
     // Wait for response from isolated audio thread
     match response_rx.await {
-        Ok(Ok(())) => Ok(()),
+        Ok(Ok(())) => {
+            // Sync with database: create configured_audio_device entry
+            if let Some((device_name, sample_rate, channels)) = device_info {
+                if let Err(e) = crate::commands::configurations::create_device_configuration(
+                    &audio_state,
+                    &new_device_id,
+                    &device_name,
+                    sample_rate as i32,
+                    channels as u32,
+                    true, // is_input
+                    new_device_id.contains("BlackHole") || new_device_id.contains("SoundflowerBed"),
+                )
+                .await
+                {
+                    tracing::warn!("Failed to create device configuration in database: {}", e);
+                    // Don't fail the command if database sync fails
+                }
+            }
+
+            Ok(())
+        }
         Ok(Err(e)) => Err(format!("Failed to add input device: {}", e)),
         Err(_) => Err("Audio system did not respond".to_string()),
     }
@@ -166,6 +210,18 @@ pub async fn safe_switch_output_device(
         .await
         .map_err(|e| format!("Failed to find output device {}: {}", new_device_id, e))?;
 
+    // Extract device information for database sync before consuming device_handle
+    let device_info = match &device_handle {
+        #[cfg(target_os = "macos")]
+        crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => Some((
+            coreaudio_device.name.clone(),
+            coreaudio_device.sample_rate,
+            coreaudio_device.channels,
+        )),
+        #[cfg(not(target_os = "macos"))]
+        _ => None,
+    };
+
     // Create command based on device type
     let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
@@ -173,7 +229,7 @@ pub async fn safe_switch_output_device(
         #[cfg(target_os = "macos")]
         crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => {
             crate::audio::mixer::stream_management::AudioCommand::AddCoreAudioOutputStream {
-                device_id: new_device_id,
+                device_id: new_device_id.clone(),
                 coreaudio_device,
                 response_tx,
             }
@@ -191,7 +247,28 @@ pub async fn safe_switch_output_device(
 
     // Wait for response from isolated audio thread
     match response_rx.await {
-        Ok(Ok(())) => Ok(()),
+        Ok(Ok(())) => {
+            // Sync with database: create new device configuration
+            if let Some((device_name, sample_rate, channels)) = device_info {
+                if let Err(e) = crate::commands::configurations::create_device_configuration(
+                    &audio_state,
+                    &new_device_id,
+                    &device_name,
+                    sample_rate as i32,
+                    channels as u32,
+                    false, // is_input
+                    new_device_id.contains("BlackHole") || new_device_id.contains("SoundflowerBed"),
+                )
+                .await
+                {
+                    tracing::warn!(
+                        "Failed to create output device configuration in database: {}",
+                        e
+                    );
+                }
+            }
+            Ok(())
+        }
         Ok(Err(e)) => Err(format!("Failed to set output device: {}", e)),
         Err(_) => Err("Audio system did not respond".to_string()),
     }
@@ -223,6 +300,18 @@ pub async fn add_input_stream(
         .find_audio_device(&device_id, true) // true = input device
         .await
         .map_err(|e| format!("Failed to find input device {}: {}", device_id, e))?;
+
+    // Extract device information for database sync before consuming device_handle
+    let device_info = match &device_handle {
+        #[cfg(target_os = "macos")]
+        crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => Some((
+            coreaudio_device.name.clone(),
+            coreaudio_device.sample_rate,
+            coreaudio_device.channels,
+        )),
+        #[cfg(not(target_os = "macos"))]
+        _ => None,
+    };
 
     // Create command based on device type
     let (response_tx, response_rx) = tokio::sync::oneshot::channel();
@@ -263,6 +352,24 @@ pub async fn add_input_stream(
                 "✅ Successfully added input stream via direct command: {}",
                 device_id
             );
+
+            // Sync with database: create configured_audio_device entry
+            if let Some((device_name, sample_rate, channels)) = device_info {
+                if let Err(e) = crate::commands::configurations::create_device_configuration(
+                    &audio_state,
+                    &device_id,
+                    &device_name,
+                    sample_rate as i32,
+                    channels as u32,
+                    true, // is_input
+                    device_id.contains("BlackHole") || device_id.contains("SoundflowerBed"),
+                )
+                .await
+                {
+                    tracing::warn!("Failed to create device configuration in database: {}", e);
+                }
+            }
+
             Ok(())
         }
         Ok(Err(e)) => Err(format!("Failed to add input stream: {}", e)),
@@ -302,6 +409,18 @@ pub async fn remove_input_stream(
                 "✅ Successfully removed input stream via direct command: {}",
                 device_id
             );
+
+            // Sync with database: remove configured_audio_device entry
+            if let Err(e) = crate::commands::configurations::remove_device_configuration(
+                &audio_state,
+                &device_id,
+            )
+            .await
+            {
+                tracing::warn!("Failed to remove device configuration from database: {}", e);
+                // Don't fail the command if database sync fails
+            }
+
             Ok(())
         }
         Ok(Err(e)) => Err(format!("Failed to remove input stream: {}", e)),
@@ -412,6 +531,18 @@ pub async fn add_output_device(
         .await
         .map_err(|e| format!("Failed to find output device {}: {}", device_id, e))?;
 
+    // Extract device information for database sync before consuming device_handle
+    let device_info = match &device_handle {
+        #[cfg(target_os = "macos")]
+        crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => Some((
+            coreaudio_device.name.clone(),
+            coreaudio_device.sample_rate,
+            coreaudio_device.channels,
+        )),
+        #[cfg(not(target_os = "macos"))]
+        _ => None,
+    };
+
     // Send appropriate command based on device type
     let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 
@@ -439,6 +570,27 @@ pub async fn add_output_device(
     match response_rx.await {
         Ok(Ok(())) => {
             println!("✅ Added output device via command queue: {}", device_id);
+
+            // Sync with database: create configured_audio_device entry
+            if let Some((device_name, sample_rate, channels)) = device_info {
+                if let Err(e) = crate::commands::configurations::create_device_configuration(
+                    &audio_state,
+                    &device_id,
+                    &device_name,
+                    sample_rate as i32,
+                    channels as u32,
+                    false, // is_input
+                    device_id.contains("BlackHole") || device_id.contains("SoundflowerBed"),
+                )
+                .await
+                {
+                    tracing::warn!(
+                        "Failed to create output device configuration in database: {}",
+                        e
+                    );
+                }
+            }
+
             Ok(())
         }
         Ok(Err(e)) => Err(format!("Failed to add output device: {}", e)),
