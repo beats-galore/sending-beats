@@ -600,11 +600,11 @@ pub struct RecordingStatus {
     pub is_recording: bool,
     pub is_paused: bool,
     #[serde(rename = "current_session")]
-    pub session: Option<RecordingSession>, // Frontend expects "current_session"
+    pub session: Option<RecordingSession>,
     pub active_writers_count: usize,
-    pub available_space_gb: f64, // **RESTORED** - Frontend expects this!
-    pub total_recordings: usize, // **RESTORED** - Frontend expects this!
-    pub active_recordings: Vec<String>, // **MISSING FIELD** - Frontend expects this!
+    pub available_space_gb: f64,
+    pub total_recordings: usize,
+    pub active_recordings: Vec<String>,
 }
 
 impl Default for RecordingStatus {
@@ -614,9 +614,9 @@ impl Default for RecordingStatus {
             is_paused: false,
             session: None,
             active_writers_count: 0,
-            available_space_gb: 0.0, // **RESTORED**: Default was missing this field
-            total_recordings: 0,     // **RESTORED**: Default was missing this field
-            active_recordings: vec![], // **MISSING FIELD**: Default was missing this field
+            available_space_gb: 0.0,
+            total_recordings: 0,
+            active_recordings: vec![],
         }
     }
 }

@@ -1,9 +1,8 @@
 // Zustand store for mixer state management
+import { invoke } from '@tauri-apps/api/core';
 import isEqual from 'fast-deep-equal';
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
-
-import { invoke } from '@tauri-apps/api/core';
 
 import { mixerService, audioService } from '../services';
 import { MixerState, DEFAULT_CHANNEL } from '../types';
@@ -16,6 +15,7 @@ import type {
   MasterLevels,
   ChannelLevels,
   ChannelUpdate,
+  CompleteConfigurationData,
 } from '../types';
 import type { AudioMixerConfiguration } from '../types/db/audio-mixer-configurations.types';
 
@@ -29,8 +29,8 @@ type MixerStore = {
   channelLevels: ChannelLevels;
 
   // Configuration Management State
-  reusableConfigurations: AudioMixerConfiguration[];
-  activeSession: AudioMixerConfiguration | null;
+  reusableConfigurations: CompleteConfigurationData[];
+  activeSession: CompleteConfigurationData | null;
   isLoadingConfigurations: boolean;
   configurationError: string | null;
 
@@ -48,6 +48,7 @@ type MixerStore = {
   saveSessionAsNewReusable: (name: string, description?: string) => Promise<void>;
   clearConfigurationError: () => void;
   setConfigurationError: (error: string) => void;
+  restoreDevicesFromSession: (sessionConfig: CompleteConfigurationData) => Promise<void>;
 
   // Real-time data updates
   updateChannelLevels: (levels: Record<number, [number, number, number, number]>) => void;
@@ -66,7 +67,6 @@ type MixerStore = {
 
 export const useMixerStore = create<MixerStore>()(
   subscribeWithSelector((set, get) => ({
-    // Initial state
     config: null,
     state: MixerState.STOPPED,
     error: null,
@@ -77,7 +77,6 @@ export const useMixerStore = create<MixerStore>()(
     },
     channelLevels: {},
 
-    // Configuration Management Initial State
     reusableConfigurations: [],
     activeSession: null,
     isLoadingConfigurations: false,
@@ -102,7 +101,7 @@ export const useMixerStore = create<MixerStore>()(
 
         set({
           config: djConfig,
-          state: MixerState.RUNNING, // Always running after creation
+          state: MixerState.RUNNING,
           error: null,
         });
       } catch (error) {
@@ -116,9 +115,6 @@ export const useMixerStore = create<MixerStore>()(
       }
     },
 
-    // Start/stop mixer actions removed - mixer is now always running after initialization
-
-    // Add new channel
     addChannel: async () => {
       const { config } = get();
       if (!config) {
@@ -350,28 +346,38 @@ export const useMixerStore = create<MixerStore>()(
 
       try {
         const [reusable, active] = await Promise.all([
-          invoke<AudioMixerConfiguration[]>('get_reusable_configurations'),
-          invoke<AudioMixerConfiguration | null>('get_active_session_configuration'),
+          invoke<CompleteConfigurationData[]>('get_reusable_configurations'),
+          invoke<CompleteConfigurationData | null>('get_active_session_configuration'),
         ]);
 
         // If no active session, auto-select the default configuration
         if (!active && reusable.length > 0) {
-          const defaultConfig = reusable.find(config => config.isDefault);
+          const defaultConfig = reusable.find((config) => config.configuration.isDefault);
           if (defaultConfig) {
-            console.log(`🔄 No active session found, auto-selecting default configuration: ${defaultConfig.name}`);
+            console.log(
+              `🔄 No active session found, auto-selecting default configuration: ${defaultConfig.configuration.name}`
+            );
 
             // Create session from default configuration
             try {
-              const newSession = await invoke<AudioMixerConfiguration>('create_session_from_reusable', {
-                reusableId: defaultConfig.id,
-                sessionName: undefined,
-              });
+              const newSession = await invoke<CompleteConfigurationData>(
+                'create_session_from_reusable',
+                {
+                  reusableId: defaultConfig.configuration.id,
+                  sessionName: undefined,
+                }
+              );
 
               set({
                 reusableConfigurations: reusable,
                 activeSession: newSession,
                 isLoadingConfigurations: false,
               });
+
+              // Restore devices from the new session
+              if (newSession.configured_devices?.length) {
+                await get().restoreDevicesFromSession(newSession);
+              }
             } catch (sessionError) {
               console.error('Failed to auto-select default configuration:', sessionError);
               // Fall back to just loading the configurations without active session
@@ -397,9 +403,16 @@ export const useMixerStore = create<MixerStore>()(
             isLoadingConfigurations: false,
           });
         }
+
+        // After successfully loading configurations, restore devices from active session
+        const currentState = get();
+        if (currentState.activeSession?.configured_devices) {
+          await get().restoreDevicesFromSession(currentState.activeSession);
+        }
       } catch (error) {
         set({
-          configurationError: error instanceof Error ? error.message : 'Failed to load configurations',
+          configurationError:
+            error instanceof Error ? error.message : 'Failed to load configurations',
           isLoadingConfigurations: false,
         });
       }
@@ -419,9 +432,15 @@ export const useMixerStore = create<MixerStore>()(
           activeSession: newSession,
           isLoadingConfigurations: false,
         });
+
+        // Restore devices from the selected configuration
+        if (newSession.configured_devices?.length) {
+          await get().restoreDevicesFromSession(newSession);
+        }
       } catch (error) {
         set({
-          configurationError: error instanceof Error ? error.message : 'Failed to select configuration',
+          configurationError:
+            error instanceof Error ? error.message : 'Failed to select configuration',
           isLoadingConfigurations: false,
         });
       }
@@ -447,7 +466,8 @@ export const useMixerStore = create<MixerStore>()(
         set({ isLoadingConfigurations: false });
       } catch (error) {
         set({
-          configurationError: error instanceof Error ? error.message : 'Failed to save configuration',
+          configurationError:
+            error instanceof Error ? error.message : 'Failed to save configuration',
           isLoadingConfigurations: false,
         });
       }
@@ -469,7 +489,8 @@ export const useMixerStore = create<MixerStore>()(
         set({ isLoadingConfigurations: false });
       } catch (error) {
         set({
-          configurationError: error instanceof Error ? error.message : 'Failed to save new configuration',
+          configurationError:
+            error instanceof Error ? error.message : 'Failed to save new configuration',
           isLoadingConfigurations: false,
         });
       }
@@ -478,6 +499,58 @@ export const useMixerStore = create<MixerStore>()(
     // Configuration error handling
     clearConfigurationError: () => set({ configurationError: null }),
     setConfigurationError: (error: string) => set({ configurationError: error }),
+
+    // Restore devices from session configuration (call existing device management methods)
+    restoreDevicesFromSession: async (sessionConfig: CompleteConfigurationData) => {
+      if (!sessionConfig.configured_devices?.length) {
+        console.log('📋 No configured devices to restore in session');
+        return;
+      }
+
+      console.log(
+        `🔄 Restoring ${sessionConfig.configured_devices.length} devices from session: ${sessionConfig.configuration.name}`
+      );
+
+      try {
+        // Restore devices one by one to avoid overwhelming the audio system
+        for (const device of sessionConfig.configured_devices) {
+          console.log(
+            `🎚️ Restoring ${device.is_input ? 'input' : 'output'} device: ${device.device_name || 'Unknown'} (${device.device_identifier})`
+          );
+
+          try {
+            if (device.is_input) {
+              // Restore input device
+              await audioService.addInputStream(device.device_identifier);
+            } else {
+              // Restore output device
+              await audioService.addOutputDevice(
+                device.device_identifier,
+                device.device_name || 'Unknown Device'
+              );
+            }
+
+            console.log(`✅ Successfully restored device: ${device.device_identifier}`);
+          } catch (deviceError) {
+            console.error(
+              `❌ Failed to restore device ${device.device_identifier}:`,
+              deviceError
+            );
+            // Continue with other devices even if one fails
+          }
+
+          // Small delay between device additions to prevent overwhelming the system
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+
+        console.log('🎉 Device restoration completed');
+      } catch (error) {
+        console.error('❌ Failed to restore devices from session:', error);
+        set({
+          configurationError: error instanceof Error ? error.message : 'Failed to restore devices'
+        });
+      }
+    },
   }))
 );
 
