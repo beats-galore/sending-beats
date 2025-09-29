@@ -23,6 +23,10 @@ use rtrb::{Consumer, Producer, RingBuffer};
 // Command channel for isolated audio thread communication
 // Cannot derive Debug because Device doesn't implement Debug
 pub enum AudioCommand {
+    SetAppHandle {
+        app_handle: tauri::AppHandle,
+        response_tx: oneshot::Sender<Result<()>>,
+    },
     RemoveInputStream {
         device_id: String,
         response_tx: oneshot::Sender<Result<bool>>,
@@ -52,9 +56,6 @@ pub enum AudioCommand {
         device_id: String,
         effects: AudioEffectsChain,
         response_tx: oneshot::Sender<Result<()>>,
-    },
-    GetVULevels {
-        response_tx: oneshot::Sender<HashMap<String, f32>>,
     },
     GetAudioMetrics {
         response_tx: oneshot::Sender<AudioMetrics>,
@@ -109,7 +110,7 @@ impl IsolatedAudioManager {
     /// **REMOVED**: Legacy resampler and VirtualMixer functionality
     /// AudioPipeline now handles all audio processing internally
 
-    pub async fn new(command_rx: mpsc::Receiver<AudioCommand>) -> Result<Self, anyhow::Error> {
+    pub async fn new(command_rx: mpsc::Receiver<AudioCommand>, app_handle: Option<tauri::AppHandle>) -> Result<Self, anyhow::Error> {
         // **CORE**: Create 4-layer AudioPipeline with dynamic sample rate detection
         // Sample rate will be determined from the first device that gets added
 
@@ -118,10 +119,21 @@ impl IsolatedAudioManager {
         let (hardware_update_tx, mut hardware_update_rx) = mpsc::channel::<AudioCommand>(32);
 
         #[cfg(target_os = "macos")]
-        let audio_pipeline = AudioPipeline::new_with_hardware_updates(Some(hardware_update_tx));
+        let audio_pipeline = if let Some(app_handle) = app_handle.clone() {
+            // Create pipeline with both hardware updates and VU events
+            let mut pipeline = AudioPipeline::new_with_app_handle(app_handle);
+            pipeline.set_hardware_update_channel(hardware_update_tx);
+            pipeline
+        } else {
+            AudioPipeline::new_with_hardware_updates(Some(hardware_update_tx))
+        };
 
         #[cfg(not(target_os = "macos"))]
-        let audio_pipeline = AudioPipeline::new();
+        let audio_pipeline = if let Some(app_handle) = app_handle.clone() {
+            AudioPipeline::new_with_app_handle(app_handle)
+        } else {
+            AudioPipeline::new()
+        };
 
         info!(
             "🎧 AUDIO_COORDINATOR: Initialized with 4-layer AudioPipeline (dynamic sample rate detection)"
@@ -229,6 +241,16 @@ impl IsolatedAudioManager {
 
     async fn handle_command(&mut self, command: AudioCommand) {
         match command {
+            AudioCommand::SetAppHandle {
+                app_handle,
+                response_tx,
+            } => {
+                info!("{}: Received SetAppHandle command", "VU_COORDINATOR".bright_cyan());
+                info!("{}: Setting AppHandle for VU level events", "VU_COORDINATOR".bright_cyan());
+                self.audio_pipeline.set_app_handle(app_handle);
+                info!("{}: AppHandle set successfully, sending confirmation", "VU_COORDINATOR".bright_cyan());
+                let _ = response_tx.send(Ok(()));
+            }
             AudioCommand::RemoveInputStream {
                 device_id,
                 response_tx,
@@ -281,10 +303,6 @@ impl IsolatedAudioManager {
             } => {
                 let result = self.handle_update_effects(device_id, effects);
                 let _ = response_tx.send(result);
-            }
-            AudioCommand::GetVULevels { response_tx } => {
-                let levels = self.get_vu_levels();
-                let _ = response_tx.send(levels);
             }
             AudioCommand::GetAudioMetrics { response_tx } => {
                 let metrics = self.get_metrics();
@@ -592,28 +610,6 @@ impl IsolatedAudioManager {
         Ok(())
     }
 
-    fn get_vu_levels(&mut self) -> HashMap<String, f32> {
-        // TEMPORARY FIX: Disable VU meter buffer draining to test if it's stealing samples
-        // VU meters were competing with process_audio() for RTRB consumer access
-        HashMap::new()
-
-        // ORIGINAL CODE (commented out for testing):
-        // let mut levels = HashMap::new();
-        // Get samples from each input stream and calculate VU levels
-        // for (device_id, input_stream) in &mut self.input_streams {
-        //     let samples = input_stream.get_samples();
-        //     if !samples.is_empty() {
-        //         // Calculate RMS level for VU meter
-        //         let rms =
-        //             (samples.iter().map(|&s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
-        //         let db_level = if rms > 0.0 { 20.0 * rms.log10() } else { -60.0 };
-        //         levels.insert(device_id.clone(), db_level);
-
-        //         self.metrics.total_samples_processed += samples.len() as u64;
-        //     }
-        // }
-        // levels
-    }
 
     fn get_metrics(&self) -> AudioMetrics {
         self.metrics.clone()

@@ -15,6 +15,7 @@ use tracing::{error, info, warn};
 use super::queue_types::ProcessedAudioSamples;
 use crate::audio::effects::AudioEffectsChain;
 use crate::audio::mixer::resampling::RubatoSRC;
+use crate::audio::vu_service::VULevelService;
 
 /// Input processing worker for a specific device
 pub struct InputWorker {
@@ -154,7 +155,7 @@ impl InputWorker {
     }
 
     /// Start the input processing worker thread
-    pub fn start(&mut self) -> Result<()> {
+    pub fn start(&mut self, app_handle: Option<tauri::AppHandle>) -> Result<()> {
         let device_id = self.device_id.clone();
         let device_sample_rate = self.device_sample_rate;
         let target_sample_rate = self.target_sample_rate;
@@ -171,6 +172,11 @@ impl InputWorker {
 
         // Create new effects chain for worker thread (AudioEffectsChain doesn't implement Clone)
         let mut effects_chain = AudioEffectsChain::new(target_sample_rate);
+
+        // Create VU level service if AppHandle is available
+        let mut vu_service_option = app_handle.map(|handle| {
+            VULevelService::new(handle, target_sample_rate, 8, 30) // 8 max channels, 30fps events
+        });
 
         // Spawn dedicated worker thread that waits for RTRB notifications
         let worker_handle = tokio::spawn(async move {
@@ -289,6 +295,13 @@ impl InputWorker {
                 // Step 3: Apply per-input effects (EQ, compressor, etc.) - now on stereo data
                 let mut effects_processed = channel_converted_samples;
                 effects_chain.process(&mut effects_processed);
+
+                // Step 3.5: Calculate and emit VU levels for this channel (if VU service available)
+                // TODO: Extract channel number from device_id or pass it separately
+                let channel_number = 0u32; // For now, use 0. This should be extracted from device_id or passed in
+                if let Some(ref mut vu_service) = vu_service_option {
+                    vu_service.process_channel_audio(channel_number, &effects_processed);
+                }
 
                 // Step 4: Send processed audio to mixing layer
                 let samples_to_send = effects_processed.len();

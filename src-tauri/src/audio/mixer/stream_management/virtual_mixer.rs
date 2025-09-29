@@ -91,22 +91,10 @@ impl VirtualMixer {
                 if !samples.is_empty() {
                     active_channels += 1;
 
-                    // **PERFORMANCE FIX**: Skip expensive peak/RMS calculations during real-time mixing
-                    // These were causing major performance bottlenecks (1000+ μs per mixing cycle)
-                    // VU meters should be handled separately in a lower-priority thread
-                    let (_peak_left, _rms_left, _peak_right, _rms_right) =
-                        (0.0f32, 0.0f32, 0.0f32, 0.0f32);
-
-                    // **PERFORMANCE FIX**: Disable debug logging during real-time mixing
-                    // This was causing additional performance overhead with mutex locks
-
-                    // **AUDIO QUALITY FIX**: Use input samples directly without unnecessary conversion
                     let stereo_samples = samples;
 
-                    // **CRITICAL FIX**: Safe buffer size matching to prevent crashes
                     let mix_length = buffer.len().min(stereo_samples.len());
 
-                    // **GAIN STAGING FIX**: Accumulate samples (will normalize after counting all channels)
                     for i in 0..mix_length {
                         if i < buffer.len() && i < stereo_samples.len() {
                             buffer[i] += stereo_samples[i];
@@ -115,7 +103,6 @@ impl VirtualMixer {
                 }
             }
 
-            // **PROFESSIONAL MIXING FIX**: Use RMS-based dynamic gain staging instead of simple division
             if active_channels > 1 {
                 // Calculate RMS (Root Mean Square) to determine actual audio energy
                 let sum_of_squares: f32 = buffer.iter().map(|&s| s * s).sum();

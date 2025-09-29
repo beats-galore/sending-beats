@@ -25,7 +25,7 @@ import {
 } from '@tabler/icons-react';
 import { memo, useCallback, useMemo, useState, useEffect } from 'react';
 
-import { useMixerState, useAudioDevices, useChannelLevels, useApplicationAudio } from '../../hooks';
+import { useMixerState, useAudioDevices, useApplicationAudio } from '../../hooks';
 import { audioService } from '../../services';
 import { useConfigurationStore } from '../../stores/mixer-store';
 
@@ -136,8 +136,6 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
   const { inputDevices, refreshDevices } = useAudioDevices();
   const { activeSession } = useConfigurationStore();
   const applicationAudio = useApplicationAudio();
-
-  const levels = useChannelLevels(channel.id);
 
   // Find the configured input device for this channel from the active session
   const configuredInputDevice = useMemo(() => {
@@ -330,7 +328,7 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
           {/* VU Meter - Now wider and flexible */}
           <Stack gap={2} className={classes.vuMeterSection}>
             <Box className={classes.vuMeterContainer}>
-              <ChannelVUMeter levels={levels} />
+              <ChannelVUMeter channelId={channel.id} />
             </Box>
           </Stack>
 

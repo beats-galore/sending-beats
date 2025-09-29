@@ -6,8 +6,7 @@ use std::error::Error;
 use std::path::Path;
 use std::time::Duration;
 
-// Legacy SQLx table modules (keeping for VU levels and other non-migrated tables)
-pub mod audio_device_levels;
+
 pub mod broadcasts;
 pub mod recordings;
 
@@ -15,7 +14,6 @@ pub mod recordings;
 pub mod seaorm_services;
 
 // Re-export only legacy types that are still needed
-pub use audio_device_levels::*;
 pub use broadcasts::*;
 pub use recordings::*;
 
@@ -23,7 +21,7 @@ pub use recordings::*;
 pub struct AudioDatabase {
     pool: SqlitePool,
     sea_orm_db: DatabaseConnection,
-    retention_seconds: i64,
+
 }
 
 impl AudioDatabase {
@@ -111,14 +109,12 @@ impl AudioDatabase {
 
         println!("✅ SeaORM connection established");
 
-        // Set default VU retention to 60 seconds
-        let retention_seconds = 60;
-        println!("📊 VU level retention set to {} seconds", retention_seconds);
+
 
         Ok(Self {
             pool,
             sea_orm_db,
-            retention_seconds,
+
         })
     }
 
@@ -132,66 +128,5 @@ impl AudioDatabase {
         &self.sea_orm_db
     }
 
-    /// Cleanup old VU level data to prevent database growth
-    pub async fn cleanup_old_vu_levels(&self) -> Result<u64> {
-        let cutoff_timestamp =
-            chrono::Utc::now().timestamp_micros() - (self.retention_seconds * 1_000_000);
 
-        let result = sqlx::query(
-            "UPDATE audio_device_levels SET deleted_at = CURRENT_TIMESTAMP
-             WHERE created_at < ? AND deleted_at IS NULL",
-        )
-        .bind(
-            chrono::DateTime::from_timestamp_micros(cutoff_timestamp)
-                .unwrap()
-                .to_rfc3339(),
-        )
-        .execute(&self.pool)
-        .await?;
-
-        let deleted_count = result.rows_affected();
-
-        if deleted_count > 0 {
-            println!(
-                "🧹 Soft deleted {} old VU level records older than {}s",
-                deleted_count, self.retention_seconds
-            );
-        }
-
-        Ok(deleted_count)
-    }
-}
-
-/// Lock-free audio event bus for real-time VU meter data
-pub struct AudioEventBus {
-    vu_events: std::sync::Arc<crossbeam::queue::SegQueue<VULevelData>>,
-    max_queue_size: usize,
-}
-
-impl AudioEventBus {
-    pub fn new(max_queue_size: usize) -> Self {
-        Self {
-            vu_events: std::sync::Arc::new(crossbeam::queue::SegQueue::new()),
-            max_queue_size,
-        }
-    }
-
-    /// Push VU level data (real-time safe, lock-free)
-    pub fn push_vu_levels(&self, level: VULevelData) {
-        // Prevent queue from growing too large
-        while self.vu_events.len() >= self.max_queue_size {
-            self.vu_events.pop();
-        }
-
-        self.vu_events.push(level);
-    }
-
-    /// Drain all VU level events
-    pub fn drain_vu_events(&self) -> Vec<VULevelData> {
-        let mut events = Vec::new();
-        while let Some(event) = self.vu_events.pop() {
-            events.push(event);
-        }
-        events
-    }
 }

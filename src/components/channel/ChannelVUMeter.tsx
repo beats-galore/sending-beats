@@ -5,6 +5,7 @@ import { memo, useMemo, useRef } from 'react';
 
 import { VU_METER_OPTIMIZATIONS } from '../../utils/performance-helpers';
 import { VUMeter } from '../ui';
+import { useChannelLevels } from '../../hooks';
 
 const useStyles = createStyles((theme) => ({
   vuContainer: {
@@ -44,12 +45,13 @@ type StereoChannelLevels = {
 };
 
 type ChannelVUMeterProps = {
-  levels: StereoChannelLevels;
+  channelId: number;
 };
 
 export const ChannelVUMeter = memo<ChannelVUMeterProps>(
-  ({ levels }) => {
+  ({ channelId }) => {
     const { classes } = useStyles();
+    const levels = useChannelLevels(channelId);
     const previousLevelsRef = useRef<
       StereoChannelLevels & {
         meterElements?: React.ReactNode;
@@ -121,10 +123,7 @@ export const ChannelVUMeter = memo<ChannelVUMeterProps>(
     );
   },
   (prev, next) => {
-    // Use optimized comparison with threshold
-    return (
-      VU_METER_OPTIMIZATIONS.levelsEqual(prev.levels.left, next.levels.left) &&
-      VU_METER_OPTIMIZATIONS.levelsEqual(prev.levels.right, next.levels.right)
-    );
+    // Only re-render if channel ID changes
+    return prev.channelId === next.channelId;
   }
 );

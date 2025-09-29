@@ -17,14 +17,14 @@ pub mod commands;
 // Re-export audio types for testing and external use
 pub use audio::{
     get_device_monitoring_stats as get_monitoring_stats_impl, AudioChannel, AudioConfigFactory,
-    AudioDatabase, AudioDeviceInfo, AudioDeviceManager, AudioEventBus, AudioMetrics, Compressor,
-    DeviceMonitorStats, EQBand, FilePlayerService, Limiter, MixerConfig, PeakDetector, RmsDetector,
-    ThreeBandEqualizer, VULevelData, VirtualMixer,
+    AudioDatabase, AudioDeviceInfo, AudioDeviceManager, AudioMetrics, Compressor,
+    DeviceMonitorStats, EQBand, FilePlayerService, Limiter, MasterVULevelEvent, MixerConfig, PeakDetector, RmsDetector,
+    ThreeBandEqualizer, VULevelEvent, VULevelService, VirtualMixer,
 };
 // Re-export application audio types
 pub use audio::tap::{ApplicationAudioError, ProcessInfo, TapStats};
 use std::sync::{Arc, Mutex};
-use tauri::State;
+use tauri::{Manager, State};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing_subscriber::prelude::*;
 // Removed unused import
@@ -40,6 +40,7 @@ use commands::icecast::*;
 use commands::mixer::*;
 use commands::recording::*;
 use commands::streaming::*;
+use commands::vu_events::*;
 
 // File player state for managing multiple file players
 use commands::file_player::FilePlayerState;
@@ -50,7 +51,6 @@ struct AudioState {
     device_manager: Arc<AsyncMutex<AudioDeviceManager>>,
     mixer: Arc<AsyncMutex<Option<VirtualMixer>>>,
     database: Arc<AudioDatabase>,
-    event_bus: Arc<AudioEventBus>,
     audio_command_tx:
         tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>,
 }
@@ -168,8 +168,6 @@ pub fn run() {
             }
         };
 
-        // Initialize event bus for lock-free audio data transfer
-        let event_bus = Arc::new(AudioEventBus::new(1000)); // Buffer up to 1000 events
 
         tracing::info!("✅ Audio system initialization complete");
 
@@ -196,6 +194,7 @@ pub fn run() {
                 tracing::info!("🎵 Starting IsolatedAudioManager in dedicated thread");
                 match crate::audio::mixer::stream_management::IsolatedAudioManager::new(
                     audio_command_rx,
+                    None, // AppHandle not available yet - events will be disabled until app starts
                 )
                 .await
                 {
@@ -215,7 +214,6 @@ pub fn run() {
             device_manager: audio_device_manager,
             mixer: Arc::new(AsyncMutex::new(None)),
             database,
-            event_bus,
             audio_command_tx,
         }
     });
@@ -238,6 +236,31 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            tracing::info!("🚀 Tauri setup hook called - app starting");
+
+            // Initialize VU level events after the app is fully started
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tracing::info!("🎧 VU events initialization task started - waiting 1 second...");
+
+                // Wait a moment for the audio system to be fully initialized
+                tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+
+                tracing::info!("🎧 Starting VU level events initialization...");
+                match initialize_vu_events(app_handle.clone(), app_handle.state()).await {
+                    Ok(()) => {
+                        tracing::info!("✅ VU level events initialized successfully");
+                    }
+                    Err(e) => {
+                        tracing::error!("❌ Failed to initialize VU events: {}", e);
+                    }
+                }
+            });
+
+            tracing::info!("🚀 Tauri setup hook completed");
+            Ok(())
+        })
         .manage(StreamState(Mutex::new(None)))
         .manage(audio_state)
         .manage(recording_state)
@@ -245,7 +268,6 @@ pub fn run() {
         .manage(application_audio_state)
         .invoke_handler(tauri::generate_handler![
             // Streaming commands
-            greet,
             connect_to_stream,
             disconnect_from_stream,
             start_streaming,
@@ -281,12 +303,7 @@ pub fn run() {
             remove_channel_effect,
             get_channel_effects,
             get_dj_mixer_config,
-            // Debug commands
-            // get_recent_vu_levels,     // TODO: Implement with new schema
-            // get_recent_master_levels, // TODO: Implement with new schema
-            // save_channel_config,      // TODO: Implement with new schema
-            // load_channel_configs,     // TODO: Implement with new schema
-            cleanup_old_levels,
+
             set_debug_log_config,
             get_debug_log_config,
             // Icecast commands
@@ -357,7 +374,9 @@ pub fn run() {
             save_session_as_new_reusable,
             get_configuration_by_id,
             create_reusable_configuration,
-            get_configured_audio_devices_by_config
+            get_configured_audio_devices_by_config,
+            // VU Events commands
+            initialize_vu_events
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
