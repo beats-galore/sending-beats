@@ -146,4 +146,9 @@ export const audioService = {
   async initializeVuEvents(): Promise<void> {
     return invoke('initialize_vu_events');
   },
+
+  // VU Level Channels (high-performance streaming)
+  async initializeVuChannels(): Promise<void> {
+    return invoke('initialize_vu_channels');
+  },
 } as const;

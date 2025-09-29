@@ -1,14 +1,14 @@
-// Event-driven VU meter data management - replaced polling with real-time events
-import { useVULevelEvents } from './use-vu-level-events';
+// High-performance VU meter data streaming - testing channel approach
+import { useVUChannelStream } from './use-vu-channel-stream';
 import { useMixerStore } from '../stores';
 
 export const useVUMeterData = (isEnabled = true) => {
-  // Check if mixer is configured to enable event listening
+  // Check if mixer is configured to enable streaming
   const hasConfig = useMixerStore((state) => state.config !== null);
 
-  // Use event-driven VU levels instead of polling
-  useVULevelEvents(isEnabled && hasConfig);
+  // Test the new channel-based VU streaming for improved responsiveness
+  useVUChannelStream(isEnabled && hasConfig);
 
-  // This hook only manages event listeners, doesn't return data
+  // This hook manages high-performance channel streaming
   // Components should use focused hooks to read specific data they need
 };

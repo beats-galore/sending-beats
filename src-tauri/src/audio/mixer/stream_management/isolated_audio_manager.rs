@@ -27,6 +27,10 @@ pub enum AudioCommand {
         app_handle: tauri::AppHandle,
         response_tx: oneshot::Sender<Result<()>>,
     },
+    SetVUChannel {
+        channel: tauri::ipc::Channel<crate::audio::VUChannelData>,
+        response_tx: oneshot::Sender<Result<()>>,
+    },
     RemoveInputStream {
         device_id: String,
         response_tx: oneshot::Sender<Result<bool>>,
@@ -249,6 +253,16 @@ impl IsolatedAudioManager {
                 info!("{}: Setting AppHandle for VU level events", "VU_COORDINATOR".bright_cyan());
                 self.audio_pipeline.set_app_handle(app_handle);
                 info!("{}: AppHandle set successfully, sending confirmation", "VU_COORDINATOR".bright_cyan());
+                let _ = response_tx.send(Ok(()));
+            }
+            AudioCommand::SetVUChannel {
+                channel,
+                response_tx,
+            } => {
+                info!("{}: Received SetVUChannel command", "VU_CHANNEL_COORD".bright_green());
+                info!("{}: Setting VU channel for high-performance streaming", "VU_CHANNEL_COORD".bright_green());
+                self.audio_pipeline.set_vu_channel(channel);
+                info!("{}: VU channel set successfully, sending confirmation", "VU_CHANNEL_COORD".bright_green());
                 let _ = response_tx.send(Ok(()));
             }
             AudioCommand::RemoveInputStream {

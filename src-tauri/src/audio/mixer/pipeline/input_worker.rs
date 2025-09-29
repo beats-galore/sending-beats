@@ -15,7 +15,7 @@ use tracing::{error, info, warn};
 use super::queue_types::ProcessedAudioSamples;
 use crate::audio::effects::AudioEffectsChain;
 use crate::audio::mixer::resampling::RubatoSRC;
-use crate::audio::vu_service::VULevelService;
+use crate::audio::{VULevelService, VUChannelService, VUProcessor};
 
 /// Input processing worker for a specific device
 pub struct InputWorker {
@@ -155,7 +155,7 @@ impl InputWorker {
     }
 
     /// Start the input processing worker thread
-    pub fn start(&mut self, app_handle: Option<tauri::AppHandle>) -> Result<()> {
+    pub fn start(&mut self, app_handle: Option<tauri::AppHandle>, vu_channel: Option<tauri::ipc::Channel<crate::audio::VUChannelData>>) -> Result<()> {
         let device_id = self.device_id.clone();
         let device_sample_rate = self.device_sample_rate;
         let target_sample_rate = self.target_sample_rate;
@@ -173,10 +173,18 @@ impl InputWorker {
         // Create new effects chain for worker thread (AudioEffectsChain doesn't implement Clone)
         let mut effects_chain = AudioEffectsChain::new(target_sample_rate);
 
-        // Create VU level service if AppHandle is available
-        let mut vu_service_option = app_handle.map(|handle| {
-            VULevelService::new(handle, target_sample_rate, 8, 30) // 8 max channels, 30fps events
-        });
+        // Create VU service based on available options
+        // Prioritize channel service for better performance, fall back to event service
+        let mut vu_service_option: Option<Box<dyn VUProcessor>> = if let Some(channel) = vu_channel {
+            info!("🚀 INPUT_WORKER: Using VUChannelService for high-performance streaming ({})", device_id);
+            Some(Box::new(VUChannelService::new(channel, target_sample_rate, 8, 60))) // 8 max channels, 60fps via channels
+        } else if let Some(handle) = app_handle {
+            info!("📡 INPUT_WORKER: Using VULevelService for event-based streaming ({})", device_id);
+            Some(Box::new(VULevelService::new(handle, target_sample_rate, 8, 30))) // 8 max channels, 30fps via events
+        } else {
+            info!("⚠️ INPUT_WORKER: No VU service available ({})", device_id);
+            None
+        };
 
         // Spawn dedicated worker thread that waits for RTRB notifications
         let worker_handle = tokio::spawn(async move {
