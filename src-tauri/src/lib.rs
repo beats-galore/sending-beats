@@ -376,7 +376,8 @@ pub fn run() {
             create_reusable_configuration,
             get_configured_audio_devices_by_config,
             // VU Events commands
-            initialize_vu_events
+            initialize_vu_events,
+            initialize_vu_channels
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

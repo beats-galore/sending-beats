@@ -42,6 +42,9 @@ pub struct AudioPipeline {
     // VU level events
     app_handle: Option<tauri::AppHandle>,
 
+    // VU level channels (high-performance streaming)
+    vu_channel: Option<tauri::ipc::Channel<crate::audio::VUChannelData>>,
+
     // State tracking
     is_running: bool,
     devices_registered: usize,
@@ -69,6 +72,7 @@ impl AudioPipeline {
             #[cfg(target_os = "macos")]
             hardware_update_tx: None,
             app_handle: None,
+            vu_channel: None,
             is_running: false,
             devices_registered: 0,
         }
@@ -90,6 +94,7 @@ impl AudioPipeline {
             #[cfg(target_os = "macos")]
             hardware_update_tx: None,
             app_handle: Some(app_handle),
+            vu_channel: None,
             is_running: false,
             devices_registered: 0,
         }
@@ -115,6 +120,7 @@ impl AudioPipeline {
             output_workers: HashMap::new(),
             hardware_update_tx,
             app_handle: None,
+            vu_channel: None,
             is_running: false,
             devices_registered: 0,
         }
@@ -140,6 +146,16 @@ impl AudioPipeline {
         // Note: This sets the AppHandle for future workers
         // Existing workers would need to be restarted to get VU events
         // For a complete implementation, we'd need to send the AppHandle to running workers
+    }
+
+    /// Set VU channel for high-performance real-time streaming (can be called after initialization)
+    pub fn set_vu_channel(&mut self, channel: tauri::ipc::Channel<crate::audio::VUChannelData>) {
+        self.vu_channel = Some(channel);
+        tracing::info!("{}: VU channel connected for high-performance streaming", "VU_CHANNEL_PIPELINE".bright_green());
+
+        // Note: This sets the channel for future workers
+        // Existing workers would need to be restarted to get channel streaming
+        // For a complete implementation, we'd need to send the channel to running workers
     }
 
 
@@ -301,7 +317,7 @@ impl AudioPipeline {
 
         // Start the mixing layer if pipeline is running and this is the first device (triggering layer start)
         if self.is_running && !self.mixing_layer.get_stats().is_running {
-            if let Err(e) = self.mixing_layer.start(self.app_handle.clone()) {
+            if let Err(e) = self.mixing_layer.start(self.app_handle.clone(), self.vu_channel.clone()) {
                 error!(
                     "❌ AUDIO_PIPELINE: Failed to start mixing layer after adding device: {}",
                     e
@@ -315,7 +331,7 @@ impl AudioPipeline {
         // Start the worker if pipeline is running (get mutable reference after insertion)
         if self.is_running {
             if let Some(worker) = self.input_workers.get_mut(&device_id) {
-                worker.start(self.app_handle.clone())?;
+                worker.start(self.app_handle.clone(), self.vu_channel.clone())?;
             }
         }
         self.devices_registered += 1;
@@ -425,7 +441,7 @@ impl AudioPipeline {
 
         // Start the mixing layer if pipeline is running and this is the first device (triggering layer start)
         if self.is_running && !self.mixing_layer.get_stats().is_running {
-            if let Err(e) = self.mixing_layer.start(self.app_handle.clone()) {
+            if let Err(e) = self.mixing_layer.start(self.app_handle.clone(), self.vu_channel.clone()) {
                 error!("❌ AUDIO_PIPELINE: Failed to start mixing layer after adding output device: {}", e);
                 return Err(e);
             } else {
@@ -454,7 +470,7 @@ impl AudioPipeline {
 
         // Start Layer 2: Input workers
         for (device_id, input_worker) in self.input_workers.iter_mut() {
-            if let Err(e) = input_worker.start(self.app_handle.clone()) {
+            if let Err(e) = input_worker.start(self.app_handle.clone(), self.vu_channel.clone()) {
                 error!(
                     "❌ AUDIO_PIPELINE: Failed to start input worker for '{}': {}",
                     device_id, e
@@ -464,7 +480,7 @@ impl AudioPipeline {
         }
 
         // Start Layer 3: Mixing layer
-        if let Err(e) = self.mixing_layer.start(self.app_handle.clone()) {
+        if let Err(e) = self.mixing_layer.start(self.app_handle.clone(), self.vu_channel.clone()) {
             error!("❌ AUDIO_PIPELINE: Failed to start mixing layer: {}", e);
             return Err(e);
         }

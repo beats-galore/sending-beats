@@ -14,7 +14,7 @@ use tracing::{error, info, warn};
 use super::queue_types::{MixedAudioSamples, ProcessedAudioSamples};
 use super::temporal_sync_buffer::TemporalSyncBuffer;
 use crate::audio::mixer::stream_management::virtual_mixer::VirtualMixer;
-use crate::audio::vu_service::VULevelService;
+use crate::audio::{VULevelService, VUChannelService, VUProcessor};
 use colored::*;
 
 /// Command for dynamically managing running MixingLayer
@@ -128,7 +128,7 @@ impl MixingLayer {
     }
 
     /// Start the mixing processing thread
-    pub fn start(&mut self, app_handle: Option<tauri::AppHandle>) -> Result<()> {
+    pub fn start(&mut self, app_handle: Option<tauri::AppHandle>, vu_channel: Option<tauri::ipc::Channel<crate::audio::VUChannelData>>) -> Result<()> {
         // No-op if no sample rate is set (no devices added yet)
         let target_sample_rate = match self.target_sample_rate {
             Some(rate) => rate,
@@ -147,10 +147,18 @@ impl MixingLayer {
         let mut processed_input_receivers = std::mem::take(&mut self.processed_input_receivers);
         let mut mixed_output_senders = self.mixed_output_senders.clone();
 
-        // Create VU level service for master output if AppHandle is available
-        let mut master_vu_service = app_handle.map(|handle| {
-            VULevelService::new(handle, target_sample_rate, 1, 30) // 1 channel (master), 30fps events
-        });
+        // Create VU service based on available options
+        // Prioritize channel service for better performance, fall back to event service
+        let mut master_vu_service: Option<Box<dyn VUProcessor>> = if let Some(channel) = vu_channel {
+            info!("🚀 MIXING_LAYER: Using VUChannelService for high-performance master VU streaming");
+            Some(Box::new(VUChannelService::new(channel, target_sample_rate, 1, 60))) // 1 channel (master), 60fps via channels
+        } else if let Some(handle) = app_handle {
+            info!("📡 MIXING_LAYER: Using VULevelService for event-based master VU streaming");
+            Some(Box::new(VULevelService::new(handle, target_sample_rate, 1, 30))) // 1 channel (master), 30fps via events
+        } else {
+            info!("⚠️ MIXING_LAYER: No master VU service available");
+            None
+        };
 
         // Spawn mixing worker thread
         let worker_handle = tokio::spawn(async move {

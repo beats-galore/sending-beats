@@ -89,3 +89,22 @@ impl MasterVULevelEvent {
     }
 }
 
+/// Combined VU data for efficient Tauri channel streaming
+/// This enum allows sending both channel and master data through a single channel
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data")]
+pub enum VUChannelData {
+    Channel(VULevelEvent),
+    Master(MasterVULevelEvent),
+}
+
+impl VUChannelData {
+    pub fn from_channel(event: VULevelEvent) -> Self {
+        Self::Channel(event)
+    }
+
+    pub fn from_master(event: MasterVULevelEvent) -> Self {
+        Self::Master(event)
+    }
+}
+
