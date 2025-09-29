@@ -14,6 +14,7 @@ use tracing::{error, info, warn};
 use super::queue_types::{MixedAudioSamples, ProcessedAudioSamples};
 use super::temporal_sync_buffer::TemporalSyncBuffer;
 use crate::audio::mixer::stream_management::virtual_mixer::VirtualMixer;
+use crate::audio::vu_service::VULevelService;
 use colored::*;
 
 /// Command for dynamically managing running MixingLayer
@@ -127,7 +128,7 @@ impl MixingLayer {
     }
 
     /// Start the mixing processing thread
-    pub fn start(&mut self) -> Result<()> {
+    pub fn start(&mut self, app_handle: Option<tauri::AppHandle>) -> Result<()> {
         // No-op if no sample rate is set (no devices added yet)
         let target_sample_rate = match self.target_sample_rate {
             Some(rate) => rate,
@@ -145,6 +146,11 @@ impl MixingLayer {
         // Take ownership of receivers for the worker thread
         let mut processed_input_receivers = std::mem::take(&mut self.processed_input_receivers);
         let mut mixed_output_senders = self.mixed_output_senders.clone();
+
+        // Create VU level service for master output if AppHandle is available
+        let mut master_vu_service = app_handle.map(|handle| {
+            VULevelService::new(handle, target_sample_rate, 1, 30) // 1 channel (master), 30fps events
+        });
 
         // Spawn mixing worker thread
         let worker_handle = tokio::spawn(async move {
@@ -245,6 +251,11 @@ impl MixingLayer {
                             *sample *= master_gain;
                         }
                         let gain_duration = gain_start.elapsed();
+
+                        // Calculate and emit master VU levels (after gain is applied)
+                        if let Some(ref mut vu_service) = master_vu_service {
+                            vu_service.process_master_audio(&final_samples);
+                        }
 
                         let samples_count = final_samples.len(); // Get count before moving
 

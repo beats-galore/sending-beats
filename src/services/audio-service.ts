@@ -141,4 +141,9 @@ export const audioService = {
   async reportDeviceError(deviceId: string, error: string): Promise<void> {
     return invoke('report_device_error', { deviceId, error });
   },
+
+  // VU Level Events
+  async initializeVuEvents(): Promise<void> {
+    return invoke('initialize_vu_events');
+  },
 } as const;

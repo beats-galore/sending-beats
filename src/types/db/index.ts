@@ -5,6 +5,5 @@
 export * from './audio-mixer-configurations.types';
 export * from './configured-audio-devices.types';
 export * from './audio-effects.types';
-export * from './audio-device-levels.types';
 export * from './recordings.types';
 export * from './broadcasts.types';

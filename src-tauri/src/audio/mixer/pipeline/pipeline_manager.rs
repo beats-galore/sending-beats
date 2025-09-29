@@ -39,6 +39,9 @@ pub struct AudioPipeline {
     hardware_update_tx:
         Option<tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>>,
 
+    // VU level events
+    app_handle: Option<tauri::AppHandle>,
+
     // State tracking
     is_running: bool,
     devices_registered: usize,
@@ -65,6 +68,28 @@ impl AudioPipeline {
             output_workers: HashMap::new(),
             #[cfg(target_os = "macos")]
             hardware_update_tx: None,
+            app_handle: None,
+            is_running: false,
+            devices_registered: 0,
+        }
+    }
+
+    /// Create a new audio pipeline with VU level events
+    pub fn new_with_app_handle(app_handle: tauri::AppHandle) -> Self {
+        info!(
+            "🏗️ {}: Creating new 4-layer audio pipeline with VU level events (sample rate will be determined from first device)",
+            "AUDIO_PIPELINE".bright_blue()
+        );
+
+        Self {
+            max_sample_rate: None,
+            queues: PipelineQueues::new(),
+            input_workers: HashMap::new(),
+            mixing_layer: MixingLayer::new(),
+            output_workers: HashMap::new(),
+            #[cfg(target_os = "macos")]
+            hardware_update_tx: None,
+            app_handle: Some(app_handle),
             is_running: false,
             devices_registered: 0,
         }
@@ -89,6 +114,7 @@ impl AudioPipeline {
             mixing_layer: MixingLayer::new(),
             output_workers: HashMap::new(),
             hardware_update_tx,
+            app_handle: None,
             is_running: false,
             devices_registered: 0,
         }
@@ -105,6 +131,17 @@ impl AudioPipeline {
             "🔗 AudioPipeline: Hardware update channel connected for dynamic buffer management"
         );
     }
+
+    /// Set AppHandle for VU level events (can be called after initialization)
+    pub fn set_app_handle(&mut self, app_handle: tauri::AppHandle) {
+        self.app_handle = Some(app_handle);
+        tracing::info!("{}: AppHandle connected for VU level events", "VU_PIPELINE".bright_green());
+
+        // Note: This sets the AppHandle for future workers
+        // Existing workers would need to be restarted to get VU events
+        // For a complete implementation, we'd need to send the AppHandle to running workers
+    }
+
 
     fn get_all_sample_rates(&self) -> Vec<(String, u32)> {
         let mut sample_rates = Vec::new();
@@ -264,7 +301,7 @@ impl AudioPipeline {
 
         // Start the mixing layer if pipeline is running and this is the first device (triggering layer start)
         if self.is_running && !self.mixing_layer.get_stats().is_running {
-            if let Err(e) = self.mixing_layer.start() {
+            if let Err(e) = self.mixing_layer.start(self.app_handle.clone()) {
                 error!(
                     "❌ AUDIO_PIPELINE: Failed to start mixing layer after adding device: {}",
                     e
@@ -278,7 +315,7 @@ impl AudioPipeline {
         // Start the worker if pipeline is running (get mutable reference after insertion)
         if self.is_running {
             if let Some(worker) = self.input_workers.get_mut(&device_id) {
-                worker.start()?;
+                worker.start(self.app_handle.clone())?;
             }
         }
         self.devices_registered += 1;
@@ -388,7 +425,7 @@ impl AudioPipeline {
 
         // Start the mixing layer if pipeline is running and this is the first device (triggering layer start)
         if self.is_running && !self.mixing_layer.get_stats().is_running {
-            if let Err(e) = self.mixing_layer.start() {
+            if let Err(e) = self.mixing_layer.start(self.app_handle.clone()) {
                 error!("❌ AUDIO_PIPELINE: Failed to start mixing layer after adding output device: {}", e);
                 return Err(e);
             } else {
@@ -417,7 +454,7 @@ impl AudioPipeline {
 
         // Start Layer 2: Input workers
         for (device_id, input_worker) in self.input_workers.iter_mut() {
-            if let Err(e) = input_worker.start() {
+            if let Err(e) = input_worker.start(self.app_handle.clone()) {
                 error!(
                     "❌ AUDIO_PIPELINE: Failed to start input worker for '{}': {}",
                     device_id, e
@@ -427,7 +464,7 @@ impl AudioPipeline {
         }
 
         // Start Layer 3: Mixing layer
-        if let Err(e) = self.mixing_layer.start() {
+        if let Err(e) = self.mixing_layer.start(self.app_handle.clone()) {
             error!("❌ AUDIO_PIPELINE: Failed to start mixing layer: {}", e);
             return Err(e);
         }

@@ -10,6 +10,7 @@
 pub mod broadcasting;
 pub mod devices;
 pub mod effects;
+pub mod events;
 pub mod file_player;
 pub mod manager;
 pub mod mixer;
@@ -17,6 +18,7 @@ pub mod recording;
 pub mod tap;
 pub mod types;
 pub mod utils;
+pub mod vu_service;
 
 // Re-export commonly used types for easier imports
 pub use types::{
@@ -33,7 +35,7 @@ pub use effects::{
 
 pub use mixer::stream_management::VirtualMixer;
 
-pub use crate::db::{AudioDatabase, AudioEventBus, VULevelData};
+pub use crate::db::{AudioDatabase};
 
 pub use broadcasting::{
     create_streaming_bridge, AudioEncoder, AudioStreamingBridge, IcecastSourceClient, IcecastStats,
@@ -63,3 +65,6 @@ pub use file_player::{
     AudioFilePlayer, FilePlayerConfig, FilePlayerDevice, FilePlayerManager, FilePlayerService,
     PlaybackAction, PlaybackMode, PlaybackState, PlaybackStatus, QueuedTrack, RepeatMode,
 };
+
+pub use events::{MasterVULevelEvent, VULevelEvent};
+pub use vu_service::VULevelService;

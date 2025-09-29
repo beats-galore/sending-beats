@@ -12,6 +12,7 @@ export { useMixerInitialization } from './use-mixer-initialization';
 export { useMixerRunningState } from './use-mixer-running-state';
 export { useChannelLevels } from './use-channel-levels';
 export { useMasterLevels } from './use-master-levels';
+export { useVULevelEvents } from './use-vu-level-events';
 export { useAudioMetrics } from './use-audio-metrics';
 export { useAudioDevicesStatus } from './use-audio-devices-status';
 
