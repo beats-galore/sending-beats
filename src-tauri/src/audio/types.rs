@@ -53,10 +53,6 @@ pub struct AudioChannel {
     pub id: u32,
     pub name: String,
     pub input_device_id: Option<String>,
-    pub gain: f32, // Linear gain (0.0 - 2.0)
-    pub pan: f32,  // Pan (-1.0 left to 1.0 right)
-    pub muted: bool,
-    pub solo: bool,
     pub effects_enabled: bool,
     pub peak_level: f32, // Current peak level for VU meter
     pub rms_level: f32,  // RMS level for VU meter
@@ -84,10 +80,6 @@ impl Default for AudioChannel {
             id: 0,
             name: "Channel".to_string(),
             input_device_id: None,
-            gain: 1.0,
-            pan: 0.0,
-            muted: false,
-            solo: false,
             effects_enabled: false,
             peak_level: 0.0,
             rms_level: 0.0,

@@ -35,11 +35,22 @@ pub async fn update_audio_effects_default_gain(
         gain
     );
 
-    let mut pipeline = state.pipeline.lock().await;
-    pipeline
-        .update_input_gain(&device_id, gain)
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    state
+        .audio_command_tx
+        .send(
+            crate::audio::mixer::stream_management::AudioCommand::UpdateInputGain {
+                device_id: device_id.clone(),
+                gain,
+                response_tx: tx,
+            },
+        )
+        .await
         .map_err(|e| e.to_string())?;
-    drop(pipeline);
+
+    rx.await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
 
     AudioEffectsDefaultService::update_gain(state.database.sea_orm(), &effects_id, gain)
         .await
@@ -63,11 +74,22 @@ pub async fn update_audio_effects_default_pan(
         pan
     );
 
-    let mut pipeline = state.pipeline.lock().await;
-    pipeline
-        .update_input_pan(&device_id, pan)
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    state
+        .audio_command_tx
+        .send(
+            crate::audio::mixer::stream_management::AudioCommand::UpdateInputPan {
+                device_id: device_id.clone(),
+                pan,
+                response_tx: tx,
+            },
+        )
+        .await
         .map_err(|e| e.to_string())?;
-    drop(pipeline);
+
+    rx.await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
 
     AudioEffectsDefaultService::update_pan(state.database.sea_orm(), &effects_id, pan)
         .await
@@ -91,11 +113,22 @@ pub async fn update_audio_effects_default_mute(
         muted
     );
 
-    let mut pipeline = state.pipeline.lock().await;
-    pipeline
-        .update_input_muted(&device_id, muted)
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    state
+        .audio_command_tx
+        .send(
+            crate::audio::mixer::stream_management::AudioCommand::UpdateInputMuted {
+                device_id: device_id.clone(),
+                muted,
+                response_tx: tx,
+            },
+        )
+        .await
         .map_err(|e| e.to_string())?;
-    drop(pipeline);
+
+    rx.await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
 
     AudioEffectsDefaultService::update_mute(state.database.sea_orm(), &effects_id, muted)
         .await
@@ -119,11 +152,22 @@ pub async fn update_audio_effects_default_solo(
         solo
     );
 
-    let mut pipeline = state.pipeline.lock().await;
-    pipeline
-        .update_input_solo(&device_id, solo)
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    state
+        .audio_command_tx
+        .send(
+            crate::audio::mixer::stream_management::AudioCommand::UpdateInputSolo {
+                device_id: device_id.clone(),
+                solo,
+                response_tx: tx,
+            },
+        )
+        .await
         .map_err(|e| e.to_string())?;
-    drop(pipeline);
+
+    rx.await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
 
     AudioEffectsDefaultService::update_solo(
         state.database.sea_orm(),
