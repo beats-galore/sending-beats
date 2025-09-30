@@ -18,6 +18,7 @@ dependencies = [
  "coreaudio-sys",
  "cpal",
  "crossbeam",
+ "crossbeam-channel",
  "dirs 5.0.1",
  "flac-bound",
  "futures",

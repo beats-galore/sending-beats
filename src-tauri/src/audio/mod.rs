@@ -19,7 +19,6 @@ pub mod tap;
 pub mod types;
 pub mod utils;
 pub mod vu_channel_service;
-pub mod vu_processor;
 
 // Re-export commonly used types for easier imports
 pub use types::{
@@ -69,4 +68,3 @@ pub use file_player::{
 
 pub use events::{MasterVULevelEvent, VUChannelData, VULevelEvent};
 pub use vu_channel_service::VUChannelService;
-pub use vu_processor::VUProcessor;
