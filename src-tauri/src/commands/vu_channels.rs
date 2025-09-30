@@ -4,8 +4,6 @@ use tokio::sync::oneshot;
 
 use crate::{audio::VUChannelData, AudioState};
 
-/// Initialize VU level streaming using high-performance Tauri channels
-/// This replaces the slow event system with channels designed for real-time data
 #[tauri::command]
 pub async fn initialize_vu_channels(
     channel: Channel<VUChannelData>,
