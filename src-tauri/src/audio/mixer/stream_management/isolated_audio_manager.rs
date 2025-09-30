@@ -78,6 +78,26 @@ pub enum AudioCommand {
         stream_id: String,
         response_tx: oneshot::Sender<Result<()>>,
     },
+    UpdateInputGain {
+        device_id: String,
+        gain: f32,
+        response_tx: oneshot::Sender<Result<()>>,
+    },
+    UpdateInputPan {
+        device_id: String,
+        pan: f32,
+        response_tx: oneshot::Sender<Result<()>>,
+    },
+    UpdateInputMuted {
+        device_id: String,
+        muted: bool,
+        response_tx: oneshot::Sender<Result<()>>,
+    },
+    UpdateInputSolo {
+        device_id: String,
+        solo: bool,
+        response_tx: oneshot::Sender<Result<()>>,
+    },
 }
 
 /// Audio System Coordinator - lightweight interface between Tauri commands and audio pipeline
@@ -340,6 +360,38 @@ impl IsolatedAudioManager {
                 response_tx,
             } => {
                 let result = self.handle_stop_icecast(stream_id).await;
+                let _ = response_tx.send(result);
+            }
+            AudioCommand::UpdateInputGain {
+                device_id,
+                gain,
+                response_tx,
+            } => {
+                let result = self.audio_pipeline.update_input_gain(&device_id, gain);
+                let _ = response_tx.send(result);
+            }
+            AudioCommand::UpdateInputPan {
+                device_id,
+                pan,
+                response_tx,
+            } => {
+                let result = self.audio_pipeline.update_input_pan(&device_id, pan);
+                let _ = response_tx.send(result);
+            }
+            AudioCommand::UpdateInputMuted {
+                device_id,
+                muted,
+                response_tx,
+            } => {
+                let result = self.audio_pipeline.update_input_muted(&device_id, muted);
+                let _ = response_tx.send(result);
+            }
+            AudioCommand::UpdateInputSolo {
+                device_id,
+                solo,
+                response_tx,
+            } => {
+                let result = self.audio_pipeline.update_input_solo(&device_id, solo);
                 let _ = response_tx.send(result);
             }
         }

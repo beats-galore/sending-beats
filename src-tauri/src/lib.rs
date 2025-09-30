@@ -33,6 +33,7 @@ use tracing_subscriber::prelude::*;
 use commands::application_audio::*;
 use commands::audio_devices::*;
 use commands::audio_effects::*;
+use commands::audio_effects_default::*;
 use commands::configurations::*;
 use commands::debug::*;
 use commands::file_player::*;

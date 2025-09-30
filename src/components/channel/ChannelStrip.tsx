@@ -27,8 +27,8 @@ import { memo, useCallback, useMemo, useState, useEffect } from 'react';
 
 import { useMixerState, useAudioDevices, useApplicationAudio } from '../../hooks';
 import { audioService } from '../../services';
-import { useConfigurationStore } from '../../stores/mixer-store';
 import { useAudioEffectsDefaultStore } from '../../stores/audio-effects-default-store';
+import { useConfigurationStore } from '../../stores/mixer-store';
 
 import { ChannelEffects } from './ChannelEffects';
 import { ChannelVUMeter } from './ChannelVUMeter';
@@ -146,7 +146,7 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
 
   const deviceEffects = useMemo(() => {
     if (!configuredInputDevice) return null;
-    return effectsDefaultStore.getEffectsByDeviceId(configuredInputDevice.deviceIdentifier);
+    return effectsDefaultStore.getEffectsByDeviceId(configuredInputDevice.id);
   }, [configuredInputDevice, effectsDefaultStore]);
 
   // State for expandable sections
@@ -178,7 +178,7 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
     if (!deviceEffects || !configuredInputDevice || !activeSession) return;
     void effectsDefaultStore.toggleMute(
       deviceEffects.id,
-      configuredInputDevice.deviceIdentifier,
+      configuredInputDevice.id,
       activeSession.configuration.id
     );
   }, [deviceEffects, configuredInputDevice, activeSession, effectsDefaultStore]);
@@ -187,7 +187,7 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
     if (!deviceEffects || !configuredInputDevice || !activeSession) return;
     void effectsDefaultStore.toggleSolo(
       deviceEffects.id,
-      configuredInputDevice.deviceIdentifier,
+      configuredInputDevice.id,
       activeSession.configuration.id
     );
   }, [deviceEffects, configuredInputDevice, activeSession, effectsDefaultStore]);
@@ -228,7 +228,7 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
       if (!deviceEffects || !configuredInputDevice || !activeSession) return;
       void effectsDefaultStore.updateGain(
         deviceEffects.id,
-        configuredInputDevice.deviceIdentifier,
+        configuredInputDevice.id,
         activeSession.configuration.id,
         gain
       );
@@ -241,7 +241,7 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
       if (!deviceEffects || !configuredInputDevice || !activeSession) return;
       void effectsDefaultStore.updatePan(
         deviceEffects.id,
-        configuredInputDevice.deviceIdentifier,
+        configuredInputDevice.id,
         activeSession.configuration.id,
         pan
       );

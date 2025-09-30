@@ -94,15 +94,6 @@ impl VirtualAudioInputStream {
                 }
             }
 
-            // Apply channel-specific gain and mute
-            if !channel.muted && channel.gain > 0.0 {
-                for sample in samples.iter_mut() {
-                    *sample *= channel.gain;
-                }
-            } else {
-                samples.fill(0.0);
-            }
-
             samples
         } else {
             Vec::new()
@@ -246,15 +237,6 @@ impl ApplicationAudioInputBridge {
                     // Process samples through effects chain
                     effects.process(&mut samples);
                 }
-            }
-
-            // Apply channel-specific gain and mute
-            if !channel.muted && channel.gain > 0.0 {
-                for sample in samples.iter_mut() {
-                    *sample *= channel.gain;
-                }
-            } else {
-                samples.fill(0.0);
             }
 
             samples

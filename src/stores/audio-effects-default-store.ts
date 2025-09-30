@@ -5,38 +5,38 @@ import { subscribeWithSelector } from 'zustand/middleware';
 import type { AudioEffectsDefault } from '../types/db/audio-effects.types';
 import type { AudioMixerConfiguration } from '../types/db/audio-mixer-configurations.types';
 import type { ConfiguredAudioDevice } from '../types/db/configured-audio-devices.types';
-import type { Identifier } from '../types/util.types';
+import type { Uuid } from '../types/util.types';
 
 type AudioEffectsDefaultStore = {
   effectsById: Record<string, AudioEffectsDefault>;
   isLoading: boolean;
   error: string | null;
 
-  loadEffects: (configurationId: Identifier<AudioMixerConfiguration>) => Promise<void>;
+  loadEffects: (configurationId: Uuid<AudioMixerConfiguration>) => Promise<void>;
   updateGain: (
-    effectsId: Identifier<AudioEffectsDefault>,
-    deviceId: Identifier<ConfiguredAudioDevice>,
-    configurationId: Identifier<AudioMixerConfiguration>,
+    effectsId: Uuid<AudioEffectsDefault>,
+    deviceId: Uuid<ConfiguredAudioDevice>,
+    configurationId: Uuid<AudioMixerConfiguration>,
     gain: number
   ) => Promise<void>;
   updatePan: (
-    effectsId: Identifier<AudioEffectsDefault>,
-    deviceId: Identifier<ConfiguredAudioDevice>,
-    configurationId: Identifier<AudioMixerConfiguration>,
+    effectsId: Uuid<AudioEffectsDefault>,
+    deviceId: Uuid<ConfiguredAudioDevice>,
+    configurationId: Uuid<AudioMixerConfiguration>,
     pan: number
   ) => Promise<void>;
   toggleMute: (
-    effectsId: Identifier<AudioEffectsDefault>,
-    deviceId: Identifier<ConfiguredAudioDevice>,
-    configurationId: Identifier<AudioMixerConfiguration>
+    effectsId: Uuid<AudioEffectsDefault>,
+    deviceId: Uuid<ConfiguredAudioDevice>,
+    configurationId: Uuid<AudioMixerConfiguration>
   ) => Promise<void>;
   toggleSolo: (
-    effectsId: Identifier<AudioEffectsDefault>,
-    deviceId: Identifier<ConfiguredAudioDevice>,
-    configurationId: Identifier<AudioMixerConfiguration>
+    effectsId: Uuid<AudioEffectsDefault>,
+    deviceId: Uuid<ConfiguredAudioDevice>,
+    configurationId: Uuid<AudioMixerConfiguration>
   ) => Promise<void>;
 
-  getEffectsByDeviceId: (deviceId: Identifier<ConfiguredAudioDevice>) => AudioEffectsDefault | null;
+  getEffectsByDeviceId: (deviceId: Uuid<ConfiguredAudioDevice>) => AudioEffectsDefault | null;
   setError: (error: string | null) => void;
   clearError: () => void;
 };
@@ -47,7 +47,7 @@ export const useAudioEffectsDefaultStore = create<AudioEffectsDefaultStore>()(
     isLoading: false,
     error: null,
 
-    loadEffects: async (configurationId: Identifier<AudioMixerConfiguration>) => {
+    loadEffects: async (configurationId: Uuid<AudioMixerConfiguration>) => {
       set({ isLoading: true, error: null });
 
       try {
@@ -72,9 +72,9 @@ export const useAudioEffectsDefaultStore = create<AudioEffectsDefaultStore>()(
     },
 
     updateGain: async (
-      effectsId: Identifier<AudioEffectsDefault>,
-      deviceId: Identifier<ConfiguredAudioDevice>,
-      configurationId: Identifier<AudioMixerConfiguration>,
+      effectsId: Uuid<AudioEffectsDefault>,
+      deviceId: Uuid<ConfiguredAudioDevice>,
+      configurationId: Uuid<AudioMixerConfiguration>,
       gain: number
     ) => {
       try {
@@ -102,9 +102,9 @@ export const useAudioEffectsDefaultStore = create<AudioEffectsDefaultStore>()(
     },
 
     updatePan: async (
-      effectsId: Identifier<AudioEffectsDefault>,
-      deviceId: Identifier<ConfiguredAudioDevice>,
-      configurationId: Identifier<AudioMixerConfiguration>,
+      effectsId: Uuid<AudioEffectsDefault>,
+      deviceId: Uuid<ConfiguredAudioDevice>,
+      configurationId: Uuid<AudioMixerConfiguration>,
       pan: number
     ) => {
       try {
@@ -132,9 +132,9 @@ export const useAudioEffectsDefaultStore = create<AudioEffectsDefaultStore>()(
     },
 
     toggleMute: async (
-      effectsId: Identifier<AudioEffectsDefault>,
-      deviceId: Identifier<ConfiguredAudioDevice>,
-      configurationId: Identifier<AudioMixerConfiguration>
+      effectsId: Uuid<AudioEffectsDefault>,
+      deviceId: Uuid<ConfiguredAudioDevice>,
+      configurationId: Uuid<AudioMixerConfiguration>
     ) => {
       const currentEffect = get().effectsById[effectsId];
       if (!currentEffect) {
@@ -168,9 +168,9 @@ export const useAudioEffectsDefaultStore = create<AudioEffectsDefaultStore>()(
     },
 
     toggleSolo: async (
-      effectsId: Identifier<AudioEffectsDefault>,
-      deviceId: Identifier<ConfiguredAudioDevice>,
-      configurationId: Identifier<AudioMixerConfiguration>
+      effectsId: Uuid<AudioEffectsDefault>,
+      deviceId: Uuid<ConfiguredAudioDevice>,
+      configurationId: Uuid<AudioMixerConfiguration>
     ) => {
       const currentEffect = get().effectsById[effectsId];
       if (!currentEffect) {
@@ -203,7 +203,7 @@ export const useAudioEffectsDefaultStore = create<AudioEffectsDefaultStore>()(
       }
     },
 
-    getEffectsByDeviceId: (deviceId: Identifier<ConfiguredAudioDevice>) => {
+    getEffectsByDeviceId: (deviceId: Uuid<ConfiguredAudioDevice>) => {
       const effects = Object.values(get().effectsById);
       return effects.find((effect) => effect.deviceId === deviceId) || null;
     },

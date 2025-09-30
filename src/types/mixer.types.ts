@@ -4,10 +4,6 @@ export type AudioChannel = {
   id: number;
   name: string;
   input_device_id?: Identifier<ConfiguredAudioDevice>;
-  gain: number;
-  pan: number;
-  muted: boolean;
-  solo: boolean;
   effects_enabled: boolean;
   peak_level: number;
   rms_level: number;
@@ -46,10 +42,6 @@ export type MixerConfig = {
 // Channel creation defaults
 export const DEFAULT_CHANNEL: Omit<AudioChannel, 'id' | 'name'> = {
   input_device_id: undefined,
-  gain: 0, // dB
-  pan: 0, // center
-  muted: false,
-  solo: false,
   effects_enabled: false,
   peak_level: 0,
   rms_level: 0,
