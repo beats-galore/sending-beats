@@ -351,6 +351,12 @@ pub fn run() {
             get_configuration_by_id,
             create_reusable_configuration,
             get_configured_audio_devices_by_config,
+            // Audio effects default commands
+            get_audio_effects_defaults,
+            update_audio_effects_default_gain,
+            update_audio_effects_default_pan,
+            update_audio_effects_default_mute,
+            update_audio_effects_default_solo,
             // VU Events commands
             initialize_vu_channels
         ])

@@ -1,7 +1,7 @@
-// Command modules for better organization
 pub mod application_audio;
 pub mod audio_devices;
 pub mod audio_effects;
+pub mod audio_effects_default;
 pub mod configurations;
 pub mod debug;
 pub mod file_player;
@@ -11,10 +11,10 @@ pub mod recording;
 pub mod streaming;
 pub mod vu_channels;
 
-// Re-export all command functions for easy access
 pub use application_audio::*;
 pub use audio_devices::*;
 pub use audio_effects::*;
+pub use audio_effects_default::*;
 pub use configurations::*;
 pub use debug::*;
 pub use file_player::*;
