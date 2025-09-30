@@ -665,3 +665,127 @@ impl ConfiguredAudioDeviceService {
         }
     }
 }
+
+pub struct AudioEffectsDefaultService;
+
+impl AudioEffectsDefaultService {
+    pub async fn find_by_device_id(
+        db: &DatabaseConnection,
+        device_id: &str,
+    ) -> Result<Option<audio_effects_default::Model>> {
+        let effect = audio_effects_default::Entity::find()
+            .filter(audio_effects_default::Column::DeviceId.eq(device_id))
+            .filter(audio_effects_default::Column::DeletedAt.is_null())
+            .one(db)
+            .await?;
+
+        Ok(effect)
+    }
+
+    pub async fn list_for_configuration(
+        db: &DatabaseConnection,
+        configuration_id: &str,
+    ) -> Result<Vec<audio_effects_default::Model>> {
+        let effects = audio_effects_default::Entity::find()
+            .filter(audio_effects_default::Column::ConfigurationId.eq(configuration_id))
+            .filter(audio_effects_default::Column::DeletedAt.is_null())
+            .all(db)
+            .await?;
+
+        Ok(effects)
+    }
+
+    pub async fn update_gain(
+        db: &DatabaseConnection,
+        effects_id: &str,
+        gain: f32,
+    ) -> Result<audio_effects_default::Model> {
+        let effect = audio_effects_default::Entity::find_by_id(effects_id)
+            .filter(audio_effects_default::Column::DeletedAt.is_null())
+            .one(db)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Audio effects default not found"))?;
+
+        let mut active: audio_effects_default::ActiveModel = effect.into();
+        active.gain = Set(gain);
+        active.updated_at = Set(chrono::Utc::now());
+
+        let updated = active.update(db).await?;
+        Ok(updated)
+    }
+
+    pub async fn update_pan(
+        db: &DatabaseConnection,
+        effects_id: &str,
+        pan: f32,
+    ) -> Result<audio_effects_default::Model> {
+        let effect = audio_effects_default::Entity::find_by_id(effects_id)
+            .filter(audio_effects_default::Column::DeletedAt.is_null())
+            .one(db)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Audio effects default not found"))?;
+
+        let mut active: audio_effects_default::ActiveModel = effect.into();
+        active.pan = Set(pan);
+        active.updated_at = Set(chrono::Utc::now());
+
+        let updated = active.update(db).await?;
+        Ok(updated)
+    }
+
+    pub async fn update_mute(
+        db: &DatabaseConnection,
+        effects_id: &str,
+        muted: bool,
+    ) -> Result<audio_effects_default::Model> {
+        let effect = audio_effects_default::Entity::find_by_id(effects_id)
+            .filter(audio_effects_default::Column::DeletedAt.is_null())
+            .one(db)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Audio effects default not found"))?;
+
+        let mut active: audio_effects_default::ActiveModel = effect.into();
+        active.muted = Set(muted);
+        active.updated_at = Set(chrono::Utc::now());
+
+        let updated = active.update(db).await?;
+        Ok(updated)
+    }
+
+    pub async fn update_solo(
+        db: &DatabaseConnection,
+        configuration_id: &str,
+        effects_id: &str,
+        solo: bool,
+    ) -> Result<audio_effects_default::Model> {
+        let txn = db.begin().await?;
+
+        if solo {
+            audio_effects_default::Entity::update_many()
+                .col_expr(audio_effects_default::Column::Solo, Expr::value(false))
+                .col_expr(
+                    audio_effects_default::Column::UpdatedAt,
+                    Expr::current_timestamp().into(),
+                )
+                .filter(audio_effects_default::Column::ConfigurationId.eq(configuration_id))
+                .filter(audio_effects_default::Column::DeletedAt.is_null())
+                .exec(&txn)
+                .await?;
+        }
+
+        let effect = audio_effects_default::Entity::find_by_id(effects_id)
+            .filter(audio_effects_default::Column::DeletedAt.is_null())
+            .one(&txn)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Audio effects default not found"))?;
+
+        let mut active: audio_effects_default::ActiveModel = effect.into();
+        active.solo = Set(solo);
+        active.updated_at = Set(chrono::Utc::now());
+
+        let updated = active.update(&txn).await?;
+
+        txn.commit().await?;
+        Ok(updated)
+    }
+}
