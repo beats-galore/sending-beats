@@ -238,6 +238,7 @@ impl AudioPipeline {
         chunk_size: usize, // Input device chunk size from hardware
         rtrb_consumer: rtrb::Consumer<f32>,
         input_notifier: Arc<tokio::sync::Notify>,
+        channel_number: Option<u32>, // Channel number from database configuration
     ) -> Result<()> {
         if self.input_workers.contains_key(&device_id) {
             return Err(anyhow::anyhow!(
@@ -302,6 +303,7 @@ impl AudioPipeline {
             rtrb_consumer,
             input_notifier,
             processed_output_tx,
+            channel_number, // Pass channel number from database
         );
 
         // Add worker to collection BEFORE recalculating (needed for sample rate detection)

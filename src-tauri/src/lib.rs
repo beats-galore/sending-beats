@@ -175,6 +175,9 @@ pub fn run() {
         let (audio_command_tx, audio_command_rx) =
             tokio::sync::mpsc::channel::<crate::audio::mixer::stream_management::AudioCommand>(100);
 
+        // Clone database for IsolatedAudioManager thread
+        let database_for_audio = database.clone();
+
         // Start IsolatedAudioManager in a dedicated thread with its own runtime
         // This avoids Send+Sync issues with CPAL streams on macOS
         std::thread::spawn(move || {
@@ -195,6 +198,7 @@ pub fn run() {
                 match crate::audio::mixer::stream_management::IsolatedAudioManager::new(
                     audio_command_rx,
                     None, // AppHandle not available yet - events will be disabled until app starts
+                    Some(database_for_audio), // Pass database for channel number queries
                 )
                 .await
                 {
