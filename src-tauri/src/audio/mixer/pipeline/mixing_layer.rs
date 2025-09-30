@@ -330,7 +330,7 @@ impl MixingLayer {
 
                 // Small yield to prevent busy-waiting
                 if !mixed_something {
-                    tokio::time::sleep(std::time::Duration::from_micros(100)).await;
+                    tokio::time::sleep(std::time::Duration::from_micros(25)).await;
                 }
             }
         });

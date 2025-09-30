@@ -109,7 +109,6 @@ pub struct IsolatedAudioManager {
 }
 
 impl IsolatedAudioManager {
-
     pub async fn new(
         command_rx: mpsc::Receiver<AudioCommand>,
         database: Option<Arc<crate::db::AudioDatabase>>,

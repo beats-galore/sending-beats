@@ -23,7 +23,7 @@ pub struct InputWorker {
     pub device_sample_rate: u32, // Original device sample rate
     target_sample_rate: u32,     // Max sample rate for mixing (e.g., 48kHz)
     channels: u16,
-    chunk_size: usize,   // Input device chunk size (for resampler)
+    chunk_size: usize, // Input device chunk size (for resampler)
     channel_number: u32,
 
     // Audio processing components
@@ -236,6 +236,7 @@ impl InputWorker {
                 let original_samples_len = samples.len();
 
                 // Step 1: Resample to target sample rate if needed (more efficient with original mono data)
+                let resample_start = std::time::Instant::now();
                 let resampled_samples = if let Some(active_resampler) =
                     Self::get_or_initialize_resampler_static(
                         &mut resampler,
@@ -252,7 +253,10 @@ impl InputWorker {
                     // WHy do we need to clone?
                     samples.clone()
                 };
+                let resample_duration = resample_start.elapsed();
+
                 // Step 2: Mono-to-stereo conversion (after resampling, before effects)
+                let conversion_start = std::time::Instant::now();
                 let channel_converted_samples = if channels == 1 {
                     let converted = Self::convert_mono_to_stereo(&resampled_samples, &device_id);
 
@@ -260,20 +264,26 @@ impl InputWorker {
                 } else {
                     resampled_samples
                 };
+                let conversion_duration = conversion_start.elapsed();
 
                 // Update channels to stereo for downstream processing (effects expect stereo)
                 let processing_channels = if channels == 1 { 2 } else { channels };
 
                 // Step 3: Apply per-input effects (EQ, compressor, etc.) - now on stereo data
+                let effects_start = std::time::Instant::now();
                 let mut effects_processed = channel_converted_samples;
                 effects_chain.process(&mut effects_processed);
+                let effects_duration = effects_start.elapsed();
 
                 // Step 3.5: Calculate and emit VU levels for this channel (if VU service available)
+                let vu_start = std::time::Instant::now();
                 if let Some(ref vu_service) = vu_service {
                     vu_service.queue_channel_audio(channel_number, &effects_processed);
                 }
+                let vu_duration = vu_start.elapsed();
 
                 // Step 4: Send processed audio to mixing layer
+                let send_start = std::time::Instant::now();
                 let samples_to_send = effects_processed.len();
                 let processed_audio = ProcessedAudioSamples {
                     device_id: device_id.clone(),
@@ -288,31 +298,42 @@ impl InputWorker {
                     warn!("⚠️ INPUT_WORKER: Failed to send processed audio for {} (mixing layer may be shut down)", device_id);
                     break;
                 }
+                let send_duration = send_start.elapsed();
 
                 // Performance tracking
                 samples_processed += 1;
                 let processing_duration = processing_start.elapsed();
 
-                // Rate-limited logging
+                // Rate-limited logging with detailed breakdown
                 if samples_processed <= 5 || samples_processed % 1000 == 0 {
                     info!(
-                        "🔄 {}: (2nd layer) {} processed {} samples, sent {} in {}μs (batch #{})",
-                        "RESAMPLE_AND_EFFECTS_INPUT_WORKER".green(),
+                        "🔄 {}: {} processed {} samples in {}μs (resample: {}μs, conv: {}μs, effects: {}μs, vu: {}μs, send: {}μs) batch #{}",
+                        "INPUT_WORKER_TIMING".green(),
                         device_id,
                         original_samples_len,
-                        samples_to_send,
                         processing_duration.as_micros(),
+                        resample_duration.as_micros(),
+                        conversion_duration.as_micros(),
+                        effects_duration.as_micros(),
+                        vu_duration.as_micros(),
+                        send_duration.as_micros(),
                         samples_processed
                     );
+                }
 
-                    // Log slow processing
-                    if processing_duration.as_micros() > 500 {
-                        warn!(
-                            "⏱️ INPUT_WORKER: {} slow processing: {}μs",
-                            device_id,
-                            processing_duration.as_micros()
-                        );
-                    }
+                // Log slow processing with breakdown
+                if processing_duration.as_micros() > 500 {
+                    warn!(
+                        "⏱️ {}: {} SLOW processing: {}μs total (resample: {}μs, conv: {}μs, effects: {}μs, vu: {}μs, send: {}μs)",
+                        "INPUT_WORKER_SLOW".yellow(),
+                        device_id,
+                        processing_duration.as_micros(),
+                        resample_duration.as_micros(),
+                        conversion_duration.as_micros(),
+                        effects_duration.as_micros(),
+                        vu_duration.as_micros(),
+                        send_duration.as_micros()
+                    );
                 }
             }
 

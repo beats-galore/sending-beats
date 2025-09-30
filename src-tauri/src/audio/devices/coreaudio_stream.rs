@@ -614,7 +614,7 @@ extern "C" fn rtrb_render_callback(
                 let delay_excess = gap_micros - expected_interval_micros;
                 TOTAL_DELAY_ACCUMULATION += delay_excess;
 
-                if CALLBACK_COUNT % 100 == 0 || delay_excess > 5000 {
+                if CALLBACK_COUNT % 1000 == 0 || delay_excess > 5000 {
                     // Log every 100 callbacks or >5ms delays
                     info!("⚠️ {} [call #{}]: Callback delay {} μs (expected {}, excess: {} μs, total excess: {} ms)",
                         "COREAUDIO_CALLBACK_DELAY".red(),
@@ -1490,10 +1490,8 @@ extern "C" fn coreaudio_input_callback(
         }
 
         // **EVENT-DRIVEN**: Notify async processing thread when hardware has provided new samples
-        // **SMART INPUT NOTIFICATION**: Only notify if we actually captured samples
-        if samples_written > 0 {
-            context.input_notifier.notify_one();
-        }
+        // ALWAYS notify, even for silent samples, to maintain temporal sync across devices
+        context.input_notifier.notify_one();
 
         // Debug logging for audio capture (same pattern as CPAL)
         static mut INPUT_CAPTURE_COUNT: u64 = 0;
