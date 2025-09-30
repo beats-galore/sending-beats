@@ -1,8 +1,7 @@
 // High-performance VU meter data streaming using Tauri channels
 // Replaces the slow event system with channels designed for real-time data
+import { Channel, invoke } from '@tauri-apps/api/core';
 import { useEffect } from 'react';
-import { Channel } from '@tauri-apps/api/core';
-import { invoke } from '@tauri-apps/api/core';
 
 import { useMixerStore } from '../stores';
 
@@ -55,7 +54,7 @@ export const useVUChannelStream = (isEnabled = true) => {
             const vuData = data.data;
 
             // Convert dB values to 0-1 linear range for UI components
-            const dbToLinear = (db: number) => Math.pow(10, db / 20);
+            const dbToLinear = (db: number) => 10 ** (db / 20);
 
             // Convert to the format expected by the mixer store
             const channelLevels: Record<number, [number, number, number, number]> = {
@@ -73,7 +72,7 @@ export const useVUChannelStream = (isEnabled = true) => {
             const vuData = data.data;
 
             // Convert dB values to 0-1 linear range for UI components
-            const dbToLinear = (db: number) => Math.pow(10, db / 20);
+            const dbToLinear = (db: number) => 10 ** (db / 20);
 
             // Convert to the format expected by the mixer store
             const masterLevels = {

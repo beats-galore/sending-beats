@@ -10,17 +10,6 @@ pub trait VUProcessor: Send {
     fn process_master_audio(&mut self, master_samples: &[f32]);
 }
 
-// Implement the trait for VULevelService (event-based)
-impl VUProcessor for crate::audio::vu_service::VULevelService {
-    fn process_channel_audio(&mut self, channel_id: u32, channel_samples: &[f32]) {
-        self.process_channel_audio(channel_id, channel_samples);
-    }
-
-    fn process_master_audio(&mut self, master_samples: &[f32]) {
-        self.process_master_audio(master_samples);
-    }
-}
-
 // Implement the trait for VUChannelService (channel-based)
 impl VUProcessor for crate::audio::vu_channel_service::VUChannelService {
     fn process_channel_audio(&mut self, channel_id: u32, channel_samples: &[f32]) {

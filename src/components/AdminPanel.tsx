@@ -12,7 +12,6 @@ import {
 import { memo, useState, useCallback } from 'react';
 
 import { DashboardTab, ScheduleTab, UploadsTab, AnalyticsTab } from './admin';
-import { ErrorBoundary } from './layout';
 
 type ScheduleItem = {
   id: string;
@@ -127,61 +126,59 @@ const AdminPanel = memo(() => {
   }, []);
 
   return (
-    <ErrorBoundary>
-      <Box className={classes.container}>
-        <Group justify="space-between" align="center" mb="xl">
-          <Title order={1} c="blue.4">
-            Admin Panel
-          </Title>
-          <Group className={classes.statusIndicator}>
-            {isLive ? (
-              <IconWifi size={20} color="#51cf66" />
-            ) : (
-              <IconWifiOff size={20} color="#fa5252" />
-            )}
-            <Badge color={isLive ? 'green' : 'gray'} variant="light" size="md">
-              {isLive ? 'Live' : 'Offline'}
-            </Badge>
-          </Group>
+    <Box className={classes.container}>
+      <Group justify="space-between" align="center" mb="xl">
+        <Title order={1} c="blue.4">
+          Admin Panel
+        </Title>
+        <Group className={classes.statusIndicator}>
+          {isLive ? (
+            <IconWifi size={20} color="#51cf66" />
+          ) : (
+            <IconWifiOff size={20} color="#fa5252" />
+          )}
+          <Badge color={isLive ? 'green' : 'gray'} variant="light" size="md">
+            {isLive ? 'Live' : 'Offline'}
+          </Badge>
         </Group>
+      </Group>
 
-        <Tabs value={activeTab} onChange={(value) => setActiveTab(value as any)} variant="pills">
-          <Tabs.List mb="xl">
-            <Tabs.Tab value="dashboard" leftSection={<IconDashboard size={16} />}>
-              Dashboard
-            </Tabs.Tab>
-            <Tabs.Tab value="schedule" leftSection={<IconCalendar size={16} />}>
-              Schedule
-            </Tabs.Tab>
-            <Tabs.Tab value="uploads" leftSection={<IconMusic size={16} />}>
-              Uploads
-            </Tabs.Tab>
-            <Tabs.Tab value="analytics" leftSection={<IconChartBar size={16} />}>
-              Analytics
-            </Tabs.Tab>
-          </Tabs.List>
+      <Tabs value={activeTab} onChange={(value) => setActiveTab(value as any)} variant="pills">
+        <Tabs.List mb="xl">
+          <Tabs.Tab value="dashboard" leftSection={<IconDashboard size={16} />}>
+            Dashboard
+          </Tabs.Tab>
+          <Tabs.Tab value="schedule" leftSection={<IconCalendar size={16} />}>
+            Schedule
+          </Tabs.Tab>
+          <Tabs.Tab value="uploads" leftSection={<IconMusic size={16} />}>
+            Uploads
+          </Tabs.Tab>
+          <Tabs.Tab value="analytics" leftSection={<IconChartBar size={16} />}>
+            Analytics
+          </Tabs.Tab>
+        </Tabs.List>
 
-          <Tabs.Panel value="dashboard">
-            <DashboardTab
-              isLive={isLive}
-              currentDJ={currentDJ}
-              analytics={analytics}
-              onGoLive={handleGoLive}
-              onTabChange={handleTabChange}
-            />
-          </Tabs.Panel>
-          <Tabs.Panel value="schedule">
-            <ScheduleTab schedules={schedules} />
-          </Tabs.Panel>
-          <Tabs.Panel value="uploads">
-            <UploadsTab uploads={uploads} />
-          </Tabs.Panel>
-          <Tabs.Panel value="analytics">
-            <AnalyticsTab analytics={analytics} />
-          </Tabs.Panel>
-        </Tabs>
-      </Box>
-    </ErrorBoundary>
+        <Tabs.Panel value="dashboard">
+          <DashboardTab
+            isLive={isLive}
+            currentDJ={currentDJ}
+            analytics={analytics}
+            onGoLive={handleGoLive}
+            onTabChange={handleTabChange}
+          />
+        </Tabs.Panel>
+        <Tabs.Panel value="schedule">
+          <ScheduleTab schedules={schedules} />
+        </Tabs.Panel>
+        <Tabs.Panel value="uploads">
+          <UploadsTab uploads={uploads} />
+        </Tabs.Panel>
+        <Tabs.Panel value="analytics">
+          <AnalyticsTab analytics={analytics} />
+        </Tabs.Panel>
+      </Tabs>
+    </Box>
   );
 });
 

@@ -10,9 +10,12 @@ import {
   useAudioMetrics,
   useAudioDevices,
 } from '../../hooks';
-import { useConfigurationStore } from '../../stores/mixer-store';
 import { audioService } from '../../services';
+import { useConfigurationStore } from '../../stores/mixer-store';
 import { VUMeter, AudioSlider } from '../ui';
+
+import type { ConfiguredAudioDevice } from '../../types/db';
+import type { Identifier } from '../../types/util.types';
 
 const useStyles = createStyles(() => ({
   responsiveGrid: {
@@ -31,16 +34,16 @@ export const MasterSection = memo(() => {
 
   // Find the configured output device from the active session
   const configuredOutputDevice = useMemo(() => {
-    if (!activeSession?.configured_devices) return null;
-    return activeSession.configured_devices.find(
-      (device) => !device.is_input // Output devices have is_input = false
+    if (!activeSession?.configuredDevices) return null;
+    return activeSession.configuredDevices.find(
+      (device) => !device.isInput // Output devices have is_input = false
     );
   }, [activeSession]);
 
   const handleOutputDeviceChange = useCallback(
-    async (deviceId: string) => {
+    (deviceId: Identifier<ConfiguredAudioDevice>) => {
       try {
-        await setMasterOutputDevice(deviceId);
+        setMasterOutputDevice(deviceId);
       } catch (error) {
         console.error('Failed to set output device:', error);
       }
@@ -81,11 +84,14 @@ export const MasterSection = memo(() => {
 
     // Add configured output device if it's not in the available devices list (missing/unplugged)
     if (configuredOutputDevice) {
-      const isDeviceAvailable = outputDevices.some(device => device.id === configuredOutputDevice.device_identifier);
+      const isDeviceAvailable = outputDevices.some(
+        (device) => device.id === configuredOutputDevice.deviceIdentifier
+      );
       if (!isDeviceAvailable) {
-        const deviceName = configuredOutputDevice.device_name || configuredOutputDevice.device_identifier;
+        const deviceName =
+          configuredOutputDevice.deviceName ?? configuredOutputDevice.deviceIdentifier;
         options.unshift({
-          value: configuredOutputDevice.device_identifier,
+          value: configuredOutputDevice.deviceIdentifier,
           label: `${deviceName} (unavailable)`,
           disabled: true, // Disable the option so it can't be selected
         });
@@ -153,7 +159,7 @@ export const MasterSection = memo(() => {
               {/* Master Gain */}
               <AudioSlider
                 label="Master Gain"
-                value={mixerConfig?.master_gain || 0}
+                value={mixerConfig?.master_gain ?? 0}
                 min={-60}
                 max={12}
                 step={0.5}
@@ -179,8 +185,10 @@ export const MasterSection = memo(() => {
                 <Select
                   placeholder="Select output device..."
                   data={outputDeviceOptions}
-                  value={configuredOutputDevice?.device_identifier || null}
-                  onChange={(value) => value && handleOutputDeviceChange(value)}
+                  value={configuredOutputDevice?.deviceIdentifier ?? null}
+                  onChange={(value) =>
+                    value && handleOutputDeviceChange(value as Identifier<ConfiguredAudioDevice>)
+                  }
                 />
               </Stack>
             </Stack>

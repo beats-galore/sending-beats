@@ -3,9 +3,9 @@ import { Text, Center, Box, Stack } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { memo, useMemo, useRef } from 'react';
 
+import { useChannelLevels } from '../../hooks';
 import { VU_METER_OPTIMIZATIONS } from '../../utils/performance-helpers';
 import { VUMeter } from '../ui';
-import { useChannelLevels } from '../../hooks';
 
 const useStyles = createStyles((theme) => ({
   vuContainer: {

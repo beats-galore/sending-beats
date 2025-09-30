@@ -49,12 +49,7 @@ impl VULevelEvent {
     }
 
     /// Create mono VU level event
-    pub fn new_mono(
-        device_id: String,
-        channel: u32,
-        peak: f32,
-        rms: f32,
-    ) -> Self {
+    pub fn new_mono(device_id: String, channel: u32, peak: f32, rms: f32) -> Self {
         Self::new(device_id, channel, peak, 0.0, rms, 0.0, false)
     }
 }
@@ -107,4 +102,3 @@ impl VUChannelData {
         Self::Master(event)
     }
 }
-

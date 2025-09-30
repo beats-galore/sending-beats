@@ -2,6 +2,8 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import type { AudioDeviceInfo, AudioMetrics, OutputDevice, DeviceHealth } from '../types';
+import type { ConfiguredAudioDevice } from '../types/db';
+import type { Identifier } from '../types/util.types';
 
 export const audioService = {
   // Device management
@@ -26,15 +28,18 @@ export const audioService = {
     return invoke<[number, number, number, number]>('get_master_levels');
   },
 
-  async removeInputStream(deviceId: string): Promise<void> {
+  async removeInputStream(deviceId: Identifier<ConfiguredAudioDevice>): Promise<void> {
     return invoke('remove_input_stream', { deviceId });
   },
 
-  async switchInputStream(oldDeviceId: string | null, newDeviceId: string): Promise<void> {
+  async switchInputStream(
+    oldDeviceId: Identifier<ConfiguredAudioDevice> | null,
+    newDeviceId: Identifier<ConfiguredAudioDevice>
+  ): Promise<void> {
     return invoke('safe_switch_input_device', { oldDeviceId, newDeviceId });
   },
 
-  async setOutputStream(deviceId: string): Promise<void> {
+  async setOutputStream(deviceId: Identifier<ConfiguredAudioDevice>): Promise<void> {
     return invoke('safe_switch_output_device', { newDeviceId: deviceId });
   },
 

@@ -4,6 +4,9 @@ import { useCallback, useMemo } from 'react';
 import { useMixerStore } from '../stores';
 import { MixerState } from '../types';
 
+import type { ConfiguredAudioDevice } from '../types/db';
+import type { Identifier } from '../types/util.types';
+
 export const useMixerState = () => {
   const {
     config,
@@ -70,7 +73,7 @@ export const useMixerState = () => {
   );
 
   const setChannelInputDevice = useCallback(
-    async (channelId: number, deviceId: string) => {
+    async (channelId: number, deviceId: Identifier<ConfiguredAudioDevice>) => {
       await updateChannel(channelId, { input_device_id: deviceId });
     },
     [updateChannel]

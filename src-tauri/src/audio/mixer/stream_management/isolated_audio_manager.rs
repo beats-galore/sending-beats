@@ -23,10 +23,6 @@ use rtrb::{Consumer, Producer, RingBuffer};
 // Command channel for isolated audio thread communication
 // Cannot derive Debug because Device doesn't implement Debug
 pub enum AudioCommand {
-    SetAppHandle {
-        app_handle: tauri::AppHandle,
-        response_tx: oneshot::Sender<Result<()>>,
-    },
     SetVUChannel {
         channel: tauri::ipc::Channel<crate::audio::VUChannelData>,
         response_tx: oneshot::Sender<Result<()>>,
@@ -117,7 +113,10 @@ impl IsolatedAudioManager {
     /// **REMOVED**: Legacy resampler and VirtualMixer functionality
     /// AudioPipeline now handles all audio processing internally
 
-    pub async fn new(command_rx: mpsc::Receiver<AudioCommand>, app_handle: Option<tauri::AppHandle>, database: Option<Arc<crate::db::AudioDatabase>>) -> Result<Self, anyhow::Error> {
+    pub async fn new(
+        command_rx: mpsc::Receiver<AudioCommand>,
+        database: Option<Arc<crate::db::AudioDatabase>>,
+    ) -> Result<Self, anyhow::Error> {
         // **CORE**: Create 4-layer AudioPipeline with dynamic sample rate detection
         // Sample rate will be determined from the first device that gets added
 
@@ -126,21 +125,10 @@ impl IsolatedAudioManager {
         let (hardware_update_tx, mut hardware_update_rx) = mpsc::channel::<AudioCommand>(32);
 
         #[cfg(target_os = "macos")]
-        let audio_pipeline = if let Some(app_handle) = app_handle.clone() {
-            // Create pipeline with both hardware updates and VU events
-            let mut pipeline = AudioPipeline::new_with_app_handle(app_handle);
-            pipeline.set_hardware_update_channel(hardware_update_tx);
-            pipeline
-        } else {
-            AudioPipeline::new_with_hardware_updates(Some(hardware_update_tx))
-        };
+        let audio_pipeline = AudioPipeline::new_with_hardware_updates(Some(hardware_update_tx));
 
         #[cfg(not(target_os = "macos"))]
-        let audio_pipeline = if let Some(app_handle) = app_handle.clone() {
-            AudioPipeline::new_with_app_handle(app_handle)
-        } else {
-            AudioPipeline::new()
-        };
+        let audio_pipeline = AudioPipeline::new();
 
         info!(
             "🎧 AUDIO_COORDINATOR: Initialized with 4-layer AudioPipeline (dynamic sample rate detection)"
@@ -251,24 +239,23 @@ impl IsolatedAudioManager {
 
     async fn handle_command(&mut self, command: AudioCommand) {
         match command {
-            AudioCommand::SetAppHandle {
-                app_handle,
-                response_tx,
-            } => {
-                info!("{}: Received SetAppHandle command", "VU_COORDINATOR".bright_cyan());
-                info!("{}: Setting AppHandle for VU level events", "VU_COORDINATOR".bright_cyan());
-                self.audio_pipeline.set_app_handle(app_handle);
-                info!("{}: AppHandle set successfully, sending confirmation", "VU_COORDINATOR".bright_cyan());
-                let _ = response_tx.send(Ok(()));
-            }
             AudioCommand::SetVUChannel {
                 channel,
                 response_tx,
             } => {
-                info!("{}: Received SetVUChannel command", "VU_CHANNEL_COORD".bright_green());
-                info!("{}: Setting VU channel for high-performance streaming", "VU_CHANNEL_COORD".bright_green());
+                info!(
+                    "{}: Received SetVUChannel command",
+                    "VU_CHANNEL_COORD".bright_green()
+                );
+                info!(
+                    "{}: Setting VU channel for high-performance streaming",
+                    "VU_CHANNEL_COORD".bright_green()
+                );
                 self.audio_pipeline.set_vu_channel(channel);
-                info!("{}: VU channel set successfully, sending confirmation", "VU_CHANNEL_COORD".bright_green());
+                info!(
+                    "{}: VU channel set successfully, sending confirmation",
+                    "VU_CHANNEL_COORD".bright_green()
+                );
                 let _ = response_tx.send(Ok(()));
             }
             AudioCommand::RemoveInputStream {
@@ -432,26 +419,42 @@ impl IsolatedAudioManager {
             match crate::db::ConfiguredAudioDeviceService::get_channel_number_for_active_device(
                 db.sea_orm(),
                 &device_id,
-            ).await {
+            )
+            .await
+            {
                 Ok(Some(channel)) => {
-                    info!("🎯 {}: Found channel number {} for device '{}'",
-                          "CHANNEL_LOOKUP".green(), channel, device_id);
+                    info!(
+                        "🎯 {}: Found channel number {} for device '{}'",
+                        "CHANNEL_LOOKUP".green(),
+                        channel,
+                        device_id
+                    );
                     Some(channel)
                 }
                 Ok(None) => {
-                    warn!("⚠️ {}: No channel configuration found for device '{}' - using channel 0",
-                          "CHANNEL_LOOKUP".yellow(), device_id);
+                    warn!(
+                        "⚠️ {}: No channel configuration found for device '{}' - using channel 0",
+                        "CHANNEL_LOOKUP".yellow(),
+                        device_id
+                    );
                     Some(0) // Default to channel 0 if not configured
                 }
                 Err(e) => {
-                    error!("❌ {}: Database error getting channel for '{}': {} - using channel 0",
-                           "CHANNEL_LOOKUP".red(), device_id, e);
+                    error!(
+                        "❌ {}: Database error getting channel for '{}': {} - using channel 0",
+                        "CHANNEL_LOOKUP".red(),
+                        device_id,
+                        e
+                    );
                     Some(0) // Default to channel 0 on error
                 }
             }
         } else {
-            warn!("⚠️ {}: No database available - using channel 0 for device '{}'",
-                  "CHANNEL_LOOKUP".yellow(), device_id);
+            warn!(
+                "⚠️ {}: No database available - using channel 0 for device '{}'",
+                "CHANNEL_LOOKUP".yellow(),
+                device_id
+            );
             Some(0) // Default to channel 0 if no database
         };
 
@@ -656,7 +659,6 @@ impl IsolatedAudioManager {
         // **REMOVED**: input_streams no longer exist - InputWorkers handle effects directly
         Ok(())
     }
-
 
     fn get_metrics(&self) -> AudioMetrics {
         self.metrics.clone()

@@ -18,7 +18,6 @@ pub mod recording;
 pub mod tap;
 pub mod types;
 pub mod utils;
-pub mod vu_service;
 pub mod vu_channel_service;
 pub mod vu_processor;
 
@@ -37,7 +36,7 @@ pub use effects::{
 
 pub use mixer::stream_management::VirtualMixer;
 
-pub use crate::db::{AudioDatabase};
+pub use crate::db::AudioDatabase;
 
 pub use broadcasting::{
     create_streaming_bridge, AudioEncoder, AudioStreamingBridge, IcecastSourceClient, IcecastStats,
@@ -68,7 +67,6 @@ pub use file_player::{
     PlaybackAction, PlaybackMode, PlaybackState, PlaybackStatus, QueuedTrack, RepeatMode,
 };
 
-pub use events::{MasterVULevelEvent, VULevelEvent, VUChannelData};
-pub use vu_service::VULevelService;
+pub use events::{MasterVULevelEvent, VUChannelData, VULevelEvent};
 pub use vu_channel_service::VUChannelService;
 pub use vu_processor::VUProcessor;

@@ -3,29 +3,31 @@ import { createStyles } from '@mantine/styles';
 import { IconWifi, IconWifiOff } from '@tabler/icons-react';
 import { memo, useEffect, useState } from 'react';
 
+import type { SampleRate } from '../../utils/constants';
+
 type StreamSettings = {
   bitrate: number;
   sampleRate: number;
   channels: number;
 };
 
-type StreamConfig = {
+type StreamConfigUI = {
   icecast_url: string;
   mount_point: string;
   username: string;
   password: string;
   bitrate: number;
-  sample_rate: number;
+  sample_rate: SampleRate;
   channels: number;
 };
 
 type StreamConfigurationCardProps = {
-  streamConfig: StreamConfig;
+  streamConfig: StreamConfigUI;
   streamSettings: StreamSettings;
   isConnected: boolean;
   isConnecting: boolean;
   availableBitrates?: number[];
-  onConfigChange: (config: StreamConfig) => void;
+  onConfigChange: (config: StreamConfigUI) => void;
   onSettingsChange: (settings: StreamSettings) => void;
   onConnect: () => void;
   onDisconnect: () => void;

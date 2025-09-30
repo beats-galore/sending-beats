@@ -3,6 +3,9 @@ import { useCallback } from 'react';
 
 import { useMixerStore } from '../stores';
 
+import type { ConfiguredAudioDevice } from '../types/db';
+import type { Identifier } from '../types/util.types';
+
 export const useMasterSectionData = () => {
   // Only select the master-related config data
   const mixerConfig = useMixerStore((state) => state.config);
@@ -17,7 +20,7 @@ export const useMasterSectionData = () => {
   );
 
   const setMasterOutputDevice = useCallback(
-    (deviceId: string) => {
+    (deviceId: Identifier<ConfiguredAudioDevice>) => {
       void setMasterOutputDeviceAction(deviceId);
     },
     [setMasterOutputDeviceAction]

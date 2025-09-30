@@ -8,7 +8,7 @@ export type AudioPermissionState = {
   isLoading: boolean;
   error: string | null;
   permissionInstructions: string | null;
-}
+};
 
 export const useAudioPermissions = () => {
   const [permissionState, setPermissionState] = useState<AudioPermissionState>({
@@ -19,17 +19,16 @@ export const useAudioPermissions = () => {
   });
 
   const checkPermissions = useCallback(async () => {
-    setPermissionState(prev => ({ ...prev, isLoading: true, error: null }));
-    
+    setPermissionState((prev) => ({ ...prev, isLoading: true, error: null }));
+
     try {
-      const hasPermission = await mixerService.checkAudioCapturePermissions();
       setPermissionState({
-        hasPermission,
+        hasPermission: null,
         isLoading: false,
         error: null,
         permissionInstructions: null,
       });
-      return hasPermission;
+      return null;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       setPermissionState({
@@ -43,20 +42,19 @@ export const useAudioPermissions = () => {
   }, []);
 
   const requestPermissions = useCallback(async () => {
-    setPermissionState(prev => ({ ...prev, isLoading: true, error: null }));
-    
+    setPermissionState((prev) => ({ ...prev, isLoading: true, error: null }));
+
     try {
       const instructions = await mixerService.requestAudioCapturePermissions();
-      const hasPermission = await mixerService.checkAudioCapturePermissions();
-      
+
       setPermissionState({
-        hasPermission,
+        hasPermission: null,
         isLoading: false,
         error: null,
         permissionInstructions: instructions,
       });
-      
-      return { hasPermission, instructions };
+
+      return { hasPermission: null, instructions };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       setPermissionState({

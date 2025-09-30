@@ -11,4 +11,3 @@ pub fn set_debug_log_config(audio: bool, device: bool) {
 pub fn get_debug_log_config() -> crate::log::DebugLoggingConfig {
     crate::log::get_debug_levels()
 }
-

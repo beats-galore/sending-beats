@@ -4,12 +4,8 @@ import { createStyles } from '@mantine/styles';
 import { IconAlertCircle, IconRefresh } from '@tabler/icons-react';
 import { memo, useEffect, useCallback } from 'react';
 
-import {
-  useAudioDevicesStatus,
-  useMixerInitialization,
-  useMixerRunningState,
-  useVUMeterData,
-} from '../../hooks';
+import { useAudioDevicesStatus, useMixerInitialization, useMixerRunningState } from '../../hooks';
+import { useVUChannelStream } from '../../hooks/use-vu-channel-stream';
 import { RecordingControlsCard, RecordingConfigCard, RecordingHistoryCard } from '../dj';
 import { ErrorBoundary, FullScreenLoader } from '../layout';
 
@@ -53,7 +49,7 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-const VirtualMixer = memo(() => {
+export const VirtualMixer = memo(() => {
   const { classes } = useStyles();
   console.log('re-rendered virtual mixer');
 
@@ -63,8 +59,7 @@ const VirtualMixer = memo(() => {
 
   const isRunning = useMixerRunningState();
 
-  // Start VU meter polling when running
-  useVUMeterData(isRunning);
+  useVUChannelStream(isRunning);
 
   const handleInitialize = useCallback(() => {
     void initialize();
@@ -157,12 +152,3 @@ const VirtualMixer = memo(() => {
 });
 
 VirtualMixer.displayName = 'VirtualMixer';
-
-// Wrap in error boundary
-export const VirtualMixerWithErrorBoundary = () => (
-  <ErrorBoundary>
-    <VirtualMixer />
-  </ErrorBoundary>
-);
-
-export default VirtualMixer;
