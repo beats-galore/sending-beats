@@ -1,12 +1,11 @@
 use colored::*;
-use crossbeam_channel::{bounded, Sender, Receiver};
+use crossbeam_channel::{bounded, Receiver, Sender};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::ipc::Channel;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
-use crate::audio::effects::{PeakDetector, RmsDetector};
 use crate::audio::events::{MasterVULevelEvent, VUChannelData, VULevelEvent};
 
 enum VUSample {
@@ -46,7 +45,8 @@ impl VUChannelService {
                 max_channels,
                 emit_rate_hz,
                 shutdown_clone,
-            ).await;
+            )
+            .await;
         });
 
         Self {
@@ -87,120 +87,143 @@ impl VUChannelService {
         emit_rate_hz: u32,
         shutdown: Arc<AtomicBool>,
     ) {
-        let mut channel_peak_detectors = Vec::with_capacity(max_channels);
-        let mut channel_rms_detectors = Vec::with_capacity(max_channels);
+        let send_interval_ms = 1000 / emit_rate_hz as u64;
+        let mut last_batch_send = std::time::Instant::now();
 
-        for _ in 0..max_channels {
-            channel_peak_detectors.push(PeakDetector::new());
-            channel_rms_detectors.push(RmsDetector::new(sample_rate));
-        }
+        info!(
+            "{}: VU processing thread started (batching every {}ms)",
+            "VU_THREAD".on_blue().cyan(),
+            send_interval_ms
+        );
 
-        let mut master_peak_left = PeakDetector::new();
-        let mut master_peak_right = PeakDetector::new();
-        let mut master_rms_left = RmsDetector::new(sample_rate);
-        let mut master_rms_right = RmsDetector::new(sample_rate);
-
-        let min_send_interval_us = 1_000_000 / emit_rate_hz as u64;
-        let last_send = AtomicU64::new(0);
-
-        info!("{}: VU processing thread started", "VU_THREAD".on_blue().cyan());
+        let mut pending_channel_events: Vec<VUChannelData> = Vec::new();
+        let mut latest_channel_levels: Vec<Option<(f32, f32, f32, f32)>> = vec![None; max_channels];
+        let mut latest_master_levels: Option<(f32, f32, f32, f32)> = None;
 
         while !shutdown.load(Ordering::Relaxed) {
-            match sample_rx.recv_timeout(std::time::Duration::from_millis(100)) {
-                Ok(VUSample::Channel { id, samples }) => {
-                    let channel_idx = id as usize;
-                    if channel_idx >= max_channels {
-                        continue;
-                    }
+            if last_batch_send.elapsed().as_millis() >= send_interval_ms as u128 {
+                let mut drained_count = 0;
 
-                    let mut left = Vec::with_capacity(samples.len() / 2);
-                    let mut right = Vec::with_capacity(samples.len() / 2);
+                loop {
+                    match sample_rx.try_recv() {
+                        Ok(VUSample::Channel { id, samples }) => {
+                            let channel_idx = id as usize;
+                            if channel_idx >= max_channels {
+                                continue;
+                            }
 
-                    for (i, &sample) in samples.iter().enumerate() {
-                        if i % 2 == 0 {
-                            left.push(sample);
-                        } else {
-                            right.push(sample);
+                            let mut left = Vec::with_capacity(samples.len() / 2);
+                            let mut right = Vec::with_capacity(samples.len() / 2);
+
+                            for (i, &sample) in samples.iter().enumerate() {
+                                if i % 2 == 0 {
+                                    left.push(sample);
+                                } else {
+                                    right.push(sample);
+                                }
+                            }
+
+                            let peak_left = Self::calculate_peak(&left);
+                            let rms_left = Self::calculate_rms(&left);
+                            let (peak_right, rms_right) = if !right.is_empty() {
+                                (Self::calculate_peak(&right), Self::calculate_rms(&right))
+                            } else {
+                                (0.0, 0.0)
+                            };
+
+                            drained_count += 1;
+
+                            latest_channel_levels[channel_idx] =
+                                Some((peak_left, rms_left, peak_right, rms_right));
+                        }
+                        Ok(VUSample::Master { samples }) => {
+                            let mut left = Vec::with_capacity(samples.len() / 2);
+                            let mut right = Vec::with_capacity(samples.len() / 2);
+
+                            for (i, &sample) in samples.iter().enumerate() {
+                                if i % 2 == 0 {
+                                    left.push(sample);
+                                } else {
+                                    right.push(sample);
+                                }
+                            }
+
+                            let peak_left = Self::calculate_peak(&left);
+                            let rms_left = Self::calculate_rms(&left);
+                            let peak_right = Self::calculate_peak(&right);
+                            let rms_right = Self::calculate_rms(&right);
+
+                            drained_count += 1;
+
+                            latest_master_levels =
+                                Some((peak_left, rms_left, peak_right, rms_right));
+                        }
+                        Err(_) => {
+                            break;
                         }
                     }
+                }
 
-                    let peak_left = channel_peak_detectors[channel_idx].process(&left);
-                    let rms_left = channel_rms_detectors[channel_idx].process(&left);
-                    let (peak_right, rms_right) = if !right.is_empty() {
-                        (peak_left, rms_left)
-                    } else {
-                        (0.0, 0.0)
-                    };
+                pending_channel_events.clear();
 
-                    if Self::should_send(&last_send, min_send_interval_us) {
+                for (idx, levels) in latest_channel_levels.iter().enumerate() {
+                    if let Some((peak_left, rms_left, peak_right, rms_right)) = levels {
                         let event = VULevelEvent::new(
-                            format!("channel_{}", id),
-                            id,
-                            Self::to_db(peak_left),
-                            Self::to_db(peak_right),
-                            Self::to_db(rms_left),
-                            Self::to_db(rms_right),
-                            !right.is_empty(),
+                            format!("channel_{}", idx),
+                            idx as u32,
+                            Self::to_db(*peak_left),
+                            Self::to_db(*peak_right),
+                            Self::to_db(*rms_left),
+                            Self::to_db(*rms_right),
+                            true,
                         );
-
-                        let _ = channel.send(VUChannelData::from_channel(event));
+                        pending_channel_events.push(VUChannelData::from_channel(event));
                     }
                 }
-                Ok(VUSample::Master { samples }) => {
-                    let mut left = Vec::with_capacity(samples.len() / 2);
-                    let mut right = Vec::with_capacity(samples.len() / 2);
 
-                    for (i, &sample) in samples.iter().enumerate() {
-                        if i % 2 == 0 {
-                            left.push(sample);
-                        } else {
-                            right.push(sample);
-                        }
-                    }
-
-                    let peak_left = master_peak_left.process(&left);
-                    let rms_left = master_rms_left.process(&left);
-                    let peak_right = master_peak_right.process(&right);
-                    let rms_right = master_rms_right.process(&right);
-
-                    if Self::should_send(&last_send, min_send_interval_us) {
-                        let event = MasterVULevelEvent::new(
-                            Self::to_db(peak_left),
-                            Self::to_db(peak_right),
-                            Self::to_db(rms_left),
-                            Self::to_db(rms_right),
-                        );
-
-                        let _ = channel.send(VUChannelData::from_master(event));
-                    }
+                if let Some((peak_left, rms_left, peak_right, rms_right)) = latest_master_levels {
+                    let event = MasterVULevelEvent::new(
+                        Self::to_db(peak_left),
+                        Self::to_db(peak_right),
+                        Self::to_db(rms_left),
+                        Self::to_db(rms_right),
+                    );
+                    pending_channel_events.push(VUChannelData::from_master(event));
                 }
-                Err(_) => continue,
+
+                for event in pending_channel_events.iter() {
+                    let _ = channel.send(event.clone());
+                }
+
+                last_batch_send = std::time::Instant::now();
+            } else {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
         }
 
-        info!("{}: VU processing thread stopped", "VU_THREAD".on_blue().cyan());
+        info!(
+            "{}: VU processing thread stopped",
+            "VU_THREAD".on_blue().cyan()
+        );
+    }
+
+    fn calculate_peak(samples: &[f32]) -> f32 {
+        samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max)
+    }
+
+    fn calculate_rms(samples: &[f32]) -> f32 {
+        if samples.is_empty() {
+            return 0.0;
+        }
+        let sum_of_squares: f32 = samples.iter().map(|&s| s * s).sum();
+        (sum_of_squares / samples.len() as f32).sqrt()
     }
 
     fn to_db(value: f32) -> f32 {
-        if value > 0.0 {
+        if value > 1e-10 {
             20.0 * value.log10()
         } else {
             -100.0
-        }
-    }
-
-    fn should_send(last_send: &AtomicU64, min_interval_us: u64) -> bool {
-        let now_us = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_micros() as u64;
-
-        let last = last_send.load(Ordering::Relaxed);
-        if now_us.saturating_sub(last) >= min_interval_us {
-            last_send.store(now_us, Ordering::Relaxed);
-            true
-        } else {
-            false
         }
     }
 

@@ -1,9 +1,9 @@
 // Hook for individual channel VU levels - stereo format [peak_left, rms_left, peak_right, rms_right]
-import { useMixerStore } from '../stores';
+import { useVUMeterStore } from '../stores';
 
 export const useChannelLevels = (channelId: number) => {
   // Get stereo channel levels from VU meter data
-  const channelLevels = useMixerStore((state) => {
+  const channelLevels = useVUMeterStore((state) => {
     const levelData = state.channelLevels?.[channelId];
 
     if (levelData && Array.isArray(levelData) && levelData.length === 4) {

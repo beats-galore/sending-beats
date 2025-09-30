@@ -108,27 +108,20 @@ impl AudioPipeline {
         );
     }
 
-    /// Set VU channel for high-performance real-time streaming (can be called after initialization)
     pub fn set_vu_channel(&mut self, channel: tauri::ipc::Channel<crate::audio::VUChannelData>) {
         self.vu_channel = Some(channel);
         tracing::info!(
-            "{}: VU channel connected for high-performance streaming",
+            "{}: VU channel connected, will be used by all workers",
             "VU_CHANNEL_PIPELINE".bright_green()
         );
-
-        // Note: This sets the channel for future workers
-        // Existing workers would need to be restarted to get channel streaming
-        // For a complete implementation, we'd need to send the channel to running workers
     }
 
     fn get_all_sample_rates(&self) -> Vec<(String, u32)> {
         let mut sample_rates = Vec::new();
 
-
         for (device_id, worker) in &self.input_workers {
             sample_rates.push((device_id.clone(), worker.device_sample_rate));
         }
-
 
         for (device_id, worker) in &self.output_workers {
             sample_rates.push((device_id.clone(), worker.device_sample_rate));

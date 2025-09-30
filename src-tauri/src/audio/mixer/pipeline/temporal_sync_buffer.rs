@@ -68,11 +68,27 @@ impl TemporalSyncBuffer {
         // Prevent buffer overflow
         if device_buffer.len() > self.max_buffer_samples {
             device_buffer.pop_front();
-            warn!(
-                "⚠️ {}: Device '{}' buffer overflow, dropping oldest samples",
-                "TEMPORAL_BUFFER".red(),
-                device_id
-            );
+
+            // Rate-limit logging
+            static mut OVERFLOW_LOG_COUNT: u64 = 0;
+            unsafe {
+                OVERFLOW_LOG_COUNT += 1;
+                if OVERFLOW_LOG_COUNT % 100 == 0 {
+                    let buffer_states: Vec<String> = self
+                        .device_buffers
+                        .iter()
+                        .map(|(id, buf)| format!("{}: {} chunks", id, buf.len()))
+                        .collect();
+
+                    warn!(
+                        "⚠️ {}: Device '{}' buffer overflow (#{}).  Buffer states: [{}]",
+                        "TEMPORAL_BUFFER".red(),
+                        device_id,
+                        OVERFLOW_LOG_COUNT,
+                        buffer_states.join(", ")
+                    );
+                }
+            }
         }
     }
 
@@ -109,8 +125,15 @@ impl TemporalSyncBuffer {
         // Extract samples from each device that fall within the sync window
         for (device_id, buffer) in self.device_buffers.iter_mut() {
             if let Some(sample) = buffer.front() {
+                // Calculate time difference (handle both past and future samples)
+                let time_diff = if sample.timestamp >= sync_time {
+                    sample.timestamp.duration_since(sync_time)
+                } else {
+                    sync_time.duration_since(sample.timestamp)
+                };
+
                 // Check if this sample is within the sync window
-                if sample.timestamp.duration_since(sync_time) <= sync_window {
+                if time_diff <= sync_window {
                     if let Some(extracted_sample) = buffer.pop_front() {
                         synchronized_samples.push((device_id.clone(), extracted_sample));
                     }
@@ -125,6 +148,44 @@ impl TemporalSyncBuffer {
         {
             synchronized_samples
         } else {
+            // Log why we're rejecting to understand timestamp drift
+            static mut REJECT_COUNT: u64 = 0;
+            unsafe {
+                REJECT_COUNT += 1;
+                if REJECT_COUNT % 100 == 0 {
+                    let details: Vec<String> = self
+                        .device_buffers
+                        .iter()
+                        .map(|(id, buf)| {
+                            if let Some(front) = buf.front() {
+                                let diff_ms = if front.timestamp >= sync_time {
+                                    front.timestamp.duration_since(sync_time).as_millis() as i64
+                                } else {
+                                    -(sync_time.duration_since(front.timestamp).as_millis() as i64)
+                                };
+                                format!(
+                                    "{}: {} chunks (oldest: {}ms from sync)",
+                                    id,
+                                    buf.len(),
+                                    diff_ms
+                                )
+                            } else {
+                                format!("{}: empty", id)
+                            }
+                        })
+                        .collect();
+
+                    warn!(
+                        "⚠️ {}: Rejecting samples (got {} of {} devices, sync window: {}ms). Details: [{}]",
+                        "TEMPORAL_SYNC_REJECT".yellow(),
+                        synchronized_samples.len(),
+                        self.device_buffers.len(),
+                        self.sync_window_ms,
+                        details.join(", ")
+                    );
+                }
+            }
+
             // Put samples back if we don't have enough for synchronization
             for (device_id, sample) in synchronized_samples {
                 if let Some(buffer) = self.device_buffers.get_mut(&device_id) {
