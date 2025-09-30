@@ -105,13 +105,10 @@ pub struct IsolatedAudioManager {
     global_input_notifier: Arc<Notify>,
     global_output_notifier: Arc<Notify>,
 
-    // **DATABASE**: For querying channel numbers and configuration data
     database: Option<Arc<crate::db::AudioDatabase>>,
 }
 
 impl IsolatedAudioManager {
-    /// **REMOVED**: Legacy resampler and VirtualMixer functionality
-    /// AudioPipeline now handles all audio processing internally
 
     pub async fn new(
         command_rx: mpsc::Receiver<AudioCommand>,
@@ -163,7 +160,6 @@ impl IsolatedAudioManager {
             global_input_notifier: Arc::new(Notify::new()),
             global_output_notifier: Arc::new(Notify::new()),
 
-            // **DATABASE**: Store database connection for channel number queries
             database,
         })
     }
@@ -414,7 +410,6 @@ impl IsolatedAudioManager {
             channels
         );
 
-        // **DATABASE QUERY**: Get channel number for this device from active configuration
         let channel_number = if let Some(ref db) = self.database {
             match crate::db::ConfiguredAudioDeviceService::get_channel_number_for_active_device(
                 db.sea_orm(),
@@ -429,33 +424,27 @@ impl IsolatedAudioManager {
                         channel,
                         device_id
                     );
-                    Some(channel)
+                    channel
                 }
                 Ok(None) => {
-                    warn!(
-                        "⚠️ {}: No channel configuration found for device '{}' - using channel 0",
-                        "CHANNEL_LOOKUP".yellow(),
+                    return Err(anyhow::anyhow!(
+                        "No channel configuration found for device '{}' in active session",
                         device_id
-                    );
-                    Some(0) // Default to channel 0 if not configured
+                    ));
                 }
                 Err(e) => {
-                    error!(
-                        "❌ {}: Database error getting channel for '{}': {} - using channel 0",
-                        "CHANNEL_LOOKUP".red(),
+                    return Err(anyhow::anyhow!(
+                        "Database error getting channel number for device '{}': {}",
                         device_id,
                         e
-                    );
-                    Some(0) // Default to channel 0 on error
+                    ));
                 }
             }
         } else {
-            warn!(
-                "⚠️ {}: No database available - using channel 0 for device '{}'",
-                "CHANNEL_LOOKUP".yellow(),
+            return Err(anyhow::anyhow!(
+                "No database available to lookup channel number for device '{}'",
                 device_id
-            );
-            Some(0) // Default to channel 0 if no database
+            ));
         };
 
         // **PIPELINE INTEGRATION**: Create input worker FIRST to consume RTRB data
@@ -467,7 +456,7 @@ impl IsolatedAudioManager {
             chunk_size,
             audio_input_consumer,
             input_device_notifier.clone(),
-            channel_number, // Pass channel number from database query
+            channel_number,
         )?;
 
         // **HARDWARE STREAM**: Create CoreAudio stream AFTER pipeline worker is ready
@@ -656,7 +645,6 @@ impl IsolatedAudioManager {
         device_id: String,
         effects: AudioEffectsChain,
     ) -> Result<()> {
-        // **REMOVED**: input_streams no longer exist - InputWorkers handle effects directly
         Ok(())
     }
 

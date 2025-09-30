@@ -13,11 +13,14 @@ solution for professional radio streaming.
 
 ## Implementation guidance
 
+- Do not describe things as "professional" ever.
 - Approach things in small chunks. Work iteratively towards a simple goal before
   spreading out into different feature areas.
 - Find logical breaking points when working, and commit before the scope of
   changes is before long with a detailed description of the work done so far.
   Make sure you check the diff of code before committing.
+- When executing git commits, you should run `turbo rust:fmt` and
+  `turbo lint:fix` so our code is properly formatted in the commits.
 - Don't be afraid to ask questions about suggested solutions. You don't
   necessarily need to work completely isolated until the goal is achieved. It's
   good to ask for feedback. You should overindex on asking for feedback, do not

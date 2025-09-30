@@ -9,7 +9,7 @@ pub mod icecast;
 pub mod mixer;
 pub mod recording;
 pub mod streaming;
-pub mod vu_events;
+pub mod vu_channels;
 
 // Re-export all command functions for easy access
 pub use application_audio::*;
@@ -22,4 +22,4 @@ pub use icecast::*;
 pub use mixer::*;
 pub use recording::*;
 pub use streaming::*;
-pub use vu_events::*;
+pub use vu_channels::*;

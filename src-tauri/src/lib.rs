@@ -40,7 +40,7 @@ use commands::icecast::*;
 use commands::mixer::*;
 use commands::recording::*;
 use commands::streaming::*;
-use commands::vu_events::*;
+use commands::vu_channels::*;
 
 // File player state for managing multiple file players
 use commands::file_player::FilePlayerState;

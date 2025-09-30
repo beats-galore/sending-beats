@@ -149,9 +149,6 @@ impl MixingLayer {
         // Take ownership of receivers for the worker thread
         let mut processed_input_receivers = std::mem::take(&mut self.processed_input_receivers);
         let mut mixed_output_senders = self.mixed_output_senders.clone();
-
-        // Create VU service based on available options
-        // Prioritize channel service for better performance, fall back to event service
         let mut master_vu_service: Option<Box<dyn VUProcessor>> = if let Some(channel) = vu_channel
         {
             info!(
@@ -162,7 +159,7 @@ impl MixingLayer {
                 target_sample_rate,
                 1,
                 60,
-            ))) // 1 channel (master), 60fps via channels
+            )))
         } else {
             info!("⚠️ MIXING_LAYER: No master VU service available");
             None
@@ -254,13 +251,12 @@ impl MixingLayer {
                     let active_inputs = input_samples_for_mixer.len();
 
                     if !input_samples_for_mixer.is_empty() {
-                        // Use VirtualMixer's professional mixing algorithm with references
                         let mix_start = std::time::Instant::now();
                         let mixed_samples =
                             VirtualMixer::mix_input_samples_ref(&input_samples_for_mixer);
                         let mix_duration = mix_start.elapsed();
 
-                        // Apply master gain to the professionally mixed samples
+                        // Apply master gain to the mixed samples
                         let gain_start = std::time::Instant::now();
                         let mut final_samples = mixed_samples;
                         for sample in final_samples.iter_mut() {
@@ -268,7 +264,6 @@ impl MixingLayer {
                         }
                         let gain_duration = gain_start.elapsed();
 
-                        // Calculate and emit master VU levels (after gain is applied)
                         if let Some(ref mut vu_service) = master_vu_service {
                             vu_service.process_master_audio(&final_samples);
                         }
@@ -368,13 +363,11 @@ impl MixingLayer {
         Ok(())
     }
 
-    /// Update master gain
     pub fn set_master_gain(&mut self, gain: f32) {
         self.master_gain = gain;
         info!("🎚️ MIXING_LAYER: Set master gain to {:.2}", gain);
     }
 
-    /// Update target sample rate when devices are added/removed
     pub fn update_target_sample_rate(&mut self, new_sample_rate: u32) {
         self.target_sample_rate = Some(new_sample_rate);
         info!(
@@ -383,7 +376,6 @@ impl MixingLayer {
         );
     }
 
-    /// Get mixing statistics
     pub fn get_stats(&self) -> MixingLayerStats {
         MixingLayerStats {
             mix_cycles: self.mix_cycles,

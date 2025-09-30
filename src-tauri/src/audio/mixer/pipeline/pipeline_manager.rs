@@ -13,7 +13,6 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
-// SPMC queue imports for hardware output connection
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 
 use super::{
@@ -34,12 +33,10 @@ pub struct AudioPipeline {
     mixing_layer: MixingLayer,
     output_workers: HashMap<String, OutputWorker>,
 
-    // Hardware communication (macOS CoreAudio only)
     #[cfg(target_os = "macos")]
     hardware_update_tx:
         Option<tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>>,
 
-    // VU level channels (high-performance streaming)
     vu_channel: Option<tauri::ipc::Channel<crate::audio::VUChannelData>>,
 
     // State tracking
@@ -74,7 +71,7 @@ impl AudioPipeline {
         }
     }
 
-    /// Create a new audio pipeline with hardware update channel (macOS only)
+    /// Create a new audio pipeline with hardware update channel
     #[cfg(target_os = "macos")]
     pub fn new_with_hardware_updates(
         hardware_update_tx: Option<
@@ -99,7 +96,7 @@ impl AudioPipeline {
         }
     }
 
-    /// Set hardware update channel for dynamic CoreAudio buffer management (macOS only)
+    /// Set hardware update channel for dynamic CoreAudio buffer management
     #[cfg(target_os = "macos")]
     pub fn set_hardware_update_channel(
         &mut self,
@@ -127,12 +124,12 @@ impl AudioPipeline {
     fn get_all_sample_rates(&self) -> Vec<(String, u32)> {
         let mut sample_rates = Vec::new();
 
-        // Collect sample rates from input workers
+
         for (device_id, worker) in &self.input_workers {
             sample_rates.push((device_id.clone(), worker.device_sample_rate));
         }
 
-        // Collect sample rates from output workers
+
         for (device_id, worker) in &self.output_workers {
             sample_rates.push((device_id.clone(), worker.device_sample_rate));
         }
@@ -203,7 +200,7 @@ impl AudioPipeline {
         chunk_size: usize, // Input device chunk size from hardware
         rtrb_consumer: rtrb::Consumer<f32>,
         input_notifier: Arc<tokio::sync::Notify>,
-        channel_number: Option<u32>, // Channel number from database configuration
+        channel_number: u32,
     ) -> Result<()> {
         if self.input_workers.contains_key(&device_id) {
             return Err(anyhow::anyhow!(
@@ -264,11 +261,11 @@ impl AudioPipeline {
             device_sample_rate,
             target_sample_rate,
             channels,
-            chunk_size, // Pass the actual input device chunk size
+            chunk_size,
             rtrb_consumer,
             input_notifier,
             processed_output_tx,
-            channel_number, // Pass channel number from database
+            channel_number,
         );
 
         // Add worker to collection BEFORE recalculating (needed for sample rate detection)

@@ -24,7 +24,7 @@ pub struct InputWorker {
     target_sample_rate: u32,     // Max sample rate for mixing (e.g., 48kHz)
     channels: u16,
     chunk_size: usize,   // Input device chunk size (for resampler)
-    channel_number: u32, // VU meter channel number from database configuration
+    channel_number: u32,
 
     // Audio processing components
     resampler: Option<RubatoSRC>,
@@ -66,10 +66,10 @@ impl InputWorker {
         rtrb_consumer: rtrb::Consumer<f32>,
         input_notifier: Arc<Notify>,
         processed_output_tx: mpsc::UnboundedSender<ProcessedAudioSamples>,
-        channel_number: Option<u32>, // VU meter channel number from database configuration
+        channel_number: u32,
     ) -> Self {
-        info!("🎤 INPUT_WORKER: Creating RTRB-based worker for device '{}' ({} Hz → {} Hz, {} channels)",
-              device_id, device_sample_rate, target_sample_rate, channels);
+        info!("🎤 INPUT_WORKER: Creating RTRB-based worker for device '{}' ({} Hz → {} Hz, {} channels, channel #{})",
+              device_id, device_sample_rate, target_sample_rate, channels, channel_number);
 
         Self {
             device_id,
@@ -77,7 +77,7 @@ impl InputWorker {
             target_sample_rate,
             channels,
             chunk_size,
-            channel_number: channel_number.unwrap_or(0), // Default to channel 0 if not provided
+            channel_number,
             resampler: None,
             effects_chain: AudioEffectsChain::new(target_sample_rate),
             rtrb_consumer: Arc::new(Mutex::new(rtrb_consumer)),
@@ -167,21 +167,15 @@ impl InputWorker {
         let target_sample_rate = self.target_sample_rate;
         let channels = self.channels;
         let chunk_size = self.chunk_size;
-        let channel_number = self.channel_number; // VU meter channel number from database
+        let channel_number = self.channel_number;
 
         // Clone shared resources for the worker thread
         let rtrb_consumer = self.rtrb_consumer.clone();
         let input_notifier = self.input_notifier.clone();
         let processed_output_tx = self.processed_output_tx.clone();
 
-        // Move the resampler from struct to worker thread (proper ownership transfer)
         let mut resampler = self.resampler.take();
-
-        // Create new effects chain for worker thread (AudioEffectsChain doesn't implement Clone)
         let mut effects_chain = AudioEffectsChain::new(target_sample_rate);
-
-        // Create VU service based on available options
-
         let mut vu_service_option: Option<Box<dyn VUProcessor>> = if let Some(channel) = vu_channel
         {
             info!(
@@ -208,9 +202,7 @@ impl InputWorker {
                 device_id
             );
 
-            // **NOTIFICATION-DRIVEN PROCESSING**: Wait for input data notifications
             loop {
-                // Wait for notification that input data is available
                 input_notifier.notified().await;
 
                 // Read available samples from RTRB
@@ -226,7 +218,6 @@ impl InputWorker {
                         }
                     };
 
-                    // Read all available samples
                     let available = consumer.slots();
                     if available == 0 {
                         continue; // No data available
@@ -271,42 +262,10 @@ impl InputWorker {
                 };
                 // Step 2: Mono-to-stereo conversion (after resampling, before effects)
                 let channel_converted_samples = if channels == 1 {
-                    // Log once for the first conversion using a simple atomic boolean
-                    static FIRST_MONO_CONVERSION_LOGGED: std::sync::atomic::AtomicBool =
-                        std::sync::atomic::AtomicBool::new(false);
-
-                    if !FIRST_MONO_CONVERSION_LOGGED
-                        .swap(true, std::sync::atomic::Ordering::Relaxed)
-                    {
-                        info!(
-                            "🔄 {}: Mono microphone detected for '{}' - converting to stereo for effects processing",
-                            "MONO_TO_STEREO_INIT".cyan(),
-                            device_id
-                        );
-                    }
                     let converted = Self::convert_mono_to_stereo(&resampled_samples, &device_id);
 
-                    // Debug logging for first few conversions
-                    if samples_processed <= 3 {
-                        info!(
-                            "🔄 {}: {} mono samples ({} channels) → {} stereo samples",
-                            "MONO_TO_STEREO_DEBUG".cyan(),
-                            resampled_samples.len(),
-                            channels,
-                            converted.len()
-                        );
-                    }
                     converted
                 } else {
-                    // Already stereo, use as-is
-                    if samples_processed <= 3 {
-                        info!(
-                            "🔄 {}: Device already has {} channels, no conversion needed ({} samples)",
-                            "STEREO_PASSTHROUGH_DEBUG".cyan(),
-                            channels,
-                            resampled_samples.len()
-                        );
-                    }
                     resampled_samples
                 };
 
