@@ -16,7 +16,7 @@ pub struct VirtualAudioInputStream {
     sample_rate: u32,
     channels: u16,
     bridge_buffer: Arc<AsyncMutex<Vec<f32>>>,
-    effects_chain: Arc<AsyncMutex<crate::audio::effects::AudioEffectsChain>>,
+    effects_chain: Arc<AsyncMutex<crate::audio::effects::CustomAudioEffectsChain>>,
 }
 
 impl VirtualAudioInputStream {
@@ -27,7 +27,7 @@ impl VirtualAudioInputStream {
         bridge_buffer: Arc<AsyncMutex<Vec<f32>>>,
     ) -> Self {
         let effects_chain = Arc::new(AsyncMutex::new(
-            crate::audio::effects::AudioEffectsChain::new(sample_rate),
+            crate::audio::effects::CustomAudioEffectsChain::new(sample_rate),
         ));
 
         Self {
@@ -134,7 +134,7 @@ pub struct ApplicationAudioInputBridge {
     channels: u16,
     audio_buffer: Arc<AsyncMutex<Vec<f32>>>, // Source buffer from tap bridge
     sync_buffer: Arc<StdMutex<Vec<f32>>>,    // Sync buffer for mixer compatibility
-    effects_chain: Arc<StdMutex<crate::audio::effects::AudioEffectsChain>>,
+    effects_chain: Arc<StdMutex<crate::audio::effects::CustomAudioEffectsChain>>,
     adaptive_chunk_size: usize,
 }
 
@@ -147,7 +147,7 @@ impl ApplicationAudioInputBridge {
     ) -> Result<Self> {
         let sync_buffer = Arc::new(StdMutex::new(Vec::new()));
         let effects_chain = Arc::new(StdMutex::new(
-            crate::audio::effects::AudioEffectsChain::new(sample_rate),
+            crate::audio::effects::CustomAudioEffectsChain::new(sample_rate),
         ));
 
         // Calculate optimal chunk size (same as AudioInputStream)

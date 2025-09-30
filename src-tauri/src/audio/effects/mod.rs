@@ -1,15 +1,15 @@
-// Modular effects implementation
 pub mod analyzer;
 pub mod compressor;
-pub mod effects_chain;
+pub mod custom_effects_chain;
+pub mod default_effects_chain;
 pub mod equalizer;
 pub mod filter;
 pub mod limiter;
 
-// Re-export all public types for backward compatibility
 pub use analyzer::{AudioAnalyzer, PeakDetector, RmsDetector, SpectrumAnalyzer};
 pub use compressor::Compressor;
-pub use effects_chain::AudioEffectsChain;
+pub use custom_effects_chain::CustomAudioEffectsChain;
+pub use default_effects_chain::DefaultAudioEffectsChain;
 pub use equalizer::{EQBand, ThreeBandEqualizer};
 pub use filter::BiquadFilter;
 pub use limiter::Limiter;

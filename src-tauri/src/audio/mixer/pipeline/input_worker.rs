@@ -13,7 +13,7 @@ use tokio::sync::{mpsc, Notify};
 use tracing::{error, info, warn};
 
 use super::queue_types::ProcessedAudioSamples;
-use crate::audio::effects::AudioEffectsChain;
+use crate::audio::effects::{CustomAudioEffectsChain, DefaultAudioEffectsChain};
 use crate::audio::mixer::resampling::RubatoSRC;
 use crate::audio::VUChannelService;
 
@@ -28,7 +28,9 @@ pub struct InputWorker {
 
     // Audio processing components
     resampler: Option<RubatoSRC>,
-    effects_chain: AudioEffectsChain,
+    default_effects: DefaultAudioEffectsChain,
+    custom_effects: CustomAudioEffectsChain,
+    any_channel_solo: Arc<std::sync::atomic::AtomicBool>,
 
     // **DIRECT RTRB**: Read directly from hardware RTRB queue
     rtrb_consumer: Arc<Mutex<rtrb::Consumer<f32>>>,
@@ -62,24 +64,27 @@ impl InputWorker {
         device_sample_rate: u32,
         target_sample_rate: u32,
         channels: u16,
-        chunk_size: usize, // Input device chunk size (e.g., from hardware buffer size)
+        chunk_size: usize,
         rtrb_consumer: rtrb::Consumer<f32>,
         input_notifier: Arc<Notify>,
         processed_output_tx: mpsc::UnboundedSender<ProcessedAudioSamples>,
         channel_number: u32,
+        any_channel_solo: Arc<std::sync::atomic::AtomicBool>,
     ) -> Self {
         info!("🎤 INPUT_WORKER: Creating RTRB-based worker for device '{}' ({} Hz → {} Hz, {} channels, channel #{})",
               device_id, device_sample_rate, target_sample_rate, channels, channel_number);
 
         Self {
-            device_id,
+            device_id: device_id.clone(),
             device_sample_rate,
             target_sample_rate,
             channels,
             chunk_size,
             channel_number,
             resampler: None,
-            effects_chain: AudioEffectsChain::new(target_sample_rate),
+            default_effects: DefaultAudioEffectsChain::new(device_id),
+            custom_effects: CustomAudioEffectsChain::new(target_sample_rate),
+            any_channel_solo,
             rtrb_consumer: Arc::new(Mutex::new(rtrb_consumer)),
             input_notifier,
             processed_output_tx,
@@ -175,7 +180,9 @@ impl InputWorker {
         let processed_output_tx = self.processed_output_tx.clone();
 
         let mut resampler = self.resampler.take();
-        let mut effects_chain = AudioEffectsChain::new(target_sample_rate);
+        let default_effects = self.default_effects.clone();
+        let mut custom_effects = CustomAudioEffectsChain::new(target_sample_rate);
+        let any_channel_solo = self.any_channel_solo.clone();
         let vu_service = vu_channel.map(|channel| {
             info!(
                 "{}: VU channel enabled for {}",
@@ -269,10 +276,19 @@ impl InputWorker {
                 // Update channels to stereo for downstream processing (effects expect stereo)
                 let processing_channels = if channels == 1 { 2 } else { channels };
 
-                // Step 3: Apply per-input effects (EQ, compressor, etc.) - now on stereo data
+                // Step 3: Apply default effects (gain/pan/mute/solo) BEFORE custom effects
                 let effects_start = std::time::Instant::now();
                 let mut effects_processed = channel_converted_samples;
-                effects_chain.process(&mut effects_processed);
+
+                let any_solo = any_channel_solo.load(std::sync::atomic::Ordering::Relaxed);
+                if processing_channels == 2 {
+                    let (left, right) = effects_processed.split_at_mut(effects_processed.len() / 2);
+                    default_effects.process_stereo(left, right, any_solo);
+                } else {
+                    default_effects.process_mono(&mut effects_processed, any_solo);
+                }
+
+                custom_effects.process(&mut effects_processed);
                 let effects_duration = effects_start.elapsed();
 
                 // Step 3.5: Calculate and emit VU levels for this channel (if VU service available)
@@ -362,9 +378,8 @@ impl InputWorker {
         );
 
         self.target_sample_rate = target_mix_rate;
-        self.update_effects(AudioEffectsChain::new(target_mix_rate));
+        self.update_custom_effects(CustomAudioEffectsChain::new(target_mix_rate));
 
-        // **CRITICAL**: Force resampler recreation with new target rate
         self.resampler = None;
 
         Ok(())
@@ -388,13 +403,30 @@ impl InputWorker {
         Ok(())
     }
 
-    /// Update effects chain for this input
-    pub fn update_effects(&mut self, new_effects_chain: AudioEffectsChain) {
-        self.effects_chain = new_effects_chain;
+    pub fn update_custom_effects(&mut self, new_effects_chain: CustomAudioEffectsChain) {
+        self.custom_effects = new_effects_chain;
         info!(
-            "🎛️ INPUT_WORKER: Updated effects chain for device '{}'",
+            "🎛️ INPUT_WORKER: Updated custom effects chain for device '{}'",
             self.device_id
         );
+    }
+
+    pub fn update_gain(&mut self, gain: f32) {
+        self.default_effects.set_gain(gain);
+    }
+
+    pub fn update_pan(&mut self, pan: f32) {
+        self.default_effects.set_pan(pan);
+    }
+
+    pub fn update_muted(&mut self, muted: bool) {
+        self.default_effects.set_muted(muted);
+    }
+
+    pub fn update_solo(&mut self, solo: bool) {
+        self.default_effects.set_solo(solo);
+        self.any_channel_solo
+            .store(solo, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Get processing statistics

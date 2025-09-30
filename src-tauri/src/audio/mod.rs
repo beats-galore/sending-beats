@@ -29,8 +29,8 @@ pub use types::{
 pub use types::CoreAudioDevice;
 
 pub use effects::{
-    AudioAnalyzer, AudioEffectsChain, BiquadFilter, Compressor, EQBand, Limiter, PeakDetector,
-    RmsDetector, SpectrumAnalyzer, ThreeBandEqualizer,
+    AudioAnalyzer, BiquadFilter, Compressor, CustomAudioEffectsChain, EQBand, Limiter,
+    PeakDetector, RmsDetector, SpectrumAnalyzer, ThreeBandEqualizer,
 };
 
 pub use mixer::stream_management::VirtualMixer;

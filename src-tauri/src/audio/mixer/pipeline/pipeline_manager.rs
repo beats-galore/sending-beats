@@ -25,7 +25,7 @@ use super::{
 /// Complete 4-layer audio pipeline manager
 pub struct AudioPipeline {
     // Configuration
-    max_sample_rate: Option<u32>, // Target rate for mixing, determined from first device
+    max_sample_rate: Option<u32>,
 
     // Pipeline components
     queues: PipelineQueues,
@@ -42,6 +42,7 @@ pub struct AudioPipeline {
     // State tracking
     is_running: bool,
     devices_registered: usize,
+    any_channel_solo: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl AudioPipeline {
@@ -68,6 +69,7 @@ impl AudioPipeline {
             vu_channel: None,
             is_running: false,
             devices_registered: 0,
+            any_channel_solo: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -93,6 +95,7 @@ impl AudioPipeline {
             vu_channel: None,
             is_running: false,
             devices_registered: 0,
+            any_channel_solo: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -259,6 +262,7 @@ impl AudioPipeline {
             input_notifier,
             processed_output_tx,
             channel_number,
+            self.any_channel_solo.clone(),
         );
 
         // Add worker to collection BEFORE recalculating (needed for sample rate detection)

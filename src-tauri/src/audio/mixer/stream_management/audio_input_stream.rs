@@ -4,7 +4,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
-use crate::audio::effects::{AudioEffectsChain, EQBand};
+use crate::audio::effects::{CustomAudioEffectsChain, EQBand};
 use crate::audio::types::AudioChannel;
 use tokio::sync::{mpsc, oneshot, Mutex, Notify};
 
@@ -20,7 +20,7 @@ pub struct AudioInputStream {
     pub channels: u16,
     pub audio_buffer_consumer: Consumer<f32>, // RTRB consumer for mixer thread (owned, not shared)
     pub audio_buffer_producer: Producer<f32>, // RTRB producer for audio callback (owned, not shared)
-    pub effects_chain: Arc<Mutex<AudioEffectsChain>>,
+    pub effects_chain: Arc<Mutex<CustomAudioEffectsChain>>,
     pub adaptive_chunk_size: usize, // Adaptive buffer chunk size based on hardware
     // TRUE EVENT-DRIVEN: Notification for when audio data arrives
     pub data_available_notifier: Arc<Notify>,
@@ -45,7 +45,7 @@ impl AudioInputStream {
         let (producer, consumer) = RingBuffer::<f32>::new(buffer_capacity);
         let audio_buffer_producer = producer; // Lock-free producer, owned by this stream
         let audio_buffer_consumer = consumer; // Lock-free consumer, owned by this stream
-        let effects_chain = Arc::new(Mutex::new(AudioEffectsChain::new(sample_rate)));
+        let effects_chain = Arc::new(Mutex::new(CustomAudioEffectsChain::new(sample_rate)));
 
         Ok(AudioInputStream {
             device_id,
