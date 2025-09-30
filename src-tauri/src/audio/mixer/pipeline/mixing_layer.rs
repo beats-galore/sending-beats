@@ -14,7 +14,7 @@ use tracing::{error, info, warn};
 use super::queue_types::{MixedAudioSamples, ProcessedAudioSamples};
 use super::temporal_sync_buffer::TemporalSyncBuffer;
 use crate::audio::mixer::stream_management::virtual_mixer::VirtualMixer;
-use crate::audio::{VUChannelService, VUProcessor};
+use crate::audio::VUChannelService;
 use colored::*;
 
 /// Command for dynamically managing running MixingLayer
@@ -149,21 +149,13 @@ impl MixingLayer {
         // Take ownership of receivers for the worker thread
         let mut processed_input_receivers = std::mem::take(&mut self.processed_input_receivers);
         let mut mixed_output_senders = self.mixed_output_senders.clone();
-        let mut master_vu_service: Option<Box<dyn VUProcessor>> = if let Some(channel) = vu_channel
-        {
+        let master_vu_service = vu_channel.map(|channel| {
             info!(
-                "🚀 MIXING_LAYER: Using VUChannelService for high-performance master VU streaming"
+                "{}: VU channel enabled for master output",
+                "VU_SETUP".on_green().white()
             );
-            Some(Box::new(VUChannelService::new(
-                channel,
-                target_sample_rate,
-                1,
-                60,
-            )))
-        } else {
-            info!("⚠️ MIXING_LAYER: No master VU service available");
-            None
-        };
+            VUChannelService::new(channel, target_sample_rate, 1, 60)
+        });
 
         // Spawn mixing worker thread
         let worker_handle = tokio::spawn(async move {
@@ -264,8 +256,8 @@ impl MixingLayer {
                         }
                         let gain_duration = gain_start.elapsed();
 
-                        if let Some(ref mut vu_service) = master_vu_service {
-                            vu_service.process_master_audio(&final_samples);
+                        if let Some(ref vu_service) = master_vu_service {
+                            vu_service.queue_master_audio(&final_samples);
                         }
 
                         let samples_count = final_samples.len(); // Get count before moving

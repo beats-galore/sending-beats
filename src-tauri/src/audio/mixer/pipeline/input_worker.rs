@@ -15,7 +15,7 @@ use tracing::{error, info, warn};
 use super::queue_types::ProcessedAudioSamples;
 use crate::audio::effects::AudioEffectsChain;
 use crate::audio::mixer::resampling::RubatoSRC;
-use crate::audio::{VUChannelService, VUProcessor};
+use crate::audio::VUChannelService;
 
 /// Input processing worker for a specific device
 pub struct InputWorker {
@@ -176,22 +176,14 @@ impl InputWorker {
 
         let mut resampler = self.resampler.take();
         let mut effects_chain = AudioEffectsChain::new(target_sample_rate);
-        let mut vu_service_option: Option<Box<dyn VUProcessor>> = if let Some(channel) = vu_channel
-        {
+        let vu_service = vu_channel.map(|channel| {
             info!(
-                "🚀 INPUT_WORKER: Using VUChannelService for high-performance streaming ({})",
+                "{}: VU channel enabled for {}",
+                "VU_SETUP".on_green().white(),
                 device_id
             );
-            Some(Box::new(VUChannelService::new(
-                channel,
-                target_sample_rate,
-                8,
-                60,
-            ))) // 8 max channels, 60fps via channels
-        } else {
-            info!("⚠️ INPUT_WORKER: No VU service available ({})", device_id);
-            None
-        };
+            VUChannelService::new(channel, target_sample_rate, 8, 60)
+        });
 
         // Spawn dedicated worker thread that waits for RTRB notifications
         let worker_handle = tokio::spawn(async move {
@@ -277,8 +269,8 @@ impl InputWorker {
                 effects_chain.process(&mut effects_processed);
 
                 // Step 3.5: Calculate and emit VU levels for this channel (if VU service available)
-                if let Some(ref mut vu_service) = vu_service_option {
-                    vu_service.process_channel_audio(channel_number, &effects_processed);
+                if let Some(ref vu_service) = vu_service {
+                    vu_service.queue_channel_audio(channel_number, &effects_processed);
                 }
 
                 // Step 4: Send processed audio to mixing layer
