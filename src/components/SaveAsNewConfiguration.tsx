@@ -7,7 +7,7 @@ import { useConfigurationStore } from '../stores/mixer-store';
 
 type SaveAsNewConfigurationProps = {
   onConfigurationCreated?: () => void;
-}
+};
 
 export const SaveAsNewConfiguration = ({ onConfigurationCreated }: SaveAsNewConfigurationProps) => {
   const [opened, { open, close }] = useDisclosure(false);
@@ -31,8 +31,8 @@ export const SaveAsNewConfiguration = ({ onConfigurationCreated }: SaveAsNewConf
   // Pre-fill form when session is available
   useEffect(() => {
     if (activeSession && opened) {
-      setName(activeSession.name.replace(' (Session)', '') || '');
-      setDescription(activeSession.description || '');
+      setName(activeSession?.configuration.name.replace(' (Session)', '') ?? '');
+      setDescription(activeSession?.configuration.description ?? '');
     }
   }, [activeSession, opened]);
 
@@ -102,11 +102,11 @@ export const SaveAsNewConfiguration = ({ onConfigurationCreated }: SaveAsNewConf
           {/* Current Session Info */}
           <Card withBorder p="sm" bg="blue.0">
             <Text size="sm" fw={500} c="blue.8">
-              Saving Current Session: {activeSession.name}
+              Saving Current Session: {activeSession.configuration.name}
             </Text>
-            {activeSession.description && (
+            {activeSession.configuration.description && (
               <Text size="xs" c="blue.7" mt="xs">
-                {activeSession.description}
+                {activeSession.configuration.description}
               </Text>
             )}
           </Card>
@@ -141,11 +141,7 @@ export const SaveAsNewConfiguration = ({ onConfigurationCreated }: SaveAsNewConf
 
           {/* Error Display */}
           {error && (
-            <Alert
-              icon={<IconAlertCircle size={16} />}
-              color="red"
-              variant="light"
-            >
+            <Alert icon={<IconAlertCircle size={16} />} color="red" variant="light">
               {error}
             </Alert>
           )}
@@ -162,12 +158,7 @@ export const SaveAsNewConfiguration = ({ onConfigurationCreated }: SaveAsNewConf
               Save Configuration
             </Button>
 
-            <Button
-              onClick={handleCancel}
-              variant="light"
-              disabled={isLoading}
-              fullWidth
-            >
+            <Button onClick={handleCancel} variant="light" disabled={isLoading} fullWidth>
               Cancel
             </Button>
           </Stack>

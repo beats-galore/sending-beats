@@ -10,7 +10,7 @@ export type ApplicationAudioState = {
   permissionsGranted: boolean;
   isLoading: boolean;
   error: string | null;
-}
+};
 
 export const useApplicationAudio = () => {
   const [state, setState] = useState<ApplicationAudioState>({
@@ -25,24 +25,23 @@ export const useApplicationAudio = () => {
   // Refresh available audio applications
   const refreshApplications = useCallback(async () => {
     console.log('🔄 useApplicationAudio: Starting refreshApplications...');
-    setState(prev => ({ ...prev, isLoading: true, error: null }));
-    
+    setState((prev) => ({ ...prev, isLoading: true, error: null }));
+
     try {
       console.log('📞 useApplicationAudio: Calling Tauri commands...');
-      const [availableApps, knownApps, activeCaptures, permissionsGranted] = await Promise.all([
+      const [availableApps, knownApps, activeCaptures] = await Promise.all([
         invoke<ProcessInfo[]>('get_available_audio_applications'),
         invoke<ProcessInfo[]>('get_known_audio_applications'),
         invoke<ProcessInfo[]>('get_active_audio_captures'),
-        invoke<boolean>('check_audio_capture_permissions'),
       ]);
       console.log('✅ useApplicationAudio: All Tauri commands completed successfully');
 
-      setState(prev => ({
+      setState((prev) => ({
         ...prev,
         availableApps,
         knownApps,
         activeCaptures,
-        permissionsGranted,
+        permissionsGranted: true,
         isLoading: false,
       }));
 
@@ -50,12 +49,12 @@ export const useApplicationAudio = () => {
         availableCount: availableApps.length,
         knownCount: knownApps.length,
         activeCount: activeCaptures.length,
-        permissionsGranted,
+        permissionsGranted: true,
       });
     } catch (error) {
       console.error('❌ useApplicationAudio: Failed to refresh applications:', error);
       console.error('❌ useApplicationAudio: Error details:', JSON.stringify(error, null, 2));
-      setState(prev => ({
+      setState((prev) => ({
         ...prev,
         isLoading: false,
         error: error as string,
@@ -64,14 +63,17 @@ export const useApplicationAudio = () => {
   }, []);
 
   // Request audio capture permissions
-  const requestPermissions = useCallback(async (): Promise<{ granted: boolean; message: string }> => {
-    setState(prev => ({ ...prev, isLoading: true, error: null }));
-    
+  const requestPermissions = useCallback(async (): Promise<{
+    granted: boolean;
+    message: string;
+  }> => {
+    setState((prev) => ({ ...prev, isLoading: true, error: null }));
+
     try {
       const message = await invoke<string>('request_audio_capture_permissions');
       const granted = message.includes('already granted');
-      
-      setState(prev => ({
+
+      setState((prev) => ({
         ...prev,
         permissionsGranted: granted,
         isLoading: false,
@@ -88,7 +90,7 @@ export const useApplicationAudio = () => {
       return { granted, message };
     } catch (error) {
       console.error('❌ Failed to request permissions:', error);
-      setState(prev => ({
+      setState((prev) => ({
         ...prev,
         isLoading: false,
         error: error as string,
@@ -99,14 +101,14 @@ export const useApplicationAudio = () => {
 
   // Start capturing from an application
   const startCapturing = useCallback(async (pid: number): Promise<string | null> => {
-    setState(prev => ({ ...prev, isLoading: true, error: null }));
-    
+    setState((prev) => ({ ...prev, isLoading: true, error: null }));
+
     try {
       const result = await invoke<string>('start_application_audio_capture', { pid });
-      
+
       // Refresh active captures
       const activeCaptures = await invoke<ProcessInfo[]>('get_active_audio_captures');
-      setState(prev => ({
+      setState((prev) => ({
         ...prev,
         activeCaptures,
         isLoading: false,
@@ -116,7 +118,7 @@ export const useApplicationAudio = () => {
       return result;
     } catch (error) {
       console.error(`❌ Failed to start capturing from PID ${pid}:`, error);
-      setState(prev => ({
+      setState((prev) => ({
         ...prev,
         isLoading: false,
         error: error as string,
@@ -127,14 +129,14 @@ export const useApplicationAudio = () => {
 
   // Stop capturing from an application
   const stopCapturing = useCallback(async (pid: number): Promise<boolean> => {
-    setState(prev => ({ ...prev, isLoading: true, error: null }));
-    
+    setState((prev) => ({ ...prev, isLoading: true, error: null }));
+
     try {
       await invoke<string>('stop_application_audio_capture', { pid });
-      
+
       // Refresh active captures
       const activeCaptures = await invoke<ProcessInfo[]>('get_active_audio_captures');
-      setState(prev => ({
+      setState((prev) => ({
         ...prev,
         activeCaptures,
         isLoading: false,
@@ -144,7 +146,7 @@ export const useApplicationAudio = () => {
       return true;
     } catch (error) {
       console.error(`❌ Failed to stop capturing from PID ${pid}:`, error);
-      setState(prev => ({
+      setState((prev) => ({
         ...prev,
         isLoading: false,
         error: error as string,
@@ -155,14 +157,14 @@ export const useApplicationAudio = () => {
 
   // Create a mixer input for an application
   const createMixerInput = useCallback(async (pid: number): Promise<string | null> => {
-    setState(prev => ({ ...prev, isLoading: true, error: null }));
-    
+    setState((prev) => ({ ...prev, isLoading: true, error: null }));
+
     try {
       const channelName = await invoke<string>('create_mixer_input_for_application', { pid });
-      
+
       // Refresh active captures
       const activeCaptures = await invoke<ProcessInfo[]>('get_active_audio_captures');
-      setState(prev => ({
+      setState((prev) => ({
         ...prev,
         activeCaptures,
         isLoading: false,
@@ -172,7 +174,7 @@ export const useApplicationAudio = () => {
       return channelName;
     } catch (error) {
       console.error(`❌ Failed to create mixer input for PID ${pid}:`, error);
-      setState(prev => ({
+      setState((prev) => ({
         ...prev,
         isLoading: false,
         error: error as string,
@@ -183,12 +185,12 @@ export const useApplicationAudio = () => {
 
   // Stop all active captures
   const stopAllCaptures = useCallback(async (): Promise<boolean> => {
-    setState(prev => ({ ...prev, isLoading: true, error: null }));
-    
+    setState((prev) => ({ ...prev, isLoading: true, error: null }));
+
     try {
       await invoke<string>('stop_all_audio_captures');
-      
-      setState(prev => ({
+
+      setState((prev) => ({
         ...prev,
         activeCaptures: [],
         isLoading: false,
@@ -198,7 +200,7 @@ export const useApplicationAudio = () => {
       return true;
     } catch (error) {
       console.error('❌ Failed to stop all captures:', error);
-      setState(prev => ({
+      setState((prev) => ({
         ...prev,
         isLoading: false,
         error: error as string,
@@ -209,7 +211,7 @@ export const useApplicationAudio = () => {
 
   // Clear error state
   const clearError = useCallback(() => {
-    setState(prev => ({ ...prev, error: null }));
+    setState((prev) => ({ ...prev, error: null }));
   }, []);
 
   // Initial load

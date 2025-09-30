@@ -17,7 +17,9 @@ import type {
   ChannelUpdate,
   CompleteConfigurationData,
 } from '../types';
+import type { ConfiguredAudioDevice } from '../types/db';
 import type { AudioMixerConfiguration } from '../types/db/audio-mixer-configurations.types';
+import type { Identifier } from '../types/util.types';
 
 type MixerStore = {
   // State
@@ -40,7 +42,7 @@ type MixerStore = {
   addChannel: () => Promise<void>;
   updateChannel: (channelId: number, updates: ChannelUpdate) => Promise<void>;
   updateMasterGain: (gain: number) => Promise<void>;
-  updateMasterOutputDevice: (deviceId: string) => Promise<void>;
+  updateMasterOutputDevice: (deviceId: Identifier<ConfiguredAudioDevice>) => Promise<void>;
 
   // Configuration Management Actions
   loadConfigurations: () => Promise<void>;
@@ -49,7 +51,7 @@ type MixerStore = {
   saveSessionAsNewReusable: (name: string, description?: string) => Promise<void>;
   clearConfigurationError: () => void;
   setConfigurationError: (error: string) => void;
-  restoreDevicesFromSession: (sessionConfig: CompleteConfigurationData) => Promise<void>;
+  restoreDevicesFromSession: (sessionConfig: CompleteConfigurationData | null) => Promise<void>;
 
   // Real-time data updates
   updateChannelLevels: (levels: Record<number, [number, number, number, number]>) => void;
@@ -225,7 +227,7 @@ export const useMixerStore = create<MixerStore>()(
     },
 
     // Update master output device
-    updateMasterOutputDevice: async (deviceId: string) => {
+    updateMasterOutputDevice: async (deviceId: Identifier<ConfiguredAudioDevice>) => {
       const { config } = get();
       if (!config) {
         throw new Error('Mixer not initialized');
@@ -368,12 +370,14 @@ export const useMixerStore = create<MixerStore>()(
 
             // Create session from default configuration
             try {
-              const newSession = await invoke<CompleteConfigurationData>(
-                'create_session_from_reusable',
-                {
-                  reusableId: defaultConfig.configuration.id,
-                  sessionName: undefined,
-                }
+              await invoke<AudioMixerConfiguration>('create_session_from_reusable', {
+                reusableId: defaultConfig.configuration.id,
+                sessionName: undefined,
+              });
+
+              // Fetch the newly created session's complete data
+              const newSession = await invoke<CompleteConfigurationData | null>(
+                'get_active_session_configuration'
               );
 
               set({
@@ -413,10 +417,11 @@ export const useMixerStore = create<MixerStore>()(
         // Only restore if not already restoring/restored for this session
         const currentState = get();
         const sessionId = currentState.activeSession?.configuration.id;
-        const shouldRestore = sessionId &&
-                             currentState.activeSession?.configured_devices?.length &&
-                             !currentState.activeSession.devicesRestored &&
-                             currentState.restoringDevicesForSession !== sessionId;
+        const shouldRestore =
+          sessionId &&
+          currentState.activeSession?.configuredDevices?.length &&
+          !currentState.activeSession.devicesRestored &&
+          currentState.restoringDevicesForSession !== sessionId;
 
         if (shouldRestore) {
           await get().restoreDevicesFromSession(currentState.activeSession);
@@ -435,10 +440,15 @@ export const useMixerStore = create<MixerStore>()(
       set({ isLoadingConfigurations: true, configurationError: null });
 
       try {
-        const newSession = await invoke<AudioMixerConfiguration>('create_session_from_reusable', {
+        await invoke<AudioMixerConfiguration>('create_session_from_reusable', {
           reusableId: configId,
           sessionName: undefined,
         });
+
+        // Fetch the newly created session's complete data
+        const newSession = await invoke<CompleteConfigurationData | null>(
+          'get_active_session_configuration'
+        );
 
         set({
           activeSession: newSession,
@@ -489,7 +499,7 @@ export const useMixerStore = create<MixerStore>()(
       try {
         const newReusable = await invoke<AudioMixerConfiguration>('save_session_as_new_reusable', {
           name,
-          description: description || undefined,
+          description: description ?? undefined,
         });
 
         // Reload configurations to include the new one and get updated session
@@ -510,17 +520,22 @@ export const useMixerStore = create<MixerStore>()(
     setConfigurationError: (error: string) => set({ configurationError: error }),
 
     // Restore devices from session configuration (call existing device management methods)
-    restoreDevicesFromSession: async (sessionConfig: CompleteConfigurationData) => {
-      const sessionId = sessionConfig.configuration.id;
+    restoreDevicesFromSession: async (sessionConfig: CompleteConfigurationData | null) => {
+      const sessionId = sessionConfig?.configuration.id;
 
       // Check if already restoring/restored this session
       const currentState = get();
-      if (currentState.restoringDevicesForSession === sessionId || sessionConfig.devicesRestored) {
-        console.log(`📋 Device restoration already in progress or completed for session: ${sessionId}`);
+      if (
+        currentState?.restoringDevicesForSession === sessionId ||
+        sessionConfig?.devicesRestored
+      ) {
+        console.log(
+          `📋 Device restoration already in progress or completed for session: ${sessionId}`
+        );
         return;
       }
 
-      if (!sessionConfig.configured_devices?.length) {
+      if (!sessionConfig?.configuredDevices?.length) {
         console.log('📋 No configured devices to restore in session');
         return;
       }
@@ -529,53 +544,53 @@ export const useMixerStore = create<MixerStore>()(
       set({ restoringDevicesForSession: sessionId });
 
       console.log(
-        `🔄 Restoring ${sessionConfig.configured_devices.length} devices from session: ${sessionConfig.configuration.name}`
+        `🔄 Restoring ${sessionConfig.configuredDevices.length} devices from session: ${sessionConfig.configuration.name}`,
+        sessionConfig
       );
 
       try {
         // Restore devices one by one to avoid overwhelming the audio system
-        for (const device of sessionConfig.configured_devices) {
+        for (const device of sessionConfig.configuredDevices) {
           console.log(
-            `🎚️ Restoring ${device.is_input ? 'input' : 'output'} device: ${device.device_name || 'Unknown'} (${device.device_identifier})`
+            `🎚️ Restoring ${device.isInput ? 'input' : 'output'} device: ${device.deviceName ?? 'Unknown'} (${device.deviceIdentifier})`
           );
 
           try {
-            if (device.is_input) {
+            if (device.isInput) {
               // Restore input device using switchInputStream (null -> deviceId)
-              await audioService.switchInputStream(null, device.device_identifier);
+              await audioService.switchInputStream(null, device.deviceIdentifier);
             } else {
               // Restore output device using setOutputStream
-              await audioService.setOutputStream(device.device_identifier);
+              await audioService.setOutputStream(device.deviceIdentifier);
             }
 
-            console.log(`✅ Successfully restored device: ${device.device_identifier}`);
+            console.log(`✅ Successfully restored device: ${device.deviceIdentifier}`);
           } catch (deviceError) {
-            console.error(
-              `❌ Failed to restore device ${device.device_identifier}:`,
-              deviceError
-            );
+            console.error(`❌ Failed to restore device ${device.deviceIdentifier}:`, deviceError);
             // Continue with other devices even if one fails
           }
 
           // Small delay between device additions to prevent overwhelming the system
-          await new Promise(resolve => setTimeout(resolve, 100));
+          await new Promise((resolve) => setTimeout(resolve, 100));
         }
 
         console.log('🎉 Device restoration completed');
 
         // Mark devices as restored and clear loading state
         set((state) => ({
-          activeSession: state.activeSession ? {
-            ...state.activeSession,
-            devicesRestored: true
-          } : null,
-          restoringDevicesForSession: null
+          activeSession: state.activeSession
+            ? {
+                ...state.activeSession,
+                devicesRestored: true,
+              }
+            : null,
+          restoringDevicesForSession: null,
         }));
       } catch (error) {
         console.error('❌ Failed to restore devices from session:', error);
         set({
           configurationError: error instanceof Error ? error.message : 'Failed to restore devices',
-          restoringDevicesForSession: null // Clear loading state on error
+          restoringDevicesForSession: null, // Clear loading state on error
         });
       }
     },

@@ -4,7 +4,7 @@ use tauri::ipc::Channel;
 use tracing::{info, warn};
 
 use crate::audio::effects::{PeakDetector, RmsDetector};
-use crate::audio::events::{MasterVULevelEvent, VULevelEvent, VUChannelData};
+use crate::audio::events::{MasterVULevelEvent, VUChannelData, VULevelEvent};
 
 /// High-performance VU level service using Tauri channels for real-time streaming
 /// Designed to eliminate the 45+ second delays caused by the event system bottleneck
@@ -30,10 +30,20 @@ impl VUChannelService {
     /// Create new VU channel service
     /// channel: Tauri channel for high-performance streaming
     /// emit_rate_hz: How often to send data (can be much higher than events)
-    pub fn new(channel: Channel<VUChannelData>, sample_rate: u32, max_channels: usize, emit_rate_hz: u32) -> Self {
+    pub fn new(
+        channel: Channel<VUChannelData>,
+        sample_rate: u32,
+        max_channels: usize,
+        emit_rate_hz: u32,
+    ) -> Self {
         let min_send_interval_us = 1_000_000 / emit_rate_hz as u64; // Convert Hz to microseconds
 
-        info!("{}: Creating VU channel service ({}fps, {} max channels)", "VU_CHANNEL_INIT".bright_green(), emit_rate_hz, max_channels);
+        info!(
+            "{}: Creating VU channel service ({}fps, {} max channels)",
+            "VU_CHANNEL_INIT".bright_green(),
+            emit_rate_hz,
+            max_channels
+        );
 
         // Create analyzers for each channel
         let mut channel_peak_detectors = Vec::with_capacity(max_channels);
@@ -93,10 +103,26 @@ impl VUChannelService {
         };
 
         // Convert to dB scale
-        let peak_left_db = if peak_left > 0.0 { 20.0 * peak_left.log10() } else { -100.0 };
-        let peak_right_db = if peak_right > 0.0 { 20.0 * peak_right.log10() } else { -100.0 };
-        let rms_left_db = if rms_left > 0.0 { 20.0 * rms_left.log10() } else { -100.0 };
-        let rms_right_db = if rms_right > 0.0 { 20.0 * rms_right.log10() } else { -100.0 };
+        let peak_left_db = if peak_left > 0.0 {
+            20.0 * peak_left.log10()
+        } else {
+            -100.0
+        };
+        let peak_right_db = if peak_right > 0.0 {
+            20.0 * peak_right.log10()
+        } else {
+            -100.0
+        };
+        let rms_left_db = if rms_left > 0.0 {
+            20.0 * rms_left.log10()
+        } else {
+            -100.0
+        };
+        let rms_right_db = if rms_right > 0.0 {
+            20.0 * rms_right.log10()
+        } else {
+            -100.0
+        };
 
         // Send data via channel (with light throttling for performance)
         if self.should_send_data() {
@@ -141,14 +167,31 @@ impl VUChannelService {
         let rms_right = self.master_rms_detector_right.process(&right_samples);
 
         // Convert to dB scale
-        let peak_left_db = if peak_left > 0.0 { 20.0 * peak_left.log10() } else { -100.0 };
-        let peak_right_db = if peak_right > 0.0 { 20.0 * peak_right.log10() } else { -100.0 };
-        let rms_left_db = if rms_left > 0.0 { 20.0 * rms_left.log10() } else { -100.0 };
-        let rms_right_db = if rms_right > 0.0 { 20.0 * rms_right.log10() } else { -100.0 };
+        let peak_left_db = if peak_left > 0.0 {
+            20.0 * peak_left.log10()
+        } else {
+            -100.0
+        };
+        let peak_right_db = if peak_right > 0.0 {
+            20.0 * peak_right.log10()
+        } else {
+            -100.0
+        };
+        let rms_left_db = if rms_left > 0.0 {
+            20.0 * rms_left.log10()
+        } else {
+            -100.0
+        };
+        let rms_right_db = if rms_right > 0.0 {
+            20.0 * rms_right.log10()
+        } else {
+            -100.0
+        };
 
         // Send data via channel (with light throttling)
         if self.should_send_data() {
-            let event = MasterVULevelEvent::new(peak_left_db, peak_right_db, rms_left_db, rms_right_db);
+            let event =
+                MasterVULevelEvent::new(peak_left_db, peak_right_db, rms_left_db, rms_right_db);
             self.send_channel_data(VUChannelData::from_master(event));
         }
     }
@@ -174,7 +217,11 @@ impl VUChannelService {
     /// Send VU data via high-performance Tauri channel
     fn send_channel_data(&self, data: VUChannelData) {
         if let Err(e) = self.channel.send(data) {
-            warn!("{}: Failed to send VU data via channel: {}", "VU_CHANNEL_ERROR".red(), e);
+            warn!(
+                "{}: Failed to send VU data via channel: {}",
+                "VU_CHANNEL_ERROR".red(),
+                e
+            );
         }
     }
 }

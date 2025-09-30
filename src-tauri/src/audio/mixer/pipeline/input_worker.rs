@@ -15,7 +15,7 @@ use tracing::{error, info, warn};
 use super::queue_types::ProcessedAudioSamples;
 use crate::audio::effects::AudioEffectsChain;
 use crate::audio::mixer::resampling::RubatoSRC;
-use crate::audio::{VULevelService, VUChannelService, VUProcessor};
+use crate::audio::{VUChannelService, VUProcessor};
 
 /// Input processing worker for a specific device
 pub struct InputWorker {
@@ -23,7 +23,7 @@ pub struct InputWorker {
     pub device_sample_rate: u32, // Original device sample rate
     target_sample_rate: u32,     // Max sample rate for mixing (e.g., 48kHz)
     channels: u16,
-    chunk_size: usize, // Input device chunk size (for resampler)
+    chunk_size: usize,   // Input device chunk size (for resampler)
     channel_number: u32, // VU meter channel number from database configuration
 
     // Audio processing components
@@ -158,7 +158,10 @@ impl InputWorker {
     }
 
     /// Start the input processing worker thread
-    pub fn start(&mut self, app_handle: Option<tauri::AppHandle>, vu_channel: Option<tauri::ipc::Channel<crate::audio::VUChannelData>>) -> Result<()> {
+    pub fn start(
+        &mut self,
+        vu_channel: Option<tauri::ipc::Channel<crate::audio::VUChannelData>>,
+    ) -> Result<()> {
         let device_id = self.device_id.clone();
         let device_sample_rate = self.device_sample_rate;
         let target_sample_rate = self.target_sample_rate;
@@ -178,13 +181,19 @@ impl InputWorker {
         let mut effects_chain = AudioEffectsChain::new(target_sample_rate);
 
         // Create VU service based on available options
-        // Prioritize channel service for better performance, fall back to event service
-        let mut vu_service_option: Option<Box<dyn VUProcessor>> = if let Some(channel) = vu_channel {
-            info!("🚀 INPUT_WORKER: Using VUChannelService for high-performance streaming ({})", device_id);
-            Some(Box::new(VUChannelService::new(channel, target_sample_rate, 8, 60))) // 8 max channels, 60fps via channels
-        } else if let Some(handle) = app_handle {
-            info!("📡 INPUT_WORKER: Using VULevelService for event-based streaming ({})", device_id);
-            Some(Box::new(VULevelService::new(handle, target_sample_rate, 8, 30))) // 8 max channels, 30fps via events
+
+        let mut vu_service_option: Option<Box<dyn VUProcessor>> = if let Some(channel) = vu_channel
+        {
+            info!(
+                "🚀 INPUT_WORKER: Using VUChannelService for high-performance streaming ({})",
+                device_id
+            );
+            Some(Box::new(VUChannelService::new(
+                channel,
+                target_sample_rate,
+                8,
+                60,
+            ))) // 8 max channels, 60fps via channels
         } else {
             info!("⚠️ INPUT_WORKER: No VU service available ({})", device_id);
             None

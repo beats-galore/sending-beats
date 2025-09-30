@@ -18,8 +18,8 @@ pub mod commands;
 pub use audio::{
     get_device_monitoring_stats as get_monitoring_stats_impl, AudioChannel, AudioConfigFactory,
     AudioDatabase, AudioDeviceInfo, AudioDeviceManager, AudioMetrics, Compressor,
-    DeviceMonitorStats, EQBand, FilePlayerService, Limiter, MasterVULevelEvent, MixerConfig, PeakDetector, RmsDetector,
-    ThreeBandEqualizer, VULevelEvent, VULevelService, VirtualMixer,
+    DeviceMonitorStats, EQBand, FilePlayerService, Limiter, MasterVULevelEvent, MixerConfig,
+    PeakDetector, RmsDetector, ThreeBandEqualizer, VULevelEvent, VirtualMixer,
 };
 // Re-export application audio types
 pub use audio::tap::{ApplicationAudioError, ProcessInfo, TapStats};
@@ -168,7 +168,6 @@ pub fn run() {
             }
         };
 
-
         tracing::info!("✅ Audio system initialization complete");
 
         // Create command channel for isolated audio thread communication
@@ -197,7 +196,6 @@ pub fn run() {
                 tracing::info!("🎵 Starting IsolatedAudioManager in dedicated thread");
                 match crate::audio::mixer::stream_management::IsolatedAudioManager::new(
                     audio_command_rx,
-                    None, // AppHandle not available yet - events will be disabled until app starts
                     Some(database_for_audio), // Pass database for channel number queries
                 )
                 .await
@@ -240,31 +238,6 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .setup(|app| {
-            tracing::info!("🚀 Tauri setup hook called - app starting");
-
-            // Initialize VU level events after the app is fully started
-            let app_handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                tracing::info!("🎧 VU events initialization task started - waiting 1 second...");
-
-                // Wait a moment for the audio system to be fully initialized
-                tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
-
-                tracing::info!("🎧 Starting VU level events initialization...");
-                match initialize_vu_events(app_handle.clone(), app_handle.state()).await {
-                    Ok(()) => {
-                        tracing::info!("✅ VU level events initialized successfully");
-                    }
-                    Err(e) => {
-                        tracing::error!("❌ Failed to initialize VU events: {}", e);
-                    }
-                }
-            });
-
-            tracing::info!("🚀 Tauri setup hook completed");
-            Ok(())
-        })
         .manage(StreamState(Mutex::new(None)))
         .manage(audio_state)
         .manage(recording_state)
@@ -307,7 +280,6 @@ pub fn run() {
             remove_channel_effect,
             get_channel_effects,
             get_dj_mixer_config,
-
             set_debug_log_config,
             get_debug_log_config,
             // Icecast commands
@@ -380,7 +352,6 @@ pub fn run() {
             create_reusable_configuration,
             get_configured_audio_devices_by_config,
             // VU Events commands
-            initialize_vu_events,
             initialize_vu_channels
         ])
         .run(tauri::generate_context!())

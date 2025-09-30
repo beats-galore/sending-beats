@@ -26,7 +26,6 @@ import {
   MetadataCard,
   VariableBitrateCard,
 } from './dj';
-import { ErrorBoundary } from './layout';
 
 type AudioDevice = {
   deviceId: string;
@@ -39,7 +38,7 @@ type StreamSettings = {
   channels: number;
 };
 
-type StreamConfig = {
+type StreamConfigUI = {
   icecast_url: string;
   mount_point: string;
   username: string;
@@ -109,7 +108,7 @@ const DJClient = memo(() => {
   });
 
   const [availableBitrates, setAvailableBitrates] = useState<number[]>([]);
-  const [streamConfig, setStreamConfig] = useState<StreamConfig>({
+  const [streamConfigUI, setStreamConfigUI] = useState<StreamConfigUI>({
     icecast_url: 'http://localhost:8000',
     mount_point: '/live',
     username: 'source',
@@ -124,7 +123,6 @@ const DJClient = memo(() => {
     album: '',
   });
   const [audioLevel, setAudioLevel] = useState(0);
-  const [legacyStreamStatus, setLegacyStreamStatus] = useState<StreamStatus | null>(null);
   const [isRefreshingDevices, setIsRefreshingDevices] = useState(false);
 
   // Derived state from new streaming status
@@ -344,7 +342,7 @@ const DJClient = memo(() => {
       controlsActions.clearError();
 
       // Parse URL to get host and port
-      const url = new URL(streamConfig.icecast_url);
+      const url = new URL(streamConfigUI.icecast_url);
       const host = url.hostname;
       const port = parseInt(url.port) || 8000;
 
@@ -352,8 +350,8 @@ const DJClient = memo(() => {
       await controlsActions.initialize({
         server_host: host,
         server_port: port,
-        mount_point: streamConfig.mount_point,
-        password: streamConfig.password,
+        mount_point: streamConfigUI.mount_point,
+        password: streamConfigUI.password,
         stream_name: 'Sendin Beats Live Stream',
         bitrate: streamSettings.bitrate,
       });
@@ -362,7 +360,7 @@ const DJClient = memo(() => {
     } catch (err) {
       console.error('Failed to connect to stream:', err);
     }
-  }, [streamConfig, streamSettings, controlsActions]);
+  }, [streamConfigUI, streamSettings, controlsActions]);
 
   const disconnectFromStream = useCallback(async () => {
     try {
@@ -409,116 +407,112 @@ const DJClient = memo(() => {
   }, [metadata, controlsActions]);
 
   return (
-    <ErrorBoundary>
-      <Box className={classes.container} pos="relative">
-        <LoadingOverlay visible={isConnecting} />
+    <Box className={classes.container} pos="relative">
+      <LoadingOverlay visible={isConnecting} />
 
-        {/* Fixed Header */}
-        <Group justify="space-between" align="center" mb="lg">
-          <Title order={1} c="blue.4">
-            DJ Streaming Client
-          </Title>
-          <Group className={classes.statusIndicator}>
-            {isConnected ? (
-              <IconWifi size={20} color="#51cf66" />
-            ) : (
-              <IconWifiOff size={20} color="#fa5252" />
-            )}
-            <Badge color={isConnected ? 'green' : 'red'} variant="light" size="md">
-              {isConnected ? 'Connected' : 'Disconnected'}
-            </Badge>
-          </Group>
+      {/* Fixed Header */}
+      <Group justify="space-between" align="center" mb="lg">
+        <Title order={1} c="blue.4">
+          DJ Streaming Client
+        </Title>
+        <Group className={classes.statusIndicator}>
+          {isConnected ? (
+            <IconWifi size={20} color="#51cf66" />
+          ) : (
+            <IconWifiOff size={20} color="#fa5252" />
+          )}
+          <Badge color={isConnected ? 'green' : 'red'} variant="light" size="md">
+            {isConnected ? 'Connected' : 'Disconnected'}
+          </Badge>
         </Group>
+      </Group>
 
-        {/* Scrollable Content */}
-        <ScrollArea className={classes.scrollContent}>
-          <Stack gap="lg">
-            {error && (
-              <Alert icon={<IconAlertCircle size={16} />} title="Error" color="red" variant="light">
-                {error}
-              </Alert>
-            )}
+      {/* Scrollable Content */}
+      <ScrollArea className={classes.scrollContent}>
+        <Stack gap="lg">
+          {error && (
+            <Alert icon={<IconAlertCircle size={16} />} title="Error" color="red" variant="light">
+              {error}
+            </Alert>
+          )}
 
-            <StreamStatusCard
-              streamStatus={
-                legacyStreamStatus || {
-                  is_connected: isConnected,
-                  is_streaming: isStreaming,
-                  current_listeners: 0,
-                  peak_listeners: 0,
-                  stream_duration: streamingStatus?.uptime_seconds || 0,
-                  bitrate: streamingStatus?.bitrate_info.current_bitrate || 0,
-                  error_message: error || undefined,
-                }
-              }
+          <StreamStatusCard
+            streamStatus={{
+              is_connected: isConnected,
+              is_streaming: isStreaming,
+              current_listeners: 0,
+              peak_listeners: 0,
+              stream_duration: streamingStatus?.uptime_seconds ?? 0,
+              bitrate: streamingStatus?.bitrate_info.current_bitrate ?? 0,
+              error_message: error ?? undefined,
+            }}
+          />
+
+          {/* New Advanced Diagnostics */}
+          {streamingStatus && (
+            <StreamDiagnosticsCard
+              connectionDiagnostics={streamingStatus.connection_diagnostics}
+              bitrateInfo={streamingStatus.bitrate_info}
+              audioStats={streamingStatus.audio_stats}
             />
+          )}
 
-            {/* New Advanced Diagnostics */}
-            {streamingStatus && (
-              <StreamDiagnosticsCard
-                connectionDiagnostics={streamingStatus.connection_diagnostics}
-                bitrateInfo={streamingStatus.bitrate_info}
-                audioStats={streamingStatus.audio_stats}
-              />
-            )}
-
-            {/* Variable Bitrate Configuration */}
-            {streamingStatus && (
-              <VariableBitrateCard
-                bitrateInfo={streamingStatus.bitrate_info}
-                onVariableBitrateChange={handleVariableBitrateChange}
-                disabled={!isConnected}
-              />
-            )}
-
-            <Grid>
-              {/* Stream Configuration */}
-              <Grid.Col span={{ base: 12, md: 6 }}>
-                <StreamConfigurationCard
-                  streamConfig={streamConfig}
-                  streamSettings={streamSettings}
-                  availableBitrates={availableBitrates}
-                  isConnected={isConnected}
-                  isConnecting={isConnecting}
-                  onConfigChange={setStreamConfig}
-                  onSettingsChange={(settings) => {
-                    setStreamSettings(settings);
-                    if (settings.bitrate !== streamSettings.bitrate) {
-                      handleBitrateChange(settings.bitrate);
-                    }
-                  }}
-                  onConnect={connectToStream}
-                  onDisconnect={disconnectFromStream}
-                />
-              </Grid.Col>
-
-              {/* Audio Controls */}
-              <Grid.Col span={{ base: 12, md: 6 }}>
-                <AudioControlsCard
-                  audioDevices={audioDevices}
-                  selectedDevice={selectedDevice}
-                  audioLevel={audioLevel}
-                  isConnected={isConnected}
-                  isStreaming={isStreaming}
-                  isRefreshingDevices={isRefreshingDevices}
-                  onDeviceChange={setSelectedDevice}
-                  onRefreshDevices={getAudioDevices}
-                  onStartStreaming={startStreaming}
-                  onStopStreaming={stopStreaming}
-                />
-              </Grid.Col>
-            </Grid>
-
-            {/* Metadata Section */}
-            <MetadataCard
-              metadata={metadata}
-              onMetadataChange={setMetadata}
-              onUpdateMetadata={updateMetadata}
+          {/* Variable Bitrate Configuration */}
+          {streamingStatus && (
+            <VariableBitrateCard
+              bitrateInfo={streamingStatus.bitrate_info}
+              onVariableBitrateChange={(...args) => void handleVariableBitrateChange(...args)}
+              disabled={!isConnected}
             />
-          </Stack>
-        </ScrollArea>
-      </Box>
-    </ErrorBoundary>
+          )}
+
+          <Grid>
+            {/* Stream Configuration */}
+            <Grid.Col span={{ base: 12, md: 6 }}>
+              <StreamConfigurationCard
+                streamConfig={streamConfigUI}
+                streamSettings={streamSettings}
+                availableBitrates={availableBitrates}
+                isConnected={isConnected}
+                isConnecting={isConnecting}
+                onConfigChange={(c) => void setStreamConfigUI(c)}
+                onSettingsChange={(settings) => {
+                  setStreamSettings(settings);
+                  if (settings.bitrate !== streamSettings.bitrate) {
+                    handleBitrateChange(settings.bitrate);
+                  }
+                }}
+                onConnect={connectToStream}
+                onDisconnect={disconnectFromStream}
+              />
+            </Grid.Col>
+
+            {/* Audio Controls */}
+            <Grid.Col span={{ base: 12, md: 6 }}>
+              <AudioControlsCard
+                audioDevices={audioDevices}
+                selectedDevice={selectedDevice}
+                audioLevel={audioLevel}
+                isConnected={isConnected}
+                isStreaming={isStreaming}
+                isRefreshingDevices={isRefreshingDevices}
+                onDeviceChange={setSelectedDevice}
+                onRefreshDevices={getAudioDevices}
+                onStartStreaming={startStreaming}
+                onStopStreaming={stopStreaming}
+              />
+            </Grid.Col>
+          </Grid>
+
+          {/* Metadata Section */}
+          <MetadataCard
+            metadata={metadata}
+            onMetadataChange={setMetadata}
+            onUpdateMetadata={updateMetadata}
+          />
+        </Stack>
+      </ScrollArea>
+    </Box>
   );
 });
 

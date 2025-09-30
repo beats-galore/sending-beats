@@ -90,7 +90,10 @@ pub async fn safe_switch_input_device(
     // Check if switching to the same device - no-op to prevent unnecessary stream restart
     if let Some(ref old_id) = old_device_id {
         if old_id == &new_device_id {
-            tracing::info!("📋 Device switch no-op: already using device {}", new_device_id);
+            tracing::info!(
+                "📋 Device switch no-op: already using device {}",
+                new_device_id
+            );
             return Ok(());
         }
     }

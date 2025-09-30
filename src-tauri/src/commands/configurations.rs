@@ -484,6 +484,7 @@ pub struct LoadedConfigurationInfo {
 
 /// Complete configuration data including all related tables
 #[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CompleteConfigurationData {
     pub configuration: crate::entities::audio_mixer_configuration::Model,
     pub configured_devices: Vec<crate::entities::configured_audio_device::Model>,

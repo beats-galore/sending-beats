@@ -6,7 +6,6 @@ use std::error::Error;
 use std::path::Path;
 use std::time::Duration;
 
-
 pub mod broadcasts;
 pub mod recordings;
 
@@ -22,7 +21,6 @@ pub use seaorm_services::{AudioMixerConfigurationService, ConfiguredAudioDeviceS
 pub struct AudioDatabase {
     pool: SqlitePool,
     sea_orm_db: DatabaseConnection,
-
 }
 
 impl AudioDatabase {
@@ -110,13 +108,7 @@ impl AudioDatabase {
 
         println!("✅ SeaORM connection established");
 
-
-
-        Ok(Self {
-            pool,
-            sea_orm_db,
-
-        })
+        Ok(Self { pool, sea_orm_db })
     }
 
     /// Get database connection pool for advanced queries
@@ -128,6 +120,4 @@ impl AudioDatabase {
     pub fn sea_orm(&self) -> &DatabaseConnection {
         &self.sea_orm_db
     }
-
-
 }

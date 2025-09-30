@@ -33,6 +33,8 @@ import { ChannelEffects } from './ChannelEffects';
 import { ChannelVUMeter } from './ChannelVUMeter';
 
 import type { AudioChannel } from '../../types';
+import type { ConfiguredAudioDevice } from '../../types/db';
+import type { Identifier } from '../../types/util.types';
 
 const useStyles = createStyles(() => ({
   channelPaper: {
@@ -114,7 +116,6 @@ const useStyles = createStyles(() => ({
       justifyContent: 'center !important',
     },
   },
-
 }));
 
 const AVAILABLE_EFFECTS = [
@@ -139,9 +140,9 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
 
   // Find the configured input device for this channel from the active session
   const configuredInputDevice = useMemo(() => {
-    if (!activeSession?.configured_devices) return null;
-    return activeSession.configured_devices.find(
-      (device) => device.channel_number === channel.id && device.is_input
+    if (!activeSession?.configuredDevices) return null;
+    return activeSession.configuredDevices.find(
+      (device) => device.channelNumber === channel.id && device.isInput
     );
   }, [activeSession, channel.id]);
 
@@ -175,14 +176,14 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
   }, [channel.id, toggleChannelSolo]);
 
   const handleInputDeviceChange = useCallback(
-    async (deviceId: string | null) => {
+    async (deviceId: Identifier<ConfiguredAudioDevice> | null) => {
       console.log(
         `🔧 FRONTEND: handleInputDeviceChange called for channel ${channel.id} with deviceId:`,
         deviceId
       );
       if (deviceId) {
         // Check if trying to select an unavailable device
-        const isDeviceAvailable = inputDevices.some(device => device.id === deviceId);
+        const isDeviceAvailable = inputDevices.some((device) => device.id === deviceId);
         if (!isDeviceAvailable && !deviceId.startsWith('app-')) {
           console.warn(`⚠️ Attempted to select unavailable device: ${deviceId}`);
           // Could show a toast notification here in the future
@@ -191,7 +192,7 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
 
         try {
           // Use the audioService switchInputStream method which handles database sync
-          const currentDeviceId = configuredInputDevice?.device_identifier || null;
+          const currentDeviceId = configuredInputDevice?.deviceIdentifier ?? null;
           console.log(`🔧 FRONTEND: Switching input device: ${currentDeviceId} → ${deviceId}`);
           await audioService.switchInputStream(currentDeviceId, deviceId);
           console.debug(`✅ Channel ${channel.id} input device switched to: ${deviceId}`);
@@ -259,13 +260,15 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
 
     // Add configured device if it's not in the available devices list (missing/unplugged)
     if (configuredInputDevice) {
-      const isDeviceAvailable = inputDevices.some(device => device.id === configuredInputDevice.device_identifier);
+      const isDeviceAvailable = inputDevices.some(
+        (device) => device.id === configuredInputDevice.deviceIdentifier
+      );
       if (!isDeviceAvailable) {
-        const deviceName = configuredInputDevice.device_name || configuredInputDevice.device_identifier;
+        const deviceName =
+          configuredInputDevice.deviceName ?? configuredInputDevice.deviceIdentifier;
         hardwareOptions.unshift({
-          value: configuredInputDevice.device_identifier,
+          value: configuredInputDevice.deviceIdentifier,
           label: `${deviceName} (unavailable)`,
-          disabled: true, // Disable the option so it can't be selected
         });
       }
     }
@@ -313,12 +316,14 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
                 <Select
                   size="xs"
                   placeholder="No Input"
-                  value={configuredInputDevice?.device_identifier ?? null}
-                  onChange={handleInputDeviceChange}
+                  value={configuredInputDevice?.deviceIdentifier ?? null}
+                  onChange={(e) =>
+                    void handleInputDeviceChange(e as Identifier<ConfiguredAudioDevice> | null)
+                  }
                   data={inputDeviceOptions}
                   className={`${classes.inputSelect} ${classes.customSelectInput}`}
                 />
-                <ActionIcon size="xs" onClick={refreshDevices} variant="subtle">
+                <ActionIcon size="xs" onClick={() => void refreshDevices()} variant="subtle">
                   <IconRefresh size={10} />
                 </ActionIcon>
               </Group>

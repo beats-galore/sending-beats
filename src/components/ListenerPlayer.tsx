@@ -143,106 +143,104 @@ const ListenerPlayer = memo(() => {
   }, []);
 
   return (
-    <ErrorBoundary>
-      <Box className={classes.container} pos="relative">
-        <LoadingOverlay visible={isLoading} />
+    <Box className={classes.container} pos="relative">
+      <LoadingOverlay visible={isLoading} />
 
-        <Stack gap="lg">
-          <Group justify="space-between" align="center">
-            <Title order={1} c="blue.4">
-              Sendin Beats Radio
-            </Title>
-            <Group className={classes.statusIndicator}>
-              {streamStatus?.is_streaming ? (
-                <IconWifi size={20} color="#51cf66" />
-              ) : (
-                <IconWifiOff size={20} color="#fa5252" />
-              )}
-              <Badge color={streamStatus?.is_streaming ? 'green' : 'red'} variant="light" size="md">
-                {streamStatus?.is_streaming ? 'LIVE' : 'OFFLINE'}
-              </Badge>
-            </Group>
+      <Stack gap="lg">
+        <Group justify="space-between" align="center">
+          <Title order={1} c="blue.4">
+            Sendin Beats Radio
+          </Title>
+          <Group className={classes.statusIndicator}>
+            {streamStatus?.is_streaming ? (
+              <IconWifi size={20} color="#51cf66" />
+            ) : (
+              <IconWifiOff size={20} color="#fa5252" />
+            )}
+            <Badge color={streamStatus?.is_streaming ? 'green' : 'red'} variant="light" size="md">
+              {streamStatus?.is_streaming ? 'LIVE' : 'OFFLINE'}
+            </Badge>
           </Group>
+        </Group>
 
-          {error && (
-            <Alert
-              icon={<IconAlertCircle size={16} />}
-              title="Playback Error"
-              color="red"
-              variant="light"
-            >
-              {error}
-            </Alert>
-          )}
+        {error && (
+          <Alert
+            icon={<IconAlertCircle size={16} />}
+            title="Playback Error"
+            color="red"
+            variant="light"
+          >
+            {error}
+          </Alert>
+        )}
 
-          {/* Stream Status */}
-          {streamStatus && (
-            <Card className={classes.statusCard} padding="lg" withBorder>
-              <Grid>
-                <Grid.Col span={{ base: 6, md: 3 }}>
-                  <StatCard
-                    icon={<IconUsers size={16} />}
-                    value={streamStatus.current_listeners}
-                    label="Current Listeners"
-                    color="blue"
-                  />
-                </Grid.Col>
-                <Grid.Col span={{ base: 6, md: 3 }}>
-                  <StatCard
-                    icon={<IconUsers size={16} />}
-                    value={streamStatus.peak_listeners}
-                    label="Peak Listeners"
-                    color="orange"
-                  />
-                </Grid.Col>
-                <Grid.Col span={{ base: 6, md: 3 }}>
-                  <StatCard
-                    icon={<IconClock size={16} />}
-                    value={formatTime(streamStatus.stream_duration)}
-                    label="Stream Duration"
-                    color="green"
-                  />
-                </Grid.Col>
-                <Grid.Col span={{ base: 6, md: 3 }}>
-                  <StatCard
-                    icon={<IconBroadcast size={16} />}
-                    value={`${streamStatus.bitrate} kbps`}
-                    label="Bitrate"
-                    color="purple"
-                  />
-                </Grid.Col>
-              </Grid>
-            </Card>
-          )}
+        {/* Stream Status */}
+        {streamStatus && (
+          <Card className={classes.statusCard} padding="lg" withBorder>
+            <Grid>
+              <Grid.Col span={{ base: 6, md: 3 }}>
+                <StatCard
+                  icon={<IconUsers size={16} />}
+                  value={streamStatus.current_listeners}
+                  label="Current Listeners"
+                  color="blue"
+                />
+              </Grid.Col>
+              <Grid.Col span={{ base: 6, md: 3 }}>
+                <StatCard
+                  icon={<IconUsers size={16} />}
+                  value={streamStatus.peak_listeners}
+                  label="Peak Listeners"
+                  color="orange"
+                />
+              </Grid.Col>
+              <Grid.Col span={{ base: 6, md: 3 }}>
+                <StatCard
+                  icon={<IconClock size={16} />}
+                  value={formatTime(streamStatus.stream_duration)}
+                  label="Stream Duration"
+                  color="green"
+                />
+              </Grid.Col>
+              <Grid.Col span={{ base: 6, md: 3 }}>
+                <StatCard
+                  icon={<IconBroadcast size={16} />}
+                  value={`${streamStatus.bitrate} kbps`}
+                  label="Bitrate"
+                  color="purple"
+                />
+              </Grid.Col>
+            </Grid>
+          </Card>
+        )}
 
-          {/* Now Playing */}
-          <NowPlayingCard currentMetadata={currentMetadata} />
+        {/* Now Playing */}
+        <NowPlayingCard currentMetadata={currentMetadata} />
 
-          {/* Audio Controls */}
-          <AudioControls
-            isPlaying={isPlaying}
-            volume={volume}
-            isLoading={isLoading}
-            streamStatus={streamStatus}
-            onPlay={handlePlay}
-            onPause={handlePause}
-            onVolumeChange={handleVolumeChange}
-          />
-
-          {/* Stream Info */}
-          <StreamInfoCard streamUrl={streamUrl} streamStatus={streamStatus} />
-        </Stack>
-
-        {/* Hidden audio element */}
-        <audio
-          ref={audioRef}
-          onError={handleAudioError}
-          onLoadStart={handleAudioLoadStart}
-          onCanPlay={handleAudioCanPlay}
-          preload="none"
+        {/* Audio Controls */}
+        <AudioControls
+          isPlaying={isPlaying}
+          volume={volume}
+          isLoading={isLoading}
+          streamStatus={streamStatus}
+          onPlay={handlePlay}
+          onPause={handlePause}
+          onVolumeChange={handleVolumeChange}
         />
-      </Box>
-    </ErrorBoundary>
+
+        {/* Stream Info */}
+        <StreamInfoCard streamUrl={streamUrl} streamStatus={streamStatus} />
+      </Stack>
+
+      {/* Hidden audio element */}
+      <audio
+        ref={audioRef}
+        onError={handleAudioError}
+        onLoadStart={handleAudioLoadStart}
+        onCanPlay={handleAudioCanPlay}
+        preload="none"
+      />
+    </Box>
   );
 });
 

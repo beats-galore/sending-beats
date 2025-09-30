@@ -3,7 +3,7 @@
 export type AudioChannel = {
   id: number;
   name: string;
-  input_device_id?: string;
+  input_device_id?: Identifier<ConfiguredAudioDevice>;
   gain: number;
   pan: number;
   muted: boolean;
@@ -89,14 +89,16 @@ export type MixerOperationResult = {
 };
 
 // Complete configuration data types for backend integration
+
 import type { AudioEffectsDefault, AudioEffectsCustom } from './db/audio-effects.types';
 import type { AudioMixerConfiguration } from './db/audio-mixer-configurations.types';
 import type { ConfiguredAudioDevice } from './db/configured-audio-devices.types';
+import type { Identifier } from './util.types';
 
 export type CompleteConfigurationData = {
   configuration: AudioMixerConfiguration;
-  configured_devices: ConfiguredAudioDevice[];
-  audio_effects_default: AudioEffectsDefault[];
-  audio_effects_custom: AudioEffectsCustom[];
+  configuredDevices: ConfiguredAudioDevice[];
+  audioEffectsDefault: AudioEffectsDefault[];
+  audioEffectsCustom: AudioEffectsCustom[];
   devicesRestored?: boolean; // Client-side flag to track restoration state
 };
