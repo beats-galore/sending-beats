@@ -1,21 +1,19 @@
-use anyhow::Result;
-
 use super::compressor::Compressor;
 use super::equalizer::{EQBand, ThreeBandEqualizer};
 use super::filter::BiquadFilter;
 use super::limiter::Limiter;
 
-/// Real-time audio effects chain
+/// Custom audio effects chain (EQ, compressor, limiter)
 #[derive(Debug)]
-pub struct AudioEffectsChain {
-    dc_blocker: BiquadFilter, // **BASS POPPING FIX**: DC offset removal
+pub struct CustomAudioEffectsChain {
+    dc_blocker: BiquadFilter,
     equalizer: ThreeBandEqualizer,
     compressor: Compressor,
     limiter: Limiter,
     enabled: bool,
 }
 
-impl AudioEffectsChain {
+impl CustomAudioEffectsChain {
     pub fn new(sample_rate: u32) -> Self {
         Self {
             dc_blocker: BiquadFilter::high_pass(sample_rate, 20.0, 0.7), // Remove DC and sub-20Hz

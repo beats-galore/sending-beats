@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 use super::virtual_mixer::VirtualMixer;
-use crate::audio::effects::{AudioEffectsChain, EQBand};
+use crate::audio::effects::{CustomAudioEffectsChain, EQBand};
 use crate::audio::mixer::pipeline::queue_types::RawAudioSamples;
 use crate::audio::mixer::AudioPipeline;
 use crate::audio::types::AudioChannel;
@@ -54,7 +54,7 @@ pub enum AudioCommand {
     },
     UpdateEffects {
         device_id: String,
-        effects: AudioEffectsChain,
+        effects: CustomAudioEffectsChain,
         response_tx: oneshot::Sender<Result<()>>,
     },
     GetAudioMetrics {
@@ -642,7 +642,7 @@ impl IsolatedAudioManager {
     fn handle_update_effects(
         &mut self,
         device_id: String,
-        effects: AudioEffectsChain,
+        effects: CustomAudioEffectsChain,
     ) -> Result<()> {
         Ok(())
     }
