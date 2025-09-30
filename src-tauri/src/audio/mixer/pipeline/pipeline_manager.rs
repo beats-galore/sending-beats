@@ -610,6 +610,62 @@ impl AudioPipeline {
         Ok(())
     }
 
+    pub fn update_input_gain(&mut self, device_id: &str, gain: f32) -> Result<()> {
+        let worker = self
+            .input_workers
+            .get_mut(device_id)
+            .ok_or_else(|| anyhow::anyhow!("Input device '{}' not found", device_id))?;
+
+        worker.update_gain(gain);
+        info!(
+            "✅ AUDIO_PIPELINE: Updated gain for input device '{}' to {}",
+            device_id, gain
+        );
+        Ok(())
+    }
+
+    pub fn update_input_pan(&mut self, device_id: &str, pan: f32) -> Result<()> {
+        let worker = self
+            .input_workers
+            .get_mut(device_id)
+            .ok_or_else(|| anyhow::anyhow!("Input device '{}' not found", device_id))?;
+
+        worker.update_pan(pan);
+        info!(
+            "✅ AUDIO_PIPELINE: Updated pan for input device '{}' to {}",
+            device_id, pan
+        );
+        Ok(())
+    }
+
+    pub fn update_input_muted(&mut self, device_id: &str, muted: bool) -> Result<()> {
+        let worker = self
+            .input_workers
+            .get_mut(device_id)
+            .ok_or_else(|| anyhow::anyhow!("Input device '{}' not found", device_id))?;
+
+        worker.update_muted(muted);
+        info!(
+            "✅ AUDIO_PIPELINE: Updated mute for input device '{}' to {}",
+            device_id, muted
+        );
+        Ok(())
+    }
+
+    pub fn update_input_solo(&mut self, device_id: &str, solo: bool) -> Result<()> {
+        let worker = self
+            .input_workers
+            .get_mut(device_id)
+            .ok_or_else(|| anyhow::anyhow!("Input device '{}' not found", device_id))?;
+
+        worker.update_solo(solo);
+        info!(
+            "✅ AUDIO_PIPELINE: Updated solo for input device '{}' to {}",
+            device_id, solo
+        );
+        Ok(())
+    }
+
     /// Get comprehensive pipeline statistics
     pub fn get_pipeline_stats(&self) -> PipelineStats {
         let input_stats: HashMap<String, InputWorkerStats> = self
