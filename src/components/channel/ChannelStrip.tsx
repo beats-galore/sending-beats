@@ -28,6 +28,7 @@ import { memo, useCallback, useMemo, useState, useEffect } from 'react';
 import { useMixerState, useAudioDevices, useApplicationAudio } from '../../hooks';
 import { audioService } from '../../services';
 import { useConfigurationStore } from '../../stores/mixer-store';
+import { useAudioEffectsDefaultStore } from '../../stores/audio-effects-default-store';
 
 import { ChannelEffects } from './ChannelEffects';
 import { ChannelVUMeter } from './ChannelVUMeter';
@@ -131,14 +132,11 @@ type ChannelStripProps = {
 export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
   const { classes } = useStyles();
 
-  const { toggleChannelMute, toggleChannelSolo, updateChannelGain, updateChannelPan } =
-    useMixerState();
-
   const { inputDevices, refreshDevices } = useAudioDevices();
   const { activeSession } = useConfigurationStore();
   const applicationAudio = useApplicationAudio();
+  const effectsDefaultStore = useAudioEffectsDefaultStore();
 
-  // Find the configured input device for this channel from the active session
   const configuredInputDevice = useMemo(() => {
     if (!activeSession?.configuredDevices) return null;
     return activeSession.configuredDevices.find(
@@ -146,15 +144,18 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
     );
   }, [activeSession, channel.id]);
 
+  const deviceEffects = useMemo(() => {
+    if (!configuredInputDevice) return null;
+    return effectsDefaultStore.getEffectsByDeviceId(configuredInputDevice.deviceIdentifier);
+  }, [configuredInputDevice, effectsDefaultStore]);
+
   // State for expandable sections
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showEQ, setShowEQ] = useState(false);
   const [showEffects, setShowEffects] = useState(false);
 
-  // State for effects
   const [activeEffects, setActiveEffects] = useState<string[]>([]);
 
-  // Load active effects on mount
   useEffect(() => {
     const loadActiveEffects = async () => {
       try {
@@ -167,13 +168,29 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
     void loadActiveEffects();
   }, [channel.id]);
 
+  useEffect(() => {
+    if (activeSession?.configuration.id) {
+      void effectsDefaultStore.loadEffects(activeSession.configuration.id);
+    }
+  }, [activeSession?.configuration.id, effectsDefaultStore]);
+
   const handleMuteToggle = useCallback(() => {
-    void toggleChannelMute(channel.id);
-  }, [channel.id, toggleChannelMute]);
+    if (!deviceEffects || !configuredInputDevice || !activeSession) return;
+    void effectsDefaultStore.toggleMute(
+      deviceEffects.id,
+      configuredInputDevice.deviceIdentifier,
+      activeSession.configuration.id
+    );
+  }, [deviceEffects, configuredInputDevice, activeSession, effectsDefaultStore]);
 
   const handleSoloToggle = useCallback(() => {
-    void toggleChannelSolo(channel.id);
-  }, [channel.id, toggleChannelSolo]);
+    if (!deviceEffects || !configuredInputDevice || !activeSession) return;
+    void effectsDefaultStore.toggleSolo(
+      deviceEffects.id,
+      configuredInputDevice.deviceIdentifier,
+      activeSession.configuration.id
+    );
+  }, [deviceEffects, configuredInputDevice, activeSession, effectsDefaultStore]);
 
   const handleInputDeviceChange = useCallback(
     async (deviceId: Identifier<ConfiguredAudioDevice> | null) => {
@@ -208,16 +225,28 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
 
   const handleGainChange = useCallback(
     (gain: number) => {
-      void updateChannelGain(channel.id, gain);
+      if (!deviceEffects || !configuredInputDevice || !activeSession) return;
+      void effectsDefaultStore.updateGain(
+        deviceEffects.id,
+        configuredInputDevice.deviceIdentifier,
+        activeSession.configuration.id,
+        gain
+      );
     },
-    [channel.id, updateChannelGain]
+    [deviceEffects, configuredInputDevice, activeSession, effectsDefaultStore]
   );
 
   const handlePanChange = useCallback(
     (pan: number) => {
-      void updateChannelPan(channel.id, pan);
+      if (!deviceEffects || !configuredInputDevice || !activeSession) return;
+      void effectsDefaultStore.updatePan(
+        deviceEffects.id,
+        configuredInputDevice.deviceIdentifier,
+        activeSession.configuration.id,
+        pan
+      );
     },
-    [channel.id, updateChannelPan]
+    [deviceEffects, configuredInputDevice, activeSession, effectsDefaultStore]
   );
 
   // Effect handling
@@ -240,16 +269,15 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
     (effect) => !activeEffects.includes(effect.value)
   );
 
-  // Convert gain to dB for display
-  const gainDb = 20 * Math.log10(Math.max(0.01, channel.gain));
+  const gainDb = deviceEffects ? 20 * Math.log10(Math.max(0.01, deviceEffects.gain)) : 0;
 
-  // Format pan display
-  const panDisplay =
-    channel.pan === 0
+  const panDisplay = deviceEffects
+    ? deviceEffects.pan === 0
       ? 'CENTER'
-      : channel.pan > 0
-        ? `R${Math.round(channel.pan * 100)}`
-        : `L${Math.round(Math.abs(channel.pan) * 100)}`;
+      : deviceEffects.pan > 0
+        ? `R${Math.round(deviceEffects.pan * 100)}`
+        : `L${Math.round(Math.abs(deviceEffects.pan) * 100)}`
+    : 'CENTER';
 
   // Memoize input device options to prevent re-renders (including application sources)
   const inputDeviceOptions = useMemo(() => {
@@ -367,7 +395,7 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
                 min={-1}
                 max={1}
                 step={0.05}
-                value={channel.pan}
+                value={deviceEffects?.pan ?? 0}
                 onChange={handlePanChange}
                 marks={[
                   { value: -1, label: 'L' },
@@ -378,26 +406,25 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
             </Box>
           </Stack>
 
-          {/* Mute/Solo Buttons */}
           <Stack gap="xs" className={classes.controlSection}>
             <Button
               size="xs"
-              color={channel.muted ? 'red' : 'gray'}
-              variant={channel.muted ? 'filled' : 'outline'}
+              color={deviceEffects?.muted ? 'red' : 'gray'}
+              variant={deviceEffects?.muted ? 'filled' : 'outline'}
               onClick={handleMuteToggle}
               className={`${classes.controlButton} ${classes.customButton}`}
             >
-              {channel.muted ? 'MUTE' : 'MUTE'}
+              MUTE
             </Button>
 
             <Button
               size="xs"
-              color={channel.solo ? 'orange' : 'gray'}
-              variant={channel.solo ? 'filled' : 'outline'}
+              color={deviceEffects?.solo ? 'orange' : 'gray'}
+              variant={deviceEffects?.solo ? 'filled' : 'outline'}
               onClick={handleSoloToggle}
               className={`${classes.controlButton} ${classes.customButton}`}
             >
-              {channel.solo ? 'SOLO' : 'SOLO'}
+              SOLO
             </Button>
           </Stack>
 
