@@ -16,6 +16,7 @@ pub mod seaorm_services;
 // Re-export only legacy types that are still needed
 pub use broadcasts::*;
 pub use recordings::*;
+pub use seaorm_services::{AudioMixerConfigurationService, ConfiguredAudioDeviceService};
 
 /// SQLite-based database manager for audio system
 pub struct AudioDatabase {

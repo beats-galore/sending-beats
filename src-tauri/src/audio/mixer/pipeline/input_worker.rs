@@ -24,6 +24,7 @@ pub struct InputWorker {
     target_sample_rate: u32,     // Max sample rate for mixing (e.g., 48kHz)
     channels: u16,
     chunk_size: usize, // Input device chunk size (for resampler)
+    channel_number: u32, // VU meter channel number from database configuration
 
     // Audio processing components
     resampler: Option<RubatoSRC>,
@@ -65,6 +66,7 @@ impl InputWorker {
         rtrb_consumer: rtrb::Consumer<f32>,
         input_notifier: Arc<Notify>,
         processed_output_tx: mpsc::UnboundedSender<ProcessedAudioSamples>,
+        channel_number: Option<u32>, // VU meter channel number from database configuration
     ) -> Self {
         info!("🎤 INPUT_WORKER: Creating RTRB-based worker for device '{}' ({} Hz → {} Hz, {} channels)",
               device_id, device_sample_rate, target_sample_rate, channels);
@@ -75,6 +77,7 @@ impl InputWorker {
             target_sample_rate,
             channels,
             chunk_size,
+            channel_number: channel_number.unwrap_or(0), // Default to channel 0 if not provided
             resampler: None,
             effects_chain: AudioEffectsChain::new(target_sample_rate),
             rtrb_consumer: Arc::new(Mutex::new(rtrb_consumer)),
@@ -161,6 +164,7 @@ impl InputWorker {
         let target_sample_rate = self.target_sample_rate;
         let channels = self.channels;
         let chunk_size = self.chunk_size;
+        let channel_number = self.channel_number; // VU meter channel number from database
 
         // Clone shared resources for the worker thread
         let rtrb_consumer = self.rtrb_consumer.clone();
@@ -305,8 +309,6 @@ impl InputWorker {
                 effects_chain.process(&mut effects_processed);
 
                 // Step 3.5: Calculate and emit VU levels for this channel (if VU service available)
-                // TODO: Extract channel number from device_id or pass it separately
-                let channel_number = 0u32; // For now, use 0. This should be extracted from device_id or passed in
                 if let Some(ref mut vu_service) = vu_service_option {
                     vu_service.process_channel_audio(channel_number, &effects_processed);
                 }

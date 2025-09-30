@@ -633,4 +633,35 @@ impl ConfiguredAudioDeviceService {
 
         Ok(devices)
     }
+
+    /// Get channel number for a device identifier from the active configuration
+    pub async fn get_channel_number_for_active_device(
+        db: &DatabaseConnection,
+        device_identifier: &str,
+    ) -> Result<Option<u32>> {
+        // First, get the active session configuration
+        let active_config = audio_mixer_configuration::Entity::find()
+            .filter(audio_mixer_configuration::Column::SessionActive.eq(true))
+            .filter(audio_mixer_configuration::Column::DeletedAt.is_null())
+            .one(db)
+            .await?;
+
+        let active_config = match active_config {
+            Some(config) => config,
+            None => return Ok(None), // No active configuration
+        };
+
+        // Find the device in the active configuration
+        let device = configured_audio_device::Entity::find()
+            .filter(configured_audio_device::Column::ConfigurationId.eq(&active_config.id))
+            .filter(configured_audio_device::Column::DeviceIdentifier.eq(device_identifier))
+            .filter(configured_audio_device::Column::DeletedAt.is_null())
+            .one(db)
+            .await?;
+
+        match device {
+            Some(device) => Ok(Some(device.channel_number as u32)),
+            None => Ok(None),
+        }
+    }
 }
