@@ -19,9 +19,47 @@ impl VirtualMixer {
         Ok(Self {})
     }
 
-    /// Professional audio mixing utility with stereo processing, smart gain management, and level calculation
+    /// Apply automatic gain reduction to maintain target RMS level
+    /// This is disabled by default and should be made configurable (see GitHub issue)
+    fn apply_auto_gain_reduction(buffer: &mut [f32], active_channels: usize) {
+        // Calculate RMS (Root Mean Square) to determine actual audio energy
+        let sum_of_squares: f32 = buffer.iter().map(|&s| s * s).sum();
+        let rms = (sum_of_squares / buffer.len() as f32).sqrt();
+
+        // Only apply gain reduction if we actually have significant signal energy
+        // Standard: -18dBFS RMS ≈ 0.125 linear scale
+        const RMS_TARGET: f32 = 0.125;
+
+        if rms > RMS_TARGET {
+            // Apply gentle compression instead of hard division
+            // Use a soft-knee approach that preserves quiet signals
+            let compression_ratio = (RMS_TARGET / rms).sqrt(); // Soft compression
+            let gain_reduction = compression_ratio.max(0.7); // Limit max reduction to 30%
+
+            for sample in buffer.iter_mut() {
+                *sample *= gain_reduction;
+            }
+
+            // Log when we apply significant gain reduction
+            if gain_reduction < 0.9 {
+                info!(
+                    "🎛️ {}: Applied dynamic gain reduction {:.2} (RMS: {:.3}, channels: {})",
+                    "AUTO_GAIN_REDUCTION".bright_yellow(),
+                    gain_reduction,
+                    rms,
+                    active_channels
+                );
+            }
+        }
+    }
+
+    ///  audio mixing utility with stereo processing, smart gain management, and level calculation
     /// This operates on samples that are already at the same sample rate (after convert_inputs_to_mix_rate)
     pub fn mix_input_samples_ref(input_samples: &[(String, &[f32])]) -> Vec<f32> {
+        // TODO: Make automatic gain reduction configurable (see GitHub issue)
+        // For now, disabled by default as it should be user-controlled
+        const ENABLE_AUTO_GAIN_REDUCTION: bool = false;
+
         if input_samples.is_empty() {
             return Vec::new();
         }
@@ -103,37 +141,8 @@ impl VirtualMixer {
                 }
             }
 
-            if active_channels > 1 {
-                // Calculate RMS (Root Mean Square) to determine actual audio energy
-                let sum_of_squares: f32 = buffer.iter().map(|&s| s * s).sum();
-                let rms = (sum_of_squares / buffer.len() as f32).sqrt();
-
-                // Only apply gain reduction if we actually have significant signal energy
-                // Professional standard: -18dBFS RMS ≈ 0.125 linear scale
-                const PROFESSIONAL_RMS_TARGET: f32 = 0.125;
-
-                if rms > PROFESSIONAL_RMS_TARGET {
-                    // Apply gentle compression instead of hard division
-                    // Use a soft-knee approach that preserves quiet signals
-                    let compression_ratio = (PROFESSIONAL_RMS_TARGET / rms).sqrt(); // Soft compression
-                    let gain_reduction = compression_ratio.max(0.7); // Limit max reduction to 30%
-
-                    for sample in buffer.iter_mut() {
-                        *sample *= gain_reduction;
-                    }
-
-                    // Log when we apply significant gain reduction
-                    if gain_reduction < 0.9 {
-                        info!(
-                            "🎛️ {}: Applied dynamic gain reduction {:.2} (RMS: {:.3}, channels: {})",
-                            "PROFESSIONAL_MIXING".bright_yellow(),
-                            gain_reduction,
-                            rms,
-                            active_channels
-                        );
-                    }
-                }
-                // If RMS is low (quiet signals), no gain reduction - preserve dynamics!
+            if active_channels > 1 && ENABLE_AUTO_GAIN_REDUCTION {
+                Self::apply_auto_gain_reduction(&mut buffer, active_channels);
             }
 
             let mixing_loop_duration = mixing_start.elapsed();

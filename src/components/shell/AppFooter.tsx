@@ -20,7 +20,7 @@ export const AppFooter = memo(() => {
   return (
     <AppShell.Footer className={classes.footer}>
       <Text size="xs" c="dimmed" className={classes.footerText}>
-        &copy; {new Date().getFullYear()} Sendin Beats - Professional Radio Streaming Platform
+        &copy; {new Date().getFullYear()} Sendin Beats - Radio Streaming Platform
       </Text>
     </AppShell.Footer>
   );

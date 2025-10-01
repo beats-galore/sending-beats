@@ -1,4 +1,4 @@
-// Professional Virtual Mixer - Refactored with modern architecture
+//  Virtual Mixer - Refactored with modern architecture
 import { Box, Title, Stack, Alert, Button, Group, Grid } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { IconAlertCircle, IconRefresh } from '@tabler/icons-react';

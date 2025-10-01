@@ -1,4 +1,4 @@
-// Professional Listener Player - Modernized with Mantine
+//  Listener Player - Modernized with Mantine
 import { Box, Stack, Group, Title, Alert, Grid, LoadingOverlay, Badge, Card } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import {
@@ -91,7 +91,9 @@ const ListenerPlayer = memo(() => {
   }, []);
 
   const handlePlay = useCallback(async () => {
-    if (!audioRef.current) {return;}
+    if (!audioRef.current) {
+      return;
+    }
 
     try {
       setIsLoading(true);

@@ -26,7 +26,7 @@ export const HomeView = memo(() => {
             Welcome to Sendin Beats Radio
           </Title>
           <Text c="dimmed" ta="center">
-            Professional radio streaming platform for DJs and listeners
+            radio streaming platform for DJs and listeners
           </Text>
         </Stack>
       </Stack>

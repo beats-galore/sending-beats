@@ -4,12 +4,12 @@
 <dict>
     <!-- Audio capture permissions for application audio taps -->
     <key>NSMicrophoneUsageDescription</key>
-    <string>Sendin Beats needs access to capture audio to record your mixes and enable professional audio streaming capabilities.</string>
-    
+    <string>Sendin Beats needs access to capture audio to record your mixes and enable  audio streaming capabilities.</string>
+
     <!-- Additional permission for application audio capture (macOS 14.4+) -->
     <key>NSAudioCaptureUsageDescription</key>
     <string>Sendin Beats needs access to capture audio from other applications (like Spotify, iTunes, Tidal) to enable direct application audio input without requiring virtual audio devices like BlackHole.</string>
-    
+
     <!-- Core Audio framework permissions for system audio access -->
     <!-- <key>com.apple.security.device.audio-input</key>
     <true/>
@@ -17,13 +17,13 @@
     <!-- Allow network client access for streaming -->
     <!-- <key>com.apple.security.network.client</key>
     <true/> -->
-    
+
     <!-- File system access for audio file management and recording -->
     <!-- <key>com.apple.security.files.user-selected.read-write</key>
     <true/>
     <key>com.apple.security.files.downloads.read-write</key>
     <true/> -->
-    
+
     <!-- Enable sandboxing for macOS security compliance -->
     <key>com.apple.security.app-sandbox</key>
     <false/>

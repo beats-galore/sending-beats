@@ -1,4 +1,4 @@
-// Professional Admin Panel - Modernized with Mantine
+//  Admin Panel - Modernized with Mantine
 import { Box, Group, Title, Badge, Tabs } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import {

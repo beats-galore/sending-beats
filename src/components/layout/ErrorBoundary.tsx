@@ -1,4 +1,4 @@
-// Professional Error Boundary using react-error-boundary with Mantine UI
+//  Error Boundary using react-error-boundary with Mantine UI
 import {
   Container,
   Title,
@@ -25,7 +25,7 @@ import { ErrorBoundary as ReactErrorBoundary } from 'react-error-boundary';
 
 import type { FallbackProps } from 'react-error-boundary';
 
-// Error fallback component with professional Mantine styling
+// Error fallback component with  Mantine styling
 function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
   const [showDetails, setShowDetails] = useState(true); // Auto-expanded as requested
 

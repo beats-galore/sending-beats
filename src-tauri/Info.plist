@@ -7,28 +7,28 @@
 
     <!-- Required for microphone permission dialog -->
     <key>NSMicrophoneUsageDescription</key>
-    <string>Sendin Beats needs microphone access to capture audio from other applications like Spotify, Music, and other audio sources for professional DJ mixing and streaming.</string>
-    
+    <string>Sendin Beats needs microphone access to capture audio from other applications like Spotify, Music, and other audio sources for  DJ mixing and streaming.</string>
+
     <!-- Additional audio capture description -->
     <key>NSAudioCaptureUsageDescription</key>
     <string>Sendin Beats needs to capture audio from other applications to enable direct application audio input without requiring virtual audio devices.</string>
-    
+
     <!-- Bundle Information -->
     <key>CFBundleName</key>
     <string>Sendin Beats</string>
-    
+
     <key>CFBundleDisplayName</key>
     <string>Sendin Beats</string>
-    
+
     <key>CFBundleIdentifier</key>
     <string>com.SendinBeats.app</string>
-    
+
     <key>CFBundleVersion</key>
     <string>0.1.0</string>
-    
+
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
-    
+
     <!-- Required for proper app categorization -->
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.music</string>
