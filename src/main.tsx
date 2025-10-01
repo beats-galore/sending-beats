@@ -2,7 +2,7 @@ import { MantineProvider } from '@mantine/core';
 import { createRoot } from 'react-dom/client';
 
 import App from './App';
-import './styles.css';
+
 import '@mantine/core/styles.css';
 
 // React Scan setup for development performance monitoring
