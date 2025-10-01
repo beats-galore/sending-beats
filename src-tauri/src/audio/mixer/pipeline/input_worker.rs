@@ -318,9 +318,7 @@ impl InputWorker {
                 let any_solo = any_channel_solo.load(std::sync::atomic::Ordering::Relaxed);
                 if let Ok(effects) = default_effects.lock() {
                     if processing_channels == 2 {
-                        let mid_point = effects_processed.len() / 2;
-                        let (left, right) = effects_processed.split_at_mut(mid_point);
-                        effects.process_stereo(left, right, any_solo);
+                        effects.process_stereo_interleaved(&mut effects_processed, any_solo);
                     } else {
                         effects.process_mono(&mut effects_processed, any_solo);
                     }
