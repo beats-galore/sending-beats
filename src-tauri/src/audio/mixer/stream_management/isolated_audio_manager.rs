@@ -498,6 +498,52 @@ impl IsolatedAudioManager {
             ));
         };
 
+        // Load initial audio effects from database
+        let (initial_gain, initial_pan, initial_muted, initial_solo) = if let Some(ref db) =
+            self.database
+        {
+            match crate::db::AudioEffectsDefaultService::find_by_device_id(db.sea_orm(), &device_id)
+                .await
+            {
+                Ok(Some(effects)) => {
+                    info!(
+                        "🎛️ {}: Loaded initial effects for '{}': gain={}, pan={}, muted={}, solo={}",
+                        "EFFECTS_LOAD".on_yellow().purple(),
+                        device_id,
+                        effects.gain,
+                        effects.pan,
+                        effects.muted,
+                        effects.solo
+                    );
+                    (
+                        Some(effects.gain),
+                        Some(effects.pan),
+                        Some(effects.muted),
+                        Some(effects.solo),
+                    )
+                }
+                Ok(None) => {
+                    info!(
+                        "ℹ️ {}: No saved effects found for '{}', using defaults",
+                        "EFFECTS_LOAD".on_yellow().purple(),
+                        device_id
+                    );
+                    (None, None, None, None)
+                }
+                Err(e) => {
+                    warn!(
+                        "⚠️ {}: Failed to load effects for '{}': {}, using defaults",
+                        "EFFECTS_LOAD".on_yellow().purple(),
+                        device_id,
+                        e
+                    );
+                    (None, None, None, None)
+                }
+            }
+        } else {
+            (None, None, None, None)
+        };
+
         // **PIPELINE INTEGRATION**: Create input worker FIRST to consume RTRB data
         let input_device_notifier = Arc::new(Notify::new());
         self.audio_pipeline.add_input_device_with_consumer(
@@ -508,6 +554,10 @@ impl IsolatedAudioManager {
             audio_input_consumer,
             input_device_notifier.clone(),
             channel_number,
+            initial_gain,
+            initial_pan,
+            initial_muted,
+            initial_solo,
         )?;
 
         // **HARDWARE STREAM**: Create CoreAudio stream AFTER pipeline worker is ready

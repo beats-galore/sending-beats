@@ -197,6 +197,10 @@ impl AudioPipeline {
         rtrb_consumer: rtrb::Consumer<f32>,
         input_notifier: Arc<tokio::sync::Notify>,
         channel_number: u32,
+        initial_gain: Option<f32>,
+        initial_pan: Option<f32>,
+        initial_muted: Option<bool>,
+        initial_solo: Option<bool>,
     ) -> Result<()> {
         if self.input_workers.contains_key(&device_id) {
             return Err(anyhow::anyhow!(
@@ -263,6 +267,10 @@ impl AudioPipeline {
             processed_output_tx,
             channel_number,
             self.any_channel_solo.clone(),
+            initial_gain,
+            initial_pan,
+            initial_muted,
+            initial_solo,
         );
 
         // Add worker to collection BEFORE recalculating (needed for sample rate detection)

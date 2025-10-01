@@ -619,6 +619,19 @@ impl AudioMixerConfigurationService {
 pub struct ConfiguredAudioDeviceService;
 
 impl ConfiguredAudioDeviceService {
+    /// Get a device by its ID
+    pub async fn get_by_id(
+        db: &DatabaseConnection,
+        id: &str,
+    ) -> Result<Option<configured_audio_device::Model>> {
+        let device = configured_audio_device::Entity::find_by_id(id)
+            .filter(configured_audio_device::Column::DeletedAt.is_null())
+            .one(db)
+            .await?;
+
+        Ok(device)
+    }
+
     /// List devices for a configuration
     pub async fn list_for_configuration(
         db: &DatabaseConnection,
