@@ -66,22 +66,18 @@ impl DefaultAudioEffectsChain {
         self.solo
     }
 
-    pub fn process_stereo(&self, left: &mut [f32], right: &mut [f32], any_channel_solo: bool) {
+    pub fn process_stereo_interleaved(&self, samples: &mut [f32], any_channel_solo: bool) {
         if self.muted || (any_channel_solo && !self.solo) {
-            left.fill(0.0);
-            right.fill(0.0);
+            samples.fill(0.0);
             return;
         }
 
         let left_gain = self.gain * if self.pan <= 0.0 { 1.0 } else { 1.0 - self.pan };
         let right_gain = self.gain * if self.pan >= 0.0 { 1.0 } else { 1.0 + self.pan };
 
-        for sample in left.iter_mut() {
-            *sample *= left_gain;
-        }
-
-        for sample in right.iter_mut() {
-            *sample *= right_gain;
+        for i in 0..(samples.len() / 2) {
+            samples[i * 2] *= left_gain;
+            samples[i * 2 + 1] *= right_gain;
         }
     }
 
