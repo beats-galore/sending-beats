@@ -59,10 +59,10 @@ export const VUMeter = memo<VUMeterProps>(
 
     const getBarColor = useMemo(
       () => (index: number, isActive: boolean) => {
-        if (!isActive) return '#495057';
+        if (!isActive) {return '#495057';}
 
-        if (index > barCount * 0.8) return '#fa5252';
-        if (index > barCount * 0.6) return '#fd7e14';
+        if (index > barCount * 0.8) {return '#fa5252';}
+        if (index > barCount * 0.6) {return '#fd7e14';}
         return '#339af0';
       },
       [barCount]

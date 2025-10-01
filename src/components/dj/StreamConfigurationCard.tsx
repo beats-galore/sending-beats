@@ -1,7 +1,7 @@
 import { Card, Stack, Title, TextInput, Grid, Select, Group, Button } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { IconWifi, IconWifiOff } from '@tabler/icons-react';
-import { memo, useEffect, useState } from 'react';
+import { memo } from 'react';
 
 import type { SampleRate } from '../../utils/constants';
 

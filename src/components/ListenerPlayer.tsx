@@ -12,7 +12,6 @@ import {
 import { invoke } from '@tauri-apps/api/core';
 import { memo, useState, useEffect, useRef, useCallback } from 'react';
 
-import { ErrorBoundary } from './layout';
 import { StatCard, NowPlayingCard, AudioControls, StreamInfoCard } from './player';
 
 type StreamMetadata = {
@@ -92,7 +91,7 @@ const ListenerPlayer = memo(() => {
   }, []);
 
   const handlePlay = useCallback(async () => {
-    if (!audioRef.current) return;
+    if (!audioRef.current) {return;}
 
     try {
       setIsLoading(true);

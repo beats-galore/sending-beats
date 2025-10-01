@@ -190,7 +190,7 @@ export const ChannelEffects = memo<ChannelEffectsProps>(({ channelId }) => {
       }
       case 'compressor': {
         const compressor = getCompressorValues();
-        if (!compressor) return null;
+        if (!compressor) {return null;}
         return (
           <Group gap="md" justify="flex-start" align="flex-start">
             <Box
@@ -244,7 +244,7 @@ export const ChannelEffects = memo<ChannelEffectsProps>(({ channelId }) => {
       }
       case 'limiter': {
         const limiter = getLimiterValues();
-        if (!limiter) return null;
+        if (!limiter) {return null;}
         return (
           <Group gap="md" justify="flex-start" align="flex-start">
             <Box
@@ -276,7 +276,7 @@ export const ChannelEffects = memo<ChannelEffectsProps>(({ channelId }) => {
       {/* Active Effects - Always Expanded */}
       {activeEffects.map((effectType) => {
         const effectConfig = AVAILABLE_EFFECTS.find((e) => e.value === effectType);
-        if (!effectConfig) return null;
+        if (!effectConfig) {return null;}
 
         const Icon = effectConfig.icon;
 

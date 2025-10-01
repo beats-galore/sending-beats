@@ -54,7 +54,7 @@ const useStyles = createStyles((theme) => ({
 }));
 
 const formatDuration = (seconds: number | null): string => {
-  if (!seconds) return 'N/A';
+  if (!seconds) {return 'N/A';}
 
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
@@ -69,16 +69,16 @@ const formatDuration = (seconds: number | null): string => {
 };
 
 const getStabilityColor = (stability: number): string => {
-  if (stability >= 0.8) return 'green';
-  if (stability >= 0.6) return 'yellow';
+  if (stability >= 0.8) {return 'green';}
+  if (stability >= 0.6) {return 'yellow';}
   return 'red';
 };
 
 const getStabilityLabel = (stability: number): string => {
-  if (stability >= 0.9) return 'Excellent';
-  if (stability >= 0.8) return 'Good';
-  if (stability >= 0.6) return 'Fair';
-  if (stability >= 0.4) return 'Poor';
+  if (stability >= 0.9) {return 'Excellent';}
+  if (stability >= 0.8) {return 'Good';}
+  if (stability >= 0.6) {return 'Fair';}
+  if (stability >= 0.4) {return 'Poor';}
   return 'Critical';
 };
 

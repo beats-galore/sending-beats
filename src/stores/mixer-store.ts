@@ -6,7 +6,6 @@ import { subscribeWithSelector } from 'zustand/middleware';
 
 import { mixerService, audioService } from '../services';
 import { MixerState, DEFAULT_CHANNEL } from '../types';
-import { updateArrayItems } from '../utils/store-helpers';
 
 import type {
   MixerConfig,
@@ -20,6 +19,7 @@ import type {
 import type { ConfiguredAudioDevice } from '../types/db';
 import type { AudioMixerConfiguration } from '../types/db/audio-mixer-configurations.types';
 import type { Identifier } from '../types/util.types';
+import { updateArrayItems } from '../utils/store-helpers';
 
 type MixerStore = {
   // State
@@ -269,7 +269,7 @@ export const useMixerStore = create<MixerStore>()(
     // Real-time level updates - optimized to prevent unnecessary re-renders (updated for stereo)
     updateChannelLevels: (levels: Record<number, [number, number, number, number]>) => {
       set((state) => {
-        if (!state.config) return {};
+        if (!state.config) {return {};}
 
         const newChannels = updateArrayItems(state.config.channels, (channel) => {
           // Stereo levels: [peak_left, rms_left, peak_right, rms_right]
@@ -298,7 +298,7 @@ export const useMixerStore = create<MixerStore>()(
         });
 
         // Only update if channels array changed
-        if (newChannels === state.config.channels) return {};
+        if (newChannels === state.config.channels) {return {};}
 
         return {
           config: {
@@ -313,7 +313,7 @@ export const useMixerStore = create<MixerStore>()(
     updateMasterLevels: (levels: MasterLevels) => {
       set((state) => {
         // Only update if levels actually changed
-        if (isEqual(state.masterLevels, levels)) return {};
+        if (isEqual(state.masterLevels, levels)) {return {};}
         return { masterLevels: levels };
       });
     },
@@ -321,7 +321,7 @@ export const useMixerStore = create<MixerStore>()(
     updateMetrics: (metrics: AudioMetrics) => {
       set((state) => {
         // Only update if metrics actually changed
-        if (isEqual(state.metrics, metrics)) return {};
+        if (isEqual(state.metrics, metrics)) {return {};}
         return { metrics };
       });
     },

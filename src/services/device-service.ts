@@ -1,9 +1,9 @@
 // Device service layer - higher-level device operations
 import { uniqBy } from 'lodash';
 
+import type { AudioDeviceInfo } from '../types';
 import { audioService } from './audio-service';
 
-import type { AudioDeviceInfo } from '../types';
 
 export const deviceService = {
   // Device filtering and categorization

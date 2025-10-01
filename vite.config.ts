@@ -28,7 +28,7 @@ export default defineConfig(() => ({
             name: 'react-scan',
             config(config) {
               // React Scan setup for development performance monitoring
-              if (!config.define) config.define = {};
+              if (!config.define) {config.define = {};}
               config.define['process.env.TURBO_RUN'] = JSON.stringify(isTurboRun.toString());
             },
           },

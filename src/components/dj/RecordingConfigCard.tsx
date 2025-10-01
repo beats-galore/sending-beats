@@ -7,7 +7,6 @@ import {
   Select,
   Switch,
   NumberInput,
-  Textarea,
   Button,
   Badge,
   Text,
@@ -18,23 +17,20 @@ import { createStyles } from '@mantine/styles';
 import {
   IconSettings,
   IconFolder,
-  IconMusic,
   IconDeviceFloppy,
-  IconTrash,
   IconPlus,
 } from '@tabler/icons-react';
 import { memo, useState, useCallback, useEffect } from 'react';
 
 import { useRecording } from '../../hooks/use-recording';
 
-import { MetadataForm } from './MetadataForm';
-
 import type {
   RecordingConfig,
   RecordingFormat,
-  RecordingMetadata,
   MetadataPreset,
 } from '../../types/audio.types';
+import { MetadataForm } from './MetadataForm';
+
 
 type RecordingConfigCardProps = {
   disabled?: boolean;
@@ -110,14 +106,14 @@ const parseFormatValue = (value: string): RecordingFormat => {
 };
 
 const formatToValue = (format: RecordingFormat): string => {
-  if (format.wav) return 'wav';
+  if (format.wav) {return 'wav';}
   if (format.mp3) {
-    if (format.mp3.bitrate === 320) return 'mp3_320';
-    if (format.mp3.bitrate === 256) return 'mp3_256';
-    if (format.mp3.bitrate === 128) return 'mp3_128';
+    if (format.mp3.bitrate === 320) {return 'mp3_320';}
+    if (format.mp3.bitrate === 256) {return 'mp3_256';}
+    if (format.mp3.bitrate === 128) {return 'mp3_128';}
     return 'mp3_192';
   }
-  if (format.flac) return 'flac';
+  if (format.flac) {return 'flac';}
   return 'mp3_192';
 };
 
@@ -186,7 +182,7 @@ export const RecordingConfigCard = memo<RecordingConfigCardProps>(({ disabled = 
   }, []);
 
   const handleSave = useCallback(async () => {
-    if (!editingConfig) return;
+    if (!editingConfig) {return;}
 
     try {
       await actions.saveConfig(editingConfig);
@@ -242,7 +238,7 @@ export const RecordingConfigCard = memo<RecordingConfigCardProps>(({ disabled = 
                   data={recordingPresets.map((p) => ({ value: p.id, label: p.name }))}
                   onChange={(value) => {
                     const preset = recordingPresets.find((p) => p.id === value);
-                    if (preset) handleCreateFromPreset(preset);
+                    if (preset) {handleCreateFromPreset(preset);}
                   }}
                   style={{ minWidth: 150 }}
                 />

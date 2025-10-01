@@ -1,7 +1,7 @@
 // Mixer service layer - abstraction over Tauri mixer commands
 import { invoke } from '@tauri-apps/api/core';
 
-import type { MixerConfig, AudioChannel, MixerOperationResult } from '../types';
+import type { MixerConfig, AudioChannel } from '../types';
 
 export const mixerService = {
   // Mixer lifecycle

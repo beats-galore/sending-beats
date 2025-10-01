@@ -1,5 +1,5 @@
-import { Card, Select, Stack, Badge, Text, Alert, Loader, Center } from '@mantine/core';
-import { IconCheck, IconAlertCircle } from '@tabler/icons-react';
+import { Card, Select, Stack, Text, Alert, Loader } from '@mantine/core';
+import { IconAlertCircle } from '@tabler/icons-react';
 import { useCallback, useEffect } from 'react';
 
 import { useConfigurationStore } from '../stores/mixer-store';
@@ -26,7 +26,7 @@ export const ConfigurationSelector = ({ onConfigurationSelect }: ConfigurationSe
 
   const handleConfigurationSelect = useCallback(
     async (configId: string | null) => {
-      if (!configId) return;
+      if (!configId) {return;}
 
       await selectConfiguration(configId);
       onConfigurationSelect?.(configId);

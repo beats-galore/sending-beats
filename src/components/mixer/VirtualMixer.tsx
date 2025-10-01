@@ -7,7 +7,6 @@ import { memo, useEffect, useCallback } from 'react';
 import { useAudioDevicesStatus, useMixerInitialization, useMixerRunningState } from '../../hooks';
 import { useVUChannelStream } from '../../hooks/use-vu-channel-stream';
 import { RecordingControlsCard, RecordingConfigCard, RecordingHistoryCard } from '../dj';
-import { ErrorBoundary, FullScreenLoader } from '../layout';
 
 import { ChannelGrid } from './ChannelGrid';
 import { MasterSection } from './MasterSection';

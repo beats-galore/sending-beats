@@ -5,13 +5,13 @@ import { AUDIO_CONSTANTS } from '../types';
 export const audioCalculations = {
   // Convert linear amplitude (0-1) to decibels
   linearToDb(linear: number): number {
-    if (linear <= 0) return AUDIO_CONSTANTS.MIN_DB;
+    if (linear <= 0) {return AUDIO_CONSTANTS.MIN_DB;}
     return 20 * Math.log10(linear);
   },
 
   // Convert decibels to linear amplitude (0-1)
   dbToLinear(db: number): number {
-    if (db <= AUDIO_CONSTANTS.MIN_DB) return 0;
+    if (db <= AUDIO_CONSTANTS.MIN_DB) {return 0;}
     return 10 ** (db / 20);
   },
 
@@ -37,7 +37,7 @@ export const audioCalculations = {
   },
 
   gainLinearToDb(gainLinear: number): number {
-    if (gainLinear <= 0) return AUDIO_CONSTANTS.MIN_GAIN_DB;
+    if (gainLinear <= 0) {return AUDIO_CONSTANTS.MIN_GAIN_DB;}
     return 20 * Math.log10(gainLinear);
   },
 
@@ -54,14 +54,14 @@ export const audioCalculations = {
 
   // Level processing
   calculateRms(samples: number[]): number {
-    if (samples.length === 0) return 0;
+    if (samples.length === 0) {return 0;}
 
     const squareSum = samples.reduce((sum, sample) => sum + sample * sample, 0);
     return Math.sqrt(squareSum / samples.length);
   },
 
   calculatePeak(samples: number[]): number {
-    if (samples.length === 0) return 0;
+    if (samples.length === 0) {return 0;}
 
     return Math.max(...samples.map(Math.abs));
   },
@@ -74,7 +74,7 @@ export const audioCalculations = {
 
   // Compressor calculations
   calculateCompressionGain(inputDb: number, threshold: number, ratio: number): number {
-    if (inputDb <= threshold) return 0; // No compression below threshold
+    if (inputDb <= threshold) {return 0;} // No compression below threshold
 
     const overThreshold = inputDb - threshold;
     const compressedOver = overThreshold / ratio;
@@ -84,7 +84,7 @@ export const audioCalculations = {
 
   // Limiter calculations
   calculateLimiterGain(inputDb: number, threshold: number): number {
-    if (inputDb <= threshold) return 0;
+    if (inputDb <= threshold) {return 0;}
     return threshold - inputDb; // Hard limiting
   },
 
@@ -116,7 +116,7 @@ export const audioCalculations = {
 
   // Format dB values for display
   formatDb(db: number, decimals = 1): string {
-    if (db <= AUDIO_CONSTANTS.MIN_DB) return '-∞ dB';
+    if (db <= AUDIO_CONSTANTS.MIN_DB) {return '-∞ dB';}
     return `${db.toFixed(decimals)} dB`;
   },
 
@@ -128,8 +128,8 @@ export const audioCalculations = {
 
   // Format pan values for display
   formatPan(pan: number): string {
-    if (pan === 0) return 'C';
-    if (pan < 0) return `L${Math.abs(pan * 100).toFixed(0)}`;
+    if (pan === 0) {return 'C';}
+    if (pan < 0) {return `L${Math.abs(pan * 100).toFixed(0)}`;}
     return `R${(pan * 100).toFixed(0)}`;
   },
 } as const;

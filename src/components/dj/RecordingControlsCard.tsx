@@ -31,15 +31,15 @@ import { invoke } from '@tauri-apps/api/core';
 import { memo, useState, useCallback, useEffect } from 'react';
 
 import { useRecording } from '../../hooks/use-recording';
-import { DEFAULT_SAMPLE_RATE_HZ } from '../../utils';
-
-import { MetadataForm } from './MetadataForm';
-
 import type {
   RecordingConfig,
   RecordingFormat,
   RecordingMetadata,
 } from '../../hooks/use-recording';
+import { DEFAULT_SAMPLE_RATE_HZ } from '../../utils';
+
+import { MetadataForm } from './MetadataForm';
+
 
 type RecordingControlsCardProps = {
   disabled?: boolean;
@@ -87,7 +87,7 @@ const formatDuration = (seconds: number): string => {
 };
 
 const formatFileSize = (bytes: number): string => {
-  if (bytes === 0) return '0 B';
+  if (bytes === 0) {return '0 B';}
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -120,13 +120,13 @@ const parseFormatValue = (value: string): RecordingFormat => {
 };
 
 const formatToValue = (format: RecordingFormat): string => {
-  if (format.wav) return 'wav';
+  if (format.wav) {return 'wav';}
   if (format.mp3) {
-    if (format.mp3.bitrate === 320) return 'mp3_320';
-    if (format.mp3.bitrate === 128) return 'mp3_128';
+    if (format.mp3.bitrate === 320) {return 'mp3_320';}
+    if (format.mp3.bitrate === 128) {return 'mp3_128';}
     return 'mp3_192';
   }
-  if (format.flac) return 'flac';
+  if (format.flac) {return 'flac';}
   return 'mp3_192';
 };
 

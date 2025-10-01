@@ -20,9 +20,9 @@ import {
   IconChevronUp,
 } from '@tabler/icons-react';
 import { useState } from 'react';
+import type { ErrorInfo } from 'react';
 import { ErrorBoundary as ReactErrorBoundary } from 'react-error-boundary';
 
-import type { ErrorInfo } from 'react';
 import type { FallbackProps } from 'react-error-boundary';
 
 // Error fallback component with professional Mantine styling

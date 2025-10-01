@@ -13,7 +13,7 @@ import {
 import { useConfigurationStore } from '../../stores/mixer-store';
 
 import type { ConfiguredAudioDevice } from '../../types/db';
-import type { Identifier, Uuid } from '../../types/util.types';
+import type { Identifier } from '../../types/util.types';
 import { VUMeter, AudioSlider } from '../ui';
 
 const useStyles = createStyles(() => ({

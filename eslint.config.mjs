@@ -23,7 +23,8 @@ export const extendableBaseConfig = [
     ignores: ['**/node_modules', '**/*.json', '**/dist/**', 'eslint.config.mjs'],
   },
   ...compat.extends('prettier'),
-  ...tseslint.configs.recommendedTypeChecked,
+  // Apply non-type-aware base rules globally; scope type-aware rules only to TS files below
+  ...tseslint.configs.recommended,
   {
     files: ['**/*.{ts,tsx}'],
 

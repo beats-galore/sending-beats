@@ -1,5 +1,5 @@
 import { Stack, Group, Title, TextInput, NumberInput, Textarea, Button, Select, Divider, Text, Grid, ActionIcon } from '@mantine/core';
-import { IconPlus, IconTrash, IconMusic, IconPhoto } from '@tabler/icons-react';
+import { IconPlus, IconTrash, IconMusic } from '@tabler/icons-react';
 import { memo, useState, useCallback } from 'react';
 
 import type { RecordingMetadata, MetadataPreset } from '../../types/audio.types';
@@ -39,7 +39,7 @@ export const MetadataForm = memo<MetadataFormProps>(
     }, [metadata, onChange]);
 
     const addCustomTag = useCallback(() => {
-      if (!customTagKey.trim() || !customTagValue.trim()) return;
+      if (!customTagKey.trim() || !customTagValue.trim()) {return;}
       
       const newTags = { ...(metadata.custom_tags || {}), [customTagKey]: customTagValue };
       updateCustomTags(newTags);

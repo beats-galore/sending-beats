@@ -15,7 +15,7 @@ export const ChannelEQ = memo<ChannelEQProps>(({ channelId }) => {
 
   const eqValues = getEQValues();
 
-  if (!eqValues) return null;
+  if (!eqValues) {return null;}
 
   return (
     <Stack gap="sm">

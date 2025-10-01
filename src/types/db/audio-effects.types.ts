@@ -1,9 +1,9 @@
 // Audio effects types
 // Corresponds to src-tauri/src/db/audio_effects.rs
 
+import type { Timestamp, Uuid } from '../util.types';
 import type { AudioMixerConfiguration } from './audio-mixer-configurations.types';
 import type { ConfiguredAudioDevice } from './configured-audio-devices.types';
-import type { Timestamp, Uuid } from '../util.types';
 
 export type AudioEffectsDefault = {
   id: Uuid<AudioEffectsDefault>; // UUID as string

@@ -1,6 +1,6 @@
 import { Card, Stack, Group, Title, Text, Button, Badge, ScrollArea, ActionIcon, Tooltip, Modal } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
-import { IconHistory, IconPlayerPlay, IconFolder, IconTrash, IconDownload, IconMusic } from '@tabler/icons-react';
+import { IconHistory, IconPlayerPlay, IconFolder, IconDownload, IconMusic } from '@tabler/icons-react';
 import { memo, useState, useCallback } from 'react';
 
 import { useRecording } from '../../hooks/use-recording';
@@ -64,7 +64,7 @@ const formatDuration = (seconds: number): string => {
 };
 
 const formatFileSize = (bytes: number): string => {
-  if (bytes === 0) return '0 B';
+  if (bytes === 0) {return '0 B';}
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));

@@ -1,6 +1,6 @@
 import { Card, Button, Stack, Text, TextInput, Textarea, Alert, Modal } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import { IconPlus, IconAlertCircle, IconCheck } from '@tabler/icons-react';
+import { IconPlus, IconAlertCircle } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 
 import { useConfigurationStore } from '../stores/mixer-store';

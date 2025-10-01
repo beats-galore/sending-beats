@@ -14,6 +14,8 @@ Apply labels:
 - All should have "bug" label
 - Choose from low_priority, medium_priority, high_priority
 
+After creating summarizing the issue USE THE GITHUB CLI to file it on github.
+
 ### Bug Title
 
 **Date Discovered**: YYYY-MM-DD
