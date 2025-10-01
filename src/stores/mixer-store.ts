@@ -185,6 +185,12 @@ export const useMixerStore = create<MixerStore>()(
           try {
             await audioService.switchInputStream(previousInputDeviceId ?? null, newInputDeviceId);
             console.debug(`✅ Successfully switched input stream to: ${newInputDeviceId}`);
+
+            // **FIX**: Refetch active session to update configuredDevices list in UI
+            const updatedSession = await invoke<CompleteConfigurationData | null>(
+              'get_active_session_configuration'
+            );
+            set({ activeSession: updatedSession });
           } catch (streamErr) {
             console.error(`❌ Failed to switch input stream to ${newInputDeviceId}:`, streamErr);
             throw new Error(`Failed to switch input stream: ${streamErr}`);

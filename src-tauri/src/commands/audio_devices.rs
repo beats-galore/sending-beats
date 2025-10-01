@@ -152,6 +152,27 @@ pub async fn safe_switch_input_device(
         _ => None,
     };
 
+    // **FIX**: Create database entry BEFORE sending command
+    // The audio pipeline needs to query the database for channel number during device setup
+    if let Some((device_name, sample_rate, channels)) = device_info.clone() {
+        if let Err(e) = crate::commands::configurations::create_device_configuration(
+            &audio_state,
+            &new_device_id,
+            &device_name,
+            sample_rate as i32,
+            channels as u32,
+            true, // is_input
+            new_device_id.contains("BlackHole") || new_device_id.contains("SoundflowerBed"),
+        )
+        .await
+        {
+            return Err(format!(
+                "Failed to create device configuration in database: {}",
+                e
+            ));
+        }
+    }
+
     // Create command based on device type
     let buffer_capacity = 8192;
     let (producer, _consumer) = rtrb::RingBuffer::<f32>::new(buffer_capacity);
@@ -184,28 +205,40 @@ pub async fn safe_switch_input_device(
     // Wait for response from isolated audio thread
     match response_rx.await {
         Ok(Ok(())) => {
-            // Sync with database: create configured_audio_device entry
-            if let Some((device_name, sample_rate, channels)) = device_info {
-                if let Err(e) = crate::commands::configurations::create_device_configuration(
-                    &audio_state,
-                    &new_device_id,
-                    &device_name,
-                    sample_rate as i32,
-                    channels as u32,
-                    true, // is_input
-                    new_device_id.contains("BlackHole") || new_device_id.contains("SoundflowerBed"),
-                )
-                .await
-                {
-                    tracing::warn!("Failed to create device configuration in database: {}", e);
-                    // Don't fail the command if database sync fails
-                }
-            }
-
+            tracing::info!("✅ Successfully added input device: {}", new_device_id);
             Ok(())
         }
-        Ok(Err(e)) => Err(format!("Failed to add input device: {}", e)),
-        Err(_) => Err("Audio system did not respond".to_string()),
+        Ok(Err(e)) => {
+            // If audio pipeline fails, clean up the database entry we created
+            tracing::error!("Failed to add input device to audio pipeline: {}", e);
+            if let Err(cleanup_err) = crate::commands::configurations::remove_device_configuration(
+                &audio_state,
+                &new_device_id,
+            )
+            .await
+            {
+                tracing::warn!(
+                    "Failed to clean up device configuration after error: {}",
+                    cleanup_err
+                );
+            }
+            Err(format!("Failed to add input device: {}", e))
+        }
+        Err(_) => {
+            // If audio system doesn't respond, clean up the database entry
+            if let Err(cleanup_err) = crate::commands::configurations::remove_device_configuration(
+                &audio_state,
+                &new_device_id,
+            )
+            .await
+            {
+                tracing::warn!(
+                    "Failed to clean up device configuration after timeout: {}",
+                    cleanup_err
+                );
+            }
+            Err("Audio system did not respond".to_string())
+        }
     }
 }
 

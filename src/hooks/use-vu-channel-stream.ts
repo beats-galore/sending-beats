@@ -39,8 +39,7 @@ export const useVUChannelStream = (isEnabled = true) => {
     }
 
     let channel: Channel<VUChannelData> | null = null;
-    let messageCount = 0;
-    let lastLogTime = Date.now();
+
     let pendingChannelLevels: Record<number, [number, number, number, number]> = {};
     let pendingMasterLevels: {
       left: { peak_level: number; rms_level: number };
@@ -82,32 +81,8 @@ export const useVUChannelStream = (isEnabled = true) => {
         // Create a new channel for high-performance VU data streaming
         channel = new Channel<VUChannelData>();
 
-        let firstMessageTime = 0;
-        let lastMessageTime = 0;
-
         // Set up message handler for incoming VU data
         channel.onmessage = (data: VUChannelData) => {
-          const now = Date.now();
-          if (messageCount === 0) {
-            firstMessageTime = now;
-          }
-          lastMessageTime = now;
-          messageCount++;
-
-          // Log timing every 10 messages at 1fps
-          if (messageCount % 10 === 0) {
-            const totalTime = now - firstMessageTime;
-            const timeSinceLastLog = now - lastLogTime;
-            const messagesPerSecond = (10 / timeSinceLastLog) * 1000;
-            const avgDelay = totalTime / messageCount;
-
-            console.log(
-              `📊 VU_CHANNEL_DEBUG: msg #${messageCount}, ${messagesPerSecond.toFixed(1)}/sec, avg delay: ${avgDelay.toFixed(0)}ms, total time: ${totalTime}ms`
-            );
-
-            lastLogTime = now;
-          }
-
           if (data.type === 'Channel') {
             // Handle channel VU data - accumulate in pending batch
             const vuData = data.data;
@@ -121,10 +96,6 @@ export const useVUChannelStream = (isEnabled = true) => {
               dbToLinear(vuData.peak_right),
               dbToLinear(vuData.rms_right),
             ];
-
-            if (messageCount % 500 === 0) {
-              console.log(`📥 Received channel ${vuData.channel} VU data:`, vuData);
-            }
           } else if (data.type === 'Master') {
             // Handle master VU data - accumulate in pending batch
             const vuData = data.data;
@@ -142,21 +113,11 @@ export const useVUChannelStream = (isEnabled = true) => {
                 rms_level: dbToLinear(vuData.rms_right),
               },
             };
-
-            if (messageCount % 500 === 0) {
-              console.log('📥 Received master VU data:', vuData);
-            }
           }
 
           // Schedule flush on next animation frame (only once per frame)
           if (rafId === null) {
             rafId = requestAnimationFrame(flushUpdates);
-            if (messageCount % 1000 === 0) {
-              console.log('⏰ Scheduled RAF flush, pending:', {
-                channels: Object.keys(pendingChannelLevels).length,
-                hasMaster: !!pendingMasterLevels,
-              });
-            }
           }
         };
 
