@@ -132,7 +132,7 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
   const { classes } = useStyles();
 
   const { inputDevices, refreshDevices } = useAudioDevices();
-  const { activeSession } = useConfigurationStore();
+  const { activeSession, loadConfigurations } = useConfigurationStore();
   const applicationAudio = useApplicationAudio();
 
   // Select only the effects data we need from the store
@@ -144,11 +144,14 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
 
   const configuredInputDevice = useMemo(() => {
     if (!activeSession?.configuredDevices) {
+      console.log(`❌ No activeSession or configuredDevices for channel ${channel.id}`);
       return null;
     }
-    return activeSession.configuredDevices.find(
+    const device = activeSession.configuredDevices.find(
       (device) => device.channelNumber === channel.id && device.isInput
     );
+    console.log(`🔍 configuredInputDevice for channel ${channel.id}:`, device);
+    return device;
   }, [activeSession, channel.id]);
 
   const deviceEffects = useMemo(() => {
@@ -222,6 +225,11 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
           console.log(`🔧 FRONTEND: Switching input device: ${currentDeviceId} → ${deviceId}`);
           await audioService.switchInputStream(currentDeviceId, deviceId);
           console.debug(`✅ Channel ${channel.id} input device switched to: ${deviceId}`);
+
+          // **FIX**: Refetch active session to update configured devices in UI
+          console.log('🔄 Refetching configurations to update UI...');
+          await loadConfigurations();
+          console.log('✅ Configurations refetched successfully');
         } catch (error) {
           console.error(`❌ Failed to switch input device for channel ${channel.id}:`, error);
         }

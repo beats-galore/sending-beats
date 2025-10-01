@@ -332,6 +332,39 @@ pub async fn create_device_configuration(
     let now = chrono::Utc::now();
     let device_uuid = uuid::Uuid::new_v4();
 
+    // Find the next available channel number for input devices
+    let next_channel_number = if is_input {
+        // Get all input devices in this configuration
+        let existing_input_devices = crate::entities::configured_audio_device::Entity::find()
+            .filter(
+                crate::entities::configured_audio_device::Column::ConfigurationId
+                    .eq(&session_config.id),
+            )
+            .filter(crate::entities::configured_audio_device::Column::IsInput.eq(true))
+            .filter(crate::entities::configured_audio_device::Column::DeletedAt.is_null())
+            .all(state.database.sea_orm())
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // Find the highest channel number and add 1
+        let max_channel = existing_input_devices
+            .iter()
+            .map(|d| d.channel_number)
+            .max()
+            .unwrap_or(-1);
+
+        max_channel + 1
+    } else {
+        0 // Output devices don't use channel numbers the same way
+    };
+
+    tracing::info!(
+        "{}: Assigning channel number {} to device {}",
+        "CHANNEL_ASSIGN".on_blue().magenta(),
+        next_channel_number,
+        device_id
+    );
+
     // Create configured_audio_device entry
     let device_entry = crate::entities::configured_audio_device::ActiveModel {
         id: sea_orm::Set(device_uuid.to_string()),
@@ -346,7 +379,7 @@ pub async fn create_device_configuration(
         }),
         is_virtual: sea_orm::Set(is_virtual),
         is_input: sea_orm::Set(is_input),
-        channel_number: sea_orm::Set(0), // Default to channel 0, will be updated when assigned to mixer channel
+        channel_number: sea_orm::Set(next_channel_number),
         configuration_id: sea_orm::Set(session_config.id.clone()),
         created_at: sea_orm::Set(now),
         updated_at: sea_orm::Set(now),
