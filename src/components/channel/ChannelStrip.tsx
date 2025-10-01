@@ -23,11 +23,14 @@ import {
   IconVolume,
   IconShield,
 } from '@tabler/icons-react';
-import { memo, useCallback, useMemo, useState, useEffect } from 'react';
+import { memo, useCallback, useMemo, useState, useEffect, useRef } from 'react';
 
 import { useMixerState, useAudioDevices, useApplicationAudio } from '../../hooks';
 import { audioService } from '../../services';
-import { useAudioEffectsDefaultStore } from '../../stores/audio-effects-default-store';
+import {
+  useAudioEffectsDefaultStore,
+  audioEffectsDefaultActions,
+} from '../../stores/audio-effects-default-store';
 import { useConfigurationStore } from '../../stores/mixer-store';
 
 import { ChannelEffects } from './ChannelEffects';
@@ -135,7 +138,13 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
   const { inputDevices, refreshDevices } = useAudioDevices();
   const { activeSession } = useConfigurationStore();
   const applicationAudio = useApplicationAudio();
-  const effectsDefaultStore = useAudioEffectsDefaultStore();
+
+  // Select only the effects data we need from the store
+  const effectsById = useAudioEffectsDefaultStore((state) => state.effectsById);
+
+  // Extract stable function references
+  const { loadEffects, updateGain, updatePan, toggleMute, toggleSolo, getEffectsByDeviceId } =
+    audioEffectsDefaultActions;
 
   const configuredInputDevice = useMemo(() => {
     if (!activeSession?.configuredDevices) return null;
@@ -146,8 +155,8 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
 
   const deviceEffects = useMemo(() => {
     if (!configuredInputDevice) return null;
-    return effectsDefaultStore.getEffectsByDeviceId(configuredInputDevice.id);
-  }, [configuredInputDevice, effectsDefaultStore]);
+    return getEffectsByDeviceId(configuredInputDevice.id);
+  }, [configuredInputDevice, effectsById, getEffectsByDeviceId]);
 
   // State for expandable sections
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -155,6 +164,10 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
   const [showEffects, setShowEffects] = useState(false);
 
   const [activeEffects, setActiveEffects] = useState<string[]>([]);
+
+  // Local state for slider values during dragging
+  const [localGainDb, setLocalGainDb] = useState<number | null>(null);
+  const [localPan, setLocalPan] = useState<number | null>(null);
 
   useEffect(() => {
     const loadActiveEffects = async () => {
@@ -170,27 +183,27 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
 
   useEffect(() => {
     if (activeSession?.configuration.id) {
-      void effectsDefaultStore.loadEffects(activeSession.configuration.id);
+      void loadEffects(activeSession.configuration.id);
     }
-  }, [activeSession?.configuration.id, effectsDefaultStore]);
+  }, [activeSession?.configuration.id, loadEffects]);
 
   const handleMuteToggle = useCallback(() => {
     if (!deviceEffects || !configuredInputDevice || !activeSession) return;
-    void effectsDefaultStore.toggleMute(
+    void toggleMute(
       deviceEffects.id,
-      configuredInputDevice.id,
+      configuredInputDevice.deviceIdentifier,
       activeSession.configuration.id
     );
-  }, [deviceEffects, configuredInputDevice, activeSession, effectsDefaultStore]);
+  }, [deviceEffects, configuredInputDevice, activeSession, toggleMute]);
 
   const handleSoloToggle = useCallback(() => {
     if (!deviceEffects || !configuredInputDevice || !activeSession) return;
-    void effectsDefaultStore.toggleSolo(
+    void toggleSolo(
       deviceEffects.id,
-      configuredInputDevice.id,
+      configuredInputDevice.deviceIdentifier,
       activeSession.configuration.id
     );
-  }, [deviceEffects, configuredInputDevice, activeSession, effectsDefaultStore]);
+  }, [deviceEffects, configuredInputDevice, activeSession, toggleSolo]);
 
   const handleInputDeviceChange = useCallback(
     async (deviceId: Identifier<ConfiguredAudioDevice> | null) => {
@@ -223,30 +236,47 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
     [channel.id, configuredInputDevice, inputDevices]
   );
 
-  const handleGainChange = useCallback(
-    (gain: number) => {
+  // Handle gain slider change (during drag)
+  const handleGainChange = useCallback((gainDb: number) => {
+    setLocalGainDb(gainDb);
+  }, []);
+
+  // Handle gain slider change end (on release)
+  const handleGainChangeEnd = useCallback(
+    (gainDb: number) => {
       if (!deviceEffects || !configuredInputDevice || !activeSession) return;
-      void effectsDefaultStore.updateGain(
+
+      const gain = 10 ** (gainDb / 20);
+      void updateGain(
         deviceEffects.id,
-        configuredInputDevice.id,
+        configuredInputDevice.deviceIdentifier,
         activeSession.configuration.id,
         gain
       );
+      setLocalGainDb(null);
     },
-    [deviceEffects, configuredInputDevice, activeSession, effectsDefaultStore]
+    [deviceEffects, configuredInputDevice, activeSession, updateGain]
   );
 
-  const handlePanChange = useCallback(
+  // Handle pan slider change (during drag)
+  const handlePanChange = useCallback((pan: number) => {
+    setLocalPan(pan);
+  }, []);
+
+  // Handle pan slider change end (on release)
+  const handlePanChangeEnd = useCallback(
     (pan: number) => {
       if (!deviceEffects || !configuredInputDevice || !activeSession) return;
-      void effectsDefaultStore.updatePan(
+
+      void updatePan(
         deviceEffects.id,
-        configuredInputDevice.id,
+        configuredInputDevice.deviceIdentifier,
         activeSession.configuration.id,
         pan
       );
+      setLocalPan(null);
     },
-    [deviceEffects, configuredInputDevice, activeSession, effectsDefaultStore]
+    [deviceEffects, configuredInputDevice, activeSession, updatePan]
   );
 
   // Effect handling
@@ -269,15 +299,18 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
     (effect) => !activeEffects.includes(effect.value)
   );
 
-  const gainDb = deviceEffects ? 20 * Math.log10(Math.max(0.01, deviceEffects.gain)) : 0;
+  // Use local state during dragging, otherwise use stored value
+  const gainDb =
+    localGainDb !== null
+      ? localGainDb
+      : deviceEffects
+        ? 20 * Math.log10(Math.max(0.01, deviceEffects.gain))
+        : 0;
 
-  const panDisplay = deviceEffects
-    ? deviceEffects.pan === 0
-      ? 'CENTER'
-      : deviceEffects.pan > 0
-        ? `R${Math.round(deviceEffects.pan * 100)}`
-        : `L${Math.round(Math.abs(deviceEffects.pan) * 100)}`
-    : 'CENTER';
+  const pan = localPan !== null ? localPan : deviceEffects?.pan ?? 0;
+
+  const panDisplay =
+    pan === 0 ? 'CENTER' : pan > 0 ? `R${Math.round(pan * 100)}` : `L${Math.round(Math.abs(pan) * 100)}`;
 
   // Memoize input device options to prevent re-renders (including application sources)
   const inputDeviceOptions = useMemo(() => {
@@ -377,7 +410,8 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
                 max={6}
                 step={0.5}
                 value={gainDb}
-                onChange={(value) => handleGainChange(10 ** (value / 20))}
+                onChange={handleGainChange}
+                onChangeEnd={handleGainChangeEnd}
                 marks={[
                   { value: -20, label: '-20' },
                   { value: 0, label: '0' },
@@ -395,8 +429,9 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
                 min={-1}
                 max={1}
                 step={0.05}
-                value={deviceEffects?.pan ?? 0}
+                value={pan}
                 onChange={handlePanChange}
+                onChangeEnd={handlePanChangeEnd}
                 marks={[
                   { value: -1, label: 'L' },
                   { value: 0, label: 'C' },

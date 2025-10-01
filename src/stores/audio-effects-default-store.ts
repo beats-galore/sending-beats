@@ -11,6 +11,7 @@ type AudioEffectsDefaultStore = {
   effectsById: Record<string, AudioEffectsDefault>;
   isLoading: boolean;
   error: string | null;
+  loadedConfigurationId: string | null;
 
   loadEffects: (configurationId: Uuid<AudioMixerConfiguration>) => Promise<void>;
   updateGain: (
@@ -41,13 +42,21 @@ type AudioEffectsDefaultStore = {
   clearError: () => void;
 };
 
-export const useAudioEffectsDefaultStore = create<AudioEffectsDefaultStore>()(
+const store = create<AudioEffectsDefaultStore>()(
   subscribeWithSelector((set, get) => ({
     effectsById: {},
     isLoading: false,
     error: null,
+    loadedConfigurationId: null,
 
     loadEffects: async (configurationId: Uuid<AudioMixerConfiguration>) => {
+      const { isLoading, loadedConfigurationId } = get();
+
+      // Skip if already loading or already loaded for this configuration
+      if (isLoading || loadedConfigurationId === configurationId) {
+        return;
+      }
+
       set({ isLoading: true, error: null });
 
       try {
@@ -63,7 +72,7 @@ export const useAudioEffectsDefaultStore = create<AudioEffectsDefaultStore>()(
           {} as Record<string, AudioEffectsDefault>
         );
 
-        set({ effectsById, isLoading: false });
+        set({ effectsById, isLoading: false, loadedConfigurationId: configurationId });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Failed to load effects';
         set({ error: errorMessage, isLoading: false });
@@ -212,3 +221,36 @@ export const useAudioEffectsDefaultStore = create<AudioEffectsDefaultStore>()(
     clearError: () => set({ error: null }),
   }))
 );
+
+// Export the hook for state selection
+export const useAudioEffectsDefaultStore = store;
+
+// Export actions directly so they don't create dependencies
+export const audioEffectsDefaultActions = {
+  loadEffects: (configurationId: Uuid<AudioMixerConfiguration>) =>
+    store.getState().loadEffects(configurationId),
+  updateGain: (
+    effectsId: Uuid<AudioEffectsDefault>,
+    deviceId: Uuid<ConfiguredAudioDevice>,
+    configurationId: Uuid<AudioMixerConfiguration>,
+    gain: number
+  ) => store.getState().updateGain(effectsId, deviceId, configurationId, gain),
+  updatePan: (
+    effectsId: Uuid<AudioEffectsDefault>,
+    deviceId: Uuid<ConfiguredAudioDevice>,
+    configurationId: Uuid<AudioMixerConfiguration>,
+    pan: number
+  ) => store.getState().updatePan(effectsId, deviceId, configurationId, pan),
+  toggleMute: (
+    effectsId: Uuid<AudioEffectsDefault>,
+    deviceId: Uuid<ConfiguredAudioDevice>,
+    configurationId: Uuid<AudioMixerConfiguration>
+  ) => store.getState().toggleMute(effectsId, deviceId, configurationId),
+  toggleSolo: (
+    effectsId: Uuid<AudioEffectsDefault>,
+    deviceId: Uuid<ConfiguredAudioDevice>,
+    configurationId: Uuid<AudioMixerConfiguration>
+  ) => store.getState().toggleSolo(effectsId, deviceId, configurationId),
+  getEffectsByDeviceId: (deviceId: Uuid<ConfiguredAudioDevice>) =>
+    store.getState().getEffectsByDeviceId(deviceId),
+};
