@@ -1,4 +1,4 @@
-// Professional DJ Streaming Client - Modernized with Mantine
+//  DJ Streaming Client - Modernized with Mantine
 import {
   Box,
   Stack,
@@ -255,7 +255,9 @@ const DJClient = memo(() => {
 
   const startAudioMonitoring = async () => {
     try {
-      if (!selectedDevice) {return;}
+      if (!selectedDevice) {
+        return;
+      }
 
       let stream: MediaStream;
 
@@ -395,7 +397,9 @@ const DJClient = memo(() => {
   }, [controlsActions]);
 
   const updateMetadata = useCallback(async () => {
-    if (!metadata.title || !metadata.artist) {return;}
+    if (!metadata.title || !metadata.artist) {
+      return;
+    }
 
     try {
       await controlsActions.updateMetadata(metadata.title, metadata.artist);

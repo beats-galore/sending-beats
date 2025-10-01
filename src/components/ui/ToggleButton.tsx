@@ -1,4 +1,4 @@
-// Professional toggle button component for mixer controls
+//  toggle button component for mixer controls
 import React, { memo } from 'react';
 
 import { COLORS } from '../../types';

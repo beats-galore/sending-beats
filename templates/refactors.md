@@ -13,6 +13,8 @@ Apply labels:
 - Add ui for UI only
 - All should have "enhancement" label
 
+After creating summarizing the issue USE THE GITHUB CLI to file it on github.
+
 ### Refactor Title
 
 **Date Identified**: YYYY-MM-DD

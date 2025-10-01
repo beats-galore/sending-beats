@@ -1,4 +1,4 @@
-// Professional VU Meter component with optimized performance
+//  VU Meter component with optimized performance
 import { Box } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { memo, useMemo, useRef, useCallback } from 'react';
@@ -6,7 +6,6 @@ import { memo, useMemo, useRef, useCallback } from 'react';
 import { VU_METER_COLORS, VU_METER_ZONES } from '../../types';
 import type { VUMeterProps } from '../../types';
 import { audioCalculations } from '../../utils';
-
 
 const useStyles = createStyles((theme) => ({
   container: {
@@ -201,7 +200,9 @@ export const VUMeter = memo<VUMeterProps>(
 
     // Memoize labels rendering (only depends on dimensions and orientation)
     const labelElements = useMemo(() => {
-      if (!showLabels) {return null;}
+      if (!showLabels) {
+        return null;
+      }
 
       const labels = [0, -6, -12, -18, -24, -30, -40, -60];
 

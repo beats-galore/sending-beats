@@ -100,7 +100,7 @@ impl RmsDetector {
     }
 }
 
-/// Professional spectrum analyzer for real-time frequency domain analysis
+///  spectrum analyzer for real-time frequency domain analysis
 pub struct SpectrumAnalyzer {
     sample_rate: u32,
     fft_size: usize,

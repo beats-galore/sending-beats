@@ -1,11 +1,10 @@
-// Professional audio slider component
+//  audio slider component
 import { Stack, Text, Box, Slider } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { memo, useCallback, useMemo } from 'react';
 
 import type { AudioSliderProps } from '../../types';
 import { useDebounce } from '../../utils/performance-helpers';
-
 
 const useStyles = createStyles((theme) => ({
   container: {

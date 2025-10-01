@@ -1,4 +1,4 @@
-// Professional Radio Streaming Platform - Modernized with Mantine
+//  Radio Streaming Platform - Modernized with Mantine
 import { AppShell, Box } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { createStyles } from '@mantine/styles';
