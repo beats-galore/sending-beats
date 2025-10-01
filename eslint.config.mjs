@@ -1,247 +1,159 @@
-import js from '@eslint/js';
-import tseslint from 'typescript-eslint';
-import react from 'eslint-plugin-react';
-import reactHooks from 'eslint-plugin-react-hooks';
-import reactRefresh from 'eslint-plugin-react-refresh';
-import jsxA11y from 'eslint-plugin-jsx-a11y';
-import importPlugin from 'eslint-plugin-import';
 import { FlatCompat } from '@eslint/eslintrc';
-import mantine from 'eslint-config-mantine';
-import path from 'path';
+import { fixupConfigRules } from '@eslint/compat';
+import eslint from '@eslint/js';
+import tseslintPlugin from '@typescript-eslint/eslint-plugin';
+import importPlugin from 'eslint-plugin-import';
+import reactPlugin from 'eslint-plugin-react';
+import reactHooksPlugin from 'eslint-plugin-react-hooks';
+import unusedImports from 'eslint-plugin-unused-imports';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import tseslint from 'typescript-eslint';
 
-const __dirname = path.dirname(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const compat = new FlatCompat({
   baseDirectory: __dirname,
 });
 
-export default tseslint.config(
+export const extendableBaseConfig = [
+  eslint.configs.recommended,
   {
-    // Global ignores
-    ignores: [
-      'postcss.config.js',
-      'eslint.config.mjs',
-      'dist/**',
-      'build/**',
-      'node_modules/**',
-      'src-tauri/target/**',
-      'src-tauri/gen/**',
-      '*.min.js',
-      '*.min.css',
-      'public/mockServiceWorker.js',
-      'coverage/**',
-      '.nyc_output/**',
-      'vite.config.ts.timestamp-*',
-    ],
+    ignores: ['**/node_modules', '**/*.json', '**/dist/**', 'eslint.config.mjs'],
   },
-
-  // Base JavaScript configuration
-  js.configs.recommended,
-  ...mantine,
-  { ignores: ['**/*.{mjs,cjs,js,d.ts,d.mts}'] },
-
-  // TypeScript configuration
-  tseslint.configs.recommendedTypeChecked,
-  ...tseslint.configs.stylisticTypeChecked,
   ...compat.extends('prettier'),
-
+  ...tseslint.configs.recommendedTypeChecked,
   {
-    files: ['**/*.{js,jsx,ts,tsx}'],
+    files: ['**/*.{ts,tsx}'],
+
+    plugins: {
+      '@typescript-eslint': tseslintPlugin,
+      'unused-imports': unusedImports,
+
+      import: importPlugin,
+      'react-hooks': reactHooksPlugin,
+    },
     languageOptions: {
       parser: tseslint.parser,
       parserOptions: {
+        project: './tsconfig.eslint.json',
+        tsconfigRootDir: __dirname,
         ecmaVersion: 'latest',
-        sourceType: 'module',
         ecmaFeatures: {
           jsx: true,
         },
-        project: [path.resolve(path.dirname(new URL(import.meta.url).pathname), 'tsconfig.json')],
-        tsconfigRootDir: path.resolve(path.dirname(new URL(import.meta.url).pathname)),
-      },
-      globals: {
-        // Browser globals
-        window: 'readonly',
-        document: 'readonly',
-        console: 'readonly',
-        // Node.js globals for config files
-        process: 'readonly',
-        __dirname: 'readonly',
-        __filename: 'readonly',
-        // Tauri globals
-        __TAURI__: 'readonly',
-        __TAURI_IPC__: 'readonly',
       },
     },
-
-    plugins: {
-      react,
-      'react-hooks': reactHooks,
-      'react-refresh': reactRefresh,
-
-      import: importPlugin,
+    settings: {
+      'import/resolver': {
+        typescript: {
+          project: './src',
+        },
+        node: {
+          moduleDirectory: ['node_modules', './'],
+          extensions: ['.d.ts', '.ts', '.tsx', '.js', '.jsx', '.json'],
+          paths: ['src'],
+        },
+      },
+      'import/parsers': {
+        '@typescript-eslint/parser': ['.ts', '.tsx'],
+      },
     },
-
     rules: {
-      // React plugin rules
-      ...react.configs.recommended.rules,
-      ...react.configs['jsx-runtime'].rules,
-
-      // React Hooks rules
-      ...reactHooks.configs.recommended.rules,
-
-      // React Refresh rules
-      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
-
-      // JSX A11y rules
-      ...jsxA11y.configs.recommended.rules,
-
-      // Import/Export rules
+      'eslint-comments/no-unused-disable': 'off',
+      '@typescript-eslint/consistent-type-imports': 'warn',
+      camelcase: 'off',
+      'no-unsafe-optional-chaining': 'warn',
+      'no-unused-vars': 'off',
+      'unused-imports/no-unused-vars': 'off',
+      'unused-imports/no-unused-imports': 'error',
+      curly: ['error', 'all'],
+      'import/extensions': 'off',
+      eqeqeq: ['error', 'always'],
+      'max-len': 'off',
+      'no-console': 'off',
+      'no-restricted-syntax': 'off',
+      'no-await-in-loop': 'off',
+      'no-continue': 'off',
+      'no-void': 'off',
+      'prefer-destructuring': 'off',
+      'class-methods-use-this': 'off',
+      'max-classes-per-file': 'off',
+      '@typescript-eslint/no-var-requires': ['error'],
+      '@typescript-eslint/no-empty-function': ['off'],
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          varsIgnorePattern: '^_',
+          argsIgnorePattern: '^_',
+        },
+      ],
+      '@typescript-eslint/no-unnecessary-condition': ['warn'],
+      '@typescript-eslint/no-require-imports': 'error',
+      '@typescript-eslint/return-await': 'error',
+      '@typescript-eslint/no-shadow': ['error'],
+      '@typescript-eslint/no-explicit-any': 'warn',
+      'no-use-before-define': 'off',
+      'no-underscore-dangle': 'off',
+      '@typescript-eslint/no-use-before-define': ['off'],
+      'no-param-reassign': [
+        'error',
+        {
+          props: false,
+        },
+      ],
+      'no-plusplus': 'off',
+      'prefer-rest-params': 'warn',
+      'import/prefer-default-export': 'off',
+      'import/no-cycle': 'off',
+      'import/no-default-export': 'warn',
+      'import/no-commonjs': 'error',
+      '@typescript-eslint/no-misused-promises': 'warn',
+      '@typescript-eslint/naming-convention': [
+        'error',
+        {
+          selector: ['typeLike'],
+          format: ['PascalCase'],
+        },
+      ],
       'import/order': [
         'error',
         {
-          groups: [
-            'builtin',
-            'external',
-            'internal',
-            'parent',
-            'sibling',
-            'index',
-            'object',
-            'type',
-          ],
-          'newlines-between': 'always',
+          groups: [['builtin', 'external'], 'internal', 'parent', 'sibling', 'index', 'object'],
           alphabetize: {
             order: 'asc',
             caseInsensitive: true,
           },
         },
       ],
-      'import/newline-after-import': 'error',
-      'import/no-duplicates': 'error',
-      'import/no-unresolved': 'off', // TypeScript handles this
-
-      // TypeScript-specific overrides
-      '@typescript-eslint/no-unused-vars': [
+      'import/no-restricted-paths': ['error'],
+      'no-restricted-imports': ['error'],
+    },
+  },
+  {
+    files: ['**/*.js'],
+    rules: {
+      'import/no-commonjs': 'off',
+    },
+  },
+  {
+    files: ['**/*.{ts,tsx}'],
+    rules: {
+      '@typescript-eslint/no-require-imports': [
         'error',
         {
-          argsIgnorePattern: '^_',
-          varsIgnorePattern: '^_',
-          ignoreRestSiblings: true,
+          allow: ['.*\\.(png|jpg|gif|svg)$'],
         },
       ],
-      '@typescript-eslint/no-explicit-any': 'error',
-      '@typescript-eslint/prefer-nullish-coalescing': 'error',
-      '@typescript-eslint/prefer-optional-chain': 'error',
-      '@typescript-eslint/no-unsafe-assignment': 'warn',
-      '@typescript-eslint/no-unsafe-call': 'warn',
-      '@typescript-eslint/no-unsafe-member-access': 'warn',
-      '@typescript-eslint/no-unsafe-return': 'warn',
-      '@typescript-eslint/no-floating-promises': 'error',
-      '@typescript-eslint/await-thenable': 'error',
-      '@typescript-eslint/require-await': 'error',
-      '@typescript-eslint/no-misused-promises': 'error',
-      '@typescript-eslint/prefer-as-const': 'error',
-      '@typescript-eslint/consistent-type-imports': ['error', { prefer: 'type-imports' }],
-      '@typescript-eslint/consistent-type-definitions': ['error', 'type'],
-
-      // React-specific rules
-      'react/prop-types': 'off', // We use TypeScript
-      'react/react-in-jsx-scope': 'off', // React 17+ doesn't need this
-      'react/jsx-uses-react': 'off', // React 17+ doesn't need this
-      'react/jsx-key': 'error',
-      'react/jsx-no-duplicate-props': 'error',
-      'react/jsx-no-undef': 'error',
-      'react/display-name': 'off',
-      'react/jsx-pascal-case': 'error',
-      'react/no-children-prop': 'error',
-      'react/no-danger-with-children': 'error',
-      'react/no-deprecated': 'error',
-      'react/no-direct-mutation-state': 'error',
-      'react/no-find-dom-node': 'error',
-      'react/no-is-mounted': 'error',
-      'react/no-render-return-value': 'error',
-      'react/no-string-refs': 'error',
-      'react/no-unescaped-entities': 'error',
-      'react/no-unknown-property': 'error',
-      'react/no-unsafe': 'error',
-      'react/require-render-return': 'error',
-      'react/self-closing-comp': 'error',
-      'react/jsx-fragments': ['error', 'syntax'],
-      'react/jsx-no-useless-fragment': 'error',
-      'react/jsx-curly-brace-presence': ['error', { props: 'never', children: 'never' }],
-
-      // Performance rules
-      'react-hooks/exhaustive-deps': 'warn',
-
-      // General JavaScript rules
-      'no-console': ['warn', { allow: ['warn', 'error', 'debug'] }],
-      'no-debugger': 'error',
-      'no-alert': 'error',
-      'no-eval': 'error',
-      'no-implied-eval': 'error',
-      'no-new-func': 'error',
-      'no-script-url': 'error',
-      'no-var': 'error',
-      'prefer-const': 'error',
-      'prefer-arrow-callback': 'error',
-      'arrow-spacing': 'error',
-      'object-shorthand': 'error',
-      'prefer-template': 'error',
-      'template-curly-spacing': 'error',
-      'no-useless-concat': 'error',
-      'no-useless-escape': 'error',
-      'no-duplicate-imports': 'off', // Use import plugin instead
-      'sort-imports': 'off', // Use import plugin instead
-    },
-
-    settings: {
-      react: {
-        version: 'detect',
-      },
-      'import/resolver': {
-        typescript: {
-          alwaysTryTypes: true,
-          project: './tsconfig.json',
+      '@typescript-eslint/no-var-requires': [
+        'error',
+        {
+          allow: ['.*\\.(png|jpg|gif|svg)$'],
         },
-      },
+      ],
     },
   },
+];
 
-  // Configuration files
-  {
-    files: ['*.config.{js,ts}', '.eslintrc.{js,cjs}'],
-    languageOptions: {
-      globals: {
-        process: 'readonly',
-        __dirname: 'readonly',
-        __filename: 'readonly',
-        module: 'readonly',
-        require: 'readonly',
-        exports: 'readonly',
-      },
-    },
-    rules: {
-      '@typescript-eslint/no-var-requires': 'off',
-      'import/no-extraneous-dependencies': 'off',
-    },
-  },
-
-  // TypeScript definition files
-  {
-    files: ['**/*.d.ts'],
-    rules: {
-      '@typescript-eslint/no-explicit-any': 'off',
-      '@typescript-eslint/ban-types': 'off',
-    },
-  },
-
-  // Test files (if you add tests later)
-  {
-    files: ['**/*.{test,spec}.{js,jsx,ts,tsx}'],
-    rules: {
-      '@typescript-eslint/no-explicit-any': 'off',
-      '@typescript-eslint/no-non-null-assertion': 'off',
-      'react/display-name': 'off',
-    },
-  }
-);
+export default tseslint.config(extendableBaseConfig);

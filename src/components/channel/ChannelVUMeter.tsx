@@ -1,5 +1,5 @@
 // Channel-specific stereo VU meter component with separate L/R channels
-import { Text, Center, Box, Stack } from '@mantine/core';
+import { Text, Center, Stack } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import { memo, useMemo, useRef } from 'react';
 
