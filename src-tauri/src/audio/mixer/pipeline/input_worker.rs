@@ -130,12 +130,12 @@ impl InputWorker {
     }
 
     /// Static helper function to get or initialize resampler in async context
-    /// This can be used in the worker thread where we don't have access to &mut self
+    /// Since we use SincFixedOut, we can dynamically adjust rates without recreation
     fn get_or_initialize_resampler_static<'a>(
         resampler: &'a mut Option<RubatoSRC>,
         device_sample_rate: u32,
         target_sample_rate: u32,
-        _chunk_size: usize, // Input device chunk size (unused with RubatoSRC)
+        _chunk_size: usize, // Input device chunk size
         channels: u16,      // Channel count for resampler configuration
         device_id: &str,
     ) -> Option<&'a mut RubatoSRC> {
@@ -146,49 +146,58 @@ impl InputWorker {
             return None;
         }
 
-        // Check if resampler exists and has the correct rates
-        let needs_recreation = if let Some(ref existing_resampler) = resampler {
-            existing_resampler.input_rate() != device_sample_rate
-                || existing_resampler.output_rate() != target_sample_rate
-        } else {
-            true // No resampler exists
-        };
+        // If resampler exists, adjust it dynamically; otherwise create new one
+        match resampler {
+            Some(ref mut existing_resampler) => {
+                let rates_changed = existing_resampler.input_rate() != device_sample_rate
+                    || existing_resampler.output_rate() != target_sample_rate;
 
-        // Create or recreate resampler if needed
-        if needs_recreation {
-            // **MATCHING OUTPUT_WORKER**: Use same RubatoSRC configuration as output_worker
-            // For input, we need to use sinc_fixed_output but we need the original channel count
-            // The channel count should be determined dynamically based on the actual input device
-            let frames_per_chunk = _chunk_size / channels as usize; // Convert samples to frames
-
-            match RubatoSRC::new_fft_fixed_input(
-                device_sample_rate as f32,
-                target_sample_rate as f32,
-                frames_per_chunk,  // Input frames from hardware buffer size
-                channels as usize, // dynamic channel count
-            ) {
-                Ok(new_resampler) => {
-                    info!(
-                        "🔄 {}: {} resampler for {} ({} Hz → {} Hz, ratio: {:.3})",
-                        "INPUT_RESAMPLER".green(),
-                        if resampler.is_some() {
-                            "Recreated"
-                        } else {
-                            "Created"
-                        },
-                        device_id,
-                        device_sample_rate,
-                        target_sample_rate,
-                        new_resampler.ratio()
-                    );
-                    *resampler = Some(new_resampler);
+                if rates_changed {
+                    // Use dynamic adjustment - SincFixedOut supports this
+                    if let Err(e) = existing_resampler.set_sample_rates(
+                        device_sample_rate as f32,
+                        target_sample_rate as f32,
+                        true, // Use ramping for smooth transitions
+                    ) {
+                        warn!(
+                            "⚠️ {}: Dynamic adjustment failed for {}: {} - recreating resampler",
+                            "DYNAMIC_ADJUST_FAILED".yellow(),
+                            device_id,
+                            e
+                        );
+                        // If dynamic adjustment fails, create a new resampler
+                        *resampler = None;
+                    }
                 }
-                Err(e) => {
-                    error!(
-                        "❌ INPUT_WORKER: Failed to create resampler for {}: {}",
-                        device_id, e
-                    );
-                    return None;
+            }
+            None => {
+                // Create new resampler
+                let frames_per_chunk = _chunk_size / channels as usize; // Convert samples to frames
+
+                match RubatoSRC::new_sinc_fixed_output(
+                    device_sample_rate as f32,
+                    target_sample_rate as f32,
+                    frames_per_chunk,  // Output frames we want to produce
+                    channels as usize, // dynamic channel count
+                ) {
+                    Ok(new_resampler) => {
+                        info!(
+                            "🔄 {}: Created resampler for {} ({} Hz → {} Hz, ratio: {:.3})",
+                            "INPUT_RESAMPLER".green(),
+                            device_id,
+                            device_sample_rate,
+                            target_sample_rate,
+                            new_resampler.ratio()
+                        );
+                        *resampler = Some(new_resampler);
+                    }
+                    Err(e) => {
+                        error!(
+                            "❌ INPUT_WORKER: Failed to create resampler for {}: {}",
+                            device_id, e
+                        );
+                        return None;
+                    }
                 }
             }
         }

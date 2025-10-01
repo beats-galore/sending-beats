@@ -183,6 +183,7 @@ impl OutputWorker {
     }
 
     /// Static helper function to get or initialize resampler in async context
+    /// Since we use SincFixedOut, we can dynamically adjust rates without recreation
     fn get_or_initialize_resampler_static<'a>(
         resampler: &'a mut Option<RubatoSRC>,
         input_sample_rate: u32,
@@ -197,81 +198,56 @@ impl OutputWorker {
             return None;
         }
 
-        // Check if we need to recreate the resampler or can use dynamic adjustment
-        let (needs_recreation, can_adjust_dynamically) =
-            if let Some(ref existing_resampler) = resampler {
+        // If resampler exists, adjust it dynamically; otherwise create new one
+        match resampler {
+            Some(ref mut existing_resampler) => {
                 let rates_changed = existing_resampler.input_rate() != input_sample_rate
                     || existing_resampler.output_rate() != output_sample_rate;
 
-                if rates_changed && existing_resampler.supports_dynamic_sample_rate() {
-                    (false, true) // Can adjust dynamically, no recreation needed
-                } else if rates_changed {
-                    (true, false) // Need recreation, no dynamic support
-                } else {
-                    (false, false) // No change needed
-                }
-            } else {
-                (true, false) // No resampler exists, need to create
-            };
-
-        // **DYNAMIC RATIO ADJUSTMENT**: Try to adjust existing resampler first
-        if can_adjust_dynamically {
-            if let Some(ref mut existing_resampler) = resampler {
-                match existing_resampler.set_sample_rates(
-                    input_sample_rate as f32,
-                    output_sample_rate as f32,
-                    true, // Use ramping for smooth transitions
-                ) {
-                    Ok(()) => {}
-                    Err(e) => {
-                        info!(
-                            "⚠️ {}: Dynamic adjustment failed: {} - falling back to recreation",
-                            "DYNAMIC_ADJUST_FALLBACK".yellow(),
+                if rates_changed {
+                    // Use dynamic adjustment - SincFixedOut supports this
+                    if let Err(e) = existing_resampler.set_sample_rates(
+                        input_sample_rate as f32,
+                        output_sample_rate as f32,
+                        true, // Use ramping for smooth transitions
+                    ) {
+                        warn!(
+                            "⚠️ {}: Dynamic adjustment failed for {}: {} - recreating resampler",
+                            "DYNAMIC_ADJUST_FAILED".yellow(),
+                            device_id,
                             e
                         );
-                        // Fall back to recreation
+                        // If dynamic adjustment fails, create a new resampler
                         *resampler = None;
                     }
                 }
             }
-        }
-
-        // Create or recreate resampler if needed
-        if needs_recreation {
-            // **CLOCK SYNC RESAMPLER**: Use SincFixedOut for dynamic ratio adjustment
-            match RubatoSRC::new_sinc_fixed_output(
-                input_sample_rate as f32,
-                output_sample_rate as f32,
-                chunk_size / 2,
-                2, // Output workers process stereo from mixing → convert to device channels later
-            ) {
-                // match RubatoSRC::new_fft_fixed_input(
-                //     input_sample_rate as f32,
-                //     output_sample_rate as f32,
-                //     128, // test value to match input sample rate currently hardcoded to 128 frames
-                // ) {
-                Ok(new_resampler) => {
-                    info!(
-                        "🔄 {}: {} resampler for {} ({} Hz → {} Hz, ratio: {:.3})",
-                        "OUTPUT_RESAMPLER".green(),
-                        if resampler.is_some() {
-                            "Recreated"
-                        } else {
-                            "Created"
-                        },
-                        device_id,
-                        input_sample_rate,
-                        output_sample_rate,
-                        new_resampler.ratio()
-                    );
-                    *resampler = Some(new_resampler);
-                }
-                Err(e) => {
-                    error!(
-                        "❌ OUTPUT_WORKER: Failed to create resampler for {}: {}",
-                        device_id, e
-                    );
-                    return None;
+            None => {
+                // Create new resampler
+                match RubatoSRC::new_sinc_fixed_output(
+                    input_sample_rate as f32,
+                    output_sample_rate as f32,
+                    chunk_size / 2,
+                    2,
+                ) {
+                    Ok(new_resampler) => {
+                        info!(
+                            "🔄 {}: Created resampler for {} ({} Hz → {} Hz, ratio: {:.3})",
+                            "OUTPUT_RESAMPLER".green(),
+                            device_id,
+                            input_sample_rate,
+                            output_sample_rate,
+                            new_resampler.ratio()
+                        );
+                        *resampler = Some(new_resampler);
+                    }
+                    Err(e) => {
+                        error!(
+                            "❌ OUTPUT_WORKER: Failed to create resampler for {}: {}",
+                            device_id, e
+                        );
+                        return None;
+                    }
                 }
             }
         }
