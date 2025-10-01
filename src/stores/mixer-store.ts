@@ -210,17 +210,24 @@ export const useMixerStore = create<MixerStore>()(
     },
 
     // Update master gain
-    updateMasterGain: async (gain: number) => {
+    updateMasterGain: async (gainDb: number) => {
       const { config } = get();
       if (!config) {
         throw new Error('Mixer not initialized');
       }
 
+      // Convert dB to linear gain for audio pipeline
+      const linearGain = 10 ** (gainDb / 20);
+
+      // Update audio pipeline with linear gain
+      await invoke('update_master_gain', { gain: linearGain });
+
+      // Store dB value in local state
       set((state) => ({
         config: state.config
           ? {
               ...state.config,
-              master_gain: gain,
+              master_gain: gainDb,
             }
           : null,
       }));

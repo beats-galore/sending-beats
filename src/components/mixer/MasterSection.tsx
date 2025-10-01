@@ -10,12 +10,11 @@ import {
   useAudioMetrics,
   useAudioDevices,
 } from '../../hooks';
-import { audioService } from '../../services';
 import { useConfigurationStore } from '../../stores/mixer-store';
-import { VUMeter, AudioSlider } from '../ui';
 
 import type { ConfiguredAudioDevice } from '../../types/db';
-import type { Identifier } from '../../types/util.types';
+import type { Identifier, Uuid } from '../../types/util.types';
+import { VUMeter, AudioSlider } from '../ui';
 
 const useStyles = createStyles(() => ({
   responsiveGrid: {
@@ -34,7 +33,9 @@ export const MasterSection = memo(() => {
 
   // Find the configured output device from the active session
   const configuredOutputDevice = useMemo(() => {
-    if (!activeSession?.configuredDevices) return null;
+    if (!activeSession?.configuredDevices) {
+      return null;
+    }
     return activeSession.configuredDevices.find(
       (device) => !device.isInput // Output devices have is_input = false
     );
@@ -59,27 +60,9 @@ export const MasterSection = memo(() => {
   );
 
   const outputDeviceOptions = useMemo(() => {
-    // Check for duplicates and deduplication if needed
-    const deviceMap = new Map();
-    const duplicateIds: string[] = [];
-
-    outputDevices.forEach((device) => {
-      if (deviceMap.has(device.id)) {
-        duplicateIds.push(device.id);
-        console.warn('🚨 Duplicate output device ID detected:', device.id, device.name);
-      }
-      deviceMap.set(device.id, device);
-    });
-
-    if (duplicateIds.length > 0) {
-      console.error('🚨 Found duplicate output device IDs:', duplicateIds);
-    }
-
-    // Return unique devices only
-    const uniqueDevices = Array.from(deviceMap.values());
-    const options = uniqueDevices.map((device) => ({
+    const options = outputDevices.map((device) => ({
       value: device.id,
-      label: device.name + (device.is_default ? ' (Default)' : ''),
+      label: device.name,
     }));
 
     // Add configured output device if it's not in the available devices list (missing/unplugged)
@@ -93,7 +76,7 @@ export const MasterSection = memo(() => {
         options.unshift({
           value: configuredOutputDevice.deviceIdentifier,
           label: `${deviceName} (unavailable)`,
-          disabled: true, // Disable the option so it can't be selected
+          disabled: true,
         });
       }
     }
@@ -160,8 +143,8 @@ export const MasterSection = memo(() => {
               <AudioSlider
                 label="Master Gain"
                 value={mixerConfig?.master_gain ?? 0}
-                min={-60}
-                max={12}
+                min={-50}
+                max={20}
                 step={0.5}
                 unit="dB"
                 onChange={handleMasterGainChange}

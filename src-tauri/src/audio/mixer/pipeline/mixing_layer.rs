@@ -8,6 +8,8 @@
 
 use anyhow::Result;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
@@ -41,7 +43,7 @@ pub struct MixingLayer {
 
     // Configuration
     target_sample_rate: Option<u32>,
-    master_gain: f32,
+    master_gain: Arc<AtomicU32>, // Use AtomicU32 to store f32 bits for thread-safe sharing
 
     // Worker thread
     worker_handle: Option<tokio::task::JoinHandle<()>>,
@@ -66,7 +68,7 @@ impl MixingLayer {
             mixed_output_senders: Vec::new(),
             command_tx,
             target_sample_rate: None,
-            master_gain: 1.0,
+            master_gain: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
             worker_handle: None,
             mix_cycles: 0,
             samples_mixed: 0,
@@ -140,7 +142,7 @@ impl MixingLayer {
                 return Ok(());
             }
         };
-        let master_gain = self.master_gain;
+        let master_gain = self.master_gain.clone();
 
         // Create command channel for this run
         let (command_tx, mut command_rx) = mpsc::unbounded_channel();
@@ -251,8 +253,9 @@ impl MixingLayer {
                         // Apply master gain to the mixed samples
                         let gain_start = std::time::Instant::now();
                         let mut final_samples = mixed_samples;
+                        let current_gain = f32::from_bits(master_gain.load(Ordering::Relaxed));
                         for sample in final_samples.iter_mut() {
-                            *sample *= master_gain;
+                            *sample *= current_gain;
                         }
                         let gain_duration = gain_start.elapsed();
 
@@ -356,7 +359,7 @@ impl MixingLayer {
     }
 
     pub fn set_master_gain(&mut self, gain: f32) {
-        self.master_gain = gain;
+        self.master_gain.store(gain.to_bits(), Ordering::Relaxed);
         info!("🎚️ MIXING_LAYER: Set master gain to {:.2}", gain);
     }
 

@@ -281,6 +281,7 @@ pub fn run() {
             remove_channel_effect,
             get_channel_effects,
             get_dj_mixer_config,
+            update_master_gain,
             set_debug_log_config,
             get_debug_log_config,
             // Icecast commands

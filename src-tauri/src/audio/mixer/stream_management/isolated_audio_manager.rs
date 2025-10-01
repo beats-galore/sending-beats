@@ -98,6 +98,10 @@ pub enum AudioCommand {
         solo: bool,
         response_tx: oneshot::Sender<Result<()>>,
     },
+    UpdateMasterGain {
+        gain: f32,
+        response_tx: oneshot::Sender<Result<()>>,
+    },
 }
 
 /// Audio System Coordinator - lightweight interface between Tauri commands and audio pipeline
@@ -392,6 +396,10 @@ impl IsolatedAudioManager {
                 response_tx,
             } => {
                 let result = self.audio_pipeline.update_input_solo(&device_id, solo);
+                let _ = response_tx.send(result);
+            }
+            AudioCommand::UpdateMasterGain { gain, response_tx } => {
+                let result = self.audio_pipeline.update_master_gain(gain);
                 let _ = response_tx.send(result);
             }
         }

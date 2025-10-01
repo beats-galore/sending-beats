@@ -674,6 +674,12 @@ impl AudioPipeline {
         Ok(())
     }
 
+    pub fn update_master_gain(&mut self, gain: f32) -> Result<()> {
+        self.mixing_layer.set_master_gain(gain);
+        info!("✅ AUDIO_PIPELINE: Updated master gain to {}", gain);
+        Ok(())
+    }
+
     /// Get comprehensive pipeline statistics
     pub fn get_pipeline_stats(&self) -> PipelineStats {
         let input_stats: HashMap<String, InputWorkerStats> = self
