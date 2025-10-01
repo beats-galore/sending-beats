@@ -9,23 +9,20 @@ import {
   Slider,
   Collapse,
   ActionIcon,
-  Divider,
   Box,
   Menu,
 } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
 import {
-  IconChevronDown,
-  IconChevronRight,
   IconRefresh,
   IconPlus,
   IconAdjustmentsHorizontal,
   IconVolume,
   IconShield,
 } from '@tabler/icons-react';
-import { memo, useCallback, useMemo, useState, useEffect, useRef } from 'react';
+import { memo, useCallback, useMemo, useState, useEffect } from 'react';
 
-import { useMixerState, useAudioDevices, useApplicationAudio } from '../../hooks';
+import { useAudioDevices, useApplicationAudio } from '../../hooks';
 import { audioService } from '../../services';
 import {
   useAudioEffectsDefaultStore,
@@ -33,12 +30,11 @@ import {
 } from '../../stores/audio-effects-default-store';
 import { useConfigurationStore } from '../../stores/mixer-store';
 
-import { ChannelEffects } from './ChannelEffects';
-import { ChannelVUMeter } from './ChannelVUMeter';
-
 import type { AudioChannel } from '../../types';
 import type { ConfiguredAudioDevice } from '../../types/db';
 import type { Identifier } from '../../types/util.types';
+import { ChannelEffects } from './ChannelEffects';
+import { ChannelVUMeter } from './ChannelVUMeter';
 
 const useStyles = createStyles(() => ({
   channelPaper: {
@@ -147,14 +143,18 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
     audioEffectsDefaultActions;
 
   const configuredInputDevice = useMemo(() => {
-    if (!activeSession?.configuredDevices) return null;
+    if (!activeSession?.configuredDevices) {
+      return null;
+    }
     return activeSession.configuredDevices.find(
       (device) => device.channelNumber === channel.id && device.isInput
     );
   }, [activeSession, channel.id]);
 
   const deviceEffects = useMemo(() => {
-    if (!configuredInputDevice) return null;
+    if (!configuredInputDevice) {
+      return null;
+    }
     return getEffectsByDeviceId(configuredInputDevice.id);
   }, [configuredInputDevice, effectsById, getEffectsByDeviceId]);
 
@@ -188,21 +188,17 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
   }, [activeSession?.configuration.id, loadEffects]);
 
   const handleMuteToggle = useCallback(() => {
-    if (!deviceEffects || !configuredInputDevice || !activeSession) return;
-    void toggleMute(
-      deviceEffects.id,
-      configuredInputDevice.deviceIdentifier,
-      activeSession.configuration.id
-    );
+    if (!deviceEffects || !configuredInputDevice || !activeSession) {
+      return;
+    }
+    void toggleMute(deviceEffects.id, configuredInputDevice.id, activeSession.configuration.id);
   }, [deviceEffects, configuredInputDevice, activeSession, toggleMute]);
 
   const handleSoloToggle = useCallback(() => {
-    if (!deviceEffects || !configuredInputDevice || !activeSession) return;
-    void toggleSolo(
-      deviceEffects.id,
-      configuredInputDevice.deviceIdentifier,
-      activeSession.configuration.id
-    );
+    if (!deviceEffects || !configuredInputDevice || !activeSession) {
+      return;
+    }
+    void toggleSolo(deviceEffects.id, configuredInputDevice.id, activeSession.configuration.id);
   }, [deviceEffects, configuredInputDevice, activeSession, toggleSolo]);
 
   const handleInputDeviceChange = useCallback(
@@ -244,12 +240,15 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
   // Handle gain slider change end (on release)
   const handleGainChangeEnd = useCallback(
     (gainDb: number) => {
-      if (!deviceEffects || !configuredInputDevice || !activeSession) return;
-
+      console.log('gain change end', gainDb);
+      if (!deviceEffects || !configuredInputDevice || !activeSession) {
+        return;
+      }
+      console.log('gain change end actually calling', gainDb);
       const gain = 10 ** (gainDb / 20);
       void updateGain(
         deviceEffects.id,
-        configuredInputDevice.deviceIdentifier,
+        configuredInputDevice.id,
         activeSession.configuration.id,
         gain
       );
@@ -266,11 +265,13 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
   // Handle pan slider change end (on release)
   const handlePanChangeEnd = useCallback(
     (pan: number) => {
-      if (!deviceEffects || !configuredInputDevice || !activeSession) return;
+      if (!deviceEffects || !configuredInputDevice || !activeSession) {
+        return;
+      }
 
       void updatePan(
         deviceEffects.id,
-        configuredInputDevice.deviceIdentifier,
+        configuredInputDevice.id,
         activeSession.configuration.id,
         pan
       );
@@ -307,10 +308,14 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
         ? 20 * Math.log10(Math.max(0.01, deviceEffects.gain))
         : 0;
 
-  const pan = localPan !== null ? localPan : deviceEffects?.pan ?? 0;
+  const pan = localPan !== null ? localPan : (deviceEffects?.pan ?? 0);
 
   const panDisplay =
-    pan === 0 ? 'CENTER' : pan > 0 ? `R${Math.round(pan * 100)}` : `L${Math.round(Math.abs(pan) * 100)}`;
+    pan === 0
+      ? 'CENTER'
+      : pan > 0
+        ? `R${Math.round(pan * 100)}`
+        : `L${Math.round(Math.abs(pan) * 100)}`;
 
   // Memoize input device options to prevent re-renders (including application sources)
   const inputDeviceOptions = useMemo(() => {

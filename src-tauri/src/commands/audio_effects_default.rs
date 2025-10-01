@@ -35,12 +35,19 @@ pub async fn update_audio_effects_default_gain(
         gain
     );
 
+    // Look up the device identifier from the configured device
+    let device =
+        crate::db::ConfiguredAudioDeviceService::get_by_id(state.database.sea_orm(), &device_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Configured device {} not found", device_id))?;
+
     let (tx, rx) = tokio::sync::oneshot::channel();
     state
         .audio_command_tx
         .send(
             crate::audio::mixer::stream_management::AudioCommand::UpdateInputGain {
-                device_id: device_id.clone(),
+                device_id: device.device_identifier,
                 gain,
                 response_tx: tx,
             },
@@ -74,12 +81,19 @@ pub async fn update_audio_effects_default_pan(
         pan
     );
 
+    // Look up the device identifier from the configured device
+    let device =
+        crate::db::ConfiguredAudioDeviceService::get_by_id(state.database.sea_orm(), &device_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Configured device {} not found", device_id))?;
+
     let (tx, rx) = tokio::sync::oneshot::channel();
     state
         .audio_command_tx
         .send(
             crate::audio::mixer::stream_management::AudioCommand::UpdateInputPan {
-                device_id: device_id.clone(),
+                device_id: device.device_identifier,
                 pan,
                 response_tx: tx,
             },
@@ -113,12 +127,19 @@ pub async fn update_audio_effects_default_mute(
         muted
     );
 
+    // Look up the device identifier from the configured device
+    let device =
+        crate::db::ConfiguredAudioDeviceService::get_by_id(state.database.sea_orm(), &device_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Configured device {} not found", device_id))?;
+
     let (tx, rx) = tokio::sync::oneshot::channel();
     state
         .audio_command_tx
         .send(
             crate::audio::mixer::stream_management::AudioCommand::UpdateInputMuted {
-                device_id: device_id.clone(),
+                device_id: device.device_identifier,
                 muted,
                 response_tx: tx,
             },
@@ -152,12 +173,19 @@ pub async fn update_audio_effects_default_solo(
         solo
     );
 
+    // Look up the device identifier from the configured device
+    let device =
+        crate::db::ConfiguredAudioDeviceService::get_by_id(state.database.sea_orm(), &device_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Configured device {} not found", device_id))?;
+
     let (tx, rx) = tokio::sync::oneshot::channel();
     state
         .audio_command_tx
         .send(
             crate::audio::mixer::stream_management::AudioCommand::UpdateInputSolo {
-                device_id: device_id.clone(),
+                device_id: device.device_identifier,
                 solo,
                 response_tx: tx,
             },

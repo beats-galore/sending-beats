@@ -28,7 +28,7 @@ pub struct InputWorker {
 
     // Audio processing components
     resampler: Option<RubatoSRC>,
-    default_effects: DefaultAudioEffectsChain,
+    default_effects: Arc<Mutex<DefaultAudioEffectsChain>>,
     custom_effects: CustomAudioEffectsChain,
     any_channel_solo: Arc<std::sync::atomic::AtomicBool>,
 
@@ -70,9 +70,44 @@ impl InputWorker {
         processed_output_tx: mpsc::UnboundedSender<ProcessedAudioSamples>,
         channel_number: u32,
         any_channel_solo: Arc<std::sync::atomic::AtomicBool>,
+        initial_gain: Option<f32>,
+        initial_pan: Option<f32>,
+        initial_muted: Option<bool>,
+        initial_solo: Option<bool>,
     ) -> Self {
         info!("🎤 INPUT_WORKER: Creating RTRB-based worker for device '{}' ({} Hz → {} Hz, {} channels, channel #{})",
               device_id, device_sample_rate, target_sample_rate, channels, channel_number);
+
+        let mut default_effects = DefaultAudioEffectsChain::new(device_id.clone());
+
+        if let Some(gain) = initial_gain {
+            default_effects.set_gain(gain);
+            info!(
+                "🔊 INPUT_WORKER: Initialized gain for '{}' to {}",
+                device_id, gain
+            );
+        }
+        if let Some(pan) = initial_pan {
+            default_effects.set_pan(pan);
+            info!(
+                "🎚️ INPUT_WORKER: Initialized pan for '{}' to {}",
+                device_id, pan
+            );
+        }
+        if let Some(muted) = initial_muted {
+            default_effects.set_muted(muted);
+            info!(
+                "🔇 INPUT_WORKER: Initialized muted for '{}' to {}",
+                device_id, muted
+            );
+        }
+        if let Some(solo) = initial_solo {
+            default_effects.set_solo(solo);
+            info!(
+                "🎯 INPUT_WORKER: Initialized solo for '{}' to {}",
+                device_id, solo
+            );
+        }
 
         Self {
             device_id: device_id.clone(),
@@ -82,7 +117,7 @@ impl InputWorker {
             chunk_size,
             channel_number,
             resampler: None,
-            default_effects: DefaultAudioEffectsChain::new(device_id),
+            default_effects: Arc::new(Mutex::new(default_effects)),
             custom_effects: CustomAudioEffectsChain::new(target_sample_rate),
             any_channel_solo,
             rtrb_consumer: Arc::new(Mutex::new(rtrb_consumer)),
@@ -180,7 +215,7 @@ impl InputWorker {
         let processed_output_tx = self.processed_output_tx.clone();
 
         let mut resampler = self.resampler.take();
-        let default_effects = self.default_effects.clone();
+        let default_effects = self.default_effects.clone(); // Arc clone - shares the same data
         let mut custom_effects = CustomAudioEffectsChain::new(target_sample_rate);
         let any_channel_solo = self.any_channel_solo.clone();
         let vu_service = vu_channel.map(|channel| {
@@ -281,12 +316,19 @@ impl InputWorker {
                 let mut effects_processed = channel_converted_samples;
 
                 let any_solo = any_channel_solo.load(std::sync::atomic::Ordering::Relaxed);
-                if processing_channels == 2 {
-                    let mid_point = effects_processed.len() / 2;
-                    let (left, right) = effects_processed.split_at_mut(mid_point);
-                    default_effects.process_stereo(left, right, any_solo);
+                if let Ok(effects) = default_effects.lock() {
+                    if processing_channels == 2 {
+                        let mid_point = effects_processed.len() / 2;
+                        let (left, right) = effects_processed.split_at_mut(mid_point);
+                        effects.process_stereo(left, right, any_solo);
+                    } else {
+                        effects.process_mono(&mut effects_processed, any_solo);
+                    }
                 } else {
-                    default_effects.process_mono(&mut effects_processed, any_solo);
+                    warn!(
+                        "⚠️ INPUT_WORKER[{}]: Failed to lock default effects",
+                        device_id
+                    );
                 }
 
                 custom_effects.process(&mut effects_processed);
@@ -413,19 +455,27 @@ impl InputWorker {
     }
 
     pub fn update_gain(&mut self, gain: f32) {
-        self.default_effects.set_gain(gain);
+        if let Ok(mut effects) = self.default_effects.lock() {
+            effects.set_gain(gain);
+        }
     }
 
     pub fn update_pan(&mut self, pan: f32) {
-        self.default_effects.set_pan(pan);
+        if let Ok(mut effects) = self.default_effects.lock() {
+            effects.set_pan(pan);
+        }
     }
 
     pub fn update_muted(&mut self, muted: bool) {
-        self.default_effects.set_muted(muted);
+        if let Ok(mut effects) = self.default_effects.lock() {
+            effects.set_muted(muted);
+        }
     }
 
     pub fn update_solo(&mut self, solo: bool) {
-        self.default_effects.set_solo(solo);
+        if let Ok(mut effects) = self.default_effects.lock() {
+            effects.set_solo(solo);
+        }
         self.any_channel_solo
             .store(solo, std::sync::atomic::Ordering::Relaxed);
     }
