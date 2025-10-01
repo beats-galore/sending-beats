@@ -42,7 +42,6 @@ export const useRecording = (pollingInterval = 1000) => {
   const [isRecording, setIsRecording] = useState(false);
 
   const fetchStatus = useCallback(async () => {
-    console.log('called fetch status', isRecording);
     if (!isRecording) return;
     try {
       const result = await invoke<RecordingStatus>('get_recording_status');

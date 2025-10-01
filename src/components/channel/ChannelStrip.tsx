@@ -245,7 +245,8 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
         return;
       }
       console.log('gain change end actually calling', gainDb);
-      const gain = 10 ** (gainDb / 20);
+      // Treat -80dB as complete mute (gain = 0)
+      const gain = gainDb <= -79 ? 0 : 10 ** (gainDb / 20);
       void updateGain(
         deviceEffects.id,
         configuredInputDevice.id,
@@ -305,7 +306,9 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
     localGainDb !== null
       ? localGainDb
       : deviceEffects
-        ? 20 * Math.log10(Math.max(0.01, deviceEffects.gain))
+        ? deviceEffects.gain === 0
+          ? -80
+          : 20 * Math.log10(Math.max(0.01, deviceEffects.gain))
         : 0;
 
   const pan = localPan !== null ? localPan : (deviceEffects?.pan ?? 0);
@@ -411,16 +414,16 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
               </Text>
               <Slider
                 size="xs"
-                min={-20}
-                max={6}
+                min={-50}
+                max={20}
                 step={0.5}
                 value={gainDb}
                 onChange={handleGainChange}
                 onChangeEnd={handleGainChangeEnd}
                 marks={[
-                  { value: -20, label: '-20' },
+                  { value: -50, label: '-50' },
                   { value: 0, label: '0' },
-                  { value: 6, label: '+6' },
+                  { value: 20, label: '+20' },
                 ]}
               />
             </Box>
