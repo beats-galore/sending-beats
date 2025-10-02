@@ -13,7 +13,6 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, warn};
 
-use super::queue_types::ProcessedAudioSamples;
 use super::temporal_sync_buffer::TemporalSyncBuffer;
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::mixer::stream_management::virtual_mixer::VirtualMixer;
@@ -24,7 +23,7 @@ use colored::*;
 pub enum MixingLayerCommand {
     AddInputStream {
         device_id: String,
-        receiver: mpsc::UnboundedReceiver<ProcessedAudioSamples>,
+        consumer: Arc<Mutex<rtrb::Consumer<f32>>>,
         queue_tracker: AtomicQueueTracker,
     },
     AddOutputProducer {
@@ -36,8 +35,8 @@ pub enum MixingLayerCommand {
 
 /// Mixing layer that combines all processed input streams
 pub struct MixingLayer {
-    // Input: Processed streams from Layer 2
-    processed_input_receivers: HashMap<String, mpsc::UnboundedReceiver<ProcessedAudioSamples>>,
+    // Input: RTRB consumers from Layer 2 input workers
+    input_rtrb_consumers: HashMap<String, Arc<Mutex<rtrb::Consumer<f32>>>>,
 
     // Queue trackers for monitoring consumer-side reads (one per input device)
     input_queue_trackers: HashMap<String, AtomicQueueTracker>,
@@ -73,12 +72,12 @@ impl MixingLayer {
         let (command_tx, _command_rx) = mpsc::unbounded_channel();
 
         Self {
-            processed_input_receivers: HashMap::new(),
+            input_rtrb_consumers: HashMap::new(),
             input_queue_trackers: HashMap::new(),
             output_rtrb_producers: HashMap::new(),
             output_queue_trackers: HashMap::new(),
             command_tx,
-            target_sample_rate: Arc::new(AtomicU32::new(0)), // 0 = not set yet
+            target_sample_rate: Arc::new(AtomicU32::new(0)),
             master_gain: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
             worker_handle: None,
             mix_cycles: 0,
@@ -86,39 +85,36 @@ impl MixingLayer {
         }
     }
 
-    /// Add an input stream from an input worker (dynamically)
-    pub fn add_input_stream(
+    pub fn add_input_consumer(
         &mut self,
         device_id: String,
-        receiver: mpsc::UnboundedReceiver<ProcessedAudioSamples>,
+        consumer: Arc<Mutex<rtrb::Consumer<f32>>>,
         queue_tracker: AtomicQueueTracker,
     ) {
         if self.worker_handle.is_some() {
-            // MixingLayer is already running - send command to worker thread
             let cmd = MixingLayerCommand::AddInputStream {
                 device_id: device_id.clone(),
-                receiver,
+                consumer,
                 queue_tracker,
             };
             if let Err(_) = self.command_tx.send(cmd) {
                 warn!(
-                    "⚠️ MIXING_LAYER: Failed to send add input stream command for '{}'",
+                    "⚠️ MIXING_LAYER: Failed to send add input consumer command for '{}'",
                     device_id
                 );
             } else {
                 info!(
-                    "🎛️ MIXING_LAYER: Sent add input stream command for device '{}'",
+                    "🎛️ MIXING_LAYER: Sent add input consumer command for device '{}'",
                     device_id
                 );
             }
         } else {
-            // MixingLayer not started yet - add to local storage
-            self.processed_input_receivers
-                .insert(device_id.clone(), receiver);
+            self.input_rtrb_consumers
+                .insert(device_id.clone(), consumer);
             self.input_queue_trackers
                 .insert(device_id.clone(), queue_tracker);
             info!(
-                "🎛️ MIXING_LAYER: Queued input stream for device '{}'",
+                "🎛️ MIXING_LAYER: Queued input consumer for device '{}'",
                 device_id
             );
         }
@@ -182,8 +178,8 @@ impl MixingLayer {
         let (command_tx, mut command_rx) = mpsc::unbounded_channel();
         self.command_tx = command_tx;
 
-        // Take ownership of receivers and queue trackers for the worker thread
-        let mut processed_input_receivers = std::mem::take(&mut self.processed_input_receivers);
+        // Take ownership of RTRB consumers and queue trackers for the worker thread
+        let mut input_rtrb_consumers = std::mem::take(&mut self.input_rtrb_consumers);
         let mut input_queue_trackers = std::mem::take(&mut self.input_queue_trackers);
         let mut output_rtrb_producers = std::mem::take(&mut self.output_rtrb_producers);
         let mut output_queue_trackers = std::mem::take(&mut self.output_queue_trackers);
@@ -199,7 +195,7 @@ impl MixingLayer {
         let worker_handle = tokio::spawn(async move {
             info!(
                 "🚀 MIXING_LAYER: Started mixing thread (inputs: {}, outputs: {})",
-                processed_input_receivers.len(),
+                input_rtrb_consumers.len(),
                 output_rtrb_producers.len()
             );
 
@@ -223,13 +219,13 @@ impl MixingLayer {
                     match cmd {
                         MixingLayerCommand::AddInputStream {
                             device_id,
-                            receiver,
+                            consumer,
                             queue_tracker,
                         } => {
-                            processed_input_receivers.insert(device_id.clone(), receiver);
+                            input_rtrb_consumers.insert(device_id.clone(), consumer);
                             input_queue_trackers.insert(device_id.clone(), queue_tracker);
                             info!(
-                                "🎛️ MIXING_LAYER_WORKER: Added input stream for device '{}'",
+                                "🎛️ MIXING_LAYER_WORKER: Added input consumer for device '{}'",
                                 device_id
                             );
                         }
@@ -250,20 +246,41 @@ impl MixingLayer {
                 }
                 let command_duration = command_start.elapsed();
 
-                // **TEMPORAL SYNC STEP 1**: Collect samples and add to temporal buffer
+                // **TEMPORAL SYNC STEP 1**: Collect samples from RTRB and add to temporal buffer
                 let collection_start = std::time::Instant::now();
-                for (device_id, receiver) in processed_input_receivers.iter_mut() {
-                    // Non-blocking receive - get whatever samples are available
-                    while let Ok(processed_audio) = receiver.try_recv() {
-                        let sample_count = processed_audio.samples.len();
-                        temporal_buffer.add_samples(device_id.clone(), processed_audio);
+                for (device_id, consumer) in input_rtrb_consumers.iter() {
+                    let mut consumer_lock = consumer.lock().await;
+                    let available = consumer_lock.slots();
 
-                        // Record samples read for queue tracking (consumer side)
-                        if let Some(tracker) = input_queue_trackers.get(device_id) {
-                            tracker.record_samples_read(sample_count);
+                    if available > 0 {
+                        let mut samples = Vec::with_capacity(available);
+                        let mut samples_read = 0;
+
+                        while let Ok(sample) = consumer_lock.pop() {
+                            samples.push(sample);
+                            samples_read += 1;
                         }
 
-                        mixed_something = true;
+                        if !samples.is_empty() {
+                            // Construct ProcessedAudioSamples from raw RTRB data
+                            let processed_audio = super::queue_types::ProcessedAudioSamples {
+                                device_id: device_id.clone(),
+                                samples,
+                                channels: 2, // All inputs are converted to stereo by InputWorker
+                                timestamp: std::time::Instant::now(),
+                                effects_applied: true, // InputWorker applies effects
+                            };
+
+                            let sample_count = processed_audio.samples.len();
+                            temporal_buffer.add_samples(device_id.clone(), processed_audio);
+
+                            // Record samples read for queue tracking
+                            if let Some(tracker) = input_queue_trackers.get(device_id) {
+                                tracker.record_samples_read(sample_count);
+                            }
+
+                            mixed_something = true;
+                        }
                     }
                 }
                 let collection_duration = collection_start.elapsed();
@@ -452,7 +469,7 @@ impl MixingLayer {
         MixingLayerStats {
             mix_cycles: self.mix_cycles,
             samples_mixed: self.samples_mixed,
-            input_streams: self.processed_input_receivers.len(),
+            input_streams: self.input_rtrb_consumers.len(),
             output_streams: self.output_rtrb_producers.len(),
             is_running: self.worker_handle.is_some(),
         }

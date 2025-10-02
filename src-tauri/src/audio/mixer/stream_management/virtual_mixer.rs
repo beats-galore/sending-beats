@@ -19,6 +19,16 @@ impl VirtualMixer {
         Ok(Self {})
     }
 
+    /// Convert mono audio samples to stereo by duplicating each sample to both channels
+    pub fn convert_mono_to_stereo(mono_samples: &[f32]) -> Vec<f32> {
+        let mut stereo_samples = Vec::with_capacity(mono_samples.len() * 2);
+        for &mono_sample in mono_samples {
+            stereo_samples.push(mono_sample); // Left channel
+            stereo_samples.push(mono_sample); // Right channel (duplicate)
+        }
+        stereo_samples
+    }
+
     /// Apply automatic gain reduction to maintain target RMS level
     /// This is disabled by default and should be made configurable (see GitHub issue)
     fn apply_auto_gain_reduction(buffer: &mut [f32], active_channels: usize) {

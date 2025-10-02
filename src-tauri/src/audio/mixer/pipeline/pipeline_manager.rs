@@ -124,7 +124,7 @@ impl AudioPipeline {
         let mut sample_rates = Vec::new();
 
         for (device_id, worker) in &self.input_workers {
-            sample_rates.push((device_id.clone(), worker.device_sample_rate));
+            sample_rates.push((device_id.clone(), worker.device_sample_rate()));
         }
 
         for (device_id, worker) in &self.output_workers {
@@ -233,43 +233,33 @@ impl AudioPipeline {
             ));
         }
 
-        // Add device to queue system first
-        self.queues
-            .add_input_device(device_id.clone())
-            .map_err(|e| anyhow::anyhow!("Failed to add input device: {}", e))?;
+        // Create RTRB queue for InputWorker → MixingLayer communication
+        let buffer_capacity = chunk_size * 16;
+        let (rtrb_producer_to_mixing, rtrb_consumer_for_mixing) =
+            rtrb::RingBuffer::<f32>::new(buffer_capacity);
 
-        // Get processed input sender for mixing layer
-        let processed_output_tx = self
-            .queues
-            .get_processed_input_sender(&device_id)
-            .ok_or_else(|| {
-                anyhow::anyhow!("Failed to get processed input sender for {}", device_id)
-            })?
-            .clone();
-
-        // Create queue tracker for processed output monitoring (shared between input worker and mixing layer)
-        let queue_tracker = crate::audio::mixer::queue_manager::AtomicQueueTracker::new(
-            format!("{}_processed_output", device_id),
-            8192, // Typical unbounded channel effective capacity for monitoring
+        // Create queue trackers
+        let hardware_queue_tracker = crate::audio::mixer::queue_manager::AtomicQueueTracker::new(
+            format!("{}_hardware_to_input", device_id),
+            chunk_size * 8,
         );
 
-        // Connect processed input receiver to mixing layer with queue tracker
-        if let Some(processed_input_rx) = self.queues.take_processed_input_receiver(&device_id) {
-            self.mixing_layer.add_input_stream(
-                device_id.clone(),
-                processed_input_rx,
-                queue_tracker.clone(), // Share with mixing layer for consumer-side tracking
-            );
-            info!(
-                "✅ PIPELINE: Connected input device '{}' to MixingLayer",
-                device_id
-            );
-        } else {
-            warn!(
-                "⚠️ PIPELINE: Failed to connect input device '{}' to MixingLayer",
-                device_id
-            );
-        }
+        let mixing_queue_tracker = crate::audio::mixer::queue_manager::AtomicQueueTracker::new(
+            format!("{}_input_to_mixing", device_id),
+            buffer_capacity,
+        );
+
+        // Connect RTRB consumer to mixing layer
+        self.mixing_layer.add_input_consumer(
+            device_id.clone(),
+            Arc::new(tokio::sync::Mutex::new(rtrb_consumer_for_mixing)),
+            mixing_queue_tracker.clone(),
+        );
+
+        info!(
+            "✅ PIPELINE: Connected input device '{}' to MixingLayer with RTRB queue",
+            device_id
+        );
 
         // **DYNAMIC SAMPLE RATE**: Set pipeline sample rate from first device
         if self.max_sample_rate.is_none() {
@@ -288,18 +278,19 @@ impl AudioPipeline {
 
         let target_sample_rate = self.max_sample_rate.unwrap(); // Safe to unwrap after check above
 
-        // Create input worker with direct RTRB consumer
+        // Create input worker with RTRB consumer (from hardware) and producer (to mixing layer)
         let mut input_worker = InputWorker::new_with_rtrb(
             device_id.clone(),
             device_sample_rate,
             target_sample_rate,
             channels,
             chunk_size,
-            rtrb_consumer,
-            processed_output_tx,
+            rtrb_consumer,           // Consumer from hardware (CoreAudio → InputWorker)
+            rtrb_producer_to_mixing, // Producer to mixing layer (InputWorker → MixingLayer)
             channel_number,
             self.any_channel_solo.clone(),
-            queue_tracker,
+            hardware_queue_tracker,
+            mixing_queue_tracker,
             initial_gain,
             initial_pan,
             initial_muted,
