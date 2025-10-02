@@ -165,7 +165,7 @@ impl InputWorker {
                     ) {
                         warn!(
                             "⚠️ {}: Dynamic adjustment failed for {}: {} - recreating resampler",
-                            "DYNAMIC_ADJUST_FAILED".yellow(),
+                            "DYNAMIC_ADJUST_FAILED".on_cyan().white(),
                             device_id,
                             e
                         );
@@ -183,11 +183,12 @@ impl InputWorker {
                     target_sample_rate as f32,
                     frames_per_chunk,  // Output frames we want to produce
                     channels as usize, // dynamic channel count
+                    format!("input_{}", device_id), // Identifier for logging
                 ) {
                     Ok(new_resampler) => {
                         info!(
                             "🔄 {}: Created resampler for {} ({} Hz → {} Hz, ratio: {:.3})",
-                            "INPUT_RESAMPLER".green(),
+                            "INPUT_RESAMPLER".on_cyan().white(),
                             device_id,
                             device_sample_rate,
                             target_sample_rate,
@@ -241,7 +242,7 @@ impl InputWorker {
         let vu_service = vu_channel.map(|channel| {
             info!(
                 "{}: VU channel enabled for {}",
-                "VU_SETUP".on_green().white(),
+                "VU_SETUP".on_cyan().white(),
                 device_id
             );
             VUChannelService::new(channel, target_sample_rate, 8, 60)
@@ -252,7 +253,8 @@ impl InputWorker {
             let mut samples_processed = 0u64;
 
             info!(
-                "🚀 INPUT_WORKER: Started RTRB notification-driven thread for device '{}'",
+                "🚀 {}: Started RTRB notification-driven thread for device '{}'",
+                "INPUT_WORKER".on_cyan().white(),
                 device_id
             );
 
@@ -325,9 +327,41 @@ impl InputWorker {
                             target_sample_rate,
                             &device_id,
                         );
+
+                        // Log resampling activity
+                        static RESAMPLE_LOG_COUNT: std::sync::atomic::AtomicU64 =
+                            std::sync::atomic::AtomicU64::new(0);
+                        let resample_count =
+                            RESAMPLE_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                        if resample_count < 10 || resample_count % 100 == 0 {
+                            info!(
+                                "🔄 {}: Upsampled {} input → {} output (buffer: {} samples, {}Hz→{}Hz)",
+                                "INPUT_RESAMPLE".on_cyan().white(),
+                                samples.len(),
+                                resampled.len(),
+                                input_accumulator.len(),
+                                device_sample_rate,
+                                target_sample_rate
+                            );
+                        }
+
                         resampled
                     } else {
                         // Not enough accumulated yet, skip this iteration
+                        static SKIP_LOG_COUNT: std::sync::atomic::AtomicU64 =
+                            std::sync::atomic::AtomicU64::new(0);
+                        let skip_count =
+                            SKIP_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                        if skip_count < 10 || skip_count % 500 == 0 {
+                            info!(
+                                "⏸️ {}: Accumulating samples (buffer: {} samples, need more for output)",
+                                "INPUT_ACCUM_SKIP".on_cyan().white(),
+                                input_accumulator.len()
+                            );
+                        }
+
                         continue;
                     }
                 } else {
@@ -363,7 +397,8 @@ impl InputWorker {
                     }
                 } else {
                     warn!(
-                        "⚠️ INPUT_WORKER[{}]: Failed to lock default effects",
+                        "⚠️ {}[{}]: Failed to lock default effects",
+                        "INPUT_WORKER".on_cyan().white(),
                         device_id
                     );
                 }
@@ -391,7 +426,7 @@ impl InputWorker {
 
                 // Send to Layer 3 mixing
                 if let Err(_) = processed_output_tx.send(processed_audio) {
-                    warn!("⚠️ INPUT_WORKER: Failed to send processed audio for {} (mixing layer may be shut down)", device_id);
+                    warn!("⚠️ {}: Failed to send processed audio for {} (mixing layer may be shut down)", "INPUT_WORKER".on_cyan().white(), device_id);
                     break;
                 }
 
@@ -408,7 +443,7 @@ impl InputWorker {
                 if samples_processed <= 5 || samples_processed % 1000 == 0 {
                     info!(
                         "🔄 {}: {} processed {} samples in {}μs (resample: {}μs, conv: {}μs, effects: {}μs, vu: {}μs, send: {}μs) batch #{}",
-                        "INPUT_WORKER_TIMING".green(),
+                        "INPUT_WORKER_TIMING".on_cyan().white(),
                         device_id,
                         original_samples_len,
                         processing_duration.as_micros(),
@@ -425,7 +460,7 @@ impl InputWorker {
                 if processing_duration.as_micros() > 500 {
                     warn!(
                         "⏱️ {}: {} SLOW processing: {}μs total (resample: {}μs, conv: {}μs, effects: {}μs, vu: {}μs, send: {}μs)",
-                        "INPUT_WORKER_SLOW".yellow(),
+                        "INPUT_WORKER_SLOW".on_cyan().white(),
                         device_id,
                         processing_duration.as_micros(),
                         resample_duration.as_micros(),
@@ -438,14 +473,17 @@ impl InputWorker {
             }
 
             info!(
-                "🛑 INPUT_WORKER: Processing thread for '{}' shutting down (processed {} batches)",
-                device_id, samples_processed
+                "🛑 {}: Processing thread for '{}' shutting down (processed {} batches)",
+                "INPUT_WORKER".on_cyan().white(),
+                device_id,
+                samples_processed
             );
         });
 
         self.worker_handle = Some(worker_handle);
         info!(
-            "✅ INPUT_WORKER: Started worker thread for device '{}'",
+            "✅ {}: Started worker thread for device '{}'",
+            "INPUT_WORKER".on_cyan().white(),
             self.device_id
         );
 
@@ -455,7 +493,7 @@ impl InputWorker {
     pub fn update_target_mix_rate(&mut self, target_mix_rate: u32) -> Result<()> {
         info!(
             "🔄 {}: Updating target mix rate for '{}': {} Hz → {} Hz",
-            "INPUT_WORKER_UPDATE".cyan(),
+            "INPUT_WORKER_UPDATE".on_cyan().white(),
             self.device_id,
             self.target_sample_rate,
             target_mix_rate
@@ -490,7 +528,8 @@ impl InputWorker {
     pub fn update_custom_effects(&mut self, new_effects_chain: CustomAudioEffectsChain) {
         self.custom_effects = new_effects_chain;
         info!(
-            "🎛️ INPUT_WORKER: Updated custom effects chain for device '{}'",
+            "🎛️ {}: Updated custom effects chain for device '{}'",
+            "INPUT_WORKER".on_cyan().white(),
             self.device_id
         );
     }

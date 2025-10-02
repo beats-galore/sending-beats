@@ -41,7 +41,6 @@ impl StreamManager {
         }
     }
 
-    /// Add CoreAudio input stream as alternative to CPAL (same interface, different backend)
     #[cfg(target_os = "macos")]
     pub fn add_coreaudio_input_stream(
         &mut self,
@@ -49,16 +48,14 @@ impl StreamManager {
         coreaudio_device_id: coreaudio_sys::AudioDeviceID,
         device_name: String,
         channels: u16,
-        producer: Producer<f32>, // Owned RTRB Producer (exactly like CPAL)
-        input_notifier: Arc<Notify>, // Event notification (exactly like CPAL)
+        producer: Producer<f32>,
+        input_notifier: Arc<Notify>,
     ) -> Result<()> {
         info!(
-          "🎤 Creating CoreAudio input stream (CPAL alternative) for device '{}' (ID: {}, CH: {})",
-          device_id, coreaudio_device_id, channels
-      );
+            "🎤 Creating CoreAudio input stream for device '{}' (ID: {}, CH: {})",
+            device_id, coreaudio_device_id, channels
+        );
 
-        // Create CoreAudio input stream with RTRB producer integration (mirrors CPAL exactly)
-        // **ADAPTIVE AUDIO**: No longer pass sample_rate - it will be detected from device
         let mut coreaudio_input_stream =
             crate::audio::devices::CoreAudioInputStream::new_with_rtrb_producer(
                 coreaudio_device_id,
@@ -76,7 +73,7 @@ impl StreamManager {
             .insert(device_id.clone(), coreaudio_input_stream);
 
         info!(
-            "✅ CoreAudio input stream (CPAL alternative) created and started for device '{}'",
+            "✅ CoreAudio input stream created and started for device '{}'",
             device_id
         );
         Ok(())

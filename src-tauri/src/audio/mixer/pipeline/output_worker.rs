@@ -68,8 +68,12 @@ impl OutputWorker {
     ) -> Self {
         let has_hardware_output = rtrb_producer.is_some();
         info!(
-            "🔊 OUTPUT_WORKER: Creating worker for device '{}' ({} Hz, {} sample chunks, hardware: {})",
-            device_id, device_sample_rate, target_chunk_size, has_hardware_output
+            "🔊 {}: Creating worker for device '{}' ({} Hz, {} sample chunks, hardware: {})",
+            "OUTPUT_WORKER".on_blue().yellow(),
+            device_id,
+            device_sample_rate,
+            target_chunk_size,
+            has_hardware_output
         );
 
         Self {
@@ -105,7 +109,8 @@ impl OutputWorker {
     ) -> Self {
         let has_hardware_output = rtrb_producer.is_some();
         info!(
-            "🔊 OUTPUT_WORKER: Creating worker with hardware updates for device '{}' ({} Hz, {} sample chunks, hardware: {})",
+            "🔊 {}: Creating worker with hardware updates for device '{}' ({} Hz, {} sample chunks, hardware: {})",
+            "OUTPUT_WORKER".on_blue().yellow(),
             device_id, device_sample_rate, target_chunk_size, has_hardware_output
         );
 
@@ -140,7 +145,7 @@ impl OutputWorker {
                     Ok(()) => {
                         info!(
                             "🎯 {}: Dynamic rate update for {} - {}Hz→{}Hz (ratio: {:.6})",
-                            "DYNAMIC_RATE_UPDATE".cyan(),
+                            "DYNAMIC_RATE_UPDATE".on_blue().yellow(),
                             self.device_id,
                             new_input_rate,
                             output_rate,
@@ -151,7 +156,7 @@ impl OutputWorker {
                     Err(e) => {
                         warn!(
                             "⚠️ {}: Dynamic rate update failed for {}: {}, falling back to recreation",
-                            "DYNAMIC_RATE_FAILED".yellow(),
+                            "DYNAMIC_RATE_FAILED".on_blue().yellow(),
                             self.device_id,
                             e
                         );
@@ -161,7 +166,7 @@ impl OutputWorker {
             } else {
                 info!(
                     "🔄 {}: Resampler for {} doesn't support dynamic rates, recreating",
-                    "RESAMPLER_RECREATION".blue(),
+                    "RESAMPLER_RECREATION".on_blue().yellow(),
                     self.device_id
                 );
             }
@@ -171,7 +176,7 @@ impl OutputWorker {
         self.resampler = None;
         info!(
             "🔧 {}: Marked resampler for recreation - new mix rate: {}Hz",
-            "RESAMPLER_RESET".blue(),
+            "RESAMPLER_RESET".on_blue().yellow(),
             target_mix_rate
         );
         Ok(())
@@ -213,7 +218,7 @@ impl OutputWorker {
                     ) {
                         warn!(
                             "⚠️ {}: Dynamic adjustment failed for {}: {} - recreating resampler",
-                            "DYNAMIC_ADJUST_FAILED".yellow(),
+                            "DYNAMIC_ADJUST_FAILED".on_blue().yellow(),
                             device_id,
                             e
                         );
@@ -229,11 +234,12 @@ impl OutputWorker {
                     output_sample_rate as f32,
                     chunk_size / 2,
                     2,
+                    format!("output_{}", device_id), // Identifier for logging
                 ) {
                     Ok(new_resampler) => {
                         info!(
                             "🔄 {}: Created resampler for {} ({} Hz → {} Hz, ratio: {:.3})",
-                            "OUTPUT_RESAMPLER".green(),
+                            "OUTPUT_RESAMPLER".on_blue().yellow(),
                             device_id,
                             input_sample_rate,
                             output_sample_rate,
@@ -243,8 +249,10 @@ impl OutputWorker {
                     }
                     Err(e) => {
                         error!(
-                            "❌ OUTPUT_WORKER: Failed to create resampler for {}: {}",
-                            device_id, e
+                            "❌ {}: Failed to create resampler for {}: {}",
+                            "OUTPUT_WORKER".on_blue().yellow(),
+                            device_id,
+                            e
                         );
                         return None;
                     }
@@ -304,7 +312,7 @@ impl OutputWorker {
         if buffer_log_count % 1000 == 0 {
             info!(
                 "🔄 {}: Buffer levels - accumulated: {}, input needed: {}, ratio: {:.2}",
-                "BUFFER_DRIFT_TRACK".cyan(),
+                "BUFFER_DRIFT_TRACK".on_blue().yellow(),
                 pre_accumulation_buffer.len(),
                 estimated_input_needed,
                 pre_accumulation_buffer.len() as f32 / estimated_input_needed as f32
@@ -459,7 +467,7 @@ impl OutputWorker {
         if post_accumulation_log_count % 1000 == 0 {
             info!(
             "🔄 {}: Called resampler with {} input samples, produced {} output samples, current buffer size {}",
-            "POST_ACCUMULATION_RESAMPLE_RESULT".cyan(),
+            "POST_ACCUMULATION_RESAMPLE_RESULT".on_blue().yellow(),
             input_samples.len(),
             resampled.len(),
             post_accumulation_buffer.len(),
@@ -476,7 +484,6 @@ impl OutputWorker {
         }
     }
 
-    /// Core resampling utility function - performs the actual resampling operation
     fn process_resampling_static(
         resampler: &mut Option<RubatoSRC>,
         input_sample_rate: u32,
@@ -531,7 +538,7 @@ impl OutputWorker {
                 } else {
                     info!(
                         "📡 {}: Sent hardware buffer update to {} frames",
-                        "HARDWARE_SYNC_COMMAND".cyan(),
+                        "HARDWARE_SYNC_COMMAND".on_blue().yellow(),
                         optimal_chunk_size
                     );
                 }
@@ -571,7 +578,8 @@ impl OutputWorker {
             let mut post_output_started = false; // Used by post-accumulation strategy
 
             info!(
-                "🚀 OUTPUT_WORKER: Started processing thread for device '{}'",
+                "🚀 {}: Started processing thread for device '{}'",
+                "OUTPUT_WORKER".on_blue().yellow(),
                 device_id
             );
 
@@ -614,8 +622,17 @@ impl OutputWorker {
                 let sample_rate_difference =
                     (mixed_audio.sample_rate as f32 - device_sample_rate as f32).abs();
                 needs_resampling = sample_rate_difference > 1.0; // Allow 1Hz tolerance
+                if needs_resampling {
+                    info!(
+                        "🔄 {}: Sample rate difference for {} - {}Hz→{}Hz (ratio: {:.3})",
+                        "RESAMPLING_DETECTED".on_blue().yellow(),
+                        device_id,
+                        mixed_audio.sample_rate,
+                        device_sample_rate,
+                        sample_rate_difference
+                    );
+                }
 
-                // **TIMING DEBUG**: Track time between receives
                 static mut LAST_RECEIVE_TIME: Option<std::time::Instant> = None;
                 let time_since_last = unsafe {
                     if let Some(last_time) = LAST_RECEIVE_TIME {
@@ -687,7 +704,7 @@ impl OutputWorker {
 
                     info!(
                         "🔄 {}: {} strategy: {} → {} samples in {}μs ({}Hz→{}Hz, ratio: {:.3})",
-                        "RESAMPLING_STRATEGY".cyan(),
+                        "RESAMPLING_STRATEGY".on_blue().yellow(),
                         strategy,
                         mixed_audio.samples.len(),
                         device_samples.len(),
@@ -708,7 +725,7 @@ impl OutputWorker {
                     let queue_info = queue_tracker.get_queue_info();
                     info!(
                         "📊 {}: occupancy={:.1}% ({}/{}) adjustment_ratio={} integral_error={} target_fill={} device={}",
-                        "QUEUE_STATE".green(),
+                        "QUEUE_STATE".on_blue().yellow(),
                         queue_info.usage_percent,
                         queue_info.estimated_occupancy,
                         queue_info.capacity,
@@ -728,13 +745,12 @@ impl OutputWorker {
                 if !device_samples.is_empty() {
                     let rtrb_write_start = std::time::Instant::now();
                     if let Some(ref rtrb_producer) = rtrb_producer {
-                        Self::write_to_hardware_rtrb(
+                        Self::write_samples_to_rtrb_sync(
                             &device_id,
                             &device_samples,
                             rtrb_producer,
                             Some(&queue_tracker),
-                        )
-                        .await;
+                        );
                     }
                     let rtrb_write_duration = rtrb_write_start.elapsed();
                     total_rtrb_duration += rtrb_write_duration;
@@ -754,7 +770,7 @@ impl OutputWorker {
 
                         info!(
                             "🎵 {} (4th layer): {} sent chunk #{} ({} samples) {}",
-                            "OUTPUT_WORKER".purple(),
+                            "OUTPUT_WORKER".on_blue().yellow(),
                             device_id,
                             chunks_processed,
                             device_samples.len(),
@@ -765,7 +781,6 @@ impl OutputWorker {
 
                 let processing_duration = processing_start.elapsed();
 
-                // **COMPREHENSIVE TIMING DIAGNOSTICS** for downsampling stuttering
                 static TIMING_DEBUG_COUNT: std::sync::atomic::AtomicU64 =
                     std::sync::atomic::AtomicU64::new(0);
                 let debug_count =
@@ -779,7 +794,7 @@ impl OutputWorker {
                     };
 
                     info!("⏱️  {} [{}]: gap_since_last={}, input={}→{} samples, 🔄resample={}μs, chunks_sent={}, rtrb={}μs, total={}μs (FFT_FIXED_IN)",
-                        "OUTPUT_TIMING".purple(),
+                        "OUTPUT_TIMING".on_blue().yellow(),
                         device_id,
                         time_between,
                         input_samples_len,
@@ -791,14 +806,13 @@ impl OutputWorker {
                     );
                 }
 
-                // Performance monitoring
                 use std::sync::atomic::{AtomicU64, Ordering};
                 static OUTPUT_WORKER_COUNT: AtomicU64 = AtomicU64::new(0);
                 let count = OUTPUT_WORKER_COUNT.fetch_add(1, Ordering::Relaxed);
                 if processing_duration.as_micros() > 500 && (count <= 3 || count % 1000 == 0) {
                     warn!(
                         "🐌 {}: {} SLOW processing: {}μs (🔄resample: {}μs, rtrb: {}μs) [FFT_FIXED_IN]",
-                        "OUTPUT_WORKER_SLOW".bright_red(),
+                        "OUTPUT_WORKER_SLOW".on_blue().yellow(),
                         device_id,
                         processing_duration.as_micros(),
                         resample_duration.as_micros(),
@@ -808,14 +822,17 @@ impl OutputWorker {
             }
 
             info!(
-                "🛑 OUTPUT_WORKER: Processing thread for '{}' shutting down (processed {} chunks)",
-                device_id, chunks_processed
+                "🛑 {}: Processing thread for '{}' shutting down (processed {} chunks)",
+                "OUTPUT_WORKER".on_blue().yellow(),
+                device_id,
+                chunks_processed
             );
         });
 
         self.worker_handle = Some(worker_handle);
         info!(
-            "✅ OUTPUT_WORKER: Started worker thread for device '{}'",
+            "✅ {}: Started worker thread for device '{}'",
+            "OUTPUT_WORKER".on_blue().yellow(),
             self.device_id
         );
 
@@ -829,11 +846,13 @@ impl OutputWorker {
 
             match tokio::time::timeout(std::time::Duration::from_millis(100), handle).await {
                 Ok(_) => info!(
-                    "✅ OUTPUT_WORKER: '{}' shut down gracefully",
+                    "✅ {}: '{}' shut down gracefully",
+                    "OUTPUT_WORKER".on_blue().yellow(),
                     self.device_id
                 ),
                 Err(_) => warn!(
-                    "⚠️ OUTPUT_WORKER: '{}' force-terminated after timeout",
+                    "⚠️ {}: '{}' force-terminated after timeout",
+                    "OUTPUT_WORKER".on_blue().yellow(),
                     self.device_id
                 ),
             }
@@ -842,9 +861,6 @@ impl OutputWorker {
         Ok(())
     }
 
-    /// Get RTRB queue occupancy information
-
-    /// Sync helper to write samples to RTRB queue with tracking
     fn write_samples_to_rtrb_sync(
         device_id: &str,
         samples: &[f32],
@@ -855,7 +871,6 @@ impl OutputWorker {
         if let Ok(mut producer) = rtrb_producer.try_lock() {
             let lock_duration = lock_start.elapsed();
 
-            // **RTRB BULK WRITE**: Use efficient chunk writing
             let mut samples_written = 0;
             let mut remaining = samples;
 
@@ -863,11 +878,11 @@ impl OutputWorker {
                 let chunk_size = remaining.len().min(producer.slots());
                 if chunk_size == 0 {
                     // Ring buffer is full, drop remaining samples
-                    // warn!(
-                    //     "⚠️ OUTPUT_WORKER: {} RTRB queue full, dropping {} remaining samples",
-                    //     device_id,
-                    //     remaining.len()
-                    // );
+                    warn!(
+                        "⚠️ OUTPUT_WORKER: {} RTRB queue full, dropping {} remaining samples",
+                        device_id,
+                        remaining.len()
+                    );
                     break;
                 }
 
@@ -885,25 +900,14 @@ impl OutputWorker {
             if let Some(tracker) = queue_tracker {
                 tracker.record_samples_written(samples_written);
             }
-
-            // Queue tracking is now handled by the AtomicQueueTracker
         } else {
             warn!(
-                "⚠️ OUTPUT_WORKER: {} failed to lock RTRB producer, dropping {} samples",
+                "⚠️ {}: {} failed to lock RTRB producer, dropping {} samples",
+                "OUTPUT_WORKER".on_blue().yellow(),
                 device_id,
                 samples.len()
             );
         }
-    }
-
-    /// Write audio samples to hardware via RTRB queue (async wrapper)
-    async fn write_to_hardware_rtrb(
-        device_id: &str,
-        samples: &[f32],
-        rtrb_producer: &Arc<Mutex<Producer<f32>>>,
-        queue_tracker: Option<&AtomicQueueTracker>,
-    ) {
-        Self::write_samples_to_rtrb_sync(device_id, samples, rtrb_producer, queue_tracker);
     }
 
     /// Get processing statistics

@@ -187,10 +187,9 @@ struct AudioCallbackContext {
     channels: u16, // Output device channel count (mono/stereo/etc)
 }
 
-/// Context struct for CoreAudio input callbacks - matches CPAL architecture exactly
 #[cfg(target_os = "macos")]
 struct AudioInputCallbackContext {
-    rtrb_producer: rtrb::Producer<f32>, // Owned producer, not Arc<Mutex<>> like CPAL
+    rtrb_producer: rtrb::Producer<f32>,
     input_notifier: Arc<tokio::sync::Notify>,
     device_name: String,
     audio_unit: AudioUnit, // Store AudioUnit for AudioUnitRender calls
@@ -437,12 +436,11 @@ impl CoreAudioOutputStream {
         *self.is_running.lock().unwrap() = true;
 
         info!(
-            "✅ CoreAudio Audio Unit stream started for: {} (device {})",
-            self.device_name, self.device_id
-        );
-        info!(
-            "   Real audio streaming active with {} channels at {} Hz",
-            self.channels, self.sample_rate
+            "{}: audio streaming for: {} active with {} channels at {} Hz",
+            "COREAUDIO_STREAM".green(),
+            self.device_name,
+            self.channels,
+            self.sample_rate
         );
 
         Ok(())
@@ -831,7 +829,7 @@ extern "C" fn rtrb_render_callback(
                             };
 
                             // Log sync issues every 1000 callbacks or on significant events
-                            if CALLBACK_COUNT % 100 == 0
+                            if CALLBACK_COUNT % 1000 == 0
                                 || queue_read_duration.as_micros() > 1000
                                 || size_change > 2048
                             {
@@ -862,7 +860,6 @@ extern "C" fn rtrb_render_callback(
                             0
                         };
 
-                        // **DEBUG**: Log audio playback periodically
                         static mut SPMC_PLAYBACK_COUNT: u64 = 0;
                         unsafe {
                             SPMC_PLAYBACK_COUNT += 1;
@@ -1148,7 +1145,9 @@ impl CoreAudioInputStream {
         };
         if status == 0 {
             info!(
-                "🔍 DEBUG INPUT FORMAT: SR: {}, Channels: {}, Format: 0x{:x}, Flags: 0x{:x}",
+                "🔍 {}: device '{}' SR: {}, Channels: {}, Format: 0x{:x}, Flags: 0x{:x}",
+                "INPUT_FORMAT".green(),
+                self.device_name,
                 actual_input_format.mSampleRate,
                 actual_input_format.mChannelsPerFrame,
                 actual_input_format.mFormatID,
@@ -1172,7 +1171,9 @@ impl CoreAudioInputStream {
         };
         if status == 0 {
             info!(
-                "🔍 DEBUG OUTPUT FORMAT: SR: {}, Channels: {}, Format: 0x{:x}, Flags: 0x{:x}",
+                "🔍 {}: device '{}' SR: {}, Channels: {}, Format: 0x{:x}, Flags: 0x{:x}",
+                "OUTPUT_FORMAT".green(),
+                self.device_name,
                 actual_output_format.mSampleRate,
                 actual_output_format.mChannelsPerFrame,
                 actual_output_format.mFormatID,
@@ -1201,13 +1202,19 @@ impl CoreAudioInputStream {
         };
         if status == 0 {
             info!(
-                "🔍 DEBUG DEVICE SAMPLE RATE: {} Hz (requested: {} Hz)",
-                device_sample_rate, self.sample_rate
+                "🔍 {}: device '{}' SAMPLE RATE: {} Hz (requested: {} Hz)",
+                "DEVICE_SAMPLE_RATE".green(),
+                self.device_name,
+                device_sample_rate,
+                self.sample_rate
             );
             if (device_sample_rate - self.sample_rate as f64).abs() > 1.0 {
                 info!(
-                    "⚠️ SAMPLE RATE MISMATCH: Device={} Hz, Requested={} Hz",
-                    device_sample_rate, self.sample_rate
+                    "⚠️ {}: device '{}' SAMPLE RATE MISMATCH: Device={} Hz, Requested={} Hz",
+                    "SAMPLE_RATE_MISMATCH".green(),
+                    self.device_name,
+                    device_sample_rate,
+                    self.sample_rate
                 );
             }
         } else {
@@ -1222,7 +1229,7 @@ impl CoreAudioInputStream {
             .map_err(|_| anyhow::anyhow!("Failed to extract RTRB producer from Mutex"))?;
 
         let context = AudioInputCallbackContext {
-            rtrb_producer, // Move extracted producer ownership to callback context, just like CPAL
+            rtrb_producer,
             input_notifier: self.input_notifier.clone(),
             device_name: self.device_name.clone(),
             audio_unit,
@@ -1469,7 +1476,6 @@ extern "C" fn coreaudio_input_callback(
             vec![0.0f32; total_samples]
         };
 
-        // **EXACTLY MATCH CPAL**: Push captured samples to RTRB ring buffer (identical to CPAL f32 callback)
         let mut samples_written = 0;
         let mut samples_dropped = 0;
 
@@ -1493,7 +1499,6 @@ extern "C" fn coreaudio_input_callback(
         // ALWAYS notify, even for silent samples, to maintain temporal sync across devices
         context.input_notifier.notify_one();
 
-        // Debug logging for audio capture (same pattern as CPAL)
         static mut INPUT_CAPTURE_COUNT: u64 = 0;
         unsafe {
             INPUT_CAPTURE_COUNT += 1;
