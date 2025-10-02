@@ -175,14 +175,22 @@ impl TemporalSyncBuffer {
                         })
                         .collect();
 
-                    warn!(
-                        "⚠️ {}: Rejecting samples (got {} of {} devices, sync window: {}ms). Details: [{}]",
-                        "TEMPORAL_SYNC_REJECT".yellow(),
-                        synchronized_samples.len(),
-                        self.device_buffers.len(),
-                        self.sync_window_ms,
-                        details.join(", ")
-                    );
+                    // Rate-limit sync rejection logging to avoid log spam
+                    static SYNC_REJECT_COUNT: std::sync::atomic::AtomicU64 =
+                        std::sync::atomic::AtomicU64::new(0);
+                    let reject_count =
+                        SYNC_REJECT_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                    if reject_count < 10 || reject_count % 1000 == 0 {
+                        warn!(
+                            "⚠️ {}: Rejecting samples (got {} of {} devices, sync window: {}ms). Details: [{}]",
+                            "TEMPORAL_SYNC_REJECT".yellow(),
+                            synchronized_samples.len(),
+                            self.device_buffers.len(),
+                            self.sync_window_ms,
+                            details.join(", ")
+                        );
+                    }
                 }
             }
 

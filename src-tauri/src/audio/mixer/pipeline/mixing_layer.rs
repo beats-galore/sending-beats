@@ -15,6 +15,7 @@ use tracing::{error, info, warn};
 
 use super::queue_types::{MixedAudioSamples, ProcessedAudioSamples};
 use super::temporal_sync_buffer::TemporalSyncBuffer;
+use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::mixer::stream_management::virtual_mixer::VirtualMixer;
 use crate::audio::VUChannelService;
 use colored::*;
@@ -24,6 +25,7 @@ pub enum MixingLayerCommand {
     AddInputStream {
         device_id: String,
         receiver: mpsc::UnboundedReceiver<ProcessedAudioSamples>,
+        queue_tracker: AtomicQueueTracker,
     },
     AddOutputSender {
         sender: mpsc::UnboundedSender<MixedAudioSamples>,
@@ -34,6 +36,9 @@ pub enum MixingLayerCommand {
 pub struct MixingLayer {
     // Input: Processed streams from Layer 2
     processed_input_receivers: HashMap<String, mpsc::UnboundedReceiver<ProcessedAudioSamples>>,
+
+    // Queue trackers for monitoring consumer-side reads (one per input device)
+    queue_trackers: HashMap<String, AtomicQueueTracker>,
 
     // Output: Mixed stream to Layer 4
     mixed_output_senders: Vec<mpsc::UnboundedSender<MixedAudioSamples>>, // Broadcast to all output devices
@@ -65,6 +70,7 @@ impl MixingLayer {
 
         Self {
             processed_input_receivers: HashMap::new(),
+            queue_trackers: HashMap::new(),
             mixed_output_senders: Vec::new(),
             command_tx,
             target_sample_rate: None,
@@ -80,12 +86,14 @@ impl MixingLayer {
         &mut self,
         device_id: String,
         receiver: mpsc::UnboundedReceiver<ProcessedAudioSamples>,
+        queue_tracker: AtomicQueueTracker,
     ) {
         if self.worker_handle.is_some() {
             // MixingLayer is already running - send command to worker thread
             let cmd = MixingLayerCommand::AddInputStream {
                 device_id: device_id.clone(),
                 receiver,
+                queue_tracker,
             };
             if let Err(_) = self.command_tx.send(cmd) {
                 warn!(
@@ -102,6 +110,7 @@ impl MixingLayer {
             // MixingLayer not started yet - add to local storage
             self.processed_input_receivers
                 .insert(device_id.clone(), receiver);
+            self.queue_trackers.insert(device_id.clone(), queue_tracker);
             info!(
                 "🎛️ MIXING_LAYER: Queued input stream for device '{}'",
                 device_id
@@ -148,8 +157,9 @@ impl MixingLayer {
         let (command_tx, mut command_rx) = mpsc::unbounded_channel();
         self.command_tx = command_tx;
 
-        // Take ownership of receivers for the worker thread
+        // Take ownership of receivers and queue trackers for the worker thread
         let mut processed_input_receivers = std::mem::take(&mut self.processed_input_receivers);
+        let mut queue_trackers = std::mem::take(&mut self.queue_trackers);
         let mut mixed_output_senders = self.mixed_output_senders.clone();
         let master_vu_service = vu_channel.map(|channel| {
             info!(
@@ -188,8 +198,10 @@ impl MixingLayer {
                         MixingLayerCommand::AddInputStream {
                             device_id,
                             receiver,
+                            queue_tracker,
                         } => {
                             processed_input_receivers.insert(device_id.clone(), receiver);
+                            queue_trackers.insert(device_id.clone(), queue_tracker);
                             info!(
                                 "🎛️ MIXING_LAYER_WORKER: Added input stream for device '{}'",
                                 device_id
@@ -211,7 +223,14 @@ impl MixingLayer {
                 for (device_id, receiver) in processed_input_receivers.iter_mut() {
                     // Non-blocking receive - get whatever samples are available
                     while let Ok(processed_audio) = receiver.try_recv() {
+                        let sample_count = processed_audio.samples.len();
                         temporal_buffer.add_samples(device_id.clone(), processed_audio);
+
+                        // Record samples read for queue tracking (consumer side)
+                        if let Some(tracker) = queue_trackers.get(device_id) {
+                            tracker.record_samples_read(sample_count);
+                        }
+
                         mixed_something = true;
                     }
                 }
