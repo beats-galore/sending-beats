@@ -21,7 +21,7 @@ use coreaudio_sys::{
 };
 use std::os::raw::c_void;
 use std::ptr;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 /// Get the native sample rate of a CoreAudio device
 pub fn get_device_native_sample_rate(device_id: AudioDeviceID) -> Result<u32> {
@@ -182,7 +182,6 @@ use std::sync::{
 struct AudioCallbackContext {
     buffer: Arc<Mutex<Vec<f32>>>,
     rtrb_consumer: Option<Arc<Mutex<rtrb::Consumer<f32>>>>,
-    output_notifier: Option<Arc<tokio::sync::Notify>>,
     queue_tracker: Option<AtomicQueueTracker>,
     channels: u16, // Output device channel count (mono/stereo/etc)
 }
@@ -190,7 +189,6 @@ struct AudioCallbackContext {
 #[cfg(target_os = "macos")]
 struct AudioInputCallbackContext {
     rtrb_producer: rtrb::Producer<f32>,
-    input_notifier: Arc<tokio::sync::Notify>,
     device_name: String,
     audio_unit: AudioUnit, // Store AudioUnit for AudioUnitRender calls
     channels: u16,
@@ -212,8 +210,6 @@ pub struct CoreAudioOutputStream {
     callback_context: Arc<AtomicPtr<AudioCallbackContext>>,
     // **RTRB INTEGRATION**: Consumer for lock-free audio data from processing pipeline
     rtrb_consumer: Option<Arc<Mutex<rtrb::Consumer<f32>>>>,
-    // **OUTPUT NOTIFIER**: Notify isolated audio manager when buffer runs low
-    output_notifier: Option<Arc<tokio::sync::Notify>>,
     // **QUEUE TRACKING**: Track samples read for dynamic sample rate adjustment
     queue_tracker: AtomicQueueTracker,
 }
@@ -249,7 +245,6 @@ impl CoreAudioOutputStream {
         device_name: String,
         channels: u16,
         rtrb_consumer: rtrb::Consumer<f32>,
-        output_notifier: Arc<tokio::sync::Notify>,
         queue_tracker: AtomicQueueTracker,
     ) -> Result<Self> {
         // **ADAPTIVE AUDIO**: Detect device's native sample rate instead of imposing our own
@@ -273,7 +268,6 @@ impl CoreAudioOutputStream {
             audio_unit: None,
             callback_context: Arc::new(AtomicPtr::new(ptr::null_mut())),
             rtrb_consumer: Some(Arc::new(Mutex::new(rtrb_consumer))), // **RTRB INTEGRATION**
-            output_notifier: Some(output_notifier),                   // **EVENT-DRIVEN PROCESSING**
             queue_tracker,
         })
     }
@@ -373,7 +367,6 @@ impl CoreAudioOutputStream {
         let context = AudioCallbackContext {
             buffer: self.input_buffer.clone(),
             rtrb_consumer: self.rtrb_consumer.clone(),
-            output_notifier: self.output_notifier.clone(),
             queue_tracker: Some(self.queue_tracker.clone()),
             channels: self.channels, // Pass actual output device channel count
         };
@@ -466,7 +459,6 @@ impl CoreAudioOutputStream {
         if let Some(audio_unit) = self.audio_unit.take() {
             info!("🔴 STOP: Found AudioUnit, attempting graceful shutdown...");
 
-            // **CRITICAL FIX**: Attempt proper CoreAudio cleanup with error handling
             unsafe {
                 // Try to stop the audio unit
                 if AudioOutputUnitStop(audio_unit) == 0 {
@@ -781,22 +773,7 @@ extern "C" fn rtrb_render_callback(
                                         QUEUE_WAS_EMPTY_LAST_TIME.store(false, Ordering::Relaxed);
                                     }
                                     Err(_) => {
-                                        // Queue empty
-                                        // **SMART NOTIFICATION**: Only notify on transition from "had data" to "no data"
-                                        if let Some(ref output_notifier) = context.output_notifier {
-                                            // Only notify when transitioning TO empty (not every time it's empty)
-                                            if !QUEUE_WAS_EMPTY_LAST_TIME
-                                                .swap(true, Ordering::Relaxed)
-                                            {
-                                                output_notifier.notify_one();
-                                                let count = TRANSITION_COUNT
-                                                    .fetch_add(1, Ordering::Relaxed)
-                                                    + 1;
-                                                if count <= 10 || count % 1000 == 0 {
-                                                    info!("🔔 {}: Queue became empty - notified processing (#{}) ⚡", "OUTPUT_TRANSITION".blue(), count);
-                                                }
-                                            }
-                                        }
+                                        // empty queue
                                         break;
                                     }
                                 }
@@ -908,8 +885,6 @@ pub struct CoreAudioInputStream {
     callback_context: Arc<AtomicPtr<AudioInputCallbackContext>>,
     // RTRB producer for lock-free audio capture - stored separately for ownership management
     rtrb_producer: Option<Arc<Mutex<rtrb::Producer<f32>>>>,
-    // Notification system for event-driven processing
-    input_notifier: Arc<tokio::sync::Notify>,
 }
 
 // Manual Debug implementation to handle the AudioUnit pointer
@@ -943,7 +918,6 @@ impl CoreAudioInputStream {
         device_name: String,
         channels: u16,
         rtrb_producer: rtrb::Producer<f32>,
-        input_notifier: Arc<tokio::sync::Notify>,
     ) -> Result<Self> {
         // **ADAPTIVE AUDIO**: Detect device's native sample rate instead of imposing our own
         let native_sample_rate = get_device_native_sample_rate(device_id)?;
@@ -965,7 +939,6 @@ impl CoreAudioInputStream {
             audio_unit: None,
             callback_context: Arc::new(AtomicPtr::new(ptr::null_mut())),
             rtrb_producer,
-            input_notifier,
         })
     }
 
@@ -1230,7 +1203,6 @@ impl CoreAudioInputStream {
 
         let context = AudioInputCallbackContext {
             rtrb_producer,
-            input_notifier: self.input_notifier.clone(),
             device_name: self.device_name.clone(),
             audio_unit,
             channels: self.channels,
@@ -1494,10 +1466,6 @@ extern "C" fn coreaudio_input_callback(
                 }
             }
         }
-
-        // **EVENT-DRIVEN**: Notify async processing thread when hardware has provided new samples
-        // ALWAYS notify, even for silent samples, to maintain temporal sync across devices
-        context.input_notifier.notify_one();
 
         static mut INPUT_CAPTURE_COUNT: u64 = 0;
         unsafe {

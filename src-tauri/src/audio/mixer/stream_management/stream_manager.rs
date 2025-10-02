@@ -49,7 +49,6 @@ impl StreamManager {
         device_name: String,
         channels: u16,
         producer: Producer<f32>,
-        input_notifier: Arc<Notify>,
     ) -> Result<()> {
         info!(
             "🎤 Creating CoreAudio input stream for device '{}' (ID: {}, CH: {})",
@@ -62,7 +61,6 @@ impl StreamManager {
                 device_name.clone(),
                 channels,
                 producer, // Use producer provided by IsolatedAudioManager
-                input_notifier,
             )?;
 
         // Start the CoreAudio input stream
@@ -138,7 +136,6 @@ impl StreamManager {
         device_id: String,
         coreaudio_device: crate::audio::types::CoreAudioDevice,
         rtrb_consumer: rtrb::Consumer<f32>,
-        output_notifier: Arc<Notify>,
         queue_tracker: AtomicQueueTracker,
     ) -> Result<()> {
         info!(
@@ -153,7 +150,6 @@ impl StreamManager {
                 coreaudio_device.name.clone(), // String
                 coreaudio_device.channels,     // Use actual device channel count (dynamic)
                 rtrb_consumer,                 // **RTRB CONSUMER INTEGRATION**
-                output_notifier,               // **OUTPUT NOTIFIER INTEGRATION**
                 queue_tracker,                 // **QUEUE TRACKING INTEGRATION**
             )?;
 

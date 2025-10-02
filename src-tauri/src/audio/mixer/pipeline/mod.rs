@@ -9,6 +9,7 @@
 // Layer 3: Mixing → [Sum Processed Streams] → Mixed Queue
 // Layer 4: Output Workers → [Resample Mixed→Device Rate] → Device Output
 
+pub mod audio_worker;
 pub mod input_worker;
 pub mod mixing_layer;
 pub mod output_worker;

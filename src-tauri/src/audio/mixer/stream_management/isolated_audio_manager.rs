@@ -49,7 +49,6 @@ pub enum AudioCommand {
         device_name: String,
         channels: u16,
         producer: Producer<f32>,
-        input_notifier: Arc<Notify>,
         response_tx: oneshot::Sender<Result<()>>,
     },
     UpdateEffects {
@@ -125,10 +124,6 @@ pub struct IsolatedAudioManager {
 
     metrics: AudioMetrics,
 
-    // **COORDINATION**: Event notifications for pipeline coordination
-    global_input_notifier: Arc<Notify>,
-    global_output_notifier: Arc<Notify>,
-
     database: Option<Arc<crate::db::AudioDatabase>>,
 }
 
@@ -178,10 +173,6 @@ impl IsolatedAudioManager {
                 buffer_underruns: 0,
                 average_latency_ms: 0.0,
             },
-
-            // **COORDINATION**: Pipeline event notifications
-            global_input_notifier: Arc::new(Notify::new()),
-            global_output_notifier: Arc::new(Notify::new()),
 
             database,
         })
@@ -307,7 +298,6 @@ impl IsolatedAudioManager {
                 device_name,
                 channels,
                 producer,
-                input_notifier,
                 response_tx,
             } => {
                 let result = self
@@ -317,7 +307,6 @@ impl IsolatedAudioManager {
                         device_name,
                         channels,
                         producer,
-                        input_notifier,
                     )
                     .await;
                 let _ = response_tx.send(result);
@@ -413,7 +402,6 @@ impl IsolatedAudioManager {
         device_name: String,
         channels: u16,
         producer: Producer<f32>,
-        input_notifier: Arc<Notify>,
     ) -> Result<()> {
         // Check if input stream is already active by checking with the stream manager
         // Note: StreamManager tracks active CoreAudio input streams internally
@@ -553,14 +541,12 @@ impl IsolatedAudioManager {
         };
 
         // **PIPELINE INTEGRATION**: Create input worker FIRST to consume RTRB data
-        let input_device_notifier = Arc::new(Notify::new());
         self.audio_pipeline.add_input_device_with_consumer(
             device_id.clone(),
             native_sample_rate,
             channels,
             chunk_size,
             audio_input_consumer,
-            input_device_notifier.clone(),
             channel_number,
             initial_gain,
             initial_pan,
@@ -576,7 +562,6 @@ impl IsolatedAudioManager {
             device_name,
             channels,
             coreaudio_producer,
-            input_device_notifier, // Use the same notifier for consistency
         )?;
 
         info!(
@@ -745,7 +730,6 @@ impl IsolatedAudioManager {
                 device_id.clone(),
                 corrected_coreaudio_device,
                 rtrb_consumer,
-                self.global_output_notifier.clone(),
                 queue_tracker.clone(),
             )?;
 

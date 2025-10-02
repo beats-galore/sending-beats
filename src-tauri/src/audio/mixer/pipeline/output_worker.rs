@@ -24,14 +24,10 @@ pub struct OutputWorker {
     device_id: String,
     pub device_sample_rate: u32, // Target device sample rate (e.g., 44.1kHz)
     channels: u16,               // Output device channel count (mono/stereo/etc)
+    target_chunk_size: usize,    // Device-required buffer size (e.g., 512 samples stereo)
 
-    // Audio processing components
     resampler: Option<RubatoSRC>,
-    sample_buffer: Vec<f32>,  // Hardware chunk accumulator
-    target_chunk_size: usize, // Device-required buffer size (e.g., 512 samples stereo)
-
-    // **ACCUMULATION**: Buffer for collecting variable FftFixedIn outputs until hardware chunk size
-    accumulation_buffer: Vec<f32>, // Accumulates samples until target_chunk_size reached
+    queue_tracker: AtomicQueueTracker,
 
     // Communication channels
     mixed_audio_rx: mpsc::UnboundedReceiver<MixedAudioSamples>,
@@ -42,9 +38,6 @@ pub struct OutputWorker {
 
     // Hardware output integration via RTRB queue
     rtrb_producer: Option<Arc<Mutex<Producer<f32>>>>, // Writes to hardware via RTRB queue
-
-    // Queue state tracking for dynamic sample rate adjustment
-    queue_tracker: AtomicQueueTracker,
 
     // Worker thread handle
     worker_handle: Option<tokio::task::JoinHandle<()>>,
@@ -80,9 +73,7 @@ impl OutputWorker {
             device_sample_rate,
             channels,
             resampler: None,
-            sample_buffer: Vec::new(),
             target_chunk_size,
-            accumulation_buffer: Vec::with_capacity(target_chunk_size * 2), // Pre-allocate for efficiency
             mixed_audio_rx,
             #[cfg(target_os = "macos")]
             hardware_update_tx: None, // No hardware updates for this constructor
@@ -118,9 +109,7 @@ impl OutputWorker {
             device_sample_rate,
             channels,
             resampler: None,
-            sample_buffer: Vec::new(),
             target_chunk_size,
-            accumulation_buffer: Vec::with_capacity(target_chunk_size * 2), // Pre-allocate for efficiency
             mixed_audio_rx,
             hardware_update_tx: Some(hardware_update_tx),
             rtrb_producer: rtrb_producer,
@@ -903,7 +892,7 @@ impl OutputWorker {
             device_id: self.device_id.clone(),
             chunks_processed: self.chunks_processed,
             samples_output: self.samples_output,
-            buffer_size: self.sample_buffer.len(),
+
             target_chunk_size: self.target_chunk_size,
             is_running: self.worker_handle.is_some(),
         }
@@ -923,7 +912,6 @@ pub struct OutputWorkerStats {
     pub device_id: String,
     pub chunks_processed: u64,
     pub samples_output: u64,
-    pub buffer_size: usize,
     pub target_chunk_size: usize,
     pub is_running: bool,
 }
