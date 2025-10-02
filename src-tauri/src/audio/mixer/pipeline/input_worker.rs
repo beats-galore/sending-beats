@@ -30,15 +30,10 @@ pub struct InputWorker {
 
     // Audio processing components
     resampler: Option<RubatoSRC>,
-    default_effects: Arc<Mutex<DefaultAudioEffectsChain>>,
-    custom_effects: CustomAudioEffectsChain,
-    any_channel_solo: Arc<std::sync::atomic::AtomicBool>,
     queue_tracker: AtomicQueueTracker, // Track output queue for dynamic resampling
 
     // **DIRECT RTRB**: Read directly from hardware RTRB queue
     rtrb_consumer: Arc<Mutex<rtrb::Consumer<f32>>>,
-    input_notifier: Arc<Notify>, // Our own notification for input data available
-
     // Output to mixing layer
     processed_output_tx: mpsc::UnboundedSender<ProcessedAudioSamples>,
 
@@ -48,6 +43,10 @@ pub struct InputWorker {
     // Performance metrics
     samples_processed: u64,
     processing_time_total: std::time::Duration,
+
+    default_effects: Arc<Mutex<DefaultAudioEffectsChain>>,
+    custom_effects: CustomAudioEffectsChain,
+    any_channel_solo: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl InputWorker {
@@ -69,7 +68,6 @@ impl InputWorker {
         channels: u16,
         chunk_size: usize,
         rtrb_consumer: rtrb::Consumer<f32>,
-        input_notifier: Arc<Notify>,
         processed_output_tx: mpsc::UnboundedSender<ProcessedAudioSamples>,
         channel_number: u32,
         any_channel_solo: Arc<std::sync::atomic::AtomicBool>,
@@ -135,7 +133,6 @@ impl InputWorker {
             any_channel_solo,
             queue_tracker,
             rtrb_consumer: Arc::new(Mutex::new(rtrb_consumer)),
-            input_notifier,
             processed_output_tx,
             worker_handle: None,
             samples_processed: 0,
@@ -145,33 +142,31 @@ impl InputWorker {
 
     /// Static helper function to get or initialize resampler in async context
     /// Since we use SincFixedOut, we can dynamically adjust rates without recreation
+    /// TODO: This will be removed once InputWorker implements AudioWorker trait
     fn get_or_initialize_resampler_static<'a>(
         resampler: &'a mut Option<RubatoSRC>,
         device_sample_rate: u32,
         target_sample_rate: u32,
-        _chunk_size: usize, // Input device chunk size
-        channels: u16,      // Channel count for resampler configuration
+        _chunk_size: usize,
+        channels: u16,
         device_id: &str,
     ) -> Option<&'a mut RubatoSRC> {
         let sample_rate_difference = (device_sample_rate as f32 - target_sample_rate as f32).abs();
 
-        // No resampling needed if rates are close (within 1 Hz)
         if sample_rate_difference <= 1.0 {
             return None;
         }
 
-        // If resampler exists, adjust it dynamically; otherwise create new one
         match resampler {
             Some(ref mut existing_resampler) => {
                 let rates_changed = existing_resampler.input_rate() != device_sample_rate
                     || existing_resampler.output_rate() != target_sample_rate;
 
                 if rates_changed {
-                    // Use dynamic adjustment - SincFixedOut supports this
                     if let Err(e) = existing_resampler.set_sample_rates(
                         device_sample_rate as f32,
                         target_sample_rate as f32,
-                        true, // Use ramping for smooth transitions
+                        true,
                     ) {
                         warn!(
                             "⚠️ {}: Dynamic adjustment failed for {}: {} - recreating resampler",
@@ -179,21 +174,19 @@ impl InputWorker {
                             device_id,
                             e
                         );
-                        // If dynamic adjustment fails, create a new resampler
                         *resampler = None;
                     }
                 }
             }
             None => {
-                // Create new resampler
-                let frames_per_chunk = _chunk_size / channels as usize; // Convert samples to frames
+                let frames_per_chunk = _chunk_size / channels as usize;
 
                 match RubatoSRC::new_sinc_fixed_output(
                     device_sample_rate as f32,
                     target_sample_rate as f32,
-                    frames_per_chunk,  // Output frames we want to produce
-                    channels as usize, // dynamic channel count
-                    format!("input_{}", device_id), // Identifier for logging
+                    frames_per_chunk,
+                    channels as usize,
+                    format!("input_{}", device_id),
                 ) {
                     Ok(new_resampler) => {
                         info!(
@@ -217,13 +210,7 @@ impl InputWorker {
             }
         }
 
-        // Return mutable reference to the resampler
         resampler.as_mut()
-    }
-
-    /// Get queue tracker for sharing with mixing layer (consumer side)
-    pub fn get_queue_tracker_for_consumer(&self) -> AtomicQueueTracker {
-        self.queue_tracker.clone()
     }
 
     /// Start the input processing worker thread
@@ -240,7 +227,6 @@ impl InputWorker {
 
         // Clone shared resources for the worker thread
         let rtrb_consumer = self.rtrb_consumer.clone();
-        let input_notifier = self.input_notifier.clone();
         let processed_output_tx = self.processed_output_tx.clone();
 
         let mut resampler = self.resampler.take();
@@ -269,8 +255,6 @@ impl InputWorker {
             );
 
             loop {
-                input_notifier.notified().await;
-
                 // Read available samples from RTRB
                 let samples = {
                     let mut consumer = match rtrb_consumer.try_lock() {
@@ -581,6 +565,11 @@ impl InputWorker {
             },
             is_running: self.worker_handle.is_some(),
         }
+    }
+
+    /// Get queue tracker for sharing with mixing layer (consumer side)
+    pub fn get_queue_tracker_for_consumer(&self) -> AtomicQueueTracker {
+        self.queue_tracker.clone()
     }
 }
 

@@ -187,7 +187,6 @@ pub async fn safe_switch_input_device(
                 device_name: coreaudio_device.name.clone(),
                 channels: coreaudio_device.channels,
                 producer,
-                input_notifier: std::sync::Arc::new(tokio::sync::Notify::new()),
                 response_tx,
             }
         }

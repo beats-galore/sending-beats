@@ -212,7 +212,6 @@ impl AudioPipeline {
         channels: u16,
         chunk_size: usize, // Input device chunk size from hardware
         rtrb_consumer: rtrb::Consumer<f32>,
-        input_notifier: Arc<tokio::sync::Notify>,
         channel_number: u32,
         initial_gain: Option<f32>,
         initial_pan: Option<f32>,
@@ -289,7 +288,6 @@ impl AudioPipeline {
             channels,
             chunk_size,
             rtrb_consumer,
-            input_notifier,
             processed_output_tx,
             channel_number,
             self.any_channel_solo.clone(),
