@@ -338,11 +338,9 @@ impl ApplicationAudioManager {
                     / audio_samples.len() as f32)
                     .sqrt();
 
-                // Store samples in the bridge buffer (same pattern as CPAL input streams)
                 if let Ok(mut buffer) = bridge_buffer_for_task.try_lock() {
                     buffer.extend_from_slice(&audio_samples);
 
-                    // Prevent buffer overflow - same logic as regular input streams
                     let max_buffer_size = crate::types::DEFAULT_SAMPLE_RATE as usize; // 1 second at 48kHz
                     if buffer.len() > max_buffer_size * 2 {
                         let keep_size = max_buffer_size;

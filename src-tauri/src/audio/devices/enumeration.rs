@@ -1,7 +1,6 @@
 // Device discovery and enumeration system
 //
-// This module handles the core device enumeration logic, including both
-// CPAL-based enumeration and safe device discovery with crash protection.
+// This module handles the core device enumeration logic, safe device discovery with crash protection.
 // It provides device information extraction, name cleaning, and availability
 // filtering.
 
@@ -53,10 +52,7 @@ impl DeviceEnumerator {
                     all_devices.extend(coreaudio_devices);
                 }
                 Err(e) => {
-                    warn!(
-                        "CoreAudio direct access failed: {}, falling back to cpal",
-                        e
-                    );
+                    error!("CoreAudio direct access failed: {}", e);
                 }
             }
         }

@@ -221,7 +221,7 @@ impl IsolatedAudioManager {
                             self.handle_command(cmd).await;
                         },
                         None => {
-                            info!("🛑 {}: Command channel closed, shutting down", "AUDIO_COORDINATOR".red());
+                            info!("🛑 {}: Command channel closed, shutting down", "AUDIO_COORDINATOR".on_yellow().red());
                             break;
                         }
                     }
@@ -234,7 +234,7 @@ impl IsolatedAudioManager {
                             AudioCommand::UpdateOutputHardwareBufferSize { device_id, target_frames } => {
                                 info!(
                                     "🔄 {}: Processing hardware buffer update for {} → {} frames",
-                                    "HARDWARE_SYNC".cyan(),
+                                    "HARDWARE_SYNC".on_yellow().red(),
                                     device_id,
                                     target_frames
                                 );
@@ -264,16 +264,16 @@ impl IsolatedAudioManager {
             } => {
                 info!(
                     "{}: Received SetVUChannel command",
-                    "VU_CHANNEL_COORD".bright_green()
+                    "VU_CHANNEL_COORD".on_yellow().red()
                 );
                 info!(
                     "{}: Setting VU channel for high-performance streaming",
-                    "VU_CHANNEL_COORD".bright_green()
+                    "VU_CHANNEL_COORD".on_yellow().red()
                 );
                 self.audio_pipeline.set_vu_channel(channel);
                 info!(
                     "{}: VU channel set successfully, sending confirmation",
-                    "VU_CHANNEL_COORD".bright_green()
+                    "VU_CHANNEL_COORD".on_yellow().red()
                 );
                 let _ = response_tx.send(Ok(()));
             }
@@ -420,7 +420,7 @@ impl IsolatedAudioManager {
         if self.stream_manager.has_input_stream(&device_id) {
             info!(
                 "📋 {}: Input device '{}' already active, skipping duplicate creation",
-                "DUPLICATE_INPUT_SKIP".yellow(),
+                "DUPLICATE_INPUT_SKIP".on_yellow().red(),
                 device_id
             );
             return Ok(());
@@ -462,7 +462,7 @@ impl IsolatedAudioManager {
 
         info!(
             "🎯 {}: Input device '{}' - hardware: {} frames → {} samples ({} channels)",
-            "CHUNK_SIZE_CALCULATION".green(),
+            "CHUNK_SIZE_CALCULATION".on_yellow().red(),
             device_id,
             actual_buffer_frames,
             chunk_size,
@@ -479,7 +479,7 @@ impl IsolatedAudioManager {
                 Ok(Some(channel)) => {
                     info!(
                         "🎯 {}: Found channel number {} for device '{}'",
-                        "CHANNEL_LOOKUP".green(),
+                        "CHANNEL_LOOKUP".on_yellow().red(),
                         channel,
                         device_id
                     );
@@ -516,7 +516,7 @@ impl IsolatedAudioManager {
                 Ok(Some(effects)) => {
                     info!(
                         "🎛️ {}: Loaded initial effects for '{}': gain={}, pan={}, muted={}, solo={}",
-                        "EFFECTS_LOAD".on_yellow().purple(),
+                        "EFFECTS_LOAD".on_yellow().red(),
                         device_id,
                         effects.gain,
                         effects.pan,
@@ -533,7 +533,7 @@ impl IsolatedAudioManager {
                 Ok(None) => {
                     info!(
                         "ℹ️ {}: No saved effects found for '{}', using defaults",
-                        "EFFECTS_LOAD".on_yellow().purple(),
+                        "EFFECTS_LOAD".on_yellow().red(),
                         device_id
                     );
                     (None, None, None, None)
@@ -541,7 +541,7 @@ impl IsolatedAudioManager {
                 Err(e) => {
                     warn!(
                         "⚠️ {}: Failed to load effects for '{}': {}, using defaults",
-                        "EFFECTS_LOAD".on_yellow().purple(),
+                        "EFFECTS_LOAD".on_yellow().red(),
                         device_id,
                         e
                     );
@@ -580,7 +580,8 @@ impl IsolatedAudioManager {
         )?;
 
         info!(
-            "✅ AUDIO_COORDINATOR: Input device '{}' connected to AudioPipeline",
+            "✅ {}: Input device '{}' connected to AudioPipeline",
+            "AUDIO_COORDINATOR".on_yellow().red(),
             device_id
         );
         Ok(())
@@ -588,7 +589,8 @@ impl IsolatedAudioManager {
 
     async fn handle_remove_input_stream(&mut self, device_id: String) -> bool {
         info!(
-            "🗑️ AUDIO_COORDINATOR: Removing input device '{}'",
+            "🗑️ {}: Removing input device '{}'",
+            "AUDIO_COORDINATOR".on_yellow().red(),
             device_id
         );
 
@@ -600,7 +602,11 @@ impl IsolatedAudioManager {
         // **HARDWARE**: Remove hardware stream
         self.stream_manager.remove_stream(&device_id);
 
-        info!("✅ AUDIO_COORDINATOR: Removed input device '{}'", device_id);
+        info!(
+            "✅ {}: Removed input device '{}'",
+            "AUDIO_COORDINATOR".on_yellow().red(),
+            device_id
+        );
         true
     }
 
@@ -620,7 +626,7 @@ impl IsolatedAudioManager {
         } else {
             tracing::info!(
                 "🔄 {}: Updated hardware buffer size to {} frames for {}",
-                "DYNAMIC_HARDWARE_SYNC".green(),
+                "DYNAMIC_HARDWARE_SYNC".on_yellow().red(),
                 target_frames,
                 device_id
             );
@@ -636,7 +642,7 @@ impl IsolatedAudioManager {
         if self.output_rtrb_producers.contains_key(&device_id) {
             info!(
                 "📋 {}: Output device '{}' already active, skipping duplicate creation",
-                "DUPLICATE_OUTPUT_SKIP".yellow(),
+                "DUPLICATE_OUTPUT_SKIP".on_yellow().red(),
                 device_id
             );
             return Ok(());
@@ -654,8 +660,10 @@ impl IsolatedAudioManager {
             )?;
 
         info!(
-            "🔧 OUTPUT_DEVICE_RATE: Using detected {} Hz for output device '{}'",
-            native_sample_rate, device_id
+            "🔧 {}: Using detected {} Hz for output device '{}'",
+            "OUTPUT_DEVICE_RATE".on_yellow().red(),
+            native_sample_rate,
+            device_id
         );
 
         // Store device_id before moving coreaudio_device
@@ -696,7 +704,7 @@ impl IsolatedAudioManager {
 
         info!(
             "🎯 {}: Output device '{}' - hardware: {} frames → {} samples ({} channels)",
-            "CHUNK_SIZE_CALCULATION".green(),
+            "CHUNK_SIZE_CALCULATION".on_yellow().red(),
             device_id,
             actual_buffer_frames,
             chunk_size,
@@ -743,9 +751,10 @@ impl IsolatedAudioManager {
 
         self.metrics.output_streams = self.output_rtrb_producers.len();
         info!(
-          "✅ CoreAudio output stream created and started for device '{}' with direct RTRB connection",
-          device_id
-      );
+            "✅ {}: output stream created and started for device '{}' with direct RTRB connection",
+            "ISOLATED_AUDIO_MANAGER_CORE_AUDIO_OUTPUT".on_yellow().red(),
+            device_id
+        );
         Ok(())
     }
 
@@ -769,7 +778,7 @@ impl IsolatedAudioManager {
     ) -> Result<rtrb::Consumer<f32>> {
         info!(
             "🎙️ {}: Starting recording session '{}' with format: {}",
-            "RECORDING_COORDINATOR".red(),
+            "RECORDING_COORDINATOR".bright_green(),
             session_id,
             recording_config.format.get_format_name()
         );
@@ -791,7 +800,7 @@ impl IsolatedAudioManager {
 
         info!(
             "🔧 {}: Created RTRB buffer with {} samples capacity for recording '{}'",
-            "RECORDING_RTRB".red(),
+            "RECORDING_RTRB".on_yellow().red(),
             buffer_capacity,
             session_id
         );
@@ -824,7 +833,7 @@ impl IsolatedAudioManager {
 
                 info!(
                     "✅ {}: Recording output worker created for session '{}'",
-                    "RECORDING_COORDINATOR".red(),
+                    "RECORDING_COORDINATOR".bright_green(),
                     session_id
                 );
 
@@ -834,7 +843,7 @@ impl IsolatedAudioManager {
             Err(e) => {
                 error!(
                     "❌ {}: Failed to create recording output worker for '{}': {}",
-                    "RECORDING_ERROR".red(),
+                    "RECORDING_ERROR".bright_green(),
                     session_id,
                     e
                 );
@@ -847,7 +856,7 @@ impl IsolatedAudioManager {
     async fn handle_stop_recording(&mut self, _session_id: String) -> Result<()> {
         info!(
             "🛑 {}: Stopping recording session",
-            "RECORDING_COORDINATOR".red()
+            "RECORDING_COORDINATOR".bright_green()
         );
 
         const RECORDING_DEVICE_ID: &str = "recording_output";
@@ -865,14 +874,14 @@ impl IsolatedAudioManager {
 
                 info!(
                     "✅ {}: Recording OutputWorker stopped and removed from pipeline",
-                    "RECORDING_COORDINATOR".red()
+                    "RECORDING_COORDINATOR".bright_green()
                 );
                 Ok(())
             }
             Err(e) => {
                 error!(
                     "❌ {}: Failed to remove recording OutputWorker from pipeline: {}",
-                    "RECORDING_ERROR".red(),
+                    "RECORDING_ERROR".on_yellow().red(),
                     e
                 );
                 Err(e)
@@ -949,7 +958,7 @@ impl IsolatedAudioManager {
             Err(e) => {
                 error!(
                     "❌ {}: Failed to create Icecast output worker for '{}': {}",
-                    "ICECAST_ERROR".red(),
+                    "ICECAST_ERROR".blue(),
                     stream_id,
                     e
                 );
@@ -989,7 +998,7 @@ impl IsolatedAudioManager {
             Err(e) => {
                 error!(
                     "❌ {}: Failed to remove Icecast OutputWorker from pipeline for '{}': {}",
-                    "ICECAST_ERROR".red(),
+                    "ICECAST_ERROR".blue(),
                     stream_id,
                     e
                 );

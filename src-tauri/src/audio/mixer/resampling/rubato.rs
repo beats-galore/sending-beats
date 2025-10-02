@@ -32,11 +32,14 @@ pub struct RubatoSRC {
     output_frames: usize,
     /// **PERFORMANCE FIX**: Reusable result buffer to eliminate Vec allocations
     reusable_result_buffer: Vec<f32>,
+    /// Identifier for logging (e.g., "input", "output", device name)
+    identifier: String,
 }
 
 impl std::fmt::Debug for RubatoSRC {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RubatoSRC")
+            .field("identifier", &self.identifier)
             .field("input_rate", &self.input_rate)
             .field("output_rate", &self.output_rate)
             .field("ratio", &self.ratio)
@@ -54,6 +57,8 @@ impl RubatoSRC {
     /// * `input_rate` - Input sample rate in Hz (e.g., 48000)
     /// * `output_rate` - Output sample rate in Hz (e.g., 44100)
     /// * `chunk_size_out` - Fixed number of output frames per call (e.g., 512)
+    /// * `channels` - Number of audio channels (1 for mono, 2 for stereo)
+    /// * `identifier` - Identifier for logging (e.g., "input", "output", device name)
     ///
     /// # Returns
     /// Sinc-based resampler with adjustable ratio for dynamic clock synchronization
@@ -62,6 +67,7 @@ impl RubatoSRC {
         output_rate: f32,
         chunk_size_out: usize,
         channels: usize,
+        identifier: String,
     ) -> Result<Self, String> {
         let resample_ratio = output_rate as f64 / input_rate as f64;
 
@@ -131,6 +137,7 @@ impl RubatoSRC {
             input_frames: max_input_frames,
             output_frames: chunk_size_out,
             reusable_result_buffer: Vec::with_capacity(chunk_size_out * channels), // Dynamic channel samples
+            identifier,
         })
     }
 
@@ -165,13 +172,14 @@ impl RubatoSRC {
 
         // Check if we have enough input frames
         if input_frames < required_frames {
-            info!(
-                "⚠️ {}: Insufficient input frames: got {}, need {} - skipping conversion",
-                "SINC_FIXED_OUT_SKIP".yellow(),
-                input_frames,
-                required_frames
-            );
-            return Vec::new();
+            // info!(
+            //     "⚠️ {}: [{}] Insufficient input frames: got {}, need {} - skipping conversion",
+            //     "SINC_FIXED_OUT_SKIP".yellow(),
+            //     self.identifier,
+            //     input_frames,
+            //     required_frames
+            // );
+            // return Vec::new();
         }
 
         // Use exactly the required number of frames

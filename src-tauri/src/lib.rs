@@ -178,10 +178,7 @@ pub fn run() {
         // Clone database for IsolatedAudioManager thread
         let database_for_audio = database.clone();
 
-        // Start IsolatedAudioManager in a dedicated thread with its own runtime
-        // This avoids Send+Sync issues with CPAL streams on macOS
         std::thread::spawn(move || {
-            // Create a new runtime for this thread since we can't send the runtime
             let rt = match tokio::runtime::Runtime::new() {
                 Ok(rt) => rt,
                 Err(e) => {

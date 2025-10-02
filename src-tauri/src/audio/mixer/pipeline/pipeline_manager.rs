@@ -55,7 +55,7 @@ impl AudioPipeline {
     pub fn new() -> Self {
         info!(
             "🏗️ {}: Creating new 4-layer audio pipeline (sample rate will be determined from first device)",
-            "AUDIO_PIPELINE".bright_blue()
+            "AUDIO_PIPELINE".on_purple().blue()
         );
 
         Self {
@@ -82,7 +82,7 @@ impl AudioPipeline {
     ) -> Self {
         info!(
             "🏗️ {}: Creating new 4-layer audio pipeline with hardware updates (sample rate will be determined from first device)",
-            "AUDIO_PIPELINE".bright_blue()
+            "AUDIO_PIPELINE".on_purple().blue()
         );
 
         Self {
@@ -115,7 +115,7 @@ impl AudioPipeline {
         self.vu_channel = Some(channel);
         tracing::info!(
             "{}: VU channel connected, will be used by all workers",
-            "VU_CHANNEL_PIPELINE".bright_green()
+            "VU_CHANNEL_PIPELINE".on_purple().blue()
         );
     }
 
@@ -162,6 +162,14 @@ impl AudioPipeline {
             ));
         }
 
+        if target_rate == self.max_sample_rate.unwrap() {
+            return Ok(target_rate);
+        }
+        info!(
+            "🎛️ {}: Calculated target sample rate to {} Hz",
+            "PIPELINE".on_purple().blue(),
+            target_rate
+        );
         self.max_sample_rate = Some(target_rate);
         Ok(target_rate)
     }
@@ -171,7 +179,10 @@ impl AudioPipeline {
         let target_rate = match self.max_sample_rate {
             Some(rate) => rate,
             None => {
-                info!("🎛️ PIPELINE: No sample rate set - no devices added yet, skipping target rate update");
+                info!(
+                    "🎛️ {}: No sample rate set - no devices added yet, skipping target rate update",
+                    "PIPELINE".on_purple().blue()
+                );
                 return Ok(());
             }
         };
@@ -184,6 +195,12 @@ impl AudioPipeline {
         for (device_id, worker) in &mut self.output_workers {
             worker.update_target_mix_rate(target_rate);
         }
+
+        info!(
+            "🎛️ {}: Updated target sample rates for all devices to {} Hz",
+            "PIPELINE".on_purple().blue(),
+            target_rate
+        );
         Ok(())
     }
 
@@ -252,7 +269,7 @@ impl AudioPipeline {
             self.max_sample_rate = Some(device_sample_rate);
             info!(
                 "🎯 {}: Pipeline sample rate initialized to {} Hz from first device '{}'",
-                "DYNAMIC_SAMPLE_RATE".blue(),
+                "DYNAMIC_SAMPLE_RATE".on_purple().blue(),
                 device_sample_rate,
                 device_id
             );
@@ -355,7 +372,7 @@ impl AudioPipeline {
             if let Some(ref hardware_tx) = self.hardware_update_tx {
                 tracing::info!(
                     "🔗 {}: Creating OutputWorker with HARDWARE UPDATES for {}",
-                    "PIPELINE".bright_blue(),
+                    "PIPELINE".on_purple().blue(),
                     device_id
                 );
                 OutputWorker::new_with_hardware_updates(
@@ -371,7 +388,7 @@ impl AudioPipeline {
             } else {
                 tracing::info!(
                     "⚠️ {}: Creating OutputWorker WITHOUT hardware updates for {}",
-                    "PIPELINE".bright_blue(),
+                    "PIPELINE".on_purple().blue(),
                     device_id
                 );
                 OutputWorker::new_with_rtrb_producer_and_tracker(
@@ -421,15 +438,23 @@ impl AudioPipeline {
         // Start the mixing layer if pipeline is running and this is the first device (triggering layer start)
         if self.is_running && !self.mixing_layer.get_stats().is_running {
             if let Err(e) = self.mixing_layer.start(self.vu_channel.clone()) {
-                error!("❌ AUDIO_PIPELINE: Failed to start mixing layer after adding output device: {}", e);
+                error!(
+                    "❌ {}: Failed to start mixing layer after adding output device: {}",
+                    "AUDIO_PIPELINE".on_purple().blue(),
+                    e
+                );
                 return Err(e);
             } else {
-                info!("🚀 AUDIO_PIPELINE: Started mixing layer after adding first output device");
+                info!(
+                    "🚀 {}: Started mixing layer after adding first output device",
+                    "AUDIO_PIPELINE".on_purple().blue()
+                );
             }
         }
 
         info!(
-            "✅ AUDIO_PIPELINE: Added output device '{}' ({} Hz ← {} Hz, {} sample chunks)",
+            "✅ {}: Added output device '{}' ({} Hz ← {} Hz, {} sample chunks)",
+            "AUDIO_PIPELINE".on_purple().blue(),
             device_id,
             device_sample_rate,
             self.get_sample_rate(),
@@ -445,14 +470,19 @@ impl AudioPipeline {
             return Ok(());
         }
 
-        info!("🚀 AUDIO_PIPELINE: Starting complete 4-layer pipeline...");
+        info!(
+            "🚀 {}: Starting complete 4-layer pipeline...",
+            "AUDIO_PIPELINE".on_purple().blue()
+        );
 
         // Start Layer 2: Input workers
         for (device_id, input_worker) in self.input_workers.iter_mut() {
             if let Err(e) = input_worker.start(self.vu_channel.clone()) {
                 error!(
-                    "❌ AUDIO_PIPELINE: Failed to start input worker for '{}': {}",
-                    device_id, e
+                    "❌ {}: Failed to start input worker for '{}': {}",
+                    "AUDIO_PIPELINE".on_purple().blue(),
+                    device_id,
+                    e
                 );
                 return Err(e);
             }
@@ -460,7 +490,11 @@ impl AudioPipeline {
 
         // Start Layer 3: Mixing layer
         if let Err(e) = self.mixing_layer.start(self.vu_channel.clone()) {
-            error!("❌ AUDIO_PIPELINE: Failed to start mixing layer: {}", e);
+            error!(
+                "❌ {}: Failed to start mixing layer: {}",
+                "AUDIO_PIPELINE".on_purple().blue(),
+                e
+            );
             return Err(e);
         }
 
@@ -468,8 +502,10 @@ impl AudioPipeline {
         for (device_id, output_worker) in self.output_workers.iter_mut() {
             if let Err(e) = output_worker.start() {
                 error!(
-                    "❌ AUDIO_PIPELINE: Failed to start output worker for '{}': {}",
-                    device_id, e
+                    "❌ {}: Failed to start output worker for '{}': {}",
+                    "AUDIO_PIPELINE".on_purple().blue(),
+                    device_id,
+                    e
                 );
                 return Err(e);
             }
@@ -477,7 +513,8 @@ impl AudioPipeline {
 
         self.is_running = true;
 
-        info!("✅ AUDIO_PIPELINE: Started complete pipeline ({} input workers, 1 mixing layer, {} output workers)",
+        info!("✅ {}: Started complete pipeline ({} input workers, 1 mixing layer, {} output workers)",
+              "AUDIO_PIPELINE".on_purple().blue(),
               self.input_workers.len(), self.output_workers.len());
 
         Ok(())
@@ -489,36 +526,50 @@ impl AudioPipeline {
             return Ok(());
         }
 
-        info!("🛑 AUDIO_PIPELINE: Stopping complete 4-layer pipeline...");
+        info!(
+            "🛑 {}: Stopping complete 4-layer pipeline...",
+            "AUDIO_PIPELINE".on_purple().blue()
+        );
 
         // Stop all input workers
         for (device_id, input_worker) in self.input_workers.iter_mut() {
             if let Err(e) = input_worker.stop().await {
                 warn!(
-                    "⚠️ AUDIO_PIPELINE: Error stopping input worker '{}': {}",
-                    device_id, e
+                    "⚠️ {}: Error stopping input worker '{}': {}",
+                    "AUDIO_PIPELINE".on_purple().blue(),
+                    device_id,
+                    e
                 );
             }
         }
 
         // Stop mixing layer
         if let Err(e) = self.mixing_layer.stop().await {
-            warn!("⚠️ AUDIO_PIPELINE: Error stopping mixing layer: {}", e);
+            warn!(
+                "⚠️ {}: Error stopping mixing layer: {}",
+                "AUDIO_PIPELINE".on_purple().blue(),
+                e
+            );
         }
 
         // Stop all output workers
         for (device_id, output_worker) in self.output_workers.iter_mut() {
             if let Err(e) = output_worker.stop().await {
                 warn!(
-                    "⚠️ AUDIO_PIPELINE: Error stopping output worker '{}': {}",
-                    device_id, e
+                    "⚠️ {}: Error stopping output worker '{}': {}",
+                    "AUDIO_PIPELINE".on_purple().blue(),
+                    device_id,
+                    e
                 );
             }
         }
 
         self.is_running = false;
 
-        info!("✅ AUDIO_PIPELINE: Stopped complete pipeline");
+        info!(
+            "✅ {}: Stopped complete pipeline",
+            "AUDIO_PIPELINE".on_purple().blue()
+        );
 
         Ok(())
     }
@@ -562,8 +613,10 @@ impl AudioPipeline {
             // Stop worker gracefully
             if let Err(e) = input_worker.stop().await {
                 warn!(
-                    "⚠️ AUDIO_PIPELINE: Error stopping input worker '{}': {}",
-                    device_id, e
+                    "⚠️ {}: Error stopping input worker '{}': {}",
+                    "AUDIO_PIPELINE".on_purple().blue(),
+                    device_id,
+                    e
                 );
             }
         }
@@ -584,7 +637,8 @@ impl AudioPipeline {
             .update_target_sample_rate(self.get_sample_rate());
 
         info!(
-            "✅ AUDIO_PIPELINE: Removed input device '{}' and recalculated mix rate to {} Hz",
+            "✅ {}: Removed input device '{}' and recalculated mix rate to {} Hz",
+            "AUDIO_PIPELINE".on_purple().blue(),
             device_id,
             self.get_sample_rate()
         );
@@ -603,8 +657,10 @@ impl AudioPipeline {
             // Stop worker gracefully
             if let Err(e) = output_worker.stop().await {
                 warn!(
-                    "⚠️ AUDIO_PIPELINE: Error stopping output worker '{}': {}",
-                    device_id, e
+                    "⚠️ {}: Error stopping output worker '{}': {}",
+                    "AUDIO_PIPELINE".on_purple().blue(),
+                    device_id,
+                    e
                 );
             }
         }
@@ -620,7 +676,8 @@ impl AudioPipeline {
             .update_target_sample_rate(self.get_sample_rate());
 
         info!(
-            "✅ AUDIO_PIPELINE: Removed output device '{}' and recalculated mix rate to {} Hz",
+            "✅ {}: Removed output device '{}' and recalculated mix rate to {} Hz",
+            "AUDIO_PIPELINE".on_purple().blue(),
             device_id,
             self.get_sample_rate()
         );
@@ -636,8 +693,10 @@ impl AudioPipeline {
 
         worker.update_gain(gain);
         info!(
-            "✅ AUDIO_PIPELINE: Updated gain for input device '{}' to {}",
-            device_id, gain
+            "✅ {}: Updated gain for input device '{}' to {}",
+            "AUDIO_PIPELINE".on_purple().blue(),
+            device_id,
+            gain
         );
         Ok(())
     }
@@ -650,8 +709,10 @@ impl AudioPipeline {
 
         worker.update_pan(pan);
         info!(
-            "✅ AUDIO_PIPELINE: Updated pan for input device '{}' to {}",
-            device_id, pan
+            "✅ {}: Updated pan for input device '{}' to {}",
+            "AUDIO_PIPELINE".on_purple().blue(),
+            device_id,
+            pan
         );
         Ok(())
     }
@@ -664,8 +725,10 @@ impl AudioPipeline {
 
         worker.update_muted(muted);
         info!(
-            "✅ AUDIO_PIPELINE: Updated mute for input device '{}' to {}",
-            device_id, muted
+            "✅ {}: Updated mute for input device '{}' to {}",
+            "AUDIO_PIPELINE".on_purple().blue(),
+            device_id,
+            muted
         );
         Ok(())
     }
@@ -678,15 +741,21 @@ impl AudioPipeline {
 
         worker.update_solo(solo);
         info!(
-            "✅ AUDIO_PIPELINE: Updated solo for input device '{}' to {}",
-            device_id, solo
+            "✅ {}: Updated solo for input device '{}' to {}",
+            "AUDIO_PIPELINE".on_purple().blue(),
+            device_id,
+            solo
         );
         Ok(())
     }
 
     pub fn update_master_gain(&mut self, gain: f32) -> Result<()> {
         self.mixing_layer.set_master_gain(gain);
-        info!("✅ AUDIO_PIPELINE: Updated master gain to {}", gain);
+        info!(
+            "✅ {}: Updated master gain to {}",
+            "AUDIO_PIPELINE".on_purple().blue(),
+            gain
+        );
         Ok(())
     }
 

@@ -47,8 +47,8 @@ pub struct MixingLayer {
     command_tx: mpsc::UnboundedSender<MixingLayerCommand>,
 
     // Configuration
-    target_sample_rate: Option<u32>,
-    master_gain: Arc<AtomicU32>, // Use AtomicU32 to store f32 bits for thread-safe sharing
+    target_sample_rate: Arc<AtomicU32>, // Use AtomicU32 for thread-safe dynamic updates
+    master_gain: Arc<AtomicU32>,        // Use AtomicU32 to store f32 bits for thread-safe sharing
 
     // Worker thread
     worker_handle: Option<tokio::task::JoinHandle<()>>,
@@ -59,10 +59,9 @@ pub struct MixingLayer {
 }
 
 impl MixingLayer {
-    /// Get the current sample rate, panics if not set (must have devices added first)
+    /// Get the current sample rate
     fn get_sample_rate(&self) -> u32 {
-        self.target_sample_rate
-            .expect("MixingLayer sample rate not set - no devices have been added yet")
+        self.target_sample_rate.load(Ordering::Relaxed)
     }
     /// Create new mixing layer with dynamic sample rate detection
     pub fn new() -> Self {
@@ -73,7 +72,7 @@ impl MixingLayer {
             queue_trackers: HashMap::new(),
             mixed_output_senders: Vec::new(),
             command_tx,
-            target_sample_rate: None,
+            target_sample_rate: Arc::new(AtomicU32::new(0)), // 0 = not set yet
             master_gain: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
             worker_handle: None,
             mix_cycles: 0,
@@ -144,13 +143,13 @@ impl MixingLayer {
         vu_channel: Option<tauri::ipc::Channel<crate::audio::VUChannelData>>,
     ) -> Result<()> {
         // No-op if no sample rate is set (no devices added yet)
-        let target_sample_rate = match self.target_sample_rate {
-            Some(rate) => rate,
-            None => {
-                info!("🎛️ MIXING_LAYER: No sample rate set - no devices added yet, skipping start");
-                return Ok(());
-            }
-        };
+        let current_sample_rate = self.target_sample_rate.load(Ordering::Relaxed);
+        if current_sample_rate == 0 {
+            info!("🎛️ MIXING_LAYER: No sample rate set - no devices added yet, skipping start");
+            return Ok(());
+        }
+
+        let target_sample_rate = self.target_sample_rate.clone();
         let master_gain = self.master_gain.clone();
 
         // Create command channel for this run
@@ -166,7 +165,7 @@ impl MixingLayer {
                 "{}: VU channel enabled for master output",
                 "VU_SETUP".on_green().white()
             );
-            VUChannelService::new(channel, target_sample_rate, 1, 60)
+            VUChannelService::new(channel, current_sample_rate, 1, 60)
         });
 
         // Spawn mixing worker thread
@@ -288,7 +287,7 @@ impl MixingLayer {
                         let broadcast_start = std::time::Instant::now();
                         let mixed_audio = MixedAudioSamples {
                             samples: final_samples,
-                            sample_rate: target_sample_rate,
+                            sample_rate: target_sample_rate.load(Ordering::Relaxed),
                             timestamp: std::time::Instant::now(),
                             input_count: active_inputs,
                         };
@@ -310,7 +309,7 @@ impl MixingLayer {
                         // Rate-limited logging (only when we actually mixed something)
                         if mix_cycles <= 5 || mix_cycles % 1000 == 0 {
                             info!("🎵 {}: TEMPORAL SYNC mixed {} inputs ({} samples) and sent to {} outputs (cycle #{}, sync took {}μs, total {}μs)",
-                                  "MIXING_LAYER_TEMPORAL".cyan(),
+                                  "MIXING_LAYER_TEMPORAL".on_green().white(),
                                   active_inputs, samples_count, mixed_output_senders.len(), mix_cycles, sync_duration.as_micros(), total_mixing_duration.as_micros());
                         }
 
@@ -318,7 +317,7 @@ impl MixingLayer {
                         if total_mixing_duration.as_micros() > 1000 {
                             warn!(
                                 "⏱️ {}: Slow mixing cycle: total {}μs (prep: {}μs, mix: {}μs, gain: {}μs, broadcast: {}μs)",
-                                "MIXING_LAYER_SLOW".yellow(),
+                                "MIXING_LAYER_SLOW".on_green().white(),
                                 total_mixing_duration.as_micros(),
                                 prep_duration.as_micros(),
                                 mix_duration.as_micros(),
@@ -341,7 +340,7 @@ impl MixingLayer {
                 if cycle_duration.as_micros() > 2000 {
                     warn!(
                         "⏱️ {}: Very slow cycle: total {}μs (commands: {}μs, collection: {}μs, sync: {}μs, mixing: {}μs)",
-                        "TEMPORAL_CYCLE_BREAKDOWN".yellow(),
+                        "TEMPORAL_CYCLE_BREAKDOWN".on_green().white(),
                         cycle_duration.as_micros(),
                         command_duration.as_micros(),
                         collection_duration.as_micros(),
@@ -383,7 +382,8 @@ impl MixingLayer {
     }
 
     pub fn update_target_sample_rate(&mut self, new_sample_rate: u32) {
-        self.target_sample_rate = Some(new_sample_rate);
+        self.target_sample_rate
+            .store(new_sample_rate, Ordering::Relaxed);
         info!(
             "🎛️ MIXING_LAYER: Updated target sample rate to {} Hz",
             new_sample_rate

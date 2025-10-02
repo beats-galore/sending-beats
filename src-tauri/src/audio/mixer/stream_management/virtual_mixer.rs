@@ -185,7 +185,7 @@ impl VirtualMixer {
             if total_mix_duration.as_micros() > 800 {
                 warn!(
                     "🐌 {}: Slow mix operation: total {}μs (buffer: {}μs, mixing: {}μs, clipping: {}μs, samples: {})",
-                    "VIRTUALMIXER_SLOW".red(),
+                    "VIRTUAL_MIXER_SLOW".red(),
                     total_mix_duration.as_micros(),
                     buffer_setup_duration.as_micros(),
                     mixing_loop_duration.as_micros(),
