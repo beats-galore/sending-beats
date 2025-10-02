@@ -14,6 +14,7 @@ use tracing::{error, info, warn};
 
 use super::queue_types::ProcessedAudioSamples;
 use crate::audio::effects::{CustomAudioEffectsChain, DefaultAudioEffectsChain};
+use crate::audio::mixer::pipeline::resampling_accumulator;
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::mixer::resampling::RubatoSRC;
 use crate::audio::VUChannelService;
@@ -78,7 +79,8 @@ impl InputWorker {
         initial_muted: Option<bool>,
         initial_solo: Option<bool>,
     ) -> Self {
-        info!("🎤 INPUT_WORKER: Creating RTRB-based worker for device '{}' ({} Hz → {} Hz, {} channels, channel #{})",
+        info!("🎤 {}: Creating RTRB-based worker for device '{}' ({} Hz → {} Hz, {} channels, channel #{})",
+        "INPUT_WORKER".on_cyan().white(),
               device_id, device_sample_rate, target_sample_rate, channels, channel_number);
 
         let mut default_effects = DefaultAudioEffectsChain::new(device_id.clone());
@@ -86,29 +88,37 @@ impl InputWorker {
         if let Some(gain) = initial_gain {
             default_effects.set_gain(gain);
             info!(
-                "🔊 INPUT_WORKER: Initialized gain for '{}' to {}",
-                device_id, gain
+                "🔊 {}: Initialized gain for '{}' to {}",
+                "INPUT_WORKER".on_cyan().white(),
+                device_id,
+                gain
             );
         }
         if let Some(pan) = initial_pan {
             default_effects.set_pan(pan);
             info!(
-                "🎚️ INPUT_WORKER: Initialized pan for '{}' to {}",
-                device_id, pan
+                "🎚️ {}: Initialized pan for '{}' to {}",
+                "INPUT_WORKER".on_cyan().white(),
+                device_id,
+                pan
             );
         }
         if let Some(muted) = initial_muted {
             default_effects.set_muted(muted);
             info!(
-                "🔇 INPUT_WORKER: Initialized muted for '{}' to {}",
-                device_id, muted
+                "🔇 {}: Initialized muted for '{}' to {}",
+                "INPUT_WORKER".on_cyan().white(),
+                device_id,
+                muted
             );
         }
         if let Some(solo) = initial_solo {
             default_effects.set_solo(solo);
             info!(
-                "🎯 INPUT_WORKER: Initialized solo for '{}' to {}",
-                device_id, solo
+                "🎯 {}: Initialized solo for '{}' to {}",
+                "INPUT_WORKER".on_cyan().white(),
+                device_id,
+                solo
             );
         }
 
@@ -311,7 +321,6 @@ impl InputWorker {
                         &device_id,
                     ) {
                     // Use pre-accumulation for upsampling: collect input until we have enough
-                    use crate::audio::mixer::pipeline::resampling_accumulator;
 
                     if let Some(resampled) = resampling_accumulator::process_with_pre_accumulation(
                         active_resampler,
@@ -336,7 +345,7 @@ impl InputWorker {
 
                         if resample_count < 10 || resample_count % 100 == 0 {
                             info!(
-                                "🔄 {}: Upsampled {} input → {} output (buffer: {} samples, {}Hz→{}Hz)",
+                                "🔄 {}: Resampled {} input → {} output (buffer: {} samples, {}Hz→{}Hz)",
                                 "INPUT_RESAMPLE".on_cyan().white(),
                                 samples.len(),
                                 resampled.len(),

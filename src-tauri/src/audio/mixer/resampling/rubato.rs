@@ -308,12 +308,6 @@ impl RubatoSRC {
         self.resampler.input_frames_next()
     }
 
-    /// Check if this resampler supports dynamic sample rate adjustment without recreation
-    /// SincFixedOut always supports dynamic ratio adjustment for clock synchronization
-    pub fn supports_dynamic_sample_rate(&self) -> bool {
-        true // SincFixedOut always supports dynamic ratio adjustment
-    }
-
     /// Dynamically adjust the sample rate ratio for clock synchronization
     /// SincFixedOut supports real-time ratio adjustment without recreation
     ///
