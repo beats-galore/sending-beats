@@ -54,15 +54,6 @@ pub fn adjust_dynamic_sample_rate(
     device_sample_rate: u32,
     device_id: &str,
 ) -> Result<(), String> {
-    if !resampler.supports_dynamic_sample_rate() {
-        trace!(
-            "🎯 {}: Resampler for {} does not support dynamic rate adjustment",
-            "DYNAMIC_RATE".yellow(),
-            device_id
-        );
-        return Ok(());
-    }
-
     // Get adjusted ratio from queue tracker
     let adjusted_ratio = queue_tracker.adjust_ratio(input_sample_rate, device_sample_rate);
     let new_out_rate = input_sample_rate as f32 * adjusted_ratio;

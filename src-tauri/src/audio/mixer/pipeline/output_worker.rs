@@ -17,7 +17,6 @@ use crate::audio::mixer::resampling::RubatoSRC;
 use crate::audio::utils::calculate_optimal_chunk_size;
 use colored::*;
 
-// RTRB queue imports for hardware output
 use rtrb::Producer;
 
 /// Output processing worker for a specific device
@@ -37,7 +36,7 @@ pub struct OutputWorker {
     // Communication channels
     mixed_audio_rx: mpsc::UnboundedReceiver<MixedAudioSamples>,
 
-    // Hardware buffer size updates (macOS CoreAudio only)
+    // Hardware buffer size updates
     #[cfg(target_os = "macos")]
     hardware_update_tx: Option<mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>>,
 
@@ -136,39 +135,31 @@ impl OutputWorker {
     pub fn update_target_mix_rate(&mut self, target_mix_rate: u32) -> Result<()> {
         if let Some(ref mut resampler) = self.resampler {
             // Check if current resampler supports dynamic rate adjustment
-            if resampler.supports_dynamic_sample_rate() {
-                // Use dynamic adjustment - keep same output rate, update input rate
-                let output_rate = self.device_sample_rate as f32;
-                let new_input_rate = target_mix_rate as f32;
 
-                match resampler.set_sample_rates(new_input_rate, output_rate, true) {
-                    Ok(()) => {
-                        info!(
-                            "🎯 {}: Dynamic rate update for {} - {}Hz→{}Hz (ratio: {:.6})",
-                            "DYNAMIC_RATE_UPDATE".on_blue().yellow(),
-                            self.device_id,
-                            new_input_rate,
-                            output_rate,
-                            output_rate / new_input_rate
-                        );
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        warn!(
-                            "⚠️ {}: Dynamic rate update failed for {}: {}, falling back to recreation",
-                            "DYNAMIC_RATE_FAILED".on_blue().yellow(),
-                            self.device_id,
-                            e
-                        );
-                        // Fall through to recreation
-                    }
+            // Use dynamic adjustment - keep same output rate, update input rate
+            let output_rate = self.device_sample_rate as f32;
+            let new_input_rate = target_mix_rate as f32;
+
+            match resampler.set_sample_rates(new_input_rate, output_rate, true) {
+                Ok(()) => {
+                    info!(
+                        "🎯 {}: Dynamic rate update for {} - {}Hz→{}Hz (ratio: {:.6})",
+                        "DYNAMIC_RATE_UPDATE".on_blue().yellow(),
+                        self.device_id,
+                        new_input_rate,
+                        output_rate,
+                        output_rate / new_input_rate
+                    );
+                    return Ok(());
                 }
-            } else {
-                info!(
-                    "🔄 {}: Resampler for {} doesn't support dynamic rates, recreating",
-                    "RESAMPLER_RECREATION".on_blue().yellow(),
-                    self.device_id
-                );
+                Err(e) => {
+                    warn!(
+                        "⚠️ {}: Dynamic rate update failed for {}: {}, falling back to recreation",
+                        "DYNAMIC_RATE_FAILED".on_blue().yellow(),
+                        self.device_id,
+                        e
+                    );
+                }
             }
         }
 
@@ -687,7 +678,6 @@ impl OutputWorker {
 
                 let resample_duration = resample_start.elapsed();
 
-                // **RESAMPLING PERFORMANCE LOGGING**
                 static RESAMPLE_LOG_COUNT: std::sync::atomic::AtomicU64 =
                     std::sync::atomic::AtomicU64::new(0);
                 let resample_count =
@@ -715,7 +705,6 @@ impl OutputWorker {
                     );
                 }
 
-                // **QUEUE STATE LOGGING**: Log queue occupancy every 1000th call
                 static QUEUE_LOG_COUNT: std::sync::atomic::AtomicU64 =
                     std::sync::atomic::AtomicU64::new(0);
                 let queue_log_count =
@@ -736,7 +725,6 @@ impl OutputWorker {
                     );
                 }
 
-                // **OPTIMIZATION**: If no resampling and chunk size matches, bypass accumulation entirely
                 let mut chunks_sent_this_cycle = 0;
                 let mut total_rtrb_duration = std::time::Duration::ZERO;
 
@@ -758,7 +746,6 @@ impl OutputWorker {
                     chunks_processed += 1;
                     chunks_sent_this_cycle += 1;
 
-                    // Rate-limited logging for strategy output
                     if chunks_processed <= 5 || chunks_processed % 1000 == 0 {
                         let strategy_label = if !needs_resampling {
                             "🔄DIRECT"
