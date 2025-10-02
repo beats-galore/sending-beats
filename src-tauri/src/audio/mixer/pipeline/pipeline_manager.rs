@@ -16,6 +16,7 @@ use tracing::{error, info, warn};
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 
 use super::{
+    audio_worker::AudioWorker,
     input_worker::{InputWorker, InputWorkerStats},
     mixing_layer::{MixingLayer, MixingLayerStats},
     output_worker::{OutputWorker, OutputWorkerStats},
@@ -127,7 +128,7 @@ impl AudioPipeline {
         }
 
         for (device_id, worker) in &self.output_workers {
-            sample_rates.push((device_id.clone(), worker.device_sample_rate));
+            sample_rates.push((device_id.clone(), worker.device_sample_rate()));
         }
 
         sample_rates
@@ -191,9 +192,16 @@ impl AudioPipeline {
             worker.update_target_mix_rate(target_rate);
         }
 
-        // Collect sample rates from output workers
+        // Update sample rates for output workers
         for (device_id, worker) in &mut self.output_workers {
-            worker.update_target_mix_rate(target_rate);
+            if let Err(e) = worker.update_target_mix_rate(target_rate) {
+                warn!(
+                    "⚠️ {}: Failed to update target rate for output '{}': {}",
+                    "PIPELINE".on_purple().blue(),
+                    device_id,
+                    e
+                );
+            }
         }
 
         info!(
@@ -340,14 +348,13 @@ impl AudioPipeline {
         Ok(())
     }
 
-    /// Register a new output device with RTRB producer and queue tracker for hardware connection
     pub fn add_output_device_with_rtrb_producer_and_tracker(
         &mut self,
         device_id: String,
         device_sample_rate: u32,
         chunk_size: usize,
-        channels: u16, // Output device channel count (mono/stereo/etc)
-        rtrb_producer: Option<Arc<tokio::sync::Mutex<rtrb::Producer<f32>>>>,
+        channels: u16,
+        rtrb_producer: Option<rtrb::Producer<f32>>,
         queue_tracker: AtomicQueueTracker,
     ) -> Result<()> {
         if self.output_workers.contains_key(&device_id) {
@@ -357,14 +364,25 @@ impl AudioPipeline {
             ));
         }
 
-        // Create mixed audio receiver for this output device
-        let (mixed_tx, mixed_rx) = mpsc::unbounded_channel::<MixedAudioSamples>();
+        // Create RTRB queue for mixing layer → output worker communication
+        let (rtrb_producer_for_mixer, rtrb_consumer_for_worker) =
+            rtrb::RingBuffer::<f32>::new(chunk_size * 8); // 8x chunk size for buffering
 
-        // Add sender to mixing layer for broadcast
-        self.mixing_layer.add_output_sender(mixed_tx);
+        // Create queue tracker for this output (mixing layer writes, output worker reads)
+        let mixing_to_output_tracker =
+            AtomicQueueTracker::new(format!("{}_mixing_to_output", device_id), chunk_size * 8);
 
-        // Create output worker for this device (with RTRB producer and hardware updates if available)
-        let mut output_worker = if let Some(rtrb_producer) = rtrb_producer {
+        // Add RTRB producer to mixing layer for writing mixed audio
+        self.mixing_layer.add_output_producer(
+            device_id.clone(),
+            Arc::new(tokio::sync::Mutex::new(rtrb_producer_for_mixer)),
+            mixing_to_output_tracker.clone(),
+        );
+
+        // Get the current mix rate (target sample rate for the pipeline)
+        let target_sample_rate = self.get_sample_rate();
+
+        let mut output_worker = if let Some(hardware_producer) = rtrb_producer {
             // **HARDWARE SYNC**: Use new constructor with hardware update channel on macOS
             #[cfg(target_os = "macos")]
             if let Some(ref hardware_tx) = self.hardware_update_tx {
@@ -376,12 +394,14 @@ impl AudioPipeline {
                 OutputWorker::new_with_hardware_updates(
                     device_id.clone(),
                     device_sample_rate,
+                    target_sample_rate,
                     chunk_size,
-                    channels, // Output device channel count
-                    mixed_rx,
-                    Some(rtrb_producer),
+                    channels,
+                    rtrb_consumer_for_worker,
+                    Some(hardware_producer),
                     hardware_tx.clone(),
                     queue_tracker,
+                    mixing_to_output_tracker,
                 )
             } else {
                 tracing::info!(
@@ -392,11 +412,13 @@ impl AudioPipeline {
                 OutputWorker::new_with_rtrb_producer_and_tracker(
                     device_id.clone(),
                     device_sample_rate,
+                    target_sample_rate,
                     chunk_size,
-                    channels, // Output device channel count
-                    mixed_rx,
-                    Some(rtrb_producer),
+                    channels,
+                    rtrb_consumer_for_worker,
+                    Some(hardware_producer),
                     queue_tracker,
+                    mixing_to_output_tracker,
                 )
             }
 
@@ -404,11 +426,13 @@ impl AudioPipeline {
             OutputWorker::new_with_rtrb_producer_and_tracker(
                 device_id.clone(),
                 device_sample_rate,
+                target_sample_rate,
                 chunk_size,
-                channels, // Output device channel count
-                mixed_rx,
-                Some(rtrb_producer),
+                channels,
+                rtrb_consumer_for_worker,
+                Some(hardware_producer),
                 queue_tracker,
+                mixing_to_output_tracker,
             )
         } else {
             return Err(anyhow::anyhow!(

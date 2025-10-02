@@ -673,19 +673,17 @@ impl IsolatedAudioManager {
         let chunk_size = (actual_buffer_frames * output_channels as u32) as usize;
 
         // **SIMPLIFIED QUEUE**: Create RTRB ring buffer for this output device - 4x the output chunk size
-        // Since each output worker serves only one device, we don't need SPMC complexity
+        // Producer goes to OutputWorker (writes), Consumer goes to CoreAudio (reads)
         let buffer_capacity = chunk_size * 4;
 
         let (rtrb_producer, rtrb_consumer) = rtrb::RingBuffer::<f32>::new(buffer_capacity);
-        let rtrb_producer = Arc::new(Mutex::new(rtrb_producer));
 
-        // **QUEUE TRACKING**: Create shared AtomicQueueTracker for this SPMC queue
+        // NOTE: Producer is NOT wrapped in Arc<Mutex<>> - OutputWorker will own it directly
+        // Consumer goes to CoreAudio stream (also owned directly)
+
+        // **QUEUE TRACKING**: Create AtomicQueueTracker for monitoring this queue
         let queue_tracker =
             AtomicQueueTracker::new(format!("output_{}", device_id), buffer_capacity);
-
-        // Store the RTRB producer for mixer to send audio data
-        self.output_rtrb_producers
-            .insert(device_id.clone(), rtrb_producer.clone());
 
         info!(
             "🎯 {}: Output device '{}' - hardware: {} frames → {} samples ({} channels)",
@@ -703,8 +701,8 @@ impl IsolatedAudioManager {
                 device_id.clone(),
                 native_sample_rate,
                 chunk_size,
-                output_channels, // Pass the actual output device channel count
-                Some(rtrb_producer.clone()),
+                output_channels,     // Pass the actual output device channel count
+                Some(rtrb_producer), // Pass raw producer - OutputWorker will own it
                 queue_tracker.clone(),
             )
         {
@@ -795,26 +793,19 @@ impl IsolatedAudioManager {
             buffer_capacity,
         );
 
-        let producer_arc = Arc::new(tokio::sync::Mutex::new(recording_producer));
-
-        // Add recording output worker to the audio pipeline
         let result = self
             .audio_pipeline
             .add_output_device_with_rtrb_producer_and_tracker(
                 RECORDING_DEVICE_ID.to_string(),
                 recording_config.sample_rate,
-                1024, // Default chunk size for recording
+                1024,
                 recording_config.channels,
-                Some(producer_arc.clone()),
+                Some(recording_producer),
                 queue_tracker,
             );
 
         match result {
             Ok(()) => {
-                // Store the producer for cleanup later
-                self.output_rtrb_producers
-                    .insert(RECORDING_DEVICE_ID.to_string(), producer_arc);
-
                 info!(
                     "✅ {}: Recording output worker created for session '{}'",
                     "RECORDING_COORDINATOR".bright_green(),
@@ -900,34 +891,24 @@ impl IsolatedAudioManager {
         }
 
         // **RTRB QUEUE**: Create ring buffer for audio data transport
-        let buffer_size = 4096 * 16; // 16x larger buffer for network streaming
+        let buffer_size = 4096 * 16;
         let (streaming_producer, streaming_consumer) = rtrb::RingBuffer::<f32>::new(buffer_size);
-        let producer_arc = Arc::new(Mutex::new(streaming_producer));
 
-        // **QUEUE TRACKING**: Create queue tracker for dynamic sample rate adjustment
-        let queue_tracker = AtomicQueueTracker::new(
-            format!("icecast_{}", stream_id), // Unique queue ID
-            buffer_size,                      // Capacity
-        );
+        let queue_tracker = AtomicQueueTracker::new(format!("icecast_{}", stream_id), buffer_size);
 
-        // Add streaming output worker to the audio pipeline using the audio format from config
         let result = self
             .audio_pipeline
             .add_output_device_with_rtrb_producer_and_tracker(
                 icecast_device_id.clone(),
                 config.audio_format.sample_rate,
-                1024, // Default chunk size for streaming
+                1024,
                 config.audio_format.channels,
-                Some(producer_arc.clone()),
+                Some(streaming_producer),
                 queue_tracker,
             );
 
         match result {
             Ok(()) => {
-                // Store the producer for cleanup later
-                self.output_rtrb_producers
-                    .insert(icecast_device_id, producer_arc);
-
                 info!(
                     "✅ {}: Icecast output worker created for stream '{}' ({}kbps, {}Hz)",
                     "ICECAST_COORDINATOR".blue(),
