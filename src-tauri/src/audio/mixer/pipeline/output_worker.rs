@@ -380,14 +380,20 @@ impl OutputWorker {
                         queue_tracker,
                     );
                     chunks_written += 1;
-                    Self::adjust_dynamic_sample_rate_static(
-                        resampler,
-                        queue_tracker,
-                        input_sample_rate,
-                        device_sample_rate,
-                        chunk_size,
-                        device_id,
-                    );
+
+                    // Apply dynamic rate adjustment using shared function
+                    if let Some(active_resampler) = resampler.as_mut() {
+                        if let Some(tracker) = queue_tracker {
+                            use crate::audio::mixer::pipeline::resampling_accumulator;
+                            let _ = resampling_accumulator::adjust_dynamic_sample_rate(
+                                active_resampler,
+                                tracker,
+                                input_sample_rate,
+                                device_sample_rate,
+                                device_id,
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -898,70 +904,6 @@ impl OutputWorker {
         queue_tracker: Option<&AtomicQueueTracker>,
     ) {
         Self::write_samples_to_rtrb_sync(device_id, samples, rtrb_producer, queue_tracker);
-    }
-
-    /// Adjusts the active resampler's output rate to correct drift.
-    ///
-    /// # Arguments
-    /// - `fill`: current queue fill (frames/samples).
-    /// - `capacity`: total queue capacity.
-    /// - `in_rate`: input sample rate (Hz).
-    /// - `out_rate_nom`: nominal output sample rate (Hz).
-    fn adjust_dynamic_sample_rate_static(
-        resampler: &mut Option<RubatoSRC>,
-        queue_tracker: Option<&AtomicQueueTracker>,
-        input_sample_rate: u32,
-        device_sample_rate: u32,
-        chunk_size: usize,
-        device_id: &str,
-    ) {
-        let can_adjust_dynamically = if let Some(active_resampler) =
-            Self::get_or_initialize_resampler_static(
-                resampler,
-                input_sample_rate,
-                device_sample_rate,
-                chunk_size,
-                device_id,
-            ) {
-            active_resampler.supports_dynamic_sample_rate()
-        } else {
-            // Fallback to manual calculation if no resampling needed
-            false
-        };
-
-        if !can_adjust_dynamically {
-            println!("adjusting dynamically not supported");
-            return;
-        }
-
-        // Get queue info from tracker if available, otherwise skip adjustment
-        let adjusted_ratio = if let Some(tracker) = queue_tracker {
-            tracker.adjust_ratio(input_sample_rate, device_sample_rate)
-        } else {
-            // No queue tracker available - can't do dynamic adjustment
-            trace!(
-                "🎯 {}: No queue tracker available for {} - skipping dynamic adjustment",
-                "DYNAMIC_RATE".yellow(),
-                device_id
-            );
-            return;
-        };
-
-        let new_out_rate = input_sample_rate as f32 * adjusted_ratio;
-
-        if let Some(active_resampler) = Self::get_or_initialize_resampler_static(
-            resampler,
-            input_sample_rate,
-            device_sample_rate,
-            chunk_size,
-            device_id,
-        ) {
-            if let Err(err) =
-                active_resampler.set_sample_rates(input_sample_rate as f32, new_out_rate, true)
-            {
-                warn!("⚠️ Drift correction failed: {}", err);
-            }
-        }
     }
 
     /// Get processing statistics

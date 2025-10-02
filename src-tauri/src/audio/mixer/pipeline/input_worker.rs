@@ -14,6 +14,7 @@ use tracing::{error, info, warn};
 
 use super::queue_types::ProcessedAudioSamples;
 use crate::audio::effects::{CustomAudioEffectsChain, DefaultAudioEffectsChain};
+use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::mixer::resampling::RubatoSRC;
 use crate::audio::VUChannelService;
 
@@ -31,6 +32,7 @@ pub struct InputWorker {
     default_effects: Arc<Mutex<DefaultAudioEffectsChain>>,
     custom_effects: CustomAudioEffectsChain,
     any_channel_solo: Arc<std::sync::atomic::AtomicBool>,
+    queue_tracker: AtomicQueueTracker, // Track output queue for dynamic resampling
 
     // **DIRECT RTRB**: Read directly from hardware RTRB queue
     rtrb_consumer: Arc<Mutex<rtrb::Consumer<f32>>>,
@@ -70,6 +72,7 @@ impl InputWorker {
         processed_output_tx: mpsc::UnboundedSender<ProcessedAudioSamples>,
         channel_number: u32,
         any_channel_solo: Arc<std::sync::atomic::AtomicBool>,
+        queue_tracker: AtomicQueueTracker,
         initial_gain: Option<f32>,
         initial_pan: Option<f32>,
         initial_muted: Option<bool>,
@@ -120,6 +123,7 @@ impl InputWorker {
             default_effects: Arc::new(Mutex::new(default_effects)),
             custom_effects: CustomAudioEffectsChain::new(target_sample_rate),
             any_channel_solo,
+            queue_tracker,
             rtrb_consumer: Arc::new(Mutex::new(rtrb_consumer)),
             input_notifier,
             processed_output_tx,
@@ -206,6 +210,11 @@ impl InputWorker {
         resampler.as_mut()
     }
 
+    /// Get queue tracker for sharing with mixing layer (consumer side)
+    pub fn get_queue_tracker_for_consumer(&self) -> AtomicQueueTracker {
+        self.queue_tracker.clone()
+    }
+
     /// Start the input processing worker thread
     pub fn start(
         &mut self,
@@ -224,6 +233,8 @@ impl InputWorker {
         let processed_output_tx = self.processed_output_tx.clone();
 
         let mut resampler = self.resampler.take();
+        let mut input_accumulator = Vec::with_capacity(8192); // Accumulator for pre-resampling
+        let queue_tracker = self.queue_tracker.clone(); // For dynamic rate adjustment (shared with mixing layer)
         let default_effects = self.default_effects.clone(); // Arc clone - shares the same data
         let mut custom_effects = CustomAudioEffectsChain::new(target_sample_rate);
         let any_channel_solo = self.any_channel_solo.clone();
@@ -297,11 +308,30 @@ impl InputWorker {
                         channels, // Original input device channel count (before conversion)
                         &device_id,
                     ) {
-                    // Resample using the active resampler (on original channel format)
-                    active_resampler.convert(&samples)
+                    // Use pre-accumulation for upsampling: collect input until we have enough
+                    use crate::audio::mixer::pipeline::resampling_accumulator;
+
+                    if let Some(resampled) = resampling_accumulator::process_with_pre_accumulation(
+                        active_resampler,
+                        &samples,
+                        &mut input_accumulator,
+                        chunk_size, // Target output sample count
+                    ) {
+                        // Apply dynamic rate adjustment after successful resampling
+                        let _ = resampling_accumulator::adjust_dynamic_sample_rate(
+                            active_resampler,
+                            &queue_tracker,
+                            device_sample_rate,
+                            target_sample_rate,
+                            &device_id,
+                        );
+                        resampled
+                    } else {
+                        // Not enough accumulated yet, skip this iteration
+                        continue;
+                    }
                 } else {
                     // No resampling needed or resampler creation failed
-                    // WHy do we need to clone?
                     samples.clone()
                 };
                 let resample_duration = resample_start.elapsed();
@@ -364,6 +394,10 @@ impl InputWorker {
                     warn!("⚠️ INPUT_WORKER: Failed to send processed audio for {} (mixing layer may be shut down)", device_id);
                     break;
                 }
+
+                // Record samples written for queue tracking (producer side)
+                queue_tracker.record_samples_written(samples_to_send);
+
                 let send_duration = send_start.elapsed();
 
                 // Performance tracking

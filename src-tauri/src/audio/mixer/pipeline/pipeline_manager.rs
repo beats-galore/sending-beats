@@ -223,10 +223,19 @@ impl AudioPipeline {
             })?
             .clone();
 
-        // Connect processed input receiver to mixing layer
+        // Create queue tracker for processed output monitoring (shared between input worker and mixing layer)
+        let queue_tracker = crate::audio::mixer::queue_manager::AtomicQueueTracker::new(
+            format!("{}_processed_output", device_id),
+            8192, // Typical unbounded channel effective capacity for monitoring
+        );
+
+        // Connect processed input receiver to mixing layer with queue tracker
         if let Some(processed_input_rx) = self.queues.take_processed_input_receiver(&device_id) {
-            self.mixing_layer
-                .add_input_stream(device_id.clone(), processed_input_rx);
+            self.mixing_layer.add_input_stream(
+                device_id.clone(),
+                processed_input_rx,
+                queue_tracker.clone(), // Share with mixing layer for consumer-side tracking
+            );
             info!(
                 "✅ PIPELINE: Connected input device '{}' to MixingLayer",
                 device_id
@@ -267,6 +276,7 @@ impl AudioPipeline {
             processed_output_tx,
             channel_number,
             self.any_channel_solo.clone(),
+            queue_tracker,
             initial_gain,
             initial_pan,
             initial_muted,
