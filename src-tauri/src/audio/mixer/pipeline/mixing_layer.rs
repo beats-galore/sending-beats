@@ -10,10 +10,10 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, warn};
 
-use super::queue_types::{MixedAudioSamples, ProcessedAudioSamples};
+use super::queue_types::ProcessedAudioSamples;
 use super::temporal_sync_buffer::TemporalSyncBuffer;
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::mixer::stream_management::virtual_mixer::VirtualMixer;
@@ -27,8 +27,10 @@ pub enum MixingLayerCommand {
         receiver: mpsc::UnboundedReceiver<ProcessedAudioSamples>,
         queue_tracker: AtomicQueueTracker,
     },
-    AddOutputSender {
-        sender: mpsc::UnboundedSender<MixedAudioSamples>,
+    AddOutputProducer {
+        device_id: String,
+        producer: Arc<Mutex<rtrb::Producer<f32>>>,
+        queue_tracker: AtomicQueueTracker,
     },
 }
 
@@ -38,10 +40,13 @@ pub struct MixingLayer {
     processed_input_receivers: HashMap<String, mpsc::UnboundedReceiver<ProcessedAudioSamples>>,
 
     // Queue trackers for monitoring consumer-side reads (one per input device)
-    queue_trackers: HashMap<String, AtomicQueueTracker>,
+    input_queue_trackers: HashMap<String, AtomicQueueTracker>,
 
-    // Output: Mixed stream to Layer 4
-    mixed_output_senders: Vec<mpsc::UnboundedSender<MixedAudioSamples>>, // Broadcast to all output devices
+    // Output: RTRB producers to Layer 4 output workers
+    output_rtrb_producers: HashMap<String, Arc<Mutex<rtrb::Producer<f32>>>>,
+
+    // Queue trackers for monitoring producer-side writes (one per output device)
+    output_queue_trackers: HashMap<String, AtomicQueueTracker>,
 
     // Command channel for dynamic input stream management
     command_tx: mpsc::UnboundedSender<MixingLayerCommand>,
@@ -69,8 +74,9 @@ impl MixingLayer {
 
         Self {
             processed_input_receivers: HashMap::new(),
-            queue_trackers: HashMap::new(),
-            mixed_output_senders: Vec::new(),
+            input_queue_trackers: HashMap::new(),
+            output_rtrb_producers: HashMap::new(),
+            output_queue_trackers: HashMap::new(),
             command_tx,
             target_sample_rate: Arc::new(AtomicU32::new(0)), // 0 = not set yet
             master_gain: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
@@ -109,7 +115,8 @@ impl MixingLayer {
             // MixingLayer not started yet - add to local storage
             self.processed_input_receivers
                 .insert(device_id.clone(), receiver);
-            self.queue_trackers.insert(device_id.clone(), queue_tracker);
+            self.input_queue_trackers
+                .insert(device_id.clone(), queue_tracker);
             info!(
                 "🎛️ MIXING_LAYER: Queued input stream for device '{}'",
                 device_id
@@ -117,22 +124,41 @@ impl MixingLayer {
         }
     }
 
-    /// Add an output sender (broadcasts mixed audio to output workers)
-    pub fn add_output_sender(&mut self, sender: mpsc::UnboundedSender<MixedAudioSamples>) {
+    /// Add an output RTRB producer (writes mixed audio directly to output workers)
+    pub fn add_output_producer(
+        &mut self,
+        device_id: String,
+        producer: Arc<Mutex<rtrb::Producer<f32>>>,
+        queue_tracker: AtomicQueueTracker,
+    ) {
         if self.worker_handle.is_some() {
             // MixingLayer is already running - send command to worker thread
-            let cmd = MixingLayerCommand::AddOutputSender { sender };
+            let cmd = MixingLayerCommand::AddOutputProducer {
+                device_id: device_id.clone(),
+                producer,
+                queue_tracker,
+            };
             if let Err(_) = self.command_tx.send(cmd) {
-                warn!("⚠️ MIXING_LAYER: Failed to send add output sender command");
+                warn!(
+                    "⚠️ MIXING_LAYER: Failed to send add output producer command for '{}'",
+                    device_id
+                );
             } else {
-                info!("🔊 MIXING_LAYER: Sent add output sender command");
+                info!(
+                    "🔊 MIXING_LAYER: Sent add output producer command for device '{}'",
+                    device_id
+                );
             }
         } else {
             // MixingLayer not started yet - add to local storage
-            self.mixed_output_senders.push(sender);
+            self.output_rtrb_producers
+                .insert(device_id.clone(), producer);
+            self.output_queue_trackers
+                .insert(device_id.clone(), queue_tracker);
             info!(
-                "🔊 MIXING_LAYER: Queued output sender (total: {})",
-                self.mixed_output_senders.len()
+                "🔊 MIXING_LAYER: Queued output producer for device '{}' (total: {})",
+                device_id,
+                self.output_rtrb_producers.len()
             );
         }
     }
@@ -158,8 +184,9 @@ impl MixingLayer {
 
         // Take ownership of receivers and queue trackers for the worker thread
         let mut processed_input_receivers = std::mem::take(&mut self.processed_input_receivers);
-        let mut queue_trackers = std::mem::take(&mut self.queue_trackers);
-        let mut mixed_output_senders = self.mixed_output_senders.clone();
+        let mut input_queue_trackers = std::mem::take(&mut self.input_queue_trackers);
+        let mut output_rtrb_producers = std::mem::take(&mut self.output_rtrb_producers);
+        let mut output_queue_trackers = std::mem::take(&mut self.output_queue_trackers);
         let master_vu_service = vu_channel.map(|channel| {
             info!(
                 "{}: VU channel enabled for master output",
@@ -173,7 +200,7 @@ impl MixingLayer {
             info!(
                 "🚀 MIXING_LAYER: Started mixing thread (inputs: {}, outputs: {})",
                 processed_input_receivers.len(),
-                mixed_output_senders.len()
+                output_rtrb_producers.len()
             );
 
             let mut mix_cycles = 0u64;
@@ -200,17 +227,23 @@ impl MixingLayer {
                             queue_tracker,
                         } => {
                             processed_input_receivers.insert(device_id.clone(), receiver);
-                            queue_trackers.insert(device_id.clone(), queue_tracker);
+                            input_queue_trackers.insert(device_id.clone(), queue_tracker);
                             info!(
                                 "🎛️ MIXING_LAYER_WORKER: Added input stream for device '{}'",
                                 device_id
                             );
                         }
-                        MixingLayerCommand::AddOutputSender { sender } => {
-                            mixed_output_senders.push(sender);
+                        MixingLayerCommand::AddOutputProducer {
+                            device_id,
+                            producer,
+                            queue_tracker,
+                        } => {
+                            output_rtrb_producers.insert(device_id.clone(), producer);
+                            output_queue_trackers.insert(device_id.clone(), queue_tracker);
                             info!(
-                                "🔊 MIXING_LAYER_WORKER: Added output sender (total: {})",
-                                mixed_output_senders.len()
+                                "🔊 MIXING_LAYER_WORKER: Added output producer for device '{}' (total: {})",
+                                device_id,
+                                output_rtrb_producers.len()
                             );
                         }
                     }
@@ -226,7 +259,7 @@ impl MixingLayer {
                         temporal_buffer.add_samples(device_id.clone(), processed_audio);
 
                         // Record samples read for queue tracking (consumer side)
-                        if let Some(tracker) = queue_trackers.get(device_id) {
+                        if let Some(tracker) = input_queue_trackers.get(device_id) {
                             tracker.record_samples_read(sample_count);
                         }
 
@@ -283,21 +316,46 @@ impl MixingLayer {
 
                         let samples_count = final_samples.len(); // Get count before moving
 
-                        // Step 3: Broadcast mixed audio to all output workers
+                        // Step 3: Write mixed audio directly to all output RTRB queues
                         let broadcast_start = std::time::Instant::now();
-                        let mixed_audio = MixedAudioSamples {
-                            samples: final_samples,
-                            sample_rate: target_sample_rate.load(Ordering::Relaxed),
-                            timestamp: std::time::Instant::now(),
-                            input_count: active_inputs,
-                        };
 
-                        // Send to all output senders
-                        // **PERFORMANCE NOTE**: Each output still requires a clone due to queue_types structure
-                        // Future optimization could use Arc<Vec<f32>> in queue_types to eliminate this
-                        for sender in mixed_output_senders.iter() {
-                            if let Err(_) = sender.send(mixed_audio.clone()) {
-                                warn!("⚠️ MIXING_LAYER: Failed to send to output worker (may be shut down)");
+                        for (device_id, producer) in output_rtrb_producers.iter() {
+                            let mut producer_lock = producer.lock().await;
+                            let mut samples_written = 0;
+                            let mut remaining = final_samples.as_slice();
+
+                            // Write samples to RTRB queue using the same pattern as audio_worker
+                            while !remaining.is_empty() && samples_written < final_samples.len() {
+                                let chunk_size = remaining.len().min(producer_lock.slots());
+                                if chunk_size == 0 {
+                                    warn!(
+                                        "⚠️ MIXING_LAYER: Output '{}' RTRB queue full, dropping {} remaining samples",
+                                        device_id,
+                                        remaining.len()
+                                    );
+                                    break;
+                                }
+
+                                let chunk = &remaining[..chunk_size];
+                                for &sample in chunk {
+                                    if producer_lock.push(sample).is_err() {
+                                        break;
+                                    }
+                                    samples_written += 1;
+                                }
+                                remaining = &remaining[chunk_size..];
+                            }
+
+                            // Record samples written for queue tracking
+                            if let Some(tracker) = output_queue_trackers.get(device_id) {
+                                tracker.record_samples_written(samples_written);
+                            }
+
+                            if samples_written < final_samples.len() {
+                                warn!(
+                                    "⚠️ MIXING_LAYER: Partial write to output '{}': {} of {} samples",
+                                    device_id, samples_written, final_samples.len()
+                                );
                             }
                         }
                         let broadcast_duration = broadcast_start.elapsed();
@@ -308,9 +366,9 @@ impl MixingLayer {
 
                         // Rate-limited logging (only when we actually mixed something)
                         if mix_cycles <= 5 || mix_cycles % 1000 == 0 {
-                            info!("🎵 {}: TEMPORAL SYNC mixed {} inputs ({} samples) and sent to {} outputs (cycle #{}, sync took {}μs, total {}μs)",
+                            info!("🎵 {}: TEMPORAL SYNC mixed {} inputs ({} samples) and wrote to {} outputs (cycle #{}, sync took {}μs, total {}μs)",
                                   "MIXING_LAYER_TEMPORAL".on_green().white(),
-                                  active_inputs, samples_count, mixed_output_senders.len(), mix_cycles, sync_duration.as_micros(), total_mixing_duration.as_micros());
+                                  active_inputs, samples_count, output_rtrb_producers.len(), mix_cycles, sync_duration.as_micros(), total_mixing_duration.as_micros());
                         }
 
                         // Performance monitoring with detailed breakdown (only when we actually mixed something)
@@ -395,7 +453,7 @@ impl MixingLayer {
             mix_cycles: self.mix_cycles,
             samples_mixed: self.samples_mixed,
             input_streams: self.processed_input_receivers.len(),
-            output_streams: self.mixed_output_senders.len(),
+            output_streams: self.output_rtrb_producers.len(),
             is_running: self.worker_handle.is_some(),
         }
     }
