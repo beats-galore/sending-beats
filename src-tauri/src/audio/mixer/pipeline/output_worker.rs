@@ -61,10 +61,12 @@ impl OutputWorker {
             prod
         };
 
+        // OutputWorker receives samples at target_sample_rate (mixing) and outputs at device_sample_rate (hardware)
+        // So we swap the rates when initializing AudioWorkerState
         let state = AudioWorkerState::new(
             device_id.clone(),
-            device_sample_rate,
-            target_sample_rate,
+            target_sample_rate, // Input: mixing rate (e.g., 48kHz)
+            device_sample_rate, // Output: hardware rate (e.g., 44.1kHz)
             channels,
             target_chunk_size,
             rtrb_consumer,
@@ -108,10 +110,12 @@ impl OutputWorker {
             prod
         };
 
+        // OutputWorker receives samples at target_sample_rate (mixing) and outputs at device_sample_rate (hardware)
+        // So we swap the rates when initializing AudioWorkerState
         let state = AudioWorkerState::new(
             device_id.clone(),
-            device_sample_rate,
-            target_sample_rate,
+            target_sample_rate, // Input: mixing rate (e.g., 48kHz)
+            device_sample_rate, // Output: hardware rate (e.g., 44.1kHz)
             channels,
             target_chunk_size,
             rtrb_consumer,

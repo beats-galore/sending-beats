@@ -99,12 +99,14 @@ impl MixingLayer {
             };
             if let Err(_) = self.command_tx.send(cmd) {
                 warn!(
-                    "⚠️ MIXING_LAYER: Failed to send add input consumer command for '{}'",
+                    "⚠️ {}: Failed to send add input consumer command for '{}'",
+                    "MIXING_LAYER".on_green().white(),
                     device_id
                 );
             } else {
                 info!(
-                    "🎛️ MIXING_LAYER: Sent add input consumer command for device '{}'",
+                    "🎛️ {}: Sent add input consumer command for device '{}'",
+                    "MIXING_LAYER".on_green().white(),
                     device_id
                 );
             }
@@ -114,7 +116,8 @@ impl MixingLayer {
             self.input_queue_trackers
                 .insert(device_id.clone(), queue_tracker);
             info!(
-                "🎛️ MIXING_LAYER: Queued input consumer for device '{}'",
+                "🎛️ {}: Queued input consumer for device '{}'",
+                "MIXING_LAYER".on_green().white(),
                 device_id
             );
         }
@@ -136,12 +139,14 @@ impl MixingLayer {
             };
             if let Err(_) = self.command_tx.send(cmd) {
                 warn!(
-                    "⚠️ MIXING_LAYER: Failed to send add output producer command for '{}'",
+                    "⚠️ {}: Failed to send add output producer command for '{}'",
+                    "MIXING_LAYER".on_green().white(),
                     device_id
                 );
             } else {
                 info!(
-                    "🔊 MIXING_LAYER: Sent add output producer command for device '{}'",
+                    "🔊 {}: Sent add output producer command for device '{}'",
+                    "MIXING_LAYER".on_green().white(),
                     device_id
                 );
             }
@@ -152,7 +157,8 @@ impl MixingLayer {
             self.output_queue_trackers
                 .insert(device_id.clone(), queue_tracker);
             info!(
-                "🔊 MIXING_LAYER: Queued output producer for device '{}' (total: {})",
+                "🔊 {}: Queued output producer for device '{}' (total: {})",
+                "MIXING_LAYER".on_green().white(),
                 device_id,
                 self.output_rtrb_producers.len()
             );
@@ -167,7 +173,10 @@ impl MixingLayer {
         // No-op if no sample rate is set (no devices added yet)
         let current_sample_rate = self.target_sample_rate.load(Ordering::Relaxed);
         if current_sample_rate == 0 {
-            info!("🎛️ MIXING_LAYER: No sample rate set - no devices added yet, skipping start");
+            info!(
+                "🎛️ {}: No sample rate set - no devices added yet, skipping start",
+                "MIXING_LAYER".on_green().white(),
+            );
             return Ok(());
         }
 
@@ -194,7 +203,8 @@ impl MixingLayer {
         // Spawn mixing worker thread
         let worker_handle = tokio::spawn(async move {
             info!(
-                "🚀 MIXING_LAYER: Started mixing thread (inputs: {}, outputs: {})",
+                "🚀 {}: Started mixing thread (inputs: {}, outputs: {})",
+                "MIXING_LAYER".on_green().white(),
                 input_rtrb_consumers.len(),
                 output_rtrb_producers.len()
             );
@@ -346,7 +356,8 @@ impl MixingLayer {
                                 let chunk_size = remaining.len().min(producer_lock.slots());
                                 if chunk_size == 0 {
                                     warn!(
-                                        "⚠️ MIXING_LAYER: Output '{}' RTRB queue full, dropping {} remaining samples",
+                                        "⚠️ {}: Output '{}' RTRB queue full, dropping {} remaining samples",
+                                        "MIXING_LAYER".on_green().white(),
                                         device_id,
                                         remaining.len()
                                     );
@@ -370,8 +381,11 @@ impl MixingLayer {
 
                             if samples_written < final_samples.len() {
                                 warn!(
-                                    "⚠️ MIXING_LAYER: Partial write to output '{}': {} of {} samples",
-                                    device_id, samples_written, final_samples.len()
+                                    "⚠️ {}: Partial write to output '{}': {} of {} samples",
+                                    "MIXING_LAYER".on_green().white(),
+                                    device_id,
+                                    samples_written,
+                                    final_samples.len()
                                 );
                             }
                         }
@@ -432,7 +446,10 @@ impl MixingLayer {
         });
 
         self.worker_handle = Some(worker_handle);
-        info!("✅ MIXING_LAYER: Started mixing worker thread");
+        info!(
+            "✅ {}: Started mixing worker thread",
+            "MIXING_LAYER".on_green().white(),
+        );
 
         Ok(())
     }
@@ -443,8 +460,14 @@ impl MixingLayer {
             handle.abort();
 
             match tokio::time::timeout(std::time::Duration::from_millis(100), handle).await {
-                Ok(_) => info!("✅ MIXING_LAYER: Shut down gracefully"),
-                Err(_) => warn!("⚠️ MIXING_LAYER: Force-terminated after timeout"),
+                Ok(_) => info!(
+                    "✅ {}: Shut down gracefully",
+                    "MIXING_LAYER".on_green().white()
+                ),
+                Err(_) => warn!(
+                    "⚠️ {}: Force-terminated after timeout",
+                    "MIXING_LAYER".on_green().white()
+                ),
             }
         }
 
@@ -453,14 +476,19 @@ impl MixingLayer {
 
     pub fn set_master_gain(&mut self, gain: f32) {
         self.master_gain.store(gain.to_bits(), Ordering::Relaxed);
-        info!("🎚️ MIXING_LAYER: Set master gain to {:.2}", gain);
+        info!(
+            "🎚️ {}: Set master gain to {:.2}",
+            "MIXING_LAYER".on_green().white(),
+            gain
+        );
     }
 
     pub fn update_target_sample_rate(&mut self, new_sample_rate: u32) {
         self.target_sample_rate
             .store(new_sample_rate, Ordering::Relaxed);
         info!(
-            "🎛️ MIXING_LAYER: Updated target sample rate to {} Hz",
+            "🎛️ {}: Updated target sample rate to {} Hz",
+            "MIXING_LAYER".on_green().white(),
             new_sample_rate
         );
     }

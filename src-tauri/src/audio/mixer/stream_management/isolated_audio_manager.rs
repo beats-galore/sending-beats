@@ -423,6 +423,7 @@ impl IsolatedAudioManager {
         let native_sample_rate =
             crate::audio::devices::coreaudio_stream::get_device_native_sample_rate(
                 coreaudio_device_id,
+                &device_id,
             )?;
 
         // **RTRB SETUP**: Create buffer for hardware → AudioPipeline communication
@@ -541,18 +542,19 @@ impl IsolatedAudioManager {
         };
 
         // **PIPELINE INTEGRATION**: Create input worker FIRST to consume RTRB data
-        self.audio_pipeline.add_input_device_with_consumer(
-            device_id.clone(),
-            native_sample_rate,
-            channels,
-            chunk_size,
-            audio_input_consumer,
-            channel_number,
-            initial_gain,
-            initial_pan,
-            initial_muted,
-            initial_solo,
-        )?;
+        self.audio_pipeline
+            .add_input_device_with_consumer_and_producer(
+                device_id.clone(),
+                native_sample_rate,
+                channels,
+                chunk_size,
+                audio_input_consumer,
+                channel_number,
+                initial_gain,
+                initial_pan,
+                initial_muted,
+                initial_solo,
+            )?;
 
         // **HARDWARE STREAM**: Create CoreAudio stream AFTER pipeline worker is ready
         // Creating before will causes the queue to become full before starting and breaks audio processing.
@@ -642,6 +644,7 @@ impl IsolatedAudioManager {
         let native_sample_rate =
             crate::audio::devices::coreaudio_stream::get_device_native_sample_rate(
                 coreaudio_device.device_id,
+                &device_id,
             )?;
 
         info!(

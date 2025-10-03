@@ -24,7 +24,7 @@ use std::ptr;
 use tracing::{error, info, warn};
 
 /// Get the native sample rate of a CoreAudio device
-pub fn get_device_native_sample_rate(device_id: AudioDeviceID) -> Result<u32> {
+pub fn get_device_native_sample_rate(device_id: AudioDeviceID, device_name: &str) -> Result<u32> {
     let mut device_sample_rate: f64 = 0.0;
     let mut size = std::mem::size_of::<f64>() as u32;
 
@@ -46,9 +46,10 @@ pub fn get_device_native_sample_rate(device_id: AudioDeviceID) -> Result<u32> {
     if status == 0 {
         let native_rate = device_sample_rate as u32;
         info!(
-            "🔍 {}: Device {} running at {} Hz",
-            "DETECTED NATIVE RATE".blue(),
+            "🔍 {}: Device {} {} running at {} Hz",
+            "DETECTED_NATIVE_RATE".blue(),
             device_id,
+            device_name,
             native_rate
         );
         Ok(native_rate)
@@ -248,7 +249,7 @@ impl CoreAudioOutputStream {
         queue_tracker: AtomicQueueTracker,
     ) -> Result<Self> {
         // **ADAPTIVE AUDIO**: Detect device's native sample rate instead of imposing our own
-        let native_sample_rate = get_device_native_sample_rate(device_id)?;
+        let native_sample_rate = get_device_native_sample_rate(device_id, &device_name)?;
 
         info!(
             "🔊 Creating CoreAudio output stream with RTRB consumer AND notifier for device: {} (ID: {}, NATIVE SR: {}, CH: {})",
@@ -920,7 +921,7 @@ impl CoreAudioInputStream {
         rtrb_producer: rtrb::Producer<f32>,
     ) -> Result<Self> {
         // **ADAPTIVE AUDIO**: Detect device's native sample rate instead of imposing our own
-        let native_sample_rate = get_device_native_sample_rate(device_id)?;
+        let native_sample_rate = get_device_native_sample_rate(device_id, &device_name)?;
 
         info!(
             "🎤 Creating CoreAudio input stream for device: {} (ID: {}, NATIVE SR: {}, CH: {})",
