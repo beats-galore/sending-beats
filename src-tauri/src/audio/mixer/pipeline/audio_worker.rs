@@ -558,15 +558,15 @@ pub trait AudioWorker {
                     }
 
                     if processing_duration.as_micros() > 500 {
-                        warn!(
-                            "⏱️ {}: {} SLOW processing: {}μs total (resample: {}μs, post: {}μs, write: {}μs)",
-                            log_prefix.on_cyan().white(),
-                            device_id,
-                            processing_duration.as_micros(),
-                            resample_duration.as_micros(),
-                            post_process_duration.as_micros(),
-                            write_duration.as_micros()
-                        );
+                        // warn!(
+                        //     "⏱️ {}: {} SLOW processing: {}μs total (resample: {}μs, post: {}μs, write: {}μs)",
+                        //     log_prefix.on_cyan().white(),
+                        //     device_id,
+                        //     processing_duration.as_micros(),
+                        //     resample_duration.as_micros(),
+                        //     post_process_duration.as_micros(),
+                        //     write_duration.as_micros()
+                        // );
                     }
                 }
             }

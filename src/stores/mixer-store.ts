@@ -34,6 +34,7 @@ type MixerStore = {
   reusableConfigurations: CompleteConfigurationData[];
   activeSession: CompleteConfigurationData | null;
   isLoadingConfigurations: boolean;
+  initialConfigurationLoadingComplete: boolean;
   configurationError: string | null;
   restoringDevicesForSession: string | null; // session ID currently being restored
 
@@ -83,6 +84,7 @@ export const useMixerStore = create<MixerStore>()(
     reusableConfigurations: [],
     activeSession: null,
     isLoadingConfigurations: false,
+    initialConfigurationLoadingComplete: false,
     configurationError: null,
     restoringDevicesForSession: null,
 
@@ -256,6 +258,11 @@ export const useMixerStore = create<MixerStore>()(
         // Update backend first
         await audioService.setOutputStream(deviceId);
 
+        // Refetch active session to update configuredDevices list in UI
+        const updatedSession = await invoke<CompleteConfigurationData | null>(
+          'get_active_session_configuration'
+        );
+
         // Update local state if backend call succeeds
         set((state) => ({
           config: state.config
@@ -264,6 +271,7 @@ export const useMixerStore = create<MixerStore>()(
                 master_output_device_id: deviceId,
               }
             : null,
+          activeSession: updatedSession,
         }));
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -275,7 +283,9 @@ export const useMixerStore = create<MixerStore>()(
     // Real-time level updates - optimized to prevent unnecessary re-renders (updated for stereo)
     updateChannelLevels: (levels: Record<number, [number, number, number, number]>) => {
       set((state) => {
-        if (!state.config) {return {};}
+        if (!state.config) {
+          return {};
+        }
 
         const newChannels = updateArrayItems(state.config.channels, (channel) => {
           // Stereo levels: [peak_left, rms_left, peak_right, rms_right]
@@ -304,7 +314,9 @@ export const useMixerStore = create<MixerStore>()(
         });
 
         // Only update if channels array changed
-        if (newChannels === state.config.channels) {return {};}
+        if (newChannels === state.config.channels) {
+          return {};
+        }
 
         return {
           config: {
@@ -319,7 +331,9 @@ export const useMixerStore = create<MixerStore>()(
     updateMasterLevels: (levels: MasterLevels) => {
       set((state) => {
         // Only update if levels actually changed
-        if (isEqual(state.masterLevels, levels)) {return {};}
+        if (isEqual(state.masterLevels, levels)) {
+          return {};
+        }
         return { masterLevels: levels };
       });
     },
@@ -327,7 +341,9 @@ export const useMixerStore = create<MixerStore>()(
     updateMetrics: (metrics: AudioMetrics) => {
       set((state) => {
         // Only update if metrics actually changed
-        if (isEqual(state.metrics, metrics)) {return {};}
+        if (isEqual(state.metrics, metrics)) {
+          return {};
+        }
         return { metrics };
       });
     },
@@ -365,6 +381,10 @@ export const useMixerStore = create<MixerStore>()(
     // Configuration Management Actions
     // Load both reusable configurations and active session
     loadConfigurations: async () => {
+      const { isLoadingConfigurations, initialConfigurationLoadingComplete } = get();
+      if (isLoadingConfigurations || initialConfigurationLoadingComplete) {
+        return;
+      }
       set({ isLoadingConfigurations: true, configurationError: null });
 
       try {
@@ -397,6 +417,7 @@ export const useMixerStore = create<MixerStore>()(
                 reusableConfigurations: reusable,
                 activeSession: newSession,
                 isLoadingConfigurations: false,
+                initialConfigurationLoadingComplete: true,
               });
 
               // Device restoration will be handled after the configuration loading is complete
@@ -407,6 +428,7 @@ export const useMixerStore = create<MixerStore>()(
                 reusableConfigurations: reusable,
                 activeSession: active,
                 isLoadingConfigurations: false,
+                initialConfigurationLoadingComplete: true,
               });
             }
           } else {

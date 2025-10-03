@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useCallback, useEffect, useState } from 'react';
 
-import { useApplicationAudio } from './useApplicationAudio';
+import { useApplicationAudio } from './use-application-audio';
 
 export const useStartupPermissionCheck = () => {
   const [showPermissionModal, setShowPermissionModal] = useState(false);

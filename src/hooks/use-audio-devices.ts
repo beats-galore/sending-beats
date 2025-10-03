@@ -28,58 +28,6 @@ export const useAudioDevices = () => {
     loadDevices();
   }, [loadDevices]);
 
-  useEffect(() => {
-    console.log('[use-audio-devices] devices changed', devices);
-  }, [devices]);
-
-  useEffect(() => {
-    console.log('[use-audio-devices] isLoading changed', isLoading);
-  }, [isLoading]);
-
-  useEffect(() => {
-    console.log('[use-audio-devices] error changed', error);
-  }, [error]);
-
-  useEffect(() => {
-    console.log('[use-audio-devices] inputDevices changed', inputDevices);
-  }, [inputDevices]);
-
-  useEffect(() => {
-    console.log('[use-audio-devices] outputDevices changed', outputDevices);
-  }, [outputDevices]);
-
-  useEffect(() => {
-    console.log('[use-audio-devices] defaultInputDevice changed', defaultInputDevice);
-  }, [defaultInputDevice]);
-
-  useEffect(() => {
-    console.log('[use-audio-devices] defaultOutputDevice changed', defaultOutputDevice);
-  }, [defaultOutputDevice]);
-
-  useEffect(() => {
-    console.log('[use-audio-devices] loadDevices changed');
-  }, [loadDevices]);
-
-  useEffect(() => {
-    console.log('[use-audio-devices] refreshDevices changed');
-  }, [refreshDevices]);
-
-  useEffect(() => {
-    console.log('[use-audio-devices] findDevice changed');
-  }, [findDevice]);
-
-  useEffect(() => {
-    console.log('[use-audio-devices] isValidInput changed');
-  }, [isValidInput]);
-
-  useEffect(() => {
-    console.log('[use-audio-devices] isValidOutput changed');
-  }, [isValidOutput]);
-
-  useEffect(() => {
-    console.log('[use-audio-devices] clearError changed');
-  }, [clearError]);
-
   // Helper functions
   const getDeviceById = useCallback(
     (deviceId: string): AudioDeviceInfo | null => {

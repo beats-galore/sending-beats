@@ -11,7 +11,7 @@ import ListenerPlayer from './components/ListenerPlayer';
 import { VirtualMixer } from './components/mixer';
 import { AppHeader, AppFooter, Navigation, HomeView } from './components/shell';
 import { PermissionModal } from './components/ui/PermissionModal';
-import { useStartupPermissionCheck } from './hooks/useStartupPermissionCheck';
+import { useStartupPermissionCheck } from './hooks/use-startup-permission-check';
 
 type ViewType = 'home' | 'dj' | 'admin' | 'listener' | 'mixer';
 
