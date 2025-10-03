@@ -54,12 +54,13 @@ struct AudioState {
     database: Arc<AudioDatabase>,
     audio_command_tx:
         tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>,
+    app_audio_manager: Arc<AsyncMutex<ApplicationAudioManager>>,
 }
 struct RecordingState {
     service: Arc<RecordingService>,
 }
 struct ApplicationAudioState {
-    manager: Arc<ApplicationAudioManager>,
+    manager: Arc<AsyncMutex<ApplicationAudioManager>>,
 }
 
 // Initialize logging to output to both console and macOS Console.app
@@ -210,11 +211,15 @@ pub fn run() {
 
         tracing::info!("🎵 IsolatedAudioManager started in dedicated thread");
 
+        // Initialize application audio manager (shared between AudioState and ApplicationAudioState)
+        let app_audio_manager_shared = Arc::new(AsyncMutex::new(ApplicationAudioManager::new()));
+
         AudioState {
             device_manager: audio_device_manager,
             mixer: Arc::new(AsyncMutex::new(None)),
             database,
             audio_command_tx,
+            app_audio_manager: app_audio_manager_shared.clone(),
         }
     });
 
@@ -228,9 +233,9 @@ pub fn run() {
         service: FilePlayerService::new(),
     };
 
-    // Initialize application audio manager
+    // Initialize application audio state using the same app audio manager from AudioState
     let application_audio_state = ApplicationAudioState {
-        manager: Arc::new(ApplicationAudioManager::new()),
+        manager: audio_state.app_audio_manager.clone(),
     };
 
     tauri::Builder::default()
@@ -270,6 +275,8 @@ pub fn run() {
             enumerate_coreaudio_devices,
             get_device_type_info,
             is_coreaudio_device,
+            // Application audio commands
+            enumerate_application_audio_devices,
             // Audio effects commands
             update_channel_eq,
             update_channel_compressor,
