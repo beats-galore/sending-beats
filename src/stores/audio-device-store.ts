@@ -11,6 +11,7 @@ type AudioDeviceStore = {
   // State
   devices: AudioDeviceInfo[];
   isLoading: boolean;
+  initialLoadCompleted: boolean;
   error: string | null;
 
   // Computed values (these will be updated when devices change)
@@ -36,6 +37,7 @@ export const useAudioDeviceStore = create<AudioDeviceStore>()(
     // Initial state
     devices: [],
     isLoading: false,
+    initialLoadCompleted: false,
     error: null,
 
     // Computed values (updated whenever devices change)
@@ -46,6 +48,10 @@ export const useAudioDeviceStore = create<AudioDeviceStore>()(
 
     // Load devices initially
     loadDevices: async () => {
+      const { isLoading, initialLoadCompleted } = get();
+      if (isLoading || initialLoadCompleted) {
+        return;
+      }
       console.debug('🎧 Loading audio devices...');
       set({ isLoading: true, error: null });
 
@@ -91,6 +97,7 @@ export const useAudioDeviceStore = create<AudioDeviceStore>()(
           return {
             ...updates,
             isLoading: false,
+            initialLoadCompleted: true,
             error: null,
           };
         });
@@ -99,6 +106,7 @@ export const useAudioDeviceStore = create<AudioDeviceStore>()(
         console.error('❌ Failed to load audio devices:', errorMessage);
         set({
           isLoading: false,
+          initialLoadCompleted: true,
           error: `Failed to load audio devices: ${errorMessage}`,
         });
       }

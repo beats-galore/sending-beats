@@ -316,7 +316,6 @@ pub fn run() {
             get_supported_audio_formats,
             validate_audio_file,
             // Application audio commands
-            get_available_audio_applications,
             get_known_audio_applications,
             start_application_audio_capture,
             stop_application_audio_capture,

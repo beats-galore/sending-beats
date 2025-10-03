@@ -7,32 +7,6 @@ use tauri::State;
 // ================================================================================================
 
 #[tauri::command]
-pub async fn get_available_audio_applications(
-    app_audio_state: State<'_, ApplicationAudioState>,
-) -> Result<Vec<ProcessInfo>, String> {
-    println!("🔍 Getting available audio applications...");
-
-    match app_audio_state.manager.get_available_applications().await {
-        Ok(apps) => {
-            println!("✅ Found {} available audio applications", apps.len());
-            for app in &apps {
-                println!(
-                    "  - {} (PID: {}) [{}]",
-                    app.name,
-                    app.pid,
-                    app.bundle_id.as_ref().unwrap_or(&"unknown".to_string())
-                );
-            }
-            Ok(apps)
-        }
-        Err(e) => {
-            eprintln!("❌ Failed to get available audio applications: {}", e);
-            Err(format!("Failed to get available audio applications: {}", e))
-        }
-    }
-}
-
-#[tauri::command]
 pub async fn get_known_audio_applications(
     app_audio_state: State<'_, ApplicationAudioState>,
 ) -> Result<Vec<ProcessInfo>, String> {
@@ -206,7 +180,7 @@ pub async fn refresh_audio_applications(
     println!("🔄 Refreshing audio applications list...");
 
     // This will force a new scan by calling get_available_applications
-    get_available_audio_applications(app_audio_state).await
+    get_known_audio_applications(app_audio_state).await
 }
 
 #[tauri::command]
