@@ -15,7 +15,6 @@ pub mod mixing_layer;
 pub mod output_worker;
 pub mod pipeline_manager;
 pub mod queue_types;
-pub mod resampling_accumulator;
 pub mod temporal_sync_buffer;
 
 pub use pipeline_manager::AudioPipeline;

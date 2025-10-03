@@ -655,7 +655,7 @@ extern "C" fn rtrb_render_callback(
                     if lock_micros > 500 {
                         LOCK_CONTENTION_COUNT += 1;
                         info!("🔒 {} [call #{}]: ACTUAL contention - lock took {} μs (contentions: {}, total lock time: {} ms)",
-                            "SPMC_LOCK_CONTENTION".red(),
+                            "RTRB_LOCK_CONTENTION".red(),
                             CALLBACK_COUNT,
                             lock_micros,
                             LOCK_CONTENTION_COUNT,
@@ -664,7 +664,7 @@ extern "C" fn rtrb_render_callback(
                     } else if CALLBACK_COUNT % 1000 == 0 {
                         // Periodic status (not contention)
                         info!("🔒 {} [call #{}]: Lock status - avg {} μs, total {} ms, actual contentions: {}",
-                            "SPMC_LOCK_STATUS".yellow(),
+                            "RTRB_LOCK_STATUS".yellow(),
                             CALLBACK_COUNT,
                             TOTAL_LOCK_TIME / CALLBACK_COUNT,
                             TOTAL_LOCK_TIME / 1000,
@@ -837,16 +837,16 @@ extern "C" fn rtrb_render_callback(
                             0
                         };
 
-                        static mut SPMC_PLAYBACK_COUNT: u64 = 0;
+                        static mut RTRB_PLAYBACK_COUNT: u64 = 0;
                         unsafe {
-                            SPMC_PLAYBACK_COUNT += 1;
-                            if SPMC_PLAYBACK_COUNT % 1000 == 0 || SPMC_PLAYBACK_COUNT < 10 {
+                            RTRB_PLAYBACK_COUNT += 1;
+                            if RTRB_PLAYBACK_COUNT % 1000 == 0 || RTRB_PLAYBACK_COUNT < 10 {
                                 let peak = (0..samples_to_fill)
                                     .map(|i| unsafe { *output_data.add(i) }.abs())
                                     .fold(0.0f32, f32::max);
                                 info!("🎵 {} [{}]: Playing {} samples (call #{}), read: {}, peak: {:.4})",
-                                "SPMC_COREAUDIO".blue(),
-                                    "CoreAudio", samples_to_fill, SPMC_PLAYBACK_COUNT, samples_read, peak);
+                                "RTRB_COREAUDIO".blue(),
+                                    "CoreAudio", samples_to_fill, RTRB_PLAYBACK_COUNT, samples_read, peak);
                             }
                         }
 
