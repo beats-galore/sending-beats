@@ -435,135 +435,139 @@ pub trait AudioWorker {
                     continue;
                 }
 
-                let processing_start = std::time::Instant::now();
-                let original_samples_len = samples.len();
-
                 // Step 1: Check if resampling is needed
                 let sample_rate_difference =
                     (device_sample_rate as f32 - initial_target_sample_rate as f32).abs();
                 let needs_resampling = sample_rate_difference > 1.0; // Allow 1Hz tolerance
 
-                // Step 2: Pre-accumulate samples (regardless of whether resampling is needed)
-                let accumulated_samples = Self::process_with_pre_accumulation(
-                    &mut resampler,
-                    needs_resampling,
-                    &samples,
-                    &mut input_accumulator,
-                    chunk_size,
-                    device_id.clone(),
-                );
+                // Step 2: Pre-accumulate incoming samples
+                input_accumulator.extend_from_slice(&samples);
 
-                // If we don't have enough accumulated samples yet, continue
-                let accumulated_samples = match accumulated_samples {
-                    Some(samples) => samples,
-                    None => continue, // Keep accumulating
-                };
-
-                // Step 3: Resample accumulated samples if needed, otherwise pass through
-                let resample_start = std::time::Instant::now();
-                let processed_samples = if needs_resampling {
-                    if let Some(active_resampler) = Self::get_or_initialize_resampler_static(
+                // Step 3: Process all available chunks from the accumulator
+                loop {
+                    let accumulated_samples = Self::process_with_pre_accumulation(
                         &mut resampler,
-                        device_sample_rate,
-                        initial_target_sample_rate,
+                        needs_resampling,
+                        &[],
+                        &mut input_accumulator,
                         chunk_size,
-                        channels,
-                        &device_id,
-                    ) {
-                        // Resample the accumulated samples
-                        let resampled = active_resampler.convert(&accumulated_samples);
+                        device_id.clone(),
+                    );
 
-                        // Apply dynamic rate adjustment
-                        let _ = Self::adjust_dynamic_sample_rate(
-                            active_resampler,
-                            &queue_tracker,
+                    // If we don't have enough accumulated samples, break inner loop
+                    let accumulated_samples = match accumulated_samples {
+                        Some(samples) => samples,
+                        None => break, // Not enough samples, wait for more input
+                    };
+
+                    let processing_start = std::time::Instant::now();
+
+                    // Step 4: Resample accumulated samples if needed, otherwise pass through
+                    let resample_start = std::time::Instant::now();
+                    let processed_samples = if needs_resampling {
+                        if let Some(active_resampler) = Self::get_or_initialize_resampler_static(
+                            &mut resampler,
                             device_sample_rate,
                             initial_target_sample_rate,
+                            chunk_size,
+                            channels,
                             &device_id,
-                        );
+                        ) {
+                            // Resample the accumulated samples
+                            let resampled = active_resampler.convert(&accumulated_samples);
 
-                        static RESAMPLE_LOG_COUNT: std::sync::atomic::AtomicU64 =
-                            std::sync::atomic::AtomicU64::new(0);
-                        let resample_count =
-                            RESAMPLE_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-                        if resample_count < 10 || resample_count % 1000 == 0 {
-                            info!(
-                                "🔄 {}: Resampled {} input → {} output ({}Hz→{}Hz) {}",
-                                "AUDIO_RESAMPLE".on_cyan().white(),
-                                accumulated_samples.len(),
-                                resampled.len(),
+                            // Apply dynamic rate adjustment
+                            let _ = Self::adjust_dynamic_sample_rate(
+                                active_resampler,
+                                &queue_tracker,
                                 device_sample_rate,
                                 initial_target_sample_rate,
-                                device_id
+                                &device_id,
+                            );
+
+                            static RESAMPLE_LOG_COUNT: std::sync::atomic::AtomicU64 =
+                                std::sync::atomic::AtomicU64::new(0);
+                            let resample_count = RESAMPLE_LOG_COUNT
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                            if resample_count < 10 || resample_count % 1000 == 0 {
+                                info!(
+                                    "🔄 {}: Resampled {} input → {} output ({}Hz→{}Hz) {}",
+                                    "AUDIO_RESAMPLE".on_cyan().white(),
+                                    accumulated_samples.len(),
+                                    resampled.len(),
+                                    device_sample_rate,
+                                    initial_target_sample_rate,
+                                    device_id
+                                );
+                            }
+
+                            resampled
+                        } else {
+                            warn!(
+                                "⚠️ {}[{}]: Failed to initialize resampler, passing through",
+                                log_prefix, device_id
+                            );
+                            accumulated_samples
+                        }
+                    } else {
+                        // No resampling needed - pass through accumulated samples
+                        accumulated_samples
+                    };
+                    let resample_duration = resample_start.elapsed();
+
+                    // Step 5: Apply post-processing (effects, VU meters, etc.) if provided
+                    let post_process_start = std::time::Instant::now();
+                    let mut final_samples = processed_samples;
+                    if let Some(ref mut process_fn) = post_process_fn {
+                        if let Err(e) = process_fn(&mut final_samples, channels, &device_id) {
+                            warn!(
+                                "⚠️ {}[{}]: Post-processing failed: {}",
+                                log_prefix, device_id, e
                             );
                         }
-
-                        resampled
-                    } else {
-                        warn!(
-                            "⚠️ {}[{}]: Failed to initialize resampler, passing through",
-                            log_prefix, device_id
-                        );
-                        accumulated_samples
                     }
-                } else {
-                    // No resampling needed - pass through accumulated samples
-                    accumulated_samples
-                };
-                let resample_duration = resample_start.elapsed();
+                    let post_process_duration = post_process_start.elapsed();
 
-                // Step 4: Apply post-processing (effects, VU meters, etc.) if provided
-                let post_process_start = std::time::Instant::now();
-                let mut final_samples = processed_samples;
-                if let Some(ref mut process_fn) = post_process_fn {
-                    if let Err(e) = process_fn(&mut final_samples, channels, &device_id) {
-                        warn!(
-                            "⚠️ {}[{}]: Post-processing failed: {}",
-                            log_prefix, device_id, e
+                    // Step 6: Write to output RTRB queue
+                    let write_start = std::time::Instant::now();
+                    Self::write_samples_to_rtrb_sync(
+                        &device_id,
+                        &final_samples,
+                        &rtrb_producer,
+                        Some(&queue_tracker),
+                    );
+                    let write_duration = write_start.elapsed();
+
+                    samples_processed += 1;
+                    let processing_duration = processing_start.elapsed();
+
+                    // Rate-limited logging
+                    if samples_processed <= 5 || samples_processed % 1000 == 0 {
+                        info!(
+                            "🔄 {}: {} processed {} samples in {}μs (resample: {}μs, post: {}μs, write: {}μs) batch #{}",
+                            log_prefix.on_cyan().white(),
+                            device_id,
+                            final_samples.len(),
+                            processing_duration.as_micros(),
+                            resample_duration.as_micros(),
+                            post_process_duration.as_micros(),
+                            write_duration.as_micros(),
+                            samples_processed
                         );
                     }
-                }
-                let post_process_duration = post_process_start.elapsed();
 
-                // Step 5: Write to output RTRB queue
-                let write_start = std::time::Instant::now();
-                Self::write_samples_to_rtrb_sync(
-                    &device_id,
-                    &final_samples,
-                    &rtrb_producer,
-                    Some(&queue_tracker),
-                );
-                let write_duration = write_start.elapsed();
-
-                samples_processed += 1;
-                let processing_duration = processing_start.elapsed();
-
-                // Rate-limited logging
-                if samples_processed <= 5 || samples_processed % 1000 == 0 {
-                    info!(
-                        "🔄 {}: {} processed {} samples in {}μs (resample: {}μs, post: {}μs, write: {}μs) batch #{}",
-                        log_prefix.on_cyan().white(),
-                        device_id,
-                        final_samples.len(),
-                        processing_duration.as_micros(),
-                        resample_duration.as_micros(),
-                        post_process_duration.as_micros(),
-                        write_duration.as_micros(),
-                        samples_processed
-                    );
-                }
-
-                if processing_duration.as_micros() > 500 {
-                    warn!(
-                        "⏱️ {}: {} SLOW processing: {}μs total (resample: {}μs, post: {}μs, write: {}μs)",
-                        log_prefix.on_cyan().white(),
-                        device_id,
-                        processing_duration.as_micros(),
-                        resample_duration.as_micros(),
-                        post_process_duration.as_micros(),
-                        write_duration.as_micros()
-                    );
+                    if processing_duration.as_micros() > 500 {
+                        warn!(
+                            "⏱️ {}: {} SLOW processing: {}μs total (resample: {}μs, post: {}μs, write: {}μs)",
+                            log_prefix.on_cyan().white(),
+                            device_id,
+                            processing_duration.as_micros(),
+                            resample_duration.as_micros(),
+                            post_process_duration.as_micros(),
+                            write_duration.as_micros()
+                        );
+                    }
                 }
             }
         });
@@ -632,15 +636,12 @@ pub trait AudioWorker {
     fn process_with_pre_accumulation(
         resampler: &mut Option<RubatoSRC>,
         needs_resampling: bool,
-        input_samples: &[f32],
+        _input_samples: &[f32],
         accumulation_buffer: &mut Vec<f32>,
         target_output_samples: usize,
         device_id: String,
     ) -> Option<Vec<f32>> {
-        // Step 1: Add incoming samples to accumulation buffer
-        accumulation_buffer.extend_from_slice(input_samples);
-
-        // Step 2: Check if we have enough input to produce target output
+        // Check if we have enough input to produce target output
         let input_frames_needed = if needs_resampling {
             if let Some(ref mut active_resampler) = resampler {
                 let output_frames = target_output_samples / 2;
@@ -652,13 +653,7 @@ pub trait AudioWorker {
             target_output_samples
         };
 
-        // **BUFFER MONITORING**: Track accumulation levels
-        static BUFFER_LEVEL_LOG_COUNT: std::sync::atomic::AtomicU64 =
-            std::sync::atomic::AtomicU64::new(0);
-        let buffer_log_count =
-            BUFFER_LEVEL_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-        // Step 3: If we have enough, extract and return the samples
+        // If we have enough, extract and return the samples
         if accumulation_buffer.len() >= input_frames_needed {
             // Extract the samples we need
             let to_process: Vec<f32> = accumulation_buffer.drain(..input_frames_needed).collect();
