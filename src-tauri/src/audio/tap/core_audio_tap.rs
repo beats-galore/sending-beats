@@ -259,18 +259,16 @@ impl ApplicationAudioTap {
         // Step 2: Set up audio streaming from the tap
         info!("Setting up audio stream from tap...");
 
-        // Create broadcast channel for audio data
-        let (audio_tx, _audio_rx) = broadcast::channel(1024);
-        self.audio_tx = Some(audio_tx.clone());
-
-        // Set up actual audio callback and streaming
-        self.setup_tap_audio_stream(tap_object_id, audio_tx).await?;
+        // Set up actual audio callback and streaming, get detected sample rate
+        let detected_sample_rate = self.setup_tap_audio_stream(tap_object_id).await?;
 
         info!(
-            "✅ Audio tap successfully created for {}",
-            self.process_info.name
+            "✅ Audio tap successfully created for {} at {} Hz",
+            self.process_info.name, detected_sample_rate
         );
-        Ok(())
+
+        // Return the detected sample rate
+        Ok(detected_sample_rate)
     }
 
     // Additional methods for tap management...
@@ -320,18 +318,18 @@ impl ApplicationAudioTap {
         }
     }
     /// Set up audio streaming from the Core Audio tap
+    /// Returns the detected sample rate
     async fn setup_tap_audio_stream(
         &mut self,
         tap_object_id: coreaudio_sys::AudioObjectID,
-        audio_tx: broadcast::Sender<Vec<f32>>,
-    ) -> Result<()> {
+    ) -> Result<f64> {
         info!(
             "Setting up audio stream for tap AudioObjectID {}",
             tap_object_id
         );
 
         // Use cpal to create an AudioUnit-based input stream from the tap device
-        self.create_cpal_input_stream_from_tap(tap_object_id, audio_tx)
+        self.create_cpal_input_stream_from_tap(tap_object_id)
             .await
     }
 
@@ -420,12 +418,12 @@ impl ApplicationAudioTap {
     }
 
     /// Create a CPAL input stream from the Core Audio tap device
+    /// Returns the detected sample rate from the tap
     #[cfg(target_os = "macos")]
     async fn create_cpal_input_stream_from_tap(
         &mut self,
         tap_object_id: coreaudio_sys::AudioObjectID,
-        audio_tx: broadcast::Sender<Vec<f32>>,
-    ) -> Result<()> {
+    ) -> Result<f64> {
         use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
         info!(
@@ -493,7 +491,7 @@ impl ApplicationAudioTap {
                 tap_object_id
             );
             return self
-                .setup_virtual_tap_bridge(tap_object_id, audio_tx, sample_rate, channels)
+                .setup_virtual_tap_bridge(tap_object_id, sample_rate, channels)
                 .await;
         }
 
@@ -529,10 +527,12 @@ impl ApplicationAudioTap {
             config.channels, config.sample_rate.0
         );
 
-        // Create the input stream with audio callback
+        // Create the input stream with audio callback using RTRB producer
         let process_name = self.process_info.name.clone();
         let mut callback_count = 0u64;
-        let audio_tx_for_callback = audio_tx.clone();
+        let producer_for_callback = self.audio_producer.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("RTRB producer not initialized"))?
+            .clone();
 
         let stream = match device_config.sample_format() {
             cpal::SampleFormat::F32 => {
@@ -558,10 +558,12 @@ impl ApplicationAudioTap {
                              process_name, device_name, callback_count, data.len(), peak_level, rms_level);
                     }
 
-                     // Send audio data to broadcast channel for mixer integration
-                     if let Err(e) = audio_tx_for_callback.send(audio_samples) {
-                         if callback_count % 1000 == 0 {
-                             warn!("Failed to send tap audio samples: {} (callback #{})", e, callback_count);
+                     // Write audio data to RTRB producer for mixer integration
+                     if let Ok(mut producer) = producer_for_callback.lock() {
+                         let written = producer.write_chunk(&audio_samples).map(|chunk| chunk.len()).unwrap_or(0);
+                         if written < audio_samples.len() && callback_count % 100 == 0 {
+                             warn!("🔄 TAP_RTRB_FULL: RTRB buffer full, wrote {}/{} samples (callback #{})",
+                                 written, audio_samples.len(), callback_count);
                          }
                      }
                  },
@@ -572,6 +574,7 @@ impl ApplicationAudioTap {
              )?
             }
             cpal::SampleFormat::I16 => {
+                let producer_for_i16_callback = producer_for_callback.clone();
                 device.build_input_stream(
                     &config,
                     move |data: &[i16], _: &cpal::InputCallbackInfo| {
@@ -618,13 +621,12 @@ impl ApplicationAudioTap {
                             );
                         }
 
-                        // Send converted audio data
-                        if let Err(e) = audio_tx_for_callback.send(audio_samples) {
-                            if callback_count % 1000 == 0 {
-                                warn!(
-                                    "Failed to send tap audio I16 samples: {} (callback #{})",
-                                    e, callback_count
-                                );
+                        // Write audio data to RTRB producer for mixer integration
+                        if let Ok(mut producer) = producer_for_i16_callback.lock() {
+                            let written = producer.write_chunk(&audio_samples).map(|chunk| chunk.len()).unwrap_or(0);
+                            if written < audio_samples.len() && callback_count % 100 == 0 {
+                                warn!("🔄 TAP_I16_RTRB_FULL: RTRB buffer full, wrote {}/{} samples (callback #{})",
+                                    written, audio_samples.len(), callback_count);
                             }
                         }
                     },
@@ -665,7 +667,9 @@ impl ApplicationAudioTap {
 
         info!("⚠️ Stream leaked intentionally for lifecycle management - will remain active until process ends");
 
-        Ok(())
+        // Store and return the detected sample rate
+        self.detected_sample_rate = Some(sample_rate);
+        Ok(sample_rate)
     }
 
     /// Set up IOProc callback on aggregate device to receive tap data
@@ -800,14 +804,22 @@ impl ApplicationAudioTap {
     }
 
     /// Set up direct Core Audio IOProc integration for tap device
+    /// Returns the detected sample rate
+    /// TODO: Implement RTRB integration for fallback path
     #[cfg(target_os = "macos")]
     async fn setup_virtual_tap_bridge(
         &mut self,
         tap_object_id: coreaudio_sys::AudioObjectID,
-        audio_tx: broadcast::Sender<Vec<f32>>,
         sample_rate: f64,
-        channels: u32,
-    ) -> Result<()> {
+        _channels: u32,
+    ) -> Result<f64> {
+        // TODO: This fallback path still uses broadcast channels and needs RTRB integration
+        return Err(anyhow::anyhow!(
+            "Virtual tap bridge not yet implemented with RTRB - tap device {} should be accessible via CPAL",
+            tap_object_id
+        ));
+
+        /* Commented out until RTRB integration is complete
         info!(
             "🔧 IMPLEMENTING: Direct Core Audio IOProc for tap AudioObjectID {}",
             tap_object_id
@@ -939,6 +951,7 @@ impl ApplicationAudioTap {
         self.is_capturing = true;
 
         Ok(())
+        */
     }
 
     /// Create the actual Core Audio aggregate device
@@ -1202,14 +1215,16 @@ impl ApplicationAudioTap {
         }
 
         self.is_capturing = false;
-        self.audio_tx = None;
+        self.audio_producer = None;
 
         Ok(())
     }
 
-    /// Get the audio broadcast sender for this tap
+    /// Get the audio broadcast sender for this tap (deprecated - now using RTRB)
+    #[allow(dead_code)]
     pub fn get_audio_sender(&self) -> Option<broadcast::Sender<Vec<f32>>> {
-        self.audio_tx.clone()
+        // Legacy method - taps now use RTRB producers directly
+        None
     }
 
     /// Check if this tap is currently active
