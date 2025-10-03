@@ -86,6 +86,7 @@ pub async fn safe_switch_input_device(
     audio_state: State<'_, AudioState>,
     old_device_id: Option<String>,
     new_device_id: String,
+    is_virtual: Option<bool>,
 ) -> Result<(), String> {
     // Check if switching to the same device - no-op to prevent unnecessary stream restart
     if let Some(ref old_id) = old_device_id {
@@ -133,23 +134,78 @@ pub async fn safe_switch_input_device(
         }
     }
 
-    // Get device handle using device manager
-    let device_manager = audio_state.device_manager.lock().await;
-    let device_handle = device_manager
-        .find_audio_device(&new_device_id, true) // true = input device
-        .await
-        .map_err(|e| format!("Failed to find input device {}: {}", new_device_id, e))?;
+    let is_app_audio = is_virtual.unwrap_or(false);
 
-    // Extract device information for database sync before consuming device_handle
-    let device_info = match &device_handle {
+    // Get device handle - either from device manager or create application audio handle
+    let (device_handle, device_info) = if is_app_audio {
         #[cfg(target_os = "macos")]
-        crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => Some((
-            coreaudio_device.name.clone(),
-            coreaudio_device.sample_rate,
-            coreaudio_device.channels,
-        )),
+        {
+            // Parse PID from device_id (format: "app-{pid}")
+            let pid: u32 = new_device_id
+                .strip_prefix("app-")
+                .ok_or_else(|| format!("Invalid application audio device ID: {}", new_device_id))?
+                .parse()
+                .map_err(|e| {
+                    format!(
+                        "Failed to parse PID from device ID {}: {}",
+                        new_device_id, e
+                    )
+                })?;
+
+            // Get application info from ApplicationAudioManager
+            let app_manager = audio_state.app_audio_manager.lock().await;
+            let available_apps = app_manager
+                .get_available_applications()
+                .await
+                .map_err(|e| format!("Failed to get available applications: {}", e))?;
+
+            let app_info = available_apps
+                .iter()
+                .find(|app| app.pid == pid)
+                .ok_or_else(|| format!("Application with PID {} not found", pid))?;
+
+            let device_handle = crate::audio::types::AudioDeviceHandle::ApplicationAudio(
+                crate::audio::types::ApplicationAudioDevice {
+                    pid,
+                    name: app_info.name.clone(),
+                    sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
+                    channels: 2,
+                },
+            );
+
+            let info = (
+                app_info.name.clone(),
+                crate::types::DEFAULT_SAMPLE_RATE,
+                2u16,
+            );
+            (device_handle, Some(info))
+        }
         #[cfg(not(target_os = "macos"))]
-        _ => None,
+        {
+            return Err("Application audio not supported on this platform".to_string());
+        }
+    } else {
+        // Standard CoreAudio device
+        let device_manager = audio_state.device_manager.lock().await;
+        let device_handle = device_manager
+            .find_audio_device(&new_device_id, true) // true = input device
+            .await
+            .map_err(|e| format!("Failed to find input device {}: {}", new_device_id, e))?;
+
+        // Extract device information for database sync before consuming device_handle
+        let device_info = match &device_handle {
+            #[cfg(target_os = "macos")]
+            crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => Some((
+                coreaudio_device.name.clone(),
+                coreaudio_device.sample_rate,
+                coreaudio_device.channels,
+            )),
+            #[cfg(not(target_os = "macos"))]
+            _ => None,
+            #[cfg(target_os = "macos")]
+            crate::audio::types::AudioDeviceHandle::ApplicationAudio(_) => None,
+        };
+        (device_handle, device_info)
     };
 
     // **FIX**: Create database entry BEFORE sending command
@@ -162,7 +218,9 @@ pub async fn safe_switch_input_device(
             sample_rate as i32,
             channels as u32,
             true, // is_input
-            new_device_id.contains("BlackHole") || new_device_id.contains("SoundflowerBed"),
+            is_app_audio
+                || new_device_id.contains("BlackHole")
+                || new_device_id.contains("SoundflowerBed"),
         )
         .await
         {
@@ -186,6 +244,17 @@ pub async fn safe_switch_input_device(
                 coreaudio_device_id: coreaudio_device.device_id,
                 device_name: coreaudio_device.name.clone(),
                 channels: coreaudio_device.channels,
+                producer,
+                response_tx,
+            }
+        }
+        #[cfg(target_os = "macos")]
+        crate::audio::types::AudioDeviceHandle::ApplicationAudio(app_device) => {
+            crate::audio::mixer::stream_management::AudioCommand::AddApplicationAudioInputStream {
+                device_id: new_device_id.clone(),
+                pid: app_device.pid,
+                device_name: app_device.name.clone(),
+                channels: app_device.channels,
                 producer,
                 response_tx,
             }
@@ -264,6 +333,13 @@ pub async fn safe_switch_output_device(
             coreaudio_device.sample_rate,
             coreaudio_device.channels,
         )),
+        #[cfg(target_os = "macos")]
+        crate::audio::types::AudioDeviceHandle::ApplicationAudio(_) => {
+            return Err(
+                "Application audio devices are input-only and cannot be used as outputs"
+                    .to_string(),
+            );
+        }
         #[cfg(not(target_os = "macos"))]
         _ => None,
     };
@@ -279,6 +355,13 @@ pub async fn safe_switch_output_device(
                 coreaudio_device,
                 response_tx,
             }
+        }
+        #[cfg(target_os = "macos")]
+        crate::audio::types::AudioDeviceHandle::ApplicationAudio(_) => {
+            return Err(
+                "Application audio devices are input-only and cannot be used as outputs"
+                    .to_string(),
+            );
         }
         #[cfg(not(target_os = "macos"))]
         _ => return Err("Unsupported device type for this platform".to_string()),
@@ -303,7 +386,7 @@ pub async fn safe_switch_output_device(
                     sample_rate as i32,
                     channels as u32,
                     false, // is_input
-                    new_device_id.contains("BlackHole") || new_device_id.contains("SoundflowerBed"),
+                    false, // is_virtual
                 )
                 .await
                 {
@@ -408,6 +491,13 @@ pub async fn set_output_stream(
                 coreaudio_device,
                 response_tx,
             }
+        }
+        #[cfg(target_os = "macos")]
+        crate::audio::types::AudioDeviceHandle::ApplicationAudio(_) => {
+            return Err(
+                "Application audio devices are input-only and cannot be used as outputs"
+                    .to_string(),
+            );
         }
         #[cfg(not(target_os = "macos"))]
         _ => return Err("Unsupported device type for this platform".to_string()),
@@ -559,5 +649,23 @@ pub async fn is_coreaudio_device(
         Ok(device_info.host_api == "CoreAudio (Direct)")
     } else {
         Ok(false)
+    }
+}
+
+#[tauri::command]
+pub async fn enumerate_application_audio_devices(
+    audio_state: State<'_, AudioState>,
+) -> Result<Vec<crate::audio::tap::ProcessInfo>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let app_manager = audio_state.app_audio_manager.lock().await;
+        app_manager
+            .get_available_applications()
+            .await
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(Vec::new())
     }
 }

@@ -22,6 +22,8 @@ pub struct AudioDeviceInfo {
 pub enum AudioDeviceHandle {
     #[cfg(target_os = "macos")]
     CoreAudio(CoreAudioDevice),
+    #[cfg(target_os = "macos")]
+    ApplicationAudio(ApplicationAudioDevice),
 }
 
 impl std::fmt::Debug for AudioDeviceHandle {
@@ -30,6 +32,11 @@ impl std::fmt::Debug for AudioDeviceHandle {
             #[cfg(target_os = "macos")]
             AudioDeviceHandle::CoreAudio(device) => f
                 .debug_struct("AudioDeviceHandle::CoreAudio")
+                .field("device", device)
+                .finish(),
+            #[cfg(target_os = "macos")]
+            AudioDeviceHandle::ApplicationAudio(device) => f
+                .debug_struct("AudioDeviceHandle::ApplicationAudio")
                 .field("device", device)
                 .finish(),
         }
@@ -45,6 +52,16 @@ pub struct CoreAudioDevice {
     pub sample_rate: u32,
     pub channels: u16,
     pub stream: Option<CoreAudioOutputStream>,
+}
+
+/// Application audio device for capturing audio from specific applications
+#[cfg(target_os = "macos")]
+#[derive(Debug)]
+pub struct ApplicationAudioDevice {
+    pub pid: u32,
+    pub name: String,
+    pub sample_rate: u32,
+    pub channels: u16,
 }
 
 /// Audio channel configuration

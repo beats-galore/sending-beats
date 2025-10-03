@@ -123,7 +123,8 @@ pub struct ApplicationAudioTap {
     process_info: ProcessInfo,
     tap_id: Option<u32>,              // AudioObjectID placeholder
     aggregate_device_id: Option<u32>, // AudioObjectID placeholder
-    audio_tx: Option<broadcast::Sender<Vec<f32>>>,
+    audio_producer: Option<Arc<StdMutex<rtrb::Producer<f32>>>>, // RTRB producer for pipeline integration
+    detected_sample_rate: Option<f64>, // Detected sample rate from the tap
     _stream_info: Option<String>, // Just store stream info for debugging
     is_capturing: bool,
     created_at: std::time::Instant,
@@ -140,7 +141,8 @@ impl ApplicationAudioTap {
             process_info,
             tap_id: None,
             aggregate_device_id: None,
-            audio_tx: None,
+            audio_producer: None,
+            detected_sample_rate: None,
             _stream_info: None,
             is_capturing: false,
             created_at: now,
@@ -148,6 +150,11 @@ impl ApplicationAudioTap {
             error_count: Arc::new(StdMutex::new(0)),
             max_errors: 5, // Maximum errors before automatic cleanup
         }
+    }
+
+    /// Get the detected sample rate from the tap (available after create_tap succeeds)
+    pub fn get_detected_sample_rate(&self) -> Option<f64> {
+        self.detected_sample_rate
     }
 
     /// Simple linear interpolation resampling for audio format conversion
