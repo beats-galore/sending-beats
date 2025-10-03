@@ -222,8 +222,11 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
         try {
           // Use the audioService switchInputStream method which handles database sync
           const currentDeviceId = configuredInputDevice?.deviceIdentifier ?? null;
-          console.log(`🔧 FRONTEND: Switching input device: ${currentDeviceId} → ${deviceId}`);
-          await audioService.switchInputStream(currentDeviceId, deviceId);
+          const isAppAudio = deviceId.startsWith('app-');
+          console.log(
+            `🔧 FRONTEND: Switching input device: ${currentDeviceId} → ${deviceId}${isAppAudio ? ' (app audio)' : ''}`
+          );
+          await audioService.switchInputStream(currentDeviceId, deviceId, isAppAudio);
           console.debug(`✅ Channel ${channel.id} input device switched to: ${deviceId}`);
 
           // **FIX**: Refetch active session to update configured devices in UI
