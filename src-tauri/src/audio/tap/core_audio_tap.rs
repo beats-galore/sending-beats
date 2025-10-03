@@ -124,7 +124,7 @@ pub struct ApplicationAudioTap {
     tap_id: Option<u32>,              // AudioObjectID placeholder
     aggregate_device_id: Option<u32>, // AudioObjectID placeholder
     audio_producer: Option<Arc<StdMutex<rtrb::Producer<f32>>>>, // RTRB producer for pipeline integration
-    detected_sample_rate: Option<f64>, // Detected sample rate from the tap
+    detected_sample_rate: Option<f64>,                          // Detected sample rate from the tap
     _stream_info: Option<String>, // Just store stream info for debugging
     is_capturing: bool,
     created_at: std::time::Instant,
@@ -193,8 +193,11 @@ impl ApplicationAudioTap {
         output
     }
 
-    /// Create a Core Audio tap for this application's process
-    pub async fn create_tap(&mut self) -> Result<()> {
+    /// Create a Core Audio tap for this application's process with RTRB producer
+    /// Returns the detected sample rate from the tap device
+    pub async fn create_tap(&mut self, producer: rtrb::Producer<f32>) -> Result<f64> {
+        // Store the producer wrapped in Arc<Mutex> for sharing with callbacks
+        self.audio_producer = Some(Arc::new(StdMutex::new(producer)));
         info!(
             "🔧 DEBUG: Creating audio tap for {} (PID: {})",
             self.process_info.name, self.process_info.pid
