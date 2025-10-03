@@ -14,7 +14,6 @@ use tracing::{error, info, warn};
 
 use super::audio_worker::{AudioWorker, AudioWorkerState};
 use crate::audio::effects::{CustomAudioEffectsChain, DefaultAudioEffectsChain};
-use crate::audio::mixer::pipeline::resampling_accumulator;
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::mixer::resampling::RubatoSRC;
 use crate::audio::mixer::stream_management::virtual_mixer::VirtualMixer;
