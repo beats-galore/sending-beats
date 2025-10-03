@@ -194,6 +194,7 @@ pub trait AudioWorker {
                         device_sample_rate as f32,
                         target_sample_rate as f32,
                         true,
+                        device_id.to_string(),
                     ) {
                         warn!(
                             "⚠️ {}: Dynamic adjustment failed for {}: {} - recreating resampler",
@@ -328,12 +329,12 @@ pub trait AudioWorker {
             while !remaining.is_empty() && samples_written < samples.len() {
                 let chunk_size = remaining.len().min(producer.slots());
                 if chunk_size == 0 {
-                //     warn!(
-                //         "⚠️ {}: {} RTRB queue full, dropping {} remaining samples",
-                //         "AUDIO_WORKER".on_cyan().white(),
-                //         device_id,
-                //         remaining.len()
-                //     );
+                    //     warn!(
+                    //         "⚠️ {}: {} RTRB queue full, dropping {} remaining samples",
+                    //         "AUDIO_WORKER".on_cyan().white(),
+                    //         device_id,
+                    //         remaining.len()
+                    //     );
                     break;
                 }
 
@@ -483,17 +484,18 @@ pub trait AudioWorker {
 
                         static RESAMPLE_LOG_COUNT: std::sync::atomic::AtomicU64 =
                             std::sync::atomic::AtomicU64::new(0);
-                        let resample_count = RESAMPLE_LOG_COUNT
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let resample_count =
+                            RESAMPLE_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                         if resample_count < 10 || resample_count % 1000 == 0 {
                             info!(
-                                "🔄 {}: Resampled {} input → {} output ({}Hz→{}Hz)",
+                                "🔄 {}: Resampled {} input → {} output ({}Hz→{}Hz) {}",
                                 "AUDIO_RESAMPLE".on_cyan().white(),
                                 accumulated_samples.len(),
                                 resampled.len(),
                                 device_sample_rate,
-                                initial_target_sample_rate
+                                initial_target_sample_rate,
+                                device_id
                             );
                         }
 
@@ -543,7 +545,7 @@ pub trait AudioWorker {
                         "🔄 {}: {} processed {} samples in {}μs (resample: {}μs, post: {}μs, write: {}μs) batch #{}",
                         log_prefix.on_cyan().white(),
                         device_id,
-                        original_samples_len,
+                        final_samples.len(),
                         processing_duration.as_micros(),
                         resample_duration.as_micros(),
                         post_process_duration.as_micros(),
@@ -590,7 +592,7 @@ pub trait AudioWorker {
 
         if let Some(ref mut resampler) = self.resampler_mut() {
             // Use dynamic adjustment - keep same output rate, update input rate
-            match resampler.set_sample_rates(new_input_rate, output_rate, true) {
+            match resampler.set_sample_rates(new_input_rate, output_rate, true, device_id.clone()) {
                 Ok(()) => {
                     info!(
                         "🎯 {}: Dynamic rate update for {} - {}Hz→{}Hz (ratio: {:.6})",
@@ -655,15 +657,6 @@ pub trait AudioWorker {
             std::sync::atomic::AtomicU64::new(0);
         let buffer_log_count =
             BUFFER_LEVEL_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        if buffer_log_count % 10000 == 0 {
-            info!(
-                "🔄 {}: Buffer {} samples, need {} for output {}",
-                "PRE_ACCUM".on_cyan().white(),
-                accumulation_buffer.len(),
-                input_frames_needed,
-                device_id
-            );
-        }
 
         // Step 3: If we have enough, extract and return the samples
         if accumulation_buffer.len() >= input_frames_needed {
@@ -691,7 +684,12 @@ pub trait AudioWorker {
 
         // Apply the adjusted sample rate
         resampler
-            .set_sample_rates(input_sample_rate as f32, new_out_rate, true)
+            .set_sample_rates(
+                input_sample_rate as f32,
+                new_out_rate,
+                true,
+                device_id.to_string(),
+            )
             .map_err(|err| {
                 warn!("⚠️ Drift correction failed: {}", err);
                 err.to_string()

@@ -323,6 +323,7 @@ impl RubatoSRC {
         new_input_rate: f32,
         new_output_rate: f32,
         ramp: bool,
+        device_id: String,
     ) -> Result<(), String> {
         let new_ratio = new_output_rate as f64 / new_input_rate as f64;
 
@@ -345,12 +346,13 @@ impl RubatoSRC {
 
         if should_log {
             info!(
-                "🔄 {}: Dynamic ratio adjusted to {:.6} ({}Hz→{}Hz, ramp: {})",
+                "🔄 {}: Dynamic ratio adjusted to {:.6} ({}Hz→{}Hz, ramp: {}) for device {}",
                 "DYNAMIC_RATIO_ADJUST".green(),
                 new_ratio,
                 new_input_rate,
                 new_output_rate,
-                ramp
+                ramp,
+                device_id
             );
         }
 

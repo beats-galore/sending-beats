@@ -204,16 +204,20 @@ impl AudioPipeline {
             }
         }
 
+        // Update mixing layer with new target rate
+        self.mixing_layer
+            .update_target_sample_rate(self.get_sample_rate());
+
         info!(
             "🎛️ {}: Updated target sample rates for all devices to {} Hz",
-            "PIPELINE".on_purple().blue(),
+            "PIPELINE_SAMPLE_RATE_UPDATE".on_purple().blue(),
             target_rate
         );
         Ok(())
     }
 
     /// Register a new input device with direct RTRB consumer (bypasses IsolatedAudioManager)
-    pub fn add_input_device_with_consumer(
+    pub fn add_input_device_with_consumer_and_producer(
         &mut self,
         device_id: String,
         device_sample_rate: u32,
@@ -255,26 +259,12 @@ impl AudioPipeline {
             Arc::new(tokio::sync::Mutex::new(rtrb_consumer_for_mixing)),
             mixing_queue_tracker.clone(),
         );
+        self.initialize_sample_rate(device_sample_rate);
 
         info!(
             "✅ PIPELINE: Connected input device '{}' to MixingLayer with RTRB queue",
             device_id
         );
-
-        // **DYNAMIC SAMPLE RATE**: Set pipeline sample rate from first device
-        if self.max_sample_rate.is_none() {
-            self.max_sample_rate = Some(device_sample_rate);
-            info!(
-                "🎯 {}: Pipeline sample rate initialized to {} Hz from first device '{}'",
-                "DYNAMIC_SAMPLE_RATE".on_purple().blue(),
-                device_sample_rate,
-                device_id
-            );
-
-            // Update mixing layer with the determined sample rate
-            self.mixing_layer
-                .update_target_sample_rate(device_sample_rate);
-        }
 
         let target_sample_rate = self.max_sample_rate.unwrap(); // Safe to unwrap after check above
 
@@ -304,9 +294,12 @@ impl AudioPipeline {
         self.calculate_target_mix_rate()?;
         self.update_target_sample_rates()?;
 
-        // Update mixing layer with new target rate
-        self.mixing_layer
-            .update_target_sample_rate(self.get_sample_rate());
+        info!(
+            "🎯 {}: Pipeline sample rate initialized to {} Hz from first device '{}'",
+            "DYNAMIC_SAMPLE_RATE".on_purple().blue(),
+            device_sample_rate,
+            device_id
+        );
 
         // Start the mixing layer if pipeline is running and this is the first device (triggering layer start)
         if self.is_running && !self.mixing_layer.get_stats().is_running {
@@ -369,6 +362,8 @@ impl AudioPipeline {
             Arc::new(tokio::sync::Mutex::new(rtrb_producer_for_mixer)),
             mixing_to_output_tracker.clone(),
         );
+
+        self.initialize_sample_rate(device_sample_rate);
 
         // Get the current mix rate (target sample rate for the pipeline)
         let target_sample_rate = self.get_sample_rate();
@@ -443,10 +438,6 @@ impl AudioPipeline {
         // every time a new output is added, we have to recalculate the new maximum and update other input workers / output workers.
         self.calculate_target_mix_rate()?;
         self.update_target_sample_rates()?;
-
-        // Update mixing layer with new target rate
-        self.mixing_layer
-            .update_target_sample_rate(self.get_sample_rate());
 
         // Start the mixing layer if pipeline is running and this is the first device (triggering layer start)
         if self.is_running && !self.mixing_layer.get_stats().is_running {
@@ -645,10 +636,6 @@ impl AudioPipeline {
         self.calculate_target_mix_rate()?;
         self.update_target_sample_rates()?;
 
-        // Update mixing layer with new target rate
-        self.mixing_layer
-            .update_target_sample_rate(self.get_sample_rate());
-
         info!(
             "✅ {}: Removed input device '{}' and recalculated mix rate to {} Hz",
             "AUDIO_PIPELINE".on_purple().blue(),
@@ -683,10 +670,6 @@ impl AudioPipeline {
         // Recalculate target sample rate and update all workers
         self.calculate_target_mix_rate()?;
         self.update_target_sample_rates()?;
-
-        // Update mixing layer with new target rate
-        self.mixing_layer
-            .update_target_sample_rate(self.get_sample_rate());
 
         info!(
             "✅ {}: Removed output device '{}' and recalculated mix rate to {} Hz",
@@ -794,6 +777,24 @@ impl AudioPipeline {
             output_workers: output_stats,
             total_devices: self.devices_registered,
         }
+    }
+
+    pub fn initialize_sample_rate(&mut self, device_sample_rate: u32) -> Result<()> {
+        // **DYNAMIC SAMPLE RATE**: Set pipeline sample rate from first device
+        if self.max_sample_rate.is_none() {
+            self.max_sample_rate = Some(device_sample_rate);
+            info!(
+                "🎯 {}: Pipeline sample rate initialized to {} Hz from first device ",
+                "DYNAMIC_SAMPLE_RATE_INITIALIZED".on_purple().blue(),
+                device_sample_rate,
+            );
+
+            // Update mixing layer with the determined sample rate
+            self.mixing_layer
+                .update_target_sample_rate(device_sample_rate);
+        }
+
+        Ok(())
     }
 }
 
