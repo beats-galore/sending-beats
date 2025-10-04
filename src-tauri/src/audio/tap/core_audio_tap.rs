@@ -329,8 +329,7 @@ impl ApplicationAudioTap {
         );
 
         // Use cpal to create an AudioUnit-based input stream from the tap device
-        self.create_cpal_input_stream_from_tap(tap_object_id)
-            .await
+        self.create_cpal_input_stream_from_tap(tap_object_id).await
     }
 
     /// Get sample rate from Core Audio tap device
@@ -530,7 +529,9 @@ impl ApplicationAudioTap {
         // Create the input stream with audio callback using RTRB producer
         let process_name = self.process_info.name.clone();
         let mut callback_count = 0u64;
-        let producer_for_callback = self.audio_producer.as_ref()
+        let producer_for_callback = self
+            .audio_producer
+            .as_ref()
             .ok_or_else(|| anyhow::anyhow!("RTRB producer not initialized"))?
             .clone();
 
@@ -559,11 +560,17 @@ impl ApplicationAudioTap {
                     }
 
                      // Write audio data to RTRB producer for mixer integration
-                     if let Ok(mut producer) = producer_for_callback.lock() {
-                         let written = producer.write_chunk(&audio_samples).map(|chunk| chunk.len()).unwrap_or(0);
-                         if written < audio_samples.len() && callback_count % 100 == 0 {
-                             warn!("🔄 TAP_RTRB_FULL: RTRB buffer full, wrote {}/{} samples (callback #{})",
-                                 written, audio_samples.len(), callback_count);
+                     if let Ok(mut producer_guard) = producer_for_callback.lock() {
+                         let mut written = 0;
+                         for &sample in &audio_samples {
+                             if producer_guard.push(sample).is_err() {
+                                 if callback_count % 100 == 0 {
+                                     warn!("🔄 TAP_RTRB_FULL: RTRB buffer full, wrote {}/{} samples (callback #{})",
+                                         written, audio_samples.len(), callback_count);
+                                 }
+                                 break;
+                             }
+                             written += 1;
                          }
                      }
                  },
@@ -622,11 +629,17 @@ impl ApplicationAudioTap {
                         }
 
                         // Write audio data to RTRB producer for mixer integration
-                        if let Ok(mut producer) = producer_for_i16_callback.lock() {
-                            let written = producer.write_chunk(&audio_samples).map(|chunk| chunk.len()).unwrap_or(0);
-                            if written < audio_samples.len() && callback_count % 100 == 0 {
-                                warn!("🔄 TAP_I16_RTRB_FULL: RTRB buffer full, wrote {}/{} samples (callback #{})",
-                                    written, audio_samples.len(), callback_count);
+                        if let Ok(mut producer_guard) = producer_for_i16_callback.lock() {
+                            let mut written = 0;
+                            for &sample in &audio_samples {
+                                if producer_guard.push(sample).is_err() {
+                                    if callback_count % 100 == 0 {
+                                        warn!("🔄 TAP_I16_RTRB_FULL: RTRB buffer full, wrote {}/{} samples (callback #{})",
+                                            written, audio_samples.len(), callback_count);
+                                    }
+                                    break;
+                                }
+                                written += 1;
                             }
                         }
                     },

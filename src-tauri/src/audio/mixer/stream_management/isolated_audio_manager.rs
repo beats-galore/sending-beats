@@ -626,17 +626,42 @@ impl IsolatedAudioManager {
             device_id, pid
         );
 
-        // TODO: Create the tap first to detect actual sample rate, then create pipeline input
-        // For now, we use DEFAULT_SAMPLE_RATE as a placeholder. The tap will need to be modified
-        // to write directly to an RTRB producer instead of using broadcast channels.
-        // See: https://github.com/anthropics/sendin-beats/issues/TBD
-        let native_sample_rate = crate::types::DEFAULT_SAMPLE_RATE;
+        // **TAP CREATION**: Create application audio tap and detect sample rate
+        // Get process info from ApplicationDiscovery
+        let discovery = crate::audio::tap::ApplicationDiscovery::new();
+        let process_info = discovery
+            .get_process_info(pid)
+            .ok_or_else(|| anyhow::anyhow!("Application with PID {} not found", pid))?;
+
+        // Create RTRB ring buffer for tap → pipeline communication
+        let initial_buffer_capacity = 16384;
+        let (app_audio_producer, audio_input_consumer) =
+            rtrb::RingBuffer::<f32>::new(initial_buffer_capacity);
+
+        // Create and configure tap with RTRB producer
+        let mut tap = crate::audio::tap::ApplicationAudioTap::new(process_info);
+
+        // Create the tap and get the detected sample rate
+        let detected_sample_rate = tap
+            .create_tap(app_audio_producer)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create application audio tap: {}", e))?;
+
+        let native_sample_rate = detected_sample_rate as u32;
+
+        info!(
+            "🎯 {}: Detected sample rate {} Hz for application audio device '{}'",
+            "APP_AUDIO_SAMPLE_RATE".on_yellow().red(),
+            native_sample_rate,
+            device_id
+        );
+
+        // Calculate buffer capacity based on detected sample rate
         let buffer_capacity = (native_sample_rate as usize * channels as usize) / 10;
         let buffer_capacity = buffer_capacity.max(4096).min(16384);
-        let (app_audio_producer, audio_input_consumer) =
-            rtrb::RingBuffer::<f32>::new(buffer_capacity);
 
-        let chunk_size = 512;
+        // Use 512 frames as chunk size (will be multiplied by channels in pipeline)
+        let chunk_size = 512 * channels as usize;
 
         let channel_number = if let Some(ref db) = self.database {
             match crate::db::ConfiguredAudioDeviceService::get_channel_number_for_active_device(
