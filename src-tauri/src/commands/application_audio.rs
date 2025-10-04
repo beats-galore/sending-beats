@@ -47,45 +47,6 @@ pub async fn get_known_audio_applications(
 }
 
 #[tauri::command]
-pub async fn start_application_audio_capture(
-    app_audio_state: State<'_, ApplicationAudioState>,
-    pid: u32,
-) -> Result<String, String> {
-    println!("🎤 Starting audio capture for PID: {}", pid);
-
-    // Check permissions first
-    let manager = app_audio_state.manager.lock().await;
-    if !manager.has_permissions().await {
-        println!("⚠️ Requesting audio capture permissions...");
-        match manager.request_permissions().await {
-            Ok(true) => println!("✅ Audio capture permissions granted"),
-            Ok(false) => {
-                eprintln!("❌ Audio capture permissions denied");
-                return Err("Audio capture permissions denied. Please grant permissions in System Preferences > Security & Privacy > Privacy > Microphone.".to_string());
-            }
-            Err(e) => {
-                eprintln!("❌ Failed to request permissions: {}", e);
-                return Err(format!("Failed to request permissions: {}", e));
-            }
-        }
-    }
-
-    match manager.create_mixer_input_for_app(pid).await {
-        Ok(channel_name) => {
-            println!("✅ Created mixer input for PID {}: {}", pid, channel_name);
-            Ok(format!(
-                "Successfully created mixer input for application: {}",
-                channel_name
-            ))
-        }
-        Err(e) => {
-            eprintln!("❌ Failed to create mixer input for PID {}: {}", pid, e);
-            Err(format!("Failed to create mixer input: {}", e))
-        }
-    }
-}
-
-#[tauri::command]
 pub async fn stop_application_audio_capture(
     app_audio_state: State<'_, ApplicationAudioState>,
     pid: u32,
@@ -183,26 +144,6 @@ pub async fn refresh_audio_applications(
 
     // This will force a new scan by calling get_available_applications
     get_known_audio_applications(app_audio_state).await
-}
-
-#[tauri::command]
-pub async fn create_mixer_input_for_application(
-    app_audio_state: State<'_, ApplicationAudioState>,
-    pid: u32,
-) -> Result<String, String> {
-    println!("🎛️ Creating mixer input for application (PID: {})", pid);
-
-    let manager = app_audio_state.manager.lock().await;
-    match manager.create_mixer_input_for_app(pid).await {
-        Ok(channel_name) => {
-            println!("✅ Created mixer input: {}", channel_name);
-            Ok(channel_name)
-        }
-        Err(e) => {
-            eprintln!("❌ Failed to create mixer input for PID {}: {}", pid, e);
-            Err(format!("Failed to create mixer input: {}", e))
-        }
-    }
 }
 
 // ================================================================================================

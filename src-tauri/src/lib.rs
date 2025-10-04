@@ -324,13 +324,11 @@ pub fn run() {
             validate_audio_file,
             // Application audio commands
             get_known_audio_applications,
-            start_application_audio_capture,
             stop_application_audio_capture,
             get_active_audio_captures,
             stop_all_audio_captures,
             get_application_info,
             refresh_audio_applications,
-            create_mixer_input_for_application,
             // Tap lifecycle management commands
             get_tap_statistics,
             cleanup_stale_taps,
