@@ -34,9 +34,10 @@ export const audioService = {
 
   async switchInputStream(
     oldDeviceId: Identifier<ConfiguredAudioDevice> | null,
-    newDeviceId: Identifier<ConfiguredAudioDevice>
+    newDeviceId: Identifier<ConfiguredAudioDevice>,
+    isVirtual?: boolean
   ): Promise<void> {
-    return invoke('safe_switch_input_device', { oldDeviceId, newDeviceId });
+    return invoke('safe_switch_input_device', { oldDeviceId, newDeviceId, isVirtual });
   },
 
   async setOutputStream(deviceId: Identifier<ConfiguredAudioDevice>): Promise<void> {

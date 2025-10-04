@@ -12,7 +12,8 @@ pub async fn get_known_audio_applications(
 ) -> Result<Vec<ProcessInfo>, String> {
     println!("🎵 Getting known audio applications...");
 
-    match app_audio_state.manager.get_available_applications().await {
+    let manager = app_audio_state.manager.lock().await;
+    match manager.get_available_applications().await {
         Ok(all_apps) => {
             println!(
                 "🔍 Processing {} total apps for known app filtering",
@@ -46,55 +47,14 @@ pub async fn get_known_audio_applications(
 }
 
 #[tauri::command]
-pub async fn start_application_audio_capture(
-    app_audio_state: State<'_, ApplicationAudioState>,
-    pid: u32,
-) -> Result<String, String> {
-    println!("🎤 Starting audio capture for PID: {}", pid);
-
-    // Check permissions first
-    if !app_audio_state.manager.has_permissions().await {
-        println!("⚠️ Requesting audio capture permissions...");
-        match app_audio_state.manager.request_permissions().await {
-            Ok(true) => println!("✅ Audio capture permissions granted"),
-            Ok(false) => {
-                eprintln!("❌ Audio capture permissions denied");
-                return Err("Audio capture permissions denied. Please grant permissions in System Preferences > Security & Privacy > Privacy > Microphone.".to_string());
-            }
-            Err(e) => {
-                eprintln!("❌ Failed to request permissions: {}", e);
-                return Err(format!("Failed to request permissions: {}", e));
-            }
-        }
-    }
-
-    match app_audio_state
-        .manager
-        .create_mixer_input_for_app(pid)
-        .await
-    {
-        Ok(channel_name) => {
-            println!("✅ Created mixer input for PID {}: {}", pid, channel_name);
-            Ok(format!(
-                "Successfully created mixer input for application: {}",
-                channel_name
-            ))
-        }
-        Err(e) => {
-            eprintln!("❌ Failed to create mixer input for PID {}: {}", pid, e);
-            Err(format!("Failed to create mixer input: {}", e))
-        }
-    }
-}
-
-#[tauri::command]
 pub async fn stop_application_audio_capture(
     app_audio_state: State<'_, ApplicationAudioState>,
     pid: u32,
 ) -> Result<String, String> {
     println!("🛑 Stopping audio capture for PID: {}", pid);
 
-    match app_audio_state.manager.stop_capturing_app(pid).await {
+    let manager = app_audio_state.manager.lock().await;
+    match manager.stop_capturing_app(pid).await {
         Ok(()) => {
             println!("✅ Stopped audio capture for PID: {}", pid);
             Ok(format!(
@@ -115,7 +75,8 @@ pub async fn get_active_audio_captures(
 ) -> Result<Vec<ProcessInfo>, String> {
     println!("📊 Getting active audio captures...");
 
-    let active_captures = app_audio_state.manager.get_active_captures().await;
+    let manager = app_audio_state.manager.lock().await;
+    let active_captures = manager.get_active_captures().await;
 
     println!("✅ Found {} active audio captures", active_captures.len());
     for capture in &active_captures {
@@ -131,7 +92,8 @@ pub async fn stop_all_audio_captures(
 ) -> Result<String, String> {
     println!("🛑 Stopping all audio captures...");
 
-    match app_audio_state.manager.stop_all_captures().await {
+    let manager = app_audio_state.manager.lock().await;
+    match manager.stop_all_captures().await {
         Ok(()) => {
             println!("✅ Stopped all audio captures");
             Ok("Successfully stopped all audio captures".to_string())
@@ -150,7 +112,8 @@ pub async fn get_application_info(
 ) -> Result<Option<ProcessInfo>, String> {
     println!("ℹ️ Getting application info for PID: {}", pid);
 
-    match app_audio_state.manager.get_available_applications().await {
+    let manager = app_audio_state.manager.lock().await;
+    match manager.get_available_applications().await {
         Ok(apps) => {
             let app_info = apps.into_iter().find(|app| app.pid == pid);
 
@@ -183,29 +146,6 @@ pub async fn refresh_audio_applications(
     get_known_audio_applications(app_audio_state).await
 }
 
-#[tauri::command]
-pub async fn create_mixer_input_for_application(
-    app_audio_state: State<'_, ApplicationAudioState>,
-    pid: u32,
-) -> Result<String, String> {
-    println!("🎛️ Creating mixer input for application (PID: {})", pid);
-
-    match app_audio_state
-        .manager
-        .create_mixer_input_for_app(pid)
-        .await
-    {
-        Ok(channel_name) => {
-            println!("✅ Created mixer input: {}", channel_name);
-            Ok(channel_name)
-        }
-        Err(e) => {
-            eprintln!("❌ Failed to create mixer input for PID {}: {}", pid, e);
-            Err(format!("Failed to create mixer input: {}", e))
-        }
-    }
-}
-
 // ================================================================================================
 // TAP LIFECYCLE MANAGEMENT COMMANDS
 // ================================================================================================
@@ -216,7 +156,8 @@ pub async fn get_tap_statistics(
 ) -> Result<Vec<TapStats>, String> {
     println!("📊 Getting tap statistics...");
 
-    let stats = app_audio_state.manager.get_tap_stats().await;
+    let manager = app_audio_state.manager.lock().await;
+    let stats = manager.get_tap_stats().await;
 
     println!("✅ Retrieved statistics for {} active taps", stats.len());
     for stat in &stats {
@@ -240,7 +181,8 @@ pub async fn cleanup_stale_taps(
 ) -> Result<usize, String> {
     println!("🧹 Performing manual cleanup of stale taps...");
 
-    match app_audio_state.manager.cleanup_stale_taps().await {
+    let manager = app_audio_state.manager.lock().await;
+    match manager.cleanup_stale_taps().await {
         Ok(cleaned_count) => {
             println!("✅ Cleaned up {} stale taps", cleaned_count);
             Ok(cleaned_count)
@@ -258,7 +200,8 @@ pub async fn shutdown_application_audio_manager(
 ) -> Result<String, String> {
     println!("🛑 Shutting down Application Audio Manager...");
 
-    match app_audio_state.manager.shutdown().await {
+    let manager = app_audio_state.manager.lock().await;
+    match manager.shutdown().await {
         Ok(()) => {
             println!("✅ Application Audio Manager shutdown complete");
             Ok("Application Audio Manager shutdown successfully".to_string())

@@ -51,6 +51,15 @@ pub enum AudioCommand {
         producer: Producer<f32>,
         response_tx: oneshot::Sender<Result<()>>,
     },
+    #[cfg(target_os = "macos")]
+    AddApplicationAudioInputStream {
+        device_id: String,
+        pid: u32,
+        device_name: String,
+        channels: u16,
+        producer: Producer<f32>,
+        response_tx: oneshot::Sender<Result<()>>,
+    },
     UpdateEffects {
         device_id: String,
         effects: CustomAudioEffectsChain,
@@ -304,6 +313,26 @@ impl IsolatedAudioManager {
                     .handle_add_coreaudio_input_stream(
                         device_id,
                         coreaudio_device_id,
+                        device_name,
+                        channels,
+                        producer,
+                    )
+                    .await;
+                let _ = response_tx.send(result);
+            }
+            #[cfg(target_os = "macos")]
+            AudioCommand::AddApplicationAudioInputStream {
+                device_id,
+                pid,
+                device_name,
+                channels,
+                producer,
+                response_tx,
+            } => {
+                let result = self
+                    .handle_add_application_audio_input_stream(
+                        device_id,
+                        pid,
                         device_name,
                         channels,
                         producer,
@@ -571,6 +600,164 @@ impl IsolatedAudioManager {
             "AUDIO_COORDINATOR".on_yellow().red(),
             device_id
         );
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn handle_add_application_audio_input_stream(
+        &mut self,
+        device_id: String,
+        pid: u32,
+        device_name: String,
+        channels: u16,
+        _producer: Producer<f32>,
+    ) -> Result<()> {
+        if self.stream_manager.has_input_stream(&device_id) {
+            info!(
+                "📋 {}: Application audio device '{}' already active, skipping duplicate creation",
+                "DUPLICATE_APP_AUDIO_SKIP".on_yellow().red(),
+                device_id
+            );
+            return Ok(());
+        }
+
+        info!(
+            "🎯 AUDIO_COORDINATOR: Adding application audio input stream for device '{}' (PID: {})",
+            device_id, pid
+        );
+
+        // **TAP CREATION**: Create application audio tap and detect sample rate
+        // Get process info from ApplicationDiscovery
+        let discovery = crate::audio::tap::ApplicationDiscovery::new();
+        let process_info = discovery
+            .get_process_info(pid)
+            .ok_or_else(|| anyhow::anyhow!("Application with PID {} not found", pid))?;
+
+        // Create RTRB ring buffer for tap → pipeline communication
+        let initial_buffer_capacity = 16384;
+        let (app_audio_producer, audio_input_consumer) =
+            rtrb::RingBuffer::<f32>::new(initial_buffer_capacity);
+
+        // Create and configure tap with RTRB producer
+        let mut tap = crate::audio::tap::ApplicationAudioTap::new(process_info);
+
+        // Create the tap and get the detected sample rate
+        let detected_sample_rate = tap
+            .create_tap(app_audio_producer)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create application audio tap: {}", e))?;
+
+        let native_sample_rate = detected_sample_rate as u32;
+
+        info!(
+            "🎯 {}: Detected sample rate {} Hz for application audio device '{}'",
+            "APP_AUDIO_SAMPLE_RATE".on_yellow().red(),
+            native_sample_rate,
+            device_id
+        );
+
+        // Calculate buffer capacity based on detected sample rate
+        let buffer_capacity = (native_sample_rate as usize * channels as usize) / 10;
+        let buffer_capacity = buffer_capacity.max(4096).min(16384);
+
+        // Use 512 frames as chunk size (will be multiplied by channels in pipeline)
+        let chunk_size = 512 * channels as usize;
+
+        let channel_number = if let Some(ref db) = self.database {
+            match crate::db::ConfiguredAudioDeviceService::get_channel_number_for_active_device(
+                db.sea_orm(),
+                &device_id,
+            )
+            .await
+            {
+                Ok(Some(channel)) => {
+                    info!(
+                        "🎯 {}: Found channel number {} for application audio device '{}'",
+                        "CHANNEL_LOOKUP".on_yellow().red(),
+                        channel,
+                        device_id
+                    );
+                    channel
+                }
+                Ok(None) => {
+                    return Err(anyhow::anyhow!(
+                        "No channel configuration found for device '{}' in active session",
+                        device_id
+                    ));
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "Database error getting channel number for device '{}': {}",
+                        device_id,
+                        e
+                    ));
+                }
+            }
+        } else {
+            return Err(anyhow::anyhow!(
+                "No database available to lookup channel number for device '{}'",
+                device_id
+            ));
+        };
+
+        let (initial_gain, initial_pan, initial_muted, initial_solo) = if let Some(ref db) =
+            self.database
+        {
+            match crate::db::AudioEffectsDefaultService::find_by_device_id(db.sea_orm(), &device_id)
+                .await
+            {
+                Ok(Some(effects)) => {
+                    info!(
+                        "🎛️ {}: Loaded initial effects for '{}': gain={}, pan={}, muted={}, solo={}",
+                        "EFFECTS_LOAD".on_yellow().red(),
+                        device_id,
+                        effects.gain,
+                        effects.pan,
+                        effects.muted,
+                        effects.solo
+                    );
+                    (
+                        Some(effects.gain),
+                        Some(effects.pan),
+                        Some(effects.muted),
+                        Some(effects.solo),
+                    )
+                }
+                Ok(None) => (None, None, None, None),
+                Err(e) => {
+                    warn!(
+                        "⚠️ {}: Failed to load effects for '{}': {}, using defaults",
+                        "EFFECTS_LOAD".on_yellow().red(),
+                        device_id,
+                        e
+                    );
+                    (None, None, None, None)
+                }
+            }
+        } else {
+            (None, None, None, None)
+        };
+
+        self.audio_pipeline
+            .add_input_device_with_consumer_and_producer(
+                device_id.clone(),
+                native_sample_rate,
+                channels,
+                chunk_size,
+                audio_input_consumer,
+                channel_number,
+                initial_gain,
+                initial_pan,
+                initial_muted,
+                initial_solo,
+            )?;
+
+        info!(
+            "✅ {}: Application audio device '{}' connected to AudioPipeline (tap will be started separately)",
+            "AUDIO_COORDINATOR".on_yellow().red(),
+            device_id
+        );
+
         Ok(())
     }
 
