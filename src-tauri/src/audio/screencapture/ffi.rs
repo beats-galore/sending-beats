@@ -1,4 +1,4 @@
-use std::ffi::{CStr, c_char, c_void};
+use std::ffi::{c_char, c_void, CStr};
 use std::os::raw::c_int;
 
 // C-compatible callback types matching Swift side
@@ -10,10 +10,7 @@ pub type AudioSampleCallback = extern "C" fn(
     sample_rate: f64,
 );
 
-pub type ErrorCallback = extern "C" fn(
-    context: *mut c_void,
-    error_message: *const c_char,
-);
+pub type ErrorCallback = extern "C" fn(context: *mut c_void, error_message: *const c_char);
 
 // Opaque pointer types for Swift objects
 pub type SCAppInfoPtr = *mut c_void;
@@ -33,10 +30,7 @@ extern "C" {
         out_count: *mut i32,
     ) -> i32;
 
-    pub fn sc_audio_free_applications(
-        apps: *mut SCAppInfoPtr,
-        count: i32,
-    );
+    pub fn sc_audio_free_applications(apps: *mut SCAppInfoPtr, count: i32);
 
     pub fn sc_audio_stream_create(pid: i32) -> SCStreamPtr;
 
@@ -59,7 +53,5 @@ pub unsafe fn c_str_to_string(ptr: *const c_char) -> String {
     if ptr.is_null() {
         return String::new();
     }
-    CStr::from_ptr(ptr)
-        .to_string_lossy()
-        .into_owned()
+    CStr::from_ptr(ptr).to_string_lossy().into_owned()
 }

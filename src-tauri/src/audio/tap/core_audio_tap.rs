@@ -22,7 +22,6 @@ struct AudioFormatInfo {
     bits_per_sample: u32,
 }
 
-
 /// Manages Core Audio taps for individual applications (macOS 14.4+ only)
 #[cfg(target_os = "macos")]
 pub struct ApplicationAudioTap {
@@ -150,7 +149,7 @@ impl ApplicationAudioTap {
             // This translates PID → AudioObjectID then creates the tap description
             let tap_description = match create_process_tap_description(
                 self.process_info.pid,
-                &self.process_info.name
+                &self.process_info.name,
             ) {
                 Ok(desc) => desc,
                 Err(e) => {
@@ -184,9 +183,13 @@ impl ApplicationAudioTap {
 
                     if status == -4 {
                         return Err(anyhow::anyhow!("Unsupported system for Core Audio taps"));
-                    } else if status == 560947818 { // !obj error - process object not found
+                    } else if status == 560947818 {
+                        // !obj error - process object not found
                         // This commonly happens with Apple's own apps (Music, Safari, etc.) or protected processes
-                        let is_apple_app = self.process_info.bundle_id.as_ref()
+                        let is_apple_app = self
+                            .process_info
+                            .bundle_id
+                            .as_ref()
                             .map(|id| id.starts_with("com.apple."))
                             .unwrap_or(false);
 
@@ -639,8 +642,6 @@ impl ApplicationAudioTap {
         Ok(sample_rate)
     }
 
-
-
     /// Create the actual Core Audio aggregate device
     #[cfg(target_os = "macos")]
     unsafe fn create_core_audio_aggregate_device(
@@ -906,7 +907,6 @@ impl ApplicationAudioTap {
 
         Ok(())
     }
-
 
     /// Check if this tap is currently active
     pub fn is_active(&self) -> bool {
