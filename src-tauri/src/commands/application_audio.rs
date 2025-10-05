@@ -2,6 +2,9 @@ use crate::audio::tap::{ApplicationAudioError, ProcessInfo, TapStats};
 use crate::ApplicationAudioState;
 use tauri::State;
 
+#[cfg(target_os = "macos")]
+use crate::audio::screencapture::{self, discovery};
+
 // ================================================================================================
 // APPLICATION AUDIO COMMANDS
 // ================================================================================================
@@ -10,39 +13,81 @@ use tauri::State;
 pub async fn get_known_audio_applications(
     app_audio_state: State<'_, ApplicationAudioState>,
 ) -> Result<Vec<ProcessInfo>, String> {
-    println!("🎵 Getting known audio applications...");
+    println!("🎵 Getting known audio applications (ScreenCaptureKit)...");
 
-    let manager = app_audio_state.manager.lock().await;
-    match manager.get_available_applications().await {
-        Ok(all_apps) => {
-            println!(
-                "🔍 Processing {} total apps for known app filtering",
-                all_apps.len()
-            );
+    #[cfg(target_os = "macos")]
+    {
+        match screencapture::get_available_applications() {
+            Ok(apps) => {
+                println!("🔍 Found {} applications via ScreenCaptureKit", apps.len());
 
-            // Filter for apps with bundle IDs (known apps)
-            let known_apps: Vec<ProcessInfo> = all_apps
-                .into_iter()
-                .filter(|app| {
-                    let has_bundle = app.bundle_id.is_some();
-                    if has_bundle {
-                        println!(
-                            "✅ Known app found: {} [{}]",
-                            app.name,
-                            app.bundle_id.as_ref().unwrap()
-                        );
-                    }
-                    has_bundle
-                })
-                .collect();
+                // Convert to ProcessInfo format
+                let process_infos: Vec<ProcessInfo> = apps
+                    .into_iter()
+                    .map(|app| ProcessInfo {
+                        pid: app.pid as u32,
+                        name: app.application_name.clone(),
+                        bundle_id: Some(app.bundle_identifier),
+                        icon_path: None,
+                        is_audio_capable: true, // ScreenCaptureKit shows all apps
+                        is_playing_audio: false, // We don't know yet
+                    })
+                    .collect();
 
-            println!("✅ Found {} known audio applications", known_apps.len());
-            Ok(known_apps)
+                println!("✅ Returning {} known audio applications", process_infos.len());
+                Ok(process_infos)
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to get applications via ScreenCaptureKit: {}", e);
+                Err(format!("Failed to get audio applications: {}", e))
+            }
         }
-        Err(e) => {
-            eprintln!("❌ Failed to get known audio applications: {}", e);
-            Err(format!("Failed to get known audio applications: {}", e))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("Application audio capture is only supported on macOS".to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn check_screen_recording_permission() -> Result<bool, String> {
+    println!("🔐 Checking Screen Recording permission...");
+
+    #[cfg(target_os = "macos")]
+    {
+        let has_permission = discovery::check_screen_recording_permission();
+        if has_permission {
+            println!("✅ Screen Recording permission available");
+        } else {
+            println!("⚠️ Screen Recording permission not available");
         }
+        Ok(has_permission)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(false)
+    }
+}
+
+#[tauri::command]
+pub async fn request_audio_capture_permissions() -> Result<String, String> {
+    println!("🔐 Requesting audio capture permissions...");
+
+    #[cfg(target_os = "macos")]
+    {
+        let has_permission = discovery::check_screen_recording_permission();
+        if has_permission {
+            Ok("Screen Recording permission already granted".to_string())
+        } else {
+            Ok("Please grant Screen Recording permission in System Settings > Privacy & Security > Screen Recording".to_string())
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("Not supported on this platform".to_string())
     }
 }
 
