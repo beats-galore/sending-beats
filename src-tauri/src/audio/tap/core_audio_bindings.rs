@@ -40,30 +40,32 @@ pub const kAudioHardwarePropertyTranslatePIDToProcessObject: u32 = 1886352239; /
 
 /// Helper function to create a CATapDescription for a specific process using PID
 #[cfg(target_os = "macos")]
-pub fn create_process_tap_description(pid: u32) -> objc2::rc::Retained<CATapDescription> {
+pub fn create_process_tap_description(pid: u32) -> Result<objc2::rc::Retained<CATapDescription>, String> {
     use objc2::rc::Retained;
     use objc2::{runtime::AnyClass, ClassType};
     use tracing::info;
 
     unsafe {
-        // BREAKTHROUGH: Create process-specific tap using initStereoMixdownOfProcesses
-        // This should capture ONLY the specified process (Apple Music)
+        // Step 1: Translate PID to AudioObjectID
+        info!("Translating PID {} to AudioObjectID", pid);
+        let audio_object_id = translate_pid_to_audio_object(pid)
+            .map_err(|status| format!("Failed to translate PID {} to AudioObjectID: OSStatus {} ({})", pid, status, format_osstatus_error(status)))?;
 
-        info!("Creating process-specific tap for PID: {}", pid);
+        info!("✅ Translated PID {} to AudioObjectID {}", pid, audio_object_id);
 
         let alloc = CATapDescription::alloc();
 
-        // Create NSNumber for the PID and put it in an NSArray
-        let pid_number = NSNumber::new_u32(pid);
-        let process_array = NSArray::from_slice(&[&*pid_number]);
+        // Create NSNumber for the AudioObjectID and put it in an NSArray
+        let object_id_number = NSNumber::new_u32(audio_object_id);
+        let process_array = NSArray::from_slice(&[&*object_id_number]);
 
         info!(
-            "Created process array with PID {} for process-specific tap",
-            pid
+            "Created process array with AudioObjectID {} for process-specific tap",
+            audio_object_id
         );
 
         // Use initStereoMixdownOfProcesses to create a tap that captures ONLY this process
-        CATapDescription::initStereoMixdownOfProcesses(alloc, &process_array)
+        Ok(CATapDescription::initStereoMixdownOfProcesses(alloc, &process_array))
     }
 }
 

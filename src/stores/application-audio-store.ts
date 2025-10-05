@@ -52,7 +52,7 @@ export const useApplicationAudioStore = create<ApplicationAudioStore>()(
         });
 
         console.log('🎵 Application audio state updated:', {
-          knownCount: knownApps.length,
+          knownCount: knownApps,
 
           permissionsGranted: true,
         });

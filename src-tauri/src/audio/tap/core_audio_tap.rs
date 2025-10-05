@@ -120,6 +120,20 @@ impl ApplicationAudioTap {
             ).into());
         }
 
+        // Verify process is still running
+        if !self.is_process_alive() {
+            return Err(anyhow::anyhow!(
+                "Process {} (PID {}) is not running",
+                self.process_info.name,
+                self.process_info.pid
+            ));
+        }
+
+        info!(
+            "🎯 Attempting to create tap for: {} (PID: {}, Bundle: {:?})",
+            self.process_info.name, self.process_info.pid, self.process_info.bundle_id
+        );
+
         // Import Core Audio taps bindings (only available on macOS 14.4+)
         use super::core_audio_bindings::{
             create_process_tap, create_process_tap_description, format_osstatus_error,
@@ -132,8 +146,18 @@ impl ApplicationAudioTap {
         );
         let tap_object_id = unsafe {
             // Create tap description in a limited scope so it's dropped before await
-            // Try using PID directly - some examples suggest this works
-            let tap_description = create_process_tap_description(self.process_info.pid);
+            // Translate PID to AudioObjectID first, then create tap description
+            let tap_description = match create_process_tap_description(self.process_info.pid) {
+                Ok(desc) => desc,
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "Failed to create tap description for {} (PID {}): {}",
+                        self.process_info.name,
+                        self.process_info.pid,
+                        e
+                    ));
+                }
+            };
             info!(
                 "Created tap description for process {}",
                 self.process_info.name
@@ -149,8 +173,32 @@ impl ApplicationAudioTap {
                 }
                 Err(status) => {
                     let error_msg = format_osstatus_error(status);
+                    error!(
+                        "❌ Failed to create tap for PID {}: OSStatus {} ({})",
+                        self.process_info.pid, status, error_msg
+                    );
+
                     if status == -4 {
                         return Err(anyhow::anyhow!("Unsupported system for Core Audio taps"));
+                    } else if status == 560947818 { // !obj error - process object not found
+                        // This commonly happens with Apple's own apps (Music, Safari, etc.) or protected processes
+                        let is_apple_app = self.process_info.bundle_id.as_ref()
+                            .map(|id| id.starts_with("com.apple."))
+                            .unwrap_or(false);
+
+                        if is_apple_app {
+                            return Err(anyhow::anyhow!(
+                                "'{}' is not currently playing audio or is playing protected content. Core Audio taps require the application to be actively outputting audio. Please start playback in {} and try again, or use BlackHole as an alternative.",
+                                self.process_info.name,
+                                self.process_info.name
+                            ));
+                        } else {
+                            return Err(anyhow::anyhow!(
+                                "'{}' is not currently playing audio. Core Audio taps require the application to be actively outputting audio. Please start playback in {} and try again, or use BlackHole as an alternative.",
+                                self.process_info.name,
+                                self.process_info.name
+                            ));
+                        }
                     } else {
                         return Err(anyhow::anyhow!("Core Audio error: {}", error_msg));
                     }

@@ -30,6 +30,18 @@ export const useApplicationAudio = () => {
         clearError: store.clearError,
       },
     }),
-    []
+    [
+      store.availableApps,
+      store.activeCaptures,
+      store.permissionsGranted,
+      store.isLoading,
+      store.error,
+      store.refreshApplications,
+      store.requestPermissions,
+      store.startCapturing,
+      store.stopAllCaptures,
+      store.clearError,
+      store.createMixerInput,
+    ]
   );
 };
