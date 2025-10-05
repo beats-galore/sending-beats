@@ -39,33 +39,57 @@ pub const kAudioHardwarePropertyTranslatePIDToProcessObject: u32 = 1886352239; /
 // CATapDescription is now provided by objc2_core_audio
 
 /// Helper function to create a CATapDescription for a specific process using PID
+/// Following Apple's documentation: https://developer.apple.com/documentation/coreaudio/capturing-system-audio-with-core-audio-taps
 #[cfg(target_os = "macos")]
-pub fn create_process_tap_description(pid: u32) -> Result<objc2::rc::Retained<CATapDescription>, String> {
+pub fn create_process_tap_description(pid: u32, name: &str) -> Result<objc2::rc::Retained<CATapDescription>, String> {
     use objc2::rc::Retained;
     use objc2::{runtime::AnyClass, ClassType};
+    use objc2_foundation::NSString;
     use tracing::info;
 
     unsafe {
+        info!("Creating CATapDescription for PID {} ({})", pid, name);
+
         // Step 1: Translate PID to AudioObjectID
+        // Many projects use kAudioHardwarePropertyTranslatePIDToProcessObject
         info!("Translating PID {} to AudioObjectID", pid);
         let audio_object_id = translate_pid_to_audio_object(pid)
-            .map_err(|status| format!("Failed to translate PID {} to AudioObjectID: OSStatus {} ({})", pid, status, format_osstatus_error(status)))?;
+            .map_err(|status| {
+                let err_msg = format_osstatus_error(status);
+                format!("Failed to translate PID {} to AudioObjectID: OSStatus {} ({})", pid, status, err_msg)
+            })?;
 
         info!("✅ Translated PID {} to AudioObjectID {}", pid, audio_object_id);
 
-        let alloc = CATapDescription::alloc();
+        // Step 2: Create a new CATapDescription instance
+        let description = CATapDescription::new();
+
+        // Set the name
+        let tap_name = NSString::from_str(&format!("Tap: {}", name));
+        description.setName(&tap_name);
 
         // Create NSNumber for the AudioObjectID and put it in an NSArray
+        // The processes array takes AudioObjectIDs, not PIDs
         let object_id_number = NSNumber::new_u32(audio_object_id);
         let process_array = NSArray::from_slice(&[&*object_id_number]);
 
-        info!(
-            "Created process array with AudioObjectID {} for process-specific tap",
-            audio_object_id
-        );
+        // Set the processes property to capture only this AudioObjectID
+        description.setProcesses(&process_array);
 
-        // Use initStereoMixdownOfProcesses to create a tap that captures ONLY this process
-        Ok(CATapDescription::initStereoMixdownOfProcesses(alloc, &process_array))
+        // Set to private (only visible to this process)
+        description.setPrivate(true);
+
+        // Set mixdown to stereo
+        description.setMixdown(true);
+        description.setMono(false);
+
+        // Don't mute the original process output
+        use objc2_core_audio::CATapMuteBehavior;
+        description.setMuteBehavior(CATapMuteBehavior(0)); // 0 = Unmuted
+
+        info!("Configured tap description for AudioObjectID {}: name='{}', stereo mixdown, unmuted", audio_object_id, name);
+
+        Ok(description)
     }
 }
 
@@ -102,7 +126,7 @@ extern "C" {
         out_data: *mut c_void,
     ) -> OSStatus;
 
-    /// Set property on Audio Hardware  
+    /// Set property on Audio Hardware
     pub fn AudioHardwareSetProperty(
         in_address: *const AudioObjectPropertyAddress,
         in_data_size: UInt32,

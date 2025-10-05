@@ -145,9 +145,13 @@ impl ApplicationAudioTap {
             self.process_info.pid
         );
         let tap_object_id = unsafe {
-            // Create tap description in a limited scope so it's dropped before await
-            // Translate PID to AudioObjectID first, then create tap description
-            let tap_description = match create_process_tap_description(self.process_info.pid) {
+            // Create tap description following Apple's documentation
+            // https://developer.apple.com/documentation/coreaudio/capturing-system-audio-with-core-audio-taps
+            // This translates PID → AudioObjectID then creates the tap description
+            let tap_description = match create_process_tap_description(
+                self.process_info.pid,
+                &self.process_info.name
+            ) {
                 Ok(desc) => desc,
                 Err(e) => {
                     return Err(anyhow::anyhow!(
