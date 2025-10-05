@@ -34,7 +34,10 @@ pub async fn get_known_audio_applications(
                     })
                     .collect();
 
-                println!("✅ Returning {} known audio applications", process_infos.len());
+                println!(
+                    "✅ Returning {} known audio applications",
+                    process_infos.len()
+                );
                 Ok(process_infos)
             }
             Err(e) => {

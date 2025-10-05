@@ -626,26 +626,19 @@ impl IsolatedAudioManager {
             device_id, pid
         );
 
-        // **TAP CREATION**: Create application audio tap and detect sample rate
-        // Get process info from ApplicationDiscovery
-        let discovery = crate::audio::tap::ApplicationDiscovery::new();
-        let process_info = discovery
-            .get_process_info(pid)
-            .ok_or_else(|| anyhow::anyhow!("Application with PID {} not found", pid))?;
-
-        // Create RTRB ring buffer for tap → pipeline communication
+        // **SCREENCAPTUREKIT**: Create ScreenCaptureKit stream and detect sample rate
+        // Create RTRB ring buffer for ScreenCaptureKit → pipeline communication
         let initial_buffer_capacity = 16384;
-        let (app_audio_producer, audio_input_consumer) =
+        let (screencapture_producer, audio_input_consumer) =
             rtrb::RingBuffer::<f32>::new(initial_buffer_capacity);
 
-        // Create and configure tap with RTRB producer
-        let mut tap = crate::audio::tap::ApplicationAudioTap::new(process_info);
-
-        // Create the tap and get the detected sample rate
-        let detected_sample_rate = tap
-            .create_tap(app_audio_producer)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to create application audio tap: {}", e))?;
+        // Create ScreenCaptureKit stream and start capture (returns detected sample rate)
+        let detected_sample_rate = self.stream_manager.add_screencapture_stream(
+            device_id.clone(),
+            pid as i32,
+            device_name.clone(),
+            screencapture_producer,
+        )?;
 
         let native_sample_rate = detected_sample_rate as u32;
 
@@ -753,7 +746,7 @@ impl IsolatedAudioManager {
             )?;
 
         info!(
-            "✅ {}: Application audio device '{}' connected to AudioPipeline (tap will be started separately)",
+            "✅ {}: Application audio device '{}' connected to AudioPipeline via ScreenCaptureKit",
             "AUDIO_COORDINATOR".on_yellow().red(),
             device_id
         );
