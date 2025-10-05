@@ -41,7 +41,10 @@ pub const kAudioHardwarePropertyTranslatePIDToProcessObject: u32 = 1886352239; /
 /// Helper function to create a CATapDescription for a specific process using PID
 /// Following Apple's documentation: https://developer.apple.com/documentation/coreaudio/capturing-system-audio-with-core-audio-taps
 #[cfg(target_os = "macos")]
-pub fn create_process_tap_description(pid: u32, name: &str) -> Result<objc2::rc::Retained<CATapDescription>, String> {
+pub fn create_process_tap_description(
+    pid: u32,
+    name: &str,
+) -> Result<objc2::rc::Retained<CATapDescription>, String> {
     use objc2::rc::Retained;
     use objc2::{runtime::AnyClass, ClassType};
     use objc2_foundation::NSString;
@@ -53,13 +56,18 @@ pub fn create_process_tap_description(pid: u32, name: &str) -> Result<objc2::rc:
         // Step 1: Translate PID to AudioObjectID
         // Many projects use kAudioHardwarePropertyTranslatePIDToProcessObject
         info!("Translating PID {} to AudioObjectID", pid);
-        let audio_object_id = translate_pid_to_audio_object(pid)
-            .map_err(|status| {
-                let err_msg = format_osstatus_error(status);
-                format!("Failed to translate PID {} to AudioObjectID: OSStatus {} ({})", pid, status, err_msg)
-            })?;
+        let audio_object_id = translate_pid_to_audio_object(pid).map_err(|status| {
+            let err_msg = format_osstatus_error(status);
+            format!(
+                "Failed to translate PID {} to AudioObjectID: OSStatus {} ({})",
+                pid, status, err_msg
+            )
+        })?;
 
-        info!("✅ Translated PID {} to AudioObjectID {}", pid, audio_object_id);
+        info!(
+            "✅ Translated PID {} to AudioObjectID {}",
+            pid, audio_object_id
+        );
 
         // Step 2: Create a new CATapDescription instance
         let description = CATapDescription::new();
@@ -87,7 +95,10 @@ pub fn create_process_tap_description(pid: u32, name: &str) -> Result<objc2::rc:
         use objc2_core_audio::CATapMuteBehavior;
         description.setMuteBehavior(CATapMuteBehavior(0)); // 0 = Unmuted
 
-        info!("Configured tap description for AudioObjectID {}: name='{}', stereo mixdown, unmuted", audio_object_id, name);
+        info!(
+            "Configured tap description for AudioObjectID {}: name='{}', stereo mixdown, unmuted",
+            audio_object_id, name
+        );
 
         Ok(description)
     }

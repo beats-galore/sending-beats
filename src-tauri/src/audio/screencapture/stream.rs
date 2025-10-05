@@ -34,7 +34,10 @@ impl ScreenCaptureAudioStream {
         // Create stream
         let stream_ptr = unsafe { ffi::sc_audio_stream_create(self.pid) };
         if stream_ptr.is_null() {
-            anyhow::bail!("Failed to create ScreenCaptureKit stream for PID {}", self.pid);
+            anyhow::bail!(
+                "Failed to create ScreenCaptureKit stream for PID {}",
+                self.pid
+            );
         }
 
         // Store producer in Arc<Mutex> for sharing with callback
@@ -50,12 +53,7 @@ impl ScreenCaptureAudioStream {
 
         // Start capture
         let result = unsafe {
-            ffi::sc_audio_stream_start(
-                stream_ptr,
-                audio_sample_callback,
-                error_callback,
-                context,
-            )
+            ffi::sc_audio_stream_start(stream_ptr, audio_sample_callback, error_callback, context)
         };
 
         if result != 0 {
@@ -63,7 +61,10 @@ impl ScreenCaptureAudioStream {
             unsafe {
                 let _ = Box::from_raw(context as *mut StreamContext);
             }
-            anyhow::bail!("Failed to start ScreenCaptureKit stream: error code {}", result);
+            anyhow::bail!(
+                "Failed to start ScreenCaptureKit stream: error code {}",
+                result
+            );
         }
 
         self.stream_ptr = Some(stream_ptr);
@@ -142,9 +143,7 @@ extern "C" fn audio_sample_callback(
     let ctx = unsafe { &*(context as *const StreamContext) };
 
     // Convert raw pointer to slice
-    let audio_data = unsafe {
-        std::slice::from_raw_parts(samples, sample_count as usize)
-    };
+    let audio_data = unsafe { std::slice::from_raw_parts(samples, sample_count as usize) };
 
     // Write to RTRB producer
     if let Ok(mut producer) = ctx.producer.lock() {
@@ -156,10 +155,7 @@ extern "C" fn audio_sample_callback(
 }
 
 // Error callback - called by Swift when errors occur
-extern "C" fn error_callback(
-    context: *mut c_void,
-    error_message: *const c_char,
-) {
+extern "C" fn error_callback(context: *mut c_void, error_message: *const c_char) {
     if context.is_null() {
         error!("{} Context is null", "SC_ERROR".red());
         return;

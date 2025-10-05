@@ -23,6 +23,8 @@ pub struct StreamManager {
     coreaudio_streams: HashMap<String, crate::audio::devices::CoreAudioOutputStream>,
     #[cfg(target_os = "macos")]
     coreaudio_input_streams: HashMap<String, crate::audio::devices::CoreAudioInputStream>,
+    #[cfg(target_os = "macos")]
+    screencapture_streams: HashMap<String, crate::audio::screencapture::ScreenCaptureAudioStream>,
 }
 
 impl std::fmt::Debug for StreamManager {
@@ -38,6 +40,8 @@ impl StreamManager {
             coreaudio_streams: HashMap::new(),
             #[cfg(target_os = "macos")]
             coreaudio_input_streams: HashMap::new(),
+            #[cfg(target_os = "macos")]
+            screencapture_streams: HashMap::new(),
         }
     }
 
@@ -122,6 +126,25 @@ impl StreamManager {
             }
         }
 
+        // Try to remove ScreenCaptureKit stream on macOS
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(mut screencapture_stream) = self.screencapture_streams.remove(device_id) {
+                println!(
+                    "Stopping and removing ScreenCaptureKit stream for device: {}",
+                    device_id
+                );
+                if let Err(e) = screencapture_stream.stop() {
+                    eprintln!(
+                        "Warning: Failed to stop ScreenCaptureKit stream {}: {}",
+                        device_id, e
+                    );
+                }
+                drop(screencapture_stream);
+                removed = true;
+            }
+        }
+
         if !removed {
             println!("Stream not found for removal: {}", device_id);
         }
@@ -172,8 +195,37 @@ impl StreamManager {
         Ok(())
     }
     #[cfg(target_os = "macos")]
+    pub fn add_screencapture_stream(
+        &mut self,
+        device_id: String,
+        pid: i32,
+        device_name: String,
+        producer: Producer<f32>,
+    ) -> Result<f64> {
+        info!(
+            "📺 Creating ScreenCaptureKit stream for device '{}' (PID: {})",
+            device_id, pid
+        );
+
+        let mut screencapture_stream =
+            crate::audio::screencapture::ScreenCaptureAudioStream::new(pid, device_name.clone());
+
+        let sample_rate = screencapture_stream.start(producer)?;
+
+        self.screencapture_streams
+            .insert(device_id.clone(), screencapture_stream);
+
+        info!(
+            "✅ ScreenCaptureKit stream created and started for device '{}' at {} Hz",
+            device_id, sample_rate
+        );
+        Ok(sample_rate)
+    }
+
+    #[cfg(target_os = "macos")]
     pub fn has_input_stream(&self, device_id: &str) -> bool {
         self.coreaudio_input_streams.contains_key(device_id)
+            || self.screencapture_streams.contains_key(device_id)
     }
     #[cfg(target_os = "macos")]
     pub fn has_output_stream(&self, device_id: &str) -> bool {

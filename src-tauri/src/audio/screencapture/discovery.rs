@@ -1,5 +1,5 @@
-use anyhow::Result;
 use super::ffi;
+use anyhow::Result;
 
 #[derive(Debug, Clone)]
 pub struct ApplicationInfo {
@@ -16,7 +16,10 @@ pub fn get_available_applications() -> Result<Vec<ApplicationInfo>> {
         let result = ffi::sc_audio_get_available_applications(&mut apps_ptr, &mut count);
 
         if result != 0 {
-            anyhow::bail!("Failed to get available applications: error code {}", result);
+            anyhow::bail!(
+                "Failed to get available applications: error code {}",
+                result
+            );
         }
 
         if apps_ptr.is_null() || count == 0 {
@@ -47,7 +50,5 @@ pub fn get_available_applications() -> Result<Vec<ApplicationInfo>> {
 }
 
 pub fn check_screen_recording_permission() -> bool {
-    unsafe {
-        ffi::sc_audio_check_permission() != 0
-    }
+    unsafe { ffi::sc_audio_check_permission() != 0 }
 }
