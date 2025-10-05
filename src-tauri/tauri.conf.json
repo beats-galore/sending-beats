@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm build && ./src-tauri/build-audio-driver.sh",
     "frontendDist": "../dist"
   },
   "app": {
@@ -35,6 +35,10 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "resources": [
+      "bin/SendinBeatsAudioDriver.bundle",
+      "bin/sendin-beats-helper"
     ],
     "macOS": {
       "entitlements": "./entitlements.plist",

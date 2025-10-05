@@ -7,6 +7,7 @@
 // - streams: Audio stream management (input/output)
 // - mixer: Core virtual mixer functionality
 
+pub mod application_audio;
 pub mod broadcasting;
 pub mod devices;
 pub mod effects;
@@ -15,7 +16,6 @@ pub mod file_player;
 pub mod manager;
 pub mod mixer;
 pub mod recording;
-pub mod tap;
 pub mod types;
 pub mod utils;
 pub mod vu_channel_service;
@@ -53,9 +53,8 @@ pub use recording::{
     RecordingService, RecordingSession, RecordingStatus, RecordingWriter,
 };
 
-pub use tap::{
-    get_virtual_input_registry, ApplicationAudioError, ApplicationAudioInputBridge,
-    ApplicationDiscovery, ProcessInfo, TapStats, VirtualAudioInputStream,
+pub use application_audio::{
+    ApplicationAudioCapture, DriverManager, IPCClient, PIDManager,
 };
 
 // Re-export high-level audio manager
