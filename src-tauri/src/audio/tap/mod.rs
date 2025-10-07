@@ -3,6 +3,7 @@
 // This module provides comprehensive audio tapping capabilities for capturing
 // audio from specific applications on macOS. It includes process discovery,
 // Core Audio tap integration, virtual stream bridging, and high-level management.
+pub mod manager;
 pub mod process_discovery;
 pub mod types;
 pub mod virtual_stream;
@@ -32,6 +33,8 @@ pub use core_audio_tap::ApplicationAudioTap;
 
 #[cfg(target_os = "macos")]
 pub use types::CoreAudioTapCallbackContext;
+
+pub use manager::ApplicationAudioManager;
 
 // Convenience type aliases
 pub type Result<T> = std::result::Result<T, ApplicationAudioError>;

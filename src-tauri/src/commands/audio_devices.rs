@@ -232,7 +232,7 @@ pub async fn safe_switch_input_device(
     }
 
     // Create command based on device type
-    let buffer_capacity = 8192;
+    let buffer_capacity = 96000;
     let (producer, _consumer) = rtrb::RingBuffer::<f32>::new(buffer_capacity);
     let (response_tx, response_rx) = tokio::sync::oneshot::channel();
 

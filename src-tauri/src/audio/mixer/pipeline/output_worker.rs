@@ -15,7 +15,6 @@ use super::audio_worker::{AudioWorker, AudioWorkerState};
 use super::queue_types::MixedAudioSamples;
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::mixer::resampling::RubatoSRC;
-use crate::audio::utils::calculate_optimal_chunk_size;
 use colored::*;
 
 use rtrb::Producer;

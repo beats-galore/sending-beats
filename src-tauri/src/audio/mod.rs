@@ -12,7 +12,6 @@ pub mod devices;
 pub mod effects;
 pub mod events;
 pub mod file_player;
-pub mod manager;
 pub mod mixer;
 pub mod recording;
 pub mod tap;
@@ -57,11 +56,8 @@ pub use recording::{
 
 pub use tap::{
     get_virtual_input_registry, ApplicationAudioError, ApplicationAudioInputBridge,
-    ApplicationDiscovery, ProcessInfo, TapStats, VirtualAudioInputStream,
+    ApplicationAudioManager, ApplicationDiscovery, ProcessInfo, TapStats, VirtualAudioInputStream,
 };
-
-// Re-export high-level audio manager
-pub use manager::ApplicationAudioManager;
 
 pub use file_player::{
     AudioFilePlayer, FilePlayerConfig, FilePlayerDevice, FilePlayerManager, FilePlayerService,

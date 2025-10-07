@@ -51,15 +51,24 @@ class ScreenCaptureAudioOutput: NSObject, SCStreamOutput {
 
     private var callbackCount = 0
     private var lastLogTime = Date()
+    private var lastCallbackTime: Date?
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .audio else { return }
 
         callbackCount += 1
+        let now = Date()
 
-        // Log every 1000 callbacks (roughly every ~20 seconds at 48kHz with 1024 sample buffers)
+        // VERIFY: Measure callback timing
+        if let lastTime = lastCallbackTime {
+            let callbackInterval = now.timeIntervalSince(lastTime) * 1000.0 // milliseconds
+            if callbackCount <= 10 {
+                print("🕐 CALLBACK_TIMING: Callback #\(callbackCount) - interval: \(String(format: "%.2f", callbackInterval))ms since last")
+            }
+        }
+        lastCallbackTime = now
+
         if callbackCount % 1000 == 0 {
-            let now = Date()
             let elapsed = now.timeIntervalSince(lastLogTime)
             print("🎵 SCREEN_CAPTURE_KIT_SWIFT: Received \(callbackCount) audio callbacks (\(String(format: "%.1f", elapsed))s since last log)")
             lastLogTime = now
@@ -104,7 +113,43 @@ class ScreenCaptureAudioOutput: NSObject, SCStreamOutput {
 
         // Log first callback with format details
         if callbackCount == 1 {
-            print("🎵 SCREEN_CAPTURE_KIT_SWIFT: First audio callback - \(length) bytes, \(channels) channels, \(sampleRate)Hz")
+            let formatFlags = asbd.mFormatFlags
+            let isFloat = (formatFlags & kAudioFormatFlagIsFloat) != 0
+            let bitsPerChannel = asbd.mBitsPerChannel
+            let bytesPerFrame = asbd.mBytesPerFrame
+            let framesPerPacket = asbd.mFramesPerPacket
+            let totalFloat32Values = length / MemoryLayout<Float>.size
+
+            // ACTUAL frame count calculation (not using broken bytesPerFrame)
+            let bytesPerSample = Int(bitsPerChannel / 8)
+            let expectedBytesPerFrame = bytesPerSample * Int(channels)
+            let actualFrames = length / expectedBytesPerFrame
+
+            // Check if audio is interleaved or planar
+            let isNonInterleaved = (formatFlags & kAudioFormatFlagIsNonInterleaved) != 0
+            let isPacked = (formatFlags & kAudioFormatFlagIsPacked) != 0
+
+            print("🎵 SCREEN_CAPTURE_KIT_SWIFT: First audio callback")
+            print("   Format: \(isFloat ? "Float\(bitsPerChannel)" : "Int\(bitsPerChannel)"), \(channels) channels, \(sampleRate)Hz")
+            print("   Format flags: isPacked=\(isPacked), isNonInterleaved=\(isNonInterleaved)")
+            print("   bytesPerFrame from CoreAudio: \(bytesPerFrame)")
+            print("   Buffer size: \(length) bytes")
+            print("   Total Float32 values in buffer: \(totalFloat32Values)")
+
+            if isNonInterleaved {
+                print("   ⚠️ AUDIO IS NON-INTERLEAVED (PLANAR)")
+                print("   This means: \(totalFloat32Values / Int(channels)) samples per channel in separate planes")
+            } else {
+                print("   ✅ AUDIO IS INTERLEAVED")
+                print("   Frames: \(totalFloat32Values / Int(channels)), Interleaved samples: \(totalFloat32Values)")
+            }
+        }
+
+        // Log every 1000th callback with audio level verification
+        if callbackCount % 1000 == 0 {
+            let totalFloat32Values = length / MemoryLayout<Float>.size
+            let actualFrames = totalFloat32Values / Int(channels)
+            print("🎵 SCREEN_CAPTURE_KIT_SWIFT: Callback #\(callbackCount) - \(actualFrames) frames (\(totalFloat32Values) interleaved samples)")
         }
 
         // Convert to Float32 if needed
@@ -112,23 +157,55 @@ class ScreenCaptureAudioOutput: NSObject, SCStreamOutput {
         let is32Bit = asbd.mBitsPerChannel == 32
 
         if isFloat && is32Bit {
-            // Already Float32, send directly
+            // Already Float32
             let floatPointer = dataPointer.withMemoryRebound(to: Float.self, capacity: length / MemoryLayout<Float>.size) { $0 }
-            let sampleCount = Int32(length / MemoryLayout<Float>.size)
+            let totalSamples = length / MemoryLayout<Float>.size
 
-            audioCallback(context, floatPointer, sampleCount, channels, sampleRate)
+            // Check if audio is non-interleaved (planar)
+            let isNonInterleaved = (asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved) != 0
+
+            if isNonInterleaved && channels == 2 {
+                // Convert planar to interleaved
+                let framesPerChannel = totalSamples / Int(channels)
+                var interleavedBuffer = [Float](repeating: 0.0, count: totalSamples)
+
+                // Planar layout: [L L L L ... L] [R R R R ... R]
+                // Interleaved layout: [L R L R L R ... L R]
+                for frame in 0..<framesPerChannel {
+                    interleavedBuffer[frame * 2] = floatPointer[frame]                      // Left
+                    interleavedBuffer[frame * 2 + 1] = floatPointer[framesPerChannel + frame]  // Right
+                }
+
+                if callbackCount == 1 {
+                    print("   🔄 Converting planar to interleaved (\(framesPerChannel) frames × \(channels) channels)")
+                    print("   First 10 interleaved samples: \(Array(interleavedBuffer.prefix(10)))")
+                }
+
+                interleavedBuffer.withUnsafeBufferPointer { buffer in
+                    audioCallback(context, buffer.baseAddress, Int32(totalSamples), channels, sampleRate)
+                }
+            } else {
+                // Already interleaved or mono, send directly
+                if callbackCount == 1 {
+                    let first10 = (0..<min(10, totalSamples)).map { floatPointer[$0] }
+                    print("   First 10 samples (already interleaved): \(first10)")
+                }
+
+                audioCallback(context, floatPointer, Int32(totalSamples), channels, sampleRate)
+            }
         } else {
             // Need conversion - convert Int16 to Float32
             let int16Pointer = dataPointer.withMemoryRebound(to: Int16.self, capacity: length / MemoryLayout<Int16>.size) { $0 }
-            let sampleCount = length / MemoryLayout<Int16>.size
+            let totalSamples = length / MemoryLayout<Int16>.size
 
-            var floatSamples = [Float](repeating: 0.0, count: sampleCount)
-            for i in 0..<sampleCount {
+            var floatSamples = [Float](repeating: 0.0, count: totalSamples)
+            for i in 0..<totalSamples {
                 floatSamples[i] = Float(int16Pointer[i]) / 32768.0
             }
 
             floatSamples.withUnsafeBufferPointer { buffer in
-                audioCallback(context, buffer.baseAddress, Int32(sampleCount), channels, sampleRate)
+                let frameCount = Int32(totalSamples / Int(channels))
+                audioCallback(context, buffer.baseAddress, frameCount, channels, sampleRate)
             }
         }
     }
@@ -186,6 +263,8 @@ class ScreenCaptureAudioOutput: NSObject, SCStreamOutput {
         config.sampleRate = 48000  // 48kHz
         config.channelCount = 2     // Stereo
         config.excludesCurrentProcessAudio = true
+
+        print("📋 SCREEN_CAPTURE_KIT_SWIFT: Requested sample rate: \(config.sampleRate)Hz, channels: \(config.channelCount)")
 
         // Don't capture video
         config.width = 1

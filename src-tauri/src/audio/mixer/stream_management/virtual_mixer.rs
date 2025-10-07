@@ -75,6 +75,8 @@ impl VirtualMixer {
         }
 
         // Calculate required buffer size based on actual input samples
+        let max_to_take = 1024 * input_samples.len();
+
         let required_stereo_samples = input_samples
             .iter()
             .map(|(_, samples)| samples.len())
@@ -97,7 +99,7 @@ impl VirtualMixer {
         // **PERFORMANCE FIX**: Use thread-local reusable buffer to eliminate allocations
         use std::cell::RefCell;
         thread_local! {
-            static REUSABLE_MIX_BUFFER: RefCell<Vec<f32>> = RefCell::new(Vec::with_capacity(8192));
+            static REUSABLE_MIX_BUFFER: RefCell<Vec<f32>> = RefCell::new(Vec::with_capacity(96000));
         }
 
         REUSABLE_MIX_BUFFER.with(|buf| {

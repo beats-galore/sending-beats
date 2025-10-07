@@ -16,8 +16,6 @@ use tracing::{info, warn};
 
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::mixer::resampling::RubatoSRC;
-use crate::audio::utils::calculate_optimal_chunk_size;
-
 /// Shared state for audio workers
 pub struct AudioWorkerState {
     pub device_id: String,
@@ -257,12 +255,12 @@ pub trait AudioWorker {
             while !remaining.is_empty() && samples_written < samples.len() {
                 let chunk_size = remaining.len().min(producer.slots());
                 if chunk_size == 0 {
-                    //     warn!(
-                    //         "⚠️ {}: {} RTRB queue full, dropping {} remaining samples",
-                    //         "AUDIO_WORKER".on_cyan().white(),
-                    //         device_id,
-                    //         remaining.len()
-                    //     );
+                    warn!(
+                        "⚠️ {}: {} RTRB queue full, dropping {} remaining samples",
+                        "AUDIO_WORKER".on_cyan().white(),
+                        device_id,
+                        remaining.len()
+                    );
                     break;
                 }
 
@@ -307,7 +305,7 @@ pub trait AudioWorker {
         let queue_tracker = self.queue_tracker().clone();
 
         let mut resampler = self.resampler_mut().take();
-        let mut input_accumulator = Vec::with_capacity(8192);
+        let mut input_accumulator = Vec::with_capacity(96000);
 
         info!(
             "🚀 {}: Starting processing thread for device '{}'",
@@ -318,7 +316,7 @@ pub trait AudioWorker {
         // Spawn dedicated worker thread
         let worker_handle = tokio::spawn(async move {
             let mut samples_processed = 0u64;
-            let mut samples_buffer = Vec::with_capacity(8192);
+            let mut samples_buffer = Vec::with_capacity(96000);
 
             info!(
                 "🚀 {}: Started processing thread for device '{}'",
@@ -347,7 +345,7 @@ pub trait AudioWorker {
                     }
 
                     let mut read_count = 0;
-                    while read_count < available.min(8192) {
+                    while read_count < available.min(96000) {
                         match consumer.pop() {
                             Ok(sample) => {
                                 samples_buffer.push(sample);
@@ -361,6 +359,17 @@ pub trait AudioWorker {
 
                 if samples.is_empty() {
                     continue;
+                }
+
+                // VERIFY: Log on first few iterations
+                if samples_processed < 5 {
+                    info!(
+                        "🔍 {}: {} received {} samples from RTRB (first 10: {:?})",
+                        "AUDIO_WORKER_INPUT".on_cyan().white(),
+                        device_id,
+                        samples.len(),
+                        samples.iter().take(10).copied().collect::<Vec<f32>>()
+                    );
                 }
 
                 // Step 1: Check if resampling is needed
@@ -457,6 +466,17 @@ pub trait AudioWorker {
                     }
                     let post_process_duration = post_process_start.elapsed();
 
+                    // VERIFY: Log output samples on first few iterations
+                    if samples_processed < 5 {
+                        info!(
+                            "🔍 {}: {} writing {} samples to output (first 10: {:?})",
+                            "AUDIO_WORKER_OUTPUT".on_cyan().white(),
+                            device_id,
+                            final_samples.len(),
+                            final_samples.iter().take(10).copied().collect::<Vec<f32>>()
+                        );
+                    }
+
                     // Step 6: Write to output RTRB queue
                     let write_start = std::time::Instant::now();
                     Self::write_samples_to_rtrb_sync(
@@ -486,15 +506,15 @@ pub trait AudioWorker {
                     }
 
                     if processing_duration.as_micros() > 500 {
-                        // warn!(
-                        //     "⏱️ {}: {} SLOW processing: {}μs total (resample: {}μs, post: {}μs, write: {}μs)",
-                        //     log_prefix.on_cyan().white(),
-                        //     device_id,
-                        //     processing_duration.as_micros(),
-                        //     resample_duration.as_micros(),
-                        //     post_process_duration.as_micros(),
-                        //     write_duration.as_micros()
-                        // );
+                        warn!(
+                            "⏱️ {}: {} SLOW processing: {}μs total (resample: {}μs, post: {}μs, write: {}μs)",
+                            log_prefix.on_cyan().white(),
+                            device_id,
+                            processing_duration.as_micros(),
+                            resample_duration.as_micros(),
+                            post_process_duration.as_micros(),
+                            write_duration.as_micros()
+                        );
                     }
                 }
             }
