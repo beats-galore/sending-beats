@@ -129,6 +129,10 @@ struct StreamContext {
 }
 
 // Audio sample callback - called by Swift when audio samples are available
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static CALLBACK_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 extern "C" fn audio_sample_callback(
     context: *mut c_void,
     samples: *const f32,
@@ -140,16 +144,62 @@ extern "C" fn audio_sample_callback(
         return;
     }
 
+    let count = CALLBACK_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
+
+    // Log first callback and every 1000th callback
+    if count == 1 {
+        info!(
+            "🎵 {}: First callback - {} samples, {} channels, {}Hz",
+            "SC_AUDIO_CALLBACK".cyan(),
+            sample_count,
+            channels,
+            sample_rate
+        );
+    } else if count % 1000 == 0 {
+        info!(
+            "🎵 {}: Received {} callbacks ({} samples each)",
+            "SC_AUDIO_CALLBACK".cyan(),
+            count,
+            sample_count
+        );
+    }
+
     let ctx = unsafe { &*(context as *const StreamContext) };
 
     // Convert raw pointer to slice
     let audio_data = unsafe { std::slice::from_raw_parts(samples, sample_count as usize) };
 
+    // Calculate peak for debugging
+    let mut peak = 0.0f32;
+    for &sample in audio_data {
+        peak = peak.max(sample.abs());
+    }
+
+    if count % 1000 == 0 {
+        info!(
+            "🎵 {}: Peak level from ScreenCaptureKit: {:.4}",
+            "SC_AUDIO_PEAK".cyan(),
+            peak
+        );
+    }
+
     // Write to RTRB producer
     if let Ok(mut producer) = ctx.producer.lock() {
+        let mut written = 0;
         // Write samples to ringbuffer (drop if full)
         for &sample in audio_data {
-            let _ = producer.push(sample);
+            if producer.push(sample).is_ok() {
+                written += 1;
+            }
+        }
+
+        if count % 1000 == 0 {
+            info!(
+                "🎵 {}: Wrote {}/{} samples to ringbuffer",
+                "SC_RTRB_WRITE".cyan(),
+                written,
+                sample_count
+            );
         }
     }
 }

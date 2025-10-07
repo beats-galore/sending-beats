@@ -16,13 +16,6 @@ pub type ErrorCallback = extern "C" fn(context: *mut c_void, error_message: *con
 pub type SCAppInfoPtr = *mut c_void;
 pub type SCStreamPtr = *mut c_void;
 
-#[repr(C)]
-pub struct SCAppInfo {
-    pub pid: i32,
-    pub bundle_identifier: *const c_char,
-    pub application_name: *const c_char,
-}
-
 // External Swift functions
 extern "C" {
     pub fn sc_audio_get_available_applications(
@@ -31,6 +24,11 @@ extern "C" {
     ) -> i32;
 
     pub fn sc_audio_free_applications(apps: *mut SCAppInfoPtr, count: i32);
+
+    // Accessor functions for SCAppInfo
+    pub fn sc_audio_app_get_pid(app: SCAppInfoPtr) -> i32;
+    pub fn sc_audio_app_get_bundle_id(app: SCAppInfoPtr) -> *const c_char;
+    pub fn sc_audio_app_get_name(app: SCAppInfoPtr) -> *const c_char;
 
     pub fn sc_audio_stream_create(pid: i32) -> SCStreamPtr;
 
