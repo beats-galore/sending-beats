@@ -625,6 +625,10 @@ impl AudioPipeline {
             }
         }
 
+        // Remove from mixing layer (this also removes from temporal buffer)
+        self.mixing_layer
+            .remove_input_consumer(device_id.to_string());
+
         // Remove from queue system
         self.queues
             .remove_input_device(device_id.to_string())
