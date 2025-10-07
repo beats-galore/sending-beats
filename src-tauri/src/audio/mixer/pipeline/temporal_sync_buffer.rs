@@ -221,6 +221,19 @@ impl TemporalSyncBuffer {
         }
     }
 
+    /// Remove a device from the temporal buffer
+    /// Called when a device is removed from the pipeline to prevent waiting for samples that will never arrive
+    pub fn remove_device(&mut self, device_id: &str) {
+        if let Some(buffer) = self.device_buffers.remove(device_id) {
+            warn!(
+                "🗑️ {}: Removed device '{}' from temporal buffer ({} buffered samples discarded)",
+                "TEMPORAL_BUFFER".red(),
+                device_id,
+                buffer.len()
+            );
+        }
+    }
+
     /// Get statistics about buffer state
     pub fn get_stats(&self) -> TemporalSyncStats {
         let total_buffered_samples: usize = self.device_buffers.values().map(|b| b.len()).sum();

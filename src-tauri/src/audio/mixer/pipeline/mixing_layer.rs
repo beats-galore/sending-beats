@@ -26,6 +26,9 @@ pub enum MixingLayerCommand {
         consumer: Arc<Mutex<rtrb::Consumer<f32>>>,
         queue_tracker: AtomicQueueTracker,
     },
+    RemoveInputStream {
+        device_id: String,
+    },
     AddOutputProducer {
         device_id: String,
         producer: Arc<Mutex<rtrb::Producer<f32>>>,
@@ -117,6 +120,36 @@ impl MixingLayer {
                 .insert(device_id.clone(), queue_tracker);
             info!(
                 "🎛️ {}: Queued input consumer for device '{}'",
+                "MIXING_LAYER".on_green().white(),
+                device_id
+            );
+        }
+    }
+
+    /// Remove an input RTRB consumer (stops receiving audio from a device)
+    pub fn remove_input_consumer(&mut self, device_id: String) {
+        if self.worker_handle.is_some() {
+            let cmd = MixingLayerCommand::RemoveInputStream {
+                device_id: device_id.clone(),
+            };
+            if let Err(_) = self.command_tx.send(cmd) {
+                warn!(
+                    "⚠️ {}: Failed to send remove input consumer command for '{}'",
+                    "MIXING_LAYER".on_green().white(),
+                    device_id
+                );
+            } else {
+                info!(
+                    "🗑️ {}: Sent remove input consumer command for device '{}'",
+                    "MIXING_LAYER".on_green().white(),
+                    device_id
+                );
+            }
+        } else {
+            self.input_rtrb_consumers.remove(&device_id);
+            self.input_queue_trackers.remove(&device_id);
+            info!(
+                "🗑️ {}: Removed input consumer for device '{}' (not yet started)",
                 "MIXING_LAYER".on_green().white(),
                 device_id
             );
@@ -223,7 +256,7 @@ impl MixingLayer {
                 let cycle_start = std::time::Instant::now();
                 let mut mixed_something = false;
 
-                // Handle commands (add new input/output streams dynamically)
+                // Handle commands (add/remove input/output streams dynamically)
                 let command_start = std::time::Instant::now();
                 while let Ok(cmd) = command_rx.try_recv() {
                     match cmd {
@@ -237,6 +270,16 @@ impl MixingLayer {
                             info!(
                                 "🎛️ MIXING_LAYER_WORKER: Added input consumer for device '{}'",
                                 device_id
+                            );
+                        }
+                        MixingLayerCommand::RemoveInputStream { device_id } => {
+                            input_rtrb_consumers.remove(&device_id);
+                            input_queue_trackers.remove(&device_id);
+                            temporal_buffer.remove_device(&device_id);
+                            info!(
+                                "🗑️ MIXING_LAYER_WORKER: Removed input consumer for device '{}' (remaining: {})",
+                                device_id,
+                                input_rtrb_consumers.len()
                             );
                         }
                         MixingLayerCommand::AddOutputProducer {

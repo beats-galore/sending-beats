@@ -99,6 +99,30 @@ pub async fn safe_switch_input_device(
         }
     }
 
+    // Query old device's channel number before removal (to preserve channel assignment)
+    let old_channel_number = if let Some(ref old_id) = old_device_id {
+        if !old_id.trim().is_empty() {
+            // Get channel number from database before deleting
+            match crate::commands::configurations::get_device_channel_number(&audio_state, old_id)
+                .await
+            {
+                Ok(channel) => Some(channel),
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to get channel number for old device '{}': {}",
+                        old_id,
+                        e
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     // Remove old device if specified
     if let Some(old_id) = old_device_id {
         if !old_id.trim().is_empty() {
@@ -221,6 +245,7 @@ pub async fn safe_switch_input_device(
             is_app_audio
                 || new_device_id.contains("BlackHole")
                 || new_device_id.contains("SoundflowerBed"),
+            old_channel_number, // Preserve channel assignment from old device
         )
         .await
         {
@@ -387,6 +412,7 @@ pub async fn safe_switch_output_device(
                     channels as u32,
                     false, // is_input
                     false, // is_virtual
+                    None,  // channel_number (outputs don't use channel numbers)
                 )
                 .await
                 {

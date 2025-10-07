@@ -255,13 +255,13 @@ pub trait AudioWorker {
             while !remaining.is_empty() && samples_written < samples.len() {
                 let chunk_size = remaining.len().min(producer.slots());
                 if chunk_size == 0 {
-                    warn!(
-                        "⚠️ {}: {} RTRB queue full, dropping {} remaining samples",
-                        "AUDIO_WORKER".on_cyan().white(),
-                        device_id,
-                        remaining.len()
-                    );
-                    break;
+                    // warn!(
+                    //     "⚠️ {}: {} RTRB queue full, dropping {} remaining samples",
+                    //     "AUDIO_WORKER".on_cyan().white(),
+                    //     device_id,
+                    //     remaining.len()
+                    // );
+                    // break;
                 }
 
                 let chunk = &remaining[..chunk_size];

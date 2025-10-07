@@ -244,6 +244,7 @@ pub async fn create_device_configuration(
     channels: u32,
     is_input: bool,
     is_virtual: bool,
+    channel_number: Option<i32>,
 ) -> Result<(), String> {
     // Get the active session configuration
     let session_config = match AudioMixerConfigurationService::get_active_session(
@@ -332,9 +333,12 @@ pub async fn create_device_configuration(
     let now = chrono::Utc::now();
     let device_uuid = uuid::Uuid::new_v4();
 
-    // Find the next available channel number for input devices
-    let next_channel_number = if is_input {
-        // Get all input devices in this configuration
+    // Determine channel number: use provided value or find next available
+    let next_channel_number = if let Some(channel) = channel_number {
+        // Use the provided channel number (from device switching)
+        channel
+    } else if is_input {
+        // Find the next available channel number for input devices
         let existing_input_devices = crate::entities::configured_audio_device::Entity::find()
             .filter(
                 crate::entities::configured_audio_device::Column::ConfigurationId
@@ -427,6 +431,21 @@ pub async fn create_device_configuration(
             tracing::error!("❌ Failed to create configured_audio_device: {}", e);
             Err(format!("Failed to create device configuration: {}", e))
         }
+    }
+}
+
+/// Get the channel number for a configured device
+pub async fn get_device_channel_number(state: &AudioState, device_id: &str) -> Result<i32, String> {
+    let device = crate::entities::configured_audio_device::Entity::find()
+        .filter(crate::entities::configured_audio_device::Column::DeviceIdentifier.eq(device_id))
+        .filter(crate::entities::configured_audio_device::Column::DeletedAt.is_null())
+        .one(state.database.sea_orm())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    match device {
+        Some(d) => Ok(d.channel_number),
+        None => Err(format!("Device '{}' not found in database", device_id)),
     }
 }
 
