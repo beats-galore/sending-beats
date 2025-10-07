@@ -457,7 +457,7 @@ impl IsolatedAudioManager {
 
         // **RTRB SETUP**: Create buffer for hardware → AudioPipeline communication
         let buffer_capacity = (native_sample_rate as usize * channels as usize) / 10; // 100ms for actual channel count
-        let buffer_capacity = buffer_capacity.max(4096).min(16384);
+        let buffer_capacity = buffer_capacity.max(4096).min(96000);
         let (coreaudio_producer, audio_input_consumer) =
             rtrb::RingBuffer::<f32>::new(buffer_capacity);
 
@@ -628,7 +628,7 @@ impl IsolatedAudioManager {
 
         // **SCREENCAPTUREKIT**: Create ScreenCaptureKit stream and detect sample rate
         // Create RTRB ring buffer for ScreenCaptureKit → pipeline communication
-        let initial_buffer_capacity = 16384;
+        let initial_buffer_capacity = 96000;
         let (screencapture_producer, audio_input_consumer) =
             rtrb::RingBuffer::<f32>::new(initial_buffer_capacity);
 
@@ -651,7 +651,7 @@ impl IsolatedAudioManager {
 
         // Calculate buffer capacity based on detected sample rate
         let buffer_capacity = (native_sample_rate as usize * channels as usize) / 10;
-        let buffer_capacity = buffer_capacity.max(4096).min(16384);
+        let buffer_capacity = buffer_capacity.max(4096).min(96000);
 
         // Use 512 frames as chunk size (will be multiplied by channels in pipeline)
         let chunk_size = 512 * channels as usize;
@@ -959,7 +959,7 @@ impl IsolatedAudioManager {
         // **RTRB SETUP**: Create buffer for AudioPipeline → Recording communication
         let buffer_capacity =
             (recording_config.sample_rate as usize * recording_config.channels as usize) / 10; // 100ms buffer
-        let buffer_capacity = buffer_capacity.max(8192).min(32768); // Larger buffer for file I/O
+        let buffer_capacity = buffer_capacity.max(96000).min(384000); // Larger buffer for file I/O
         let (recording_producer, recording_consumer) =
             rtrb::RingBuffer::<f32>::new(buffer_capacity);
 

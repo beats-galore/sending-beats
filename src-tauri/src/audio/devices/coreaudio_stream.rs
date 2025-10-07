@@ -364,6 +364,8 @@ impl CoreAudioOutputStream {
             return Err(anyhow::anyhow!("Failed to set stream format: {}", status));
         }
 
+        // self.set_dynamic_buffer_size(1920);
+
         // Step 6: Set up render callback with new AudioCallbackContext
         let context = AudioCallbackContext {
             buffer: self.input_buffer.clone(),
