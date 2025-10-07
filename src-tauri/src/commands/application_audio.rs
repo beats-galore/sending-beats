@@ -19,24 +19,34 @@ pub async fn get_known_audio_applications(
     {
         match screencapture::get_available_applications() {
             Ok(apps) => {
-                println!("🔍 Found {} applications via ScreenCaptureKit", apps.len());
+                let total_apps = apps.len();
+                println!("🔍 Found {} applications via ScreenCaptureKit", total_apps);
 
-                // Convert to ProcessInfo format
+                // Deduplicate by PID (ScreenCaptureKit can return multiple entries for same app)
+                let mut seen_pids = std::collections::HashSet::new();
                 let process_infos: Vec<ProcessInfo> = apps
                     .into_iter()
-                    .map(|app| ProcessInfo {
-                        pid: app.pid as u32,
-                        name: app.application_name.clone(),
-                        bundle_id: Some(app.bundle_identifier),
-                        icon_path: None,
-                        is_audio_capable: true, // ScreenCaptureKit shows all apps
-                        is_playing_audio: false, // We don't know yet
+                    .filter_map(|app| {
+                        let pid = app.pid as u32;
+                        if seen_pids.insert(pid) {
+                            Some(ProcessInfo {
+                                pid,
+                                name: app.application_name.clone(),
+                                bundle_id: Some(app.bundle_identifier),
+                                icon_path: None,
+                                is_audio_capable: true,
+                                is_playing_audio: false,
+                            })
+                        } else {
+                            None
+                        }
                     })
                     .collect();
 
                 println!(
-                    "✅ Returning {} known audio applications",
-                    process_infos.len()
+                    "✅ Returning {} known audio applications (deduplicated from {})",
+                    process_infos.len(),
+                    total_apps
                 );
                 Ok(process_infos)
             }

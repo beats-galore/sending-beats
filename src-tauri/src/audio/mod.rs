@@ -17,7 +17,6 @@ pub mod mixer;
 pub mod recording;
 pub mod tap;
 pub mod types;
-pub mod utils;
 pub mod vu_channel_service;
 
 #[cfg(target_os = "macos")]

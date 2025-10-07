@@ -339,7 +339,8 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
     }));
 
     // Add configured device if it's not in the available devices list (missing/unplugged)
-    if (configuredInputDevice) {
+    // BUT skip application devices (they're in the app list)
+    if (configuredInputDevice && !configuredInputDevice.deviceIdentifier.startsWith('app-')) {
       const isDeviceAvailable = inputDevices.some(
         (device) => device.id === configuredInputDevice.deviceIdentifier
       );

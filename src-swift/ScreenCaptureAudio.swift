@@ -49,8 +49,21 @@ class ScreenCaptureAudioOutput: NSObject, SCStreamOutput {
         super.init()
     }
 
+    private var callbackCount = 0
+    private var lastLogTime = Date()
+
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .audio else { return }
+
+        callbackCount += 1
+
+        // Log every 1000 callbacks (roughly every ~20 seconds at 48kHz with 1024 sample buffers)
+        if callbackCount % 1000 == 0 {
+            let now = Date()
+            let elapsed = now.timeIntervalSince(lastLogTime)
+            print("🎵 SCREEN_CAPTURE_KIT_SWIFT: Received \(callbackCount) audio callbacks (\(String(format: "%.1f", elapsed))s since last log)")
+            lastLogTime = now
+        }
 
         // Extract audio buffer from CMSampleBuffer
         guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else {
@@ -88,6 +101,11 @@ class ScreenCaptureAudioOutput: NSObject, SCStreamOutput {
 
         let channels = Int32(asbd.mChannelsPerFrame)
         let sampleRate = Float64(asbd.mSampleRate)
+
+        // Log first callback with format details
+        if callbackCount == 1 {
+            print("🎵 SCREEN_CAPTURE_KIT_SWIFT: First audio callback - \(length) bytes, \(channels) channels, \(sampleRate)Hz")
+        }
 
         // Convert to Float32 if needed
         let isFloat = (asbd.mFormatFlags & kAudioFormatFlagIsFloat) != 0
@@ -143,15 +161,24 @@ class ScreenCaptureAudioOutput: NSObject, SCStreamOutput {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
 
         // Find application with matching PID
-        guard let app = content.applications.first(where: { $0.processID == self.pid }) else {
+        guard let targetApp = content.applications.first(where: { $0.processID == self.pid }) else {
             throw NSError(domain: "ScreenCaptureAudio", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: "Application with PID \(pid) not found"
             ])
         }
 
-        // Create filter for this specific application (audio only)
-        // Use first window as placeholder - audio capture is app-wide anyway
-        let filter = SCContentFilter(desktopIndependentWindow: content.windows.first!)
+        print("🎯 SCREEN_CAPTURE_KIT_SWIFT: Creating audio filter for app '\(targetApp.applicationName)' (PID: \(pid))")
+
+        // Create filter to capture ONLY this application's audio
+        // We need to get a window from the target application to use as anchor
+        guard let appWindow = content.windows.first(where: { $0.owningApplication?.processID == self.pid }) else {
+            throw NSError(domain: "ScreenCaptureAudio", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "Application with PID \(pid) has no windows"
+            ])
+        }
+
+        // Create filter using the application's window - this captures that app's audio
+        let filter = SCContentFilter(desktopIndependentWindow: appWindow)
 
         // Configure stream for audio-only capture
         let config = SCStreamConfiguration()
@@ -207,13 +234,18 @@ public func sc_audio_get_available_applications(
     outApps: UnsafeMutablePointer<UnsafeMutablePointer<UnsafeMutablePointer<SCAppInfo>?>?>?,
     outCount: UnsafeMutablePointer<Int32>?
 ) -> Int32 {
+    print("🔍 SCREEN_CAPTURE_KIT_SWIFT: Getting available applications...")
+
     let semaphore = DispatchSemaphore(value: 0)
     var apps: [SCAppInfo] = []
     var errorCode: Int32 = 0
+    var errorMessage: String?
 
     Task {
         do {
+            print("📡 SCREEN_CAPTURE_KIT_SWIFT: Requesting shareable content...")
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            print("✅ SCREEN_CAPTURE_KIT_SWIFT: Got \(content.applications.count) applications")
 
             apps = content.applications.map { app in
                 return SCAppInfo(
@@ -224,15 +256,32 @@ public func sc_audio_get_available_applications(
             }
             errorCode = 0
         } catch {
+            print("❌ SCREEN_CAPTURE_KIT_SWIFT error: \(error.localizedDescription)")
+            errorMessage = error.localizedDescription
             errorCode = -1
         }
         semaphore.signal()
     }
 
-    semaphore.wait()
+    let waitResult = semaphore.wait(timeout: .now() + 10.0)
+
+    if waitResult == .timedOut {
+        print("⏱️ SCREEN_CAPTURE_KIT_SWIFT: Timed out waiting for content")
+        return -2
+    }
 
     if errorCode != 0 {
+        if let msg = errorMessage {
+            print("❌ SCREEN_CAPTURE_KIT_SWIFT failed: \(msg)")
+        }
         return errorCode
+    }
+
+    if apps.isEmpty {
+        print("⚠️ SCREEN_CAPTURE_KIT_SWIFT: No applications found")
+        outApps?.pointee = nil
+        outCount?.pointee = 0
+        return 0
     }
 
     // Allocate array of pointers
@@ -244,6 +293,7 @@ public func sc_audio_get_available_applications(
     outApps?.pointee = appsArray
     outCount?.pointee = Int32(apps.count)
 
+    print("✅ SCREEN_CAPTURE_KIT_SWIFT: Returning \(apps.count) applications")
     return 0
 }
 
@@ -258,6 +308,28 @@ public func sc_audio_free_applications(apps: UnsafeMutablePointer<UnsafeMutableP
     }
 
     apps.deallocate()
+}
+
+// Accessor functions for SCAppInfo fields
+@_cdecl("sc_audio_app_get_pid")
+public func sc_audio_app_get_pid(appPtr: UnsafeMutableRawPointer?) -> Int32 {
+    guard let appPtr = appPtr else { return -1 }
+    let app = Unmanaged<SCAppInfo>.fromOpaque(appPtr).takeUnretainedValue()
+    return app.pid
+}
+
+@_cdecl("sc_audio_app_get_bundle_id")
+public func sc_audio_app_get_bundle_id(appPtr: UnsafeMutableRawPointer?) -> UnsafePointer<CChar>? {
+    guard let appPtr = appPtr else { return nil }
+    let app = Unmanaged<SCAppInfo>.fromOpaque(appPtr).takeUnretainedValue()
+    return (app.bundleIdentifier as NSString).utf8String
+}
+
+@_cdecl("sc_audio_app_get_name")
+public func sc_audio_app_get_name(appPtr: UnsafeMutableRawPointer?) -> UnsafePointer<CChar>? {
+    guard let appPtr = appPtr else { return nil }
+    let app = Unmanaged<SCAppInfo>.fromOpaque(appPtr).takeUnretainedValue()
+    return (app.applicationName as NSString).utf8String
 }
 
 @_cdecl("sc_audio_stream_create")
