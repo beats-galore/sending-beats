@@ -9,12 +9,12 @@ use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::{broadcast, Mutex, RwLock};
 use tracing::{error, info, warn};
 
-use super::tap::process_discovery::ApplicationDiscovery;
-use super::tap::types::{ApplicationAudioError, ProcessInfo, TapStats};
-use super::tap::virtual_stream::get_virtual_input_registry;
+use super::process_discovery::ApplicationDiscovery;
+use super::types::{ApplicationAudioError, ProcessInfo, TapStats};
+use super::virtual_stream::get_virtual_input_registry;
 
 #[cfg(target_os = "macos")]
-use super::tap::core_audio_tap::ApplicationAudioTap;
+use super::core_audio_tap::ApplicationAudioTap;
 
 /// High-level manager for application audio capture
 #[derive(Clone)]
@@ -155,42 +155,6 @@ impl ApplicationAudioManager {
     async fn check_audio_capture_permissions(&self) -> bool {
         *self.permission_granted.read().await
     }
-
-    /// Register virtual stream synchronously BEFORE capture starts
-    async fn register_virtual_input_stream_sync(
-        &self,
-        virtual_device_id: String,
-        channel_name: String,
-        bridge_buffer: Arc<tokio::sync::Mutex<Vec<f32>>>,
-    ) -> Result<()> {
-        info!(
-            "📡 SYNC: Registering virtual input stream: {} ({})",
-            channel_name, virtual_device_id
-        );
-
-        // Create the AudioInputStream immediately and register it
-        // {
-        //     let _audio_input_stream = Arc::new(
-        //         crate::audio::mixer::stream_management::AudioInputStream::new(
-        //             virtual_device_id.clone(),
-        //             channel_name.clone(),
-        //             crate::types::DEFAULT_SAMPLE_RATE,
-        //         )?,
-        //     );
-        //     // Drop before await to avoid Send+Sync issues
-        // }
-
-        // // Store in global registry IMMEDIATELY (STUBBED for command channel architecture)
-        // self.add_to_global_mixer_sync(virtual_device_id.clone(), ())
-        //     .await?;
-
-        // info!(
-        //     "✅ SYNC: Virtual stream {} registered and ready for mixer",
-        //     virtual_device_id
-        // );
-        Ok(())
-    }
-
     /// Synchronously add virtual stream to global mixer registry (STUBBED for command channel architecture)
     async fn add_to_global_mixer_sync(
         &self,

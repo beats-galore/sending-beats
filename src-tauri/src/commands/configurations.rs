@@ -371,7 +371,7 @@ pub async fn create_device_configuration(
         device_identifier: sea_orm::Set(device_id.to_string()),
         device_name: sea_orm::Set(Some(device_name.to_string())),
         sample_rate: sea_orm::Set(sample_rate),
-        buffer_size: sea_orm::Set(Some(8192)), // Default buffer size
+        buffer_size: sea_orm::Set(Some(96000)), // Default buffer size
         channel_format: sea_orm::Set(if channels == 1 {
             "mono".to_string()
         } else {

@@ -146,21 +146,22 @@ extern "C" fn audio_sample_callback(
 
     let count = CALLBACK_COUNTER.fetch_add(1, Ordering::Relaxed) + 1;
 
-    // Log first callback and every 1000th callback
+    // VERIFY: Log what we receive from Swift
     if count == 1 {
         info!(
-            "🎵 {}: First callback - {} samples, {} channels, {}Hz",
-            "SC_AUDIO_CALLBACK".cyan(),
+            "🎵 {}: First callback - sample_count={}, channels={}, sample_rate={}Hz",
+            "SC_AUDIO_CALLBACK".on_purple().cyan(),
             sample_count,
             channels,
             sample_rate
         );
     } else if count % 1000 == 0 {
         info!(
-            "🎵 {}: Received {} callbacks ({} samples each)",
-            "SC_AUDIO_CALLBACK".cyan(),
+            "🎵 {}: Callback #{} - sample_count={}, channels={}",
+            "SC_AUDIO_CALLBACK".on_purple().cyan(),
             count,
-            sample_count
+            sample_count,
+            channels
         );
     }
 
@@ -168,6 +169,16 @@ extern "C" fn audio_sample_callback(
 
     // Convert raw pointer to slice
     let audio_data = unsafe { std::slice::from_raw_parts(samples, sample_count as usize) };
+
+    // VERIFY: Log first 10 samples on first callback
+    if count == 1 {
+        let first_10: Vec<f32> = audio_data.iter().take(10).copied().collect();
+        info!(
+            "🎵 {}: First 10 samples received in Rust: {:?}",
+            "SC_AUDIO_VERIFY".on_purple().cyan(),
+            first_10
+        );
+    }
 
     // Calculate peak for debugging
     let mut peak = 0.0f32;
@@ -178,7 +189,7 @@ extern "C" fn audio_sample_callback(
     if count % 1000 == 0 {
         info!(
             "🎵 {}: Peak level from ScreenCaptureKit: {:.4}",
-            "SC_AUDIO_PEAK".cyan(),
+            "SC_AUDIO_PEAK".on_purple().cyan(),
             peak
         );
     }
@@ -196,7 +207,7 @@ extern "C" fn audio_sample_callback(
         if count % 1000 == 0 {
             info!(
                 "🎵 {}: Wrote {}/{} samples to ringbuffer",
-                "SC_RTRB_WRITE".cyan(),
+                "SC_RTRB_WRITE".on_purple().cyan(),
                 written,
                 sample_count
             );

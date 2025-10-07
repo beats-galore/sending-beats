@@ -245,21 +245,6 @@ impl ApplicationAudioInputBridge {
         }
     }
 
-    /// Set adaptive chunk size (compatible with AudioInputStream interface)
-    pub fn set_adaptive_chunk_size(&mut self, hardware_buffer_size: usize) {
-        let adaptive_size = if hardware_buffer_size > 32 && hardware_buffer_size <= 2048 {
-            hardware_buffer_size
-        } else {
-            (self.sample_rate as f32 * 0.005) as usize
-        };
-
-        self.adaptive_chunk_size = adaptive_size;
-        info!(
-            "🔧 ADAPTIVE BUFFER: Set chunk size to {} samples for app device {}",
-            self.adaptive_chunk_size, self.device_id
-        );
-    }
-
     // Getters (compatible with AudioInputStream interface)
     pub fn device_id(&self) -> &str {
         &self.device_id

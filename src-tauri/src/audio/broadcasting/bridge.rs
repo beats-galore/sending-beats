@@ -7,7 +7,7 @@ use tokio::time::{Duration, Instant};
 /// Real-time audio streaming bridge that connects the mixer output to Icecast
 ///
 /// This component captures live audio from the mixer and handles:
-/// - Sample rate conversion for Icecast compatibility  
+/// - Sample rate conversion for Icecast compatibility
 /// - Real-time encoding to MP3/AAC
 /// - Buffering and flow control
 /// - Stream health monitoring
@@ -17,7 +17,7 @@ pub struct AudioStreamingBridge {
     /// Stream configuration
     config: StreamConfig,
 
-    /// Icecast stream manager  
+    /// Icecast stream manager
     stream_manager: Arc<Mutex<StreamManager>>,
 
     /// Audio input receiver from mixer
@@ -98,7 +98,7 @@ impl AudioStreamingBridge {
             control_tx: Some(control_tx),
             control_rx: Some(control_rx),
             stats: Arc::new(Mutex::new(StreamingStats::default())),
-            conversion_buffer: Vec::with_capacity(8192),
+            conversion_buffer: Vec::with_capacity(96000),
         }
     }
 
