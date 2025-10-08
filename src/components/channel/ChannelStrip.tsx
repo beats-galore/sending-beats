@@ -132,7 +132,7 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
   const { classes } = useStyles();
 
   const { inputDevices, refreshDevices } = useAudioDevices();
-  const { activeSession, loadConfigurations } = useConfigurationStore();
+  const { activeSession, updateConfiguredDevice, removeConfiguredDevice } = useConfigurationStore();
   const applicationAudio = useApplicationAudio();
 
   // Select only the effects data we need from the store
@@ -226,13 +226,21 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
           console.log(
             `🔧 FRONTEND: Switching input device: ${currentDeviceId} → ${deviceId}${isAppAudio ? ' (app audio)' : ''}`
           );
-          await audioService.switchInputStream(currentDeviceId, deviceId, isAppAudio);
+
+          // Remove old device from UI state first
+          if (currentDeviceId) {
+            removeConfiguredDevice(currentDeviceId);
+            console.log(`🗑️ Removed old device from UI state: ${currentDeviceId}`);
+          }
+
+          const updatedDevice = await audioService.switchInputStream(currentDeviceId, deviceId, isAppAudio);
           console.debug(`✅ Channel ${channel.id} input device switched to: ${deviceId}`);
 
-          // **FIX**: Refetch active session to update configured devices in UI
-          console.log('🔄 Refetching configurations to update UI...');
-          await loadConfigurations();
-          console.log('✅ Configurations refetched successfully');
+          // Update the local state with the returned device configuration
+          if (updatedDevice) {
+            updateConfiguredDevice(updatedDevice);
+            console.log(`🔄 Updated UI state with new device configuration:`, updatedDevice);
+          }
         } catch (error) {
           console.error(`❌ Failed to switch input device for channel ${channel.id}:`, error);
         }
@@ -240,7 +248,7 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
         console.log(`🔧 FRONTEND: deviceId is null, not setting input device`);
       }
     },
-    [channel.id, configuredInputDevice, inputDevices]
+    [channel.id, configuredInputDevice, inputDevices, updateConfiguredDevice, removeConfiguredDevice]
   );
 
   // Handle gain slider change (during drag)

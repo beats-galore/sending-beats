@@ -23,3 +23,24 @@ pub use mixer::*;
 pub use recording::*;
 pub use streaming::*;
 pub use vu_channels::*;
+
+/// Log a command invocation at the API boundary
+/// This helps track which frontend calls are triggering backend operations
+#[macro_export]
+macro_rules! log_command {
+    ($cmd:expr) => {
+        tracing::info!(
+            "🔷 {} {}",
+            "API_COMMAND".on_white().purple(),
+            $cmd
+        );
+    };
+    ($cmd:expr, $($arg:tt)*) => {
+        tracing::info!(
+            "🔷 {} {}: {}",
+            "API_COMMAND".on_white().white(),
+            $cmd,
+            format!($($arg)*)
+        );
+    };
+}

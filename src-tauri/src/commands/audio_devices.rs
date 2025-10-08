@@ -1,4 +1,6 @@
-use crate::{AudioDeviceInfo, AudioState};
+use crate::{log_command, AudioDeviceInfo, AudioState};
+use colored::*;
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use tauri::State;
 
 #[tauri::command]
@@ -16,6 +18,7 @@ pub async fn enumerate_audio_devices(
 pub async fn refresh_audio_devices(
     audio_state: State<'_, AudioState>,
 ) -> Result<Vec<AudioDeviceInfo>, String> {
+    log_command!("refresh_audio_devices");
     let device_manager = audio_state.device_manager.lock().await;
     // Force a fresh device enumeration
     device_manager
@@ -29,6 +32,7 @@ pub async fn get_audio_device(
     audio_state: State<'_, AudioState>,
     device_id: String,
 ) -> Result<Option<AudioDeviceInfo>, String> {
+    log_command!("get_audio_device", "device: {}", device_id);
     let device_manager = audio_state.device_manager.lock().await;
     Ok(device_manager.get_device(&device_id).await)
 }
@@ -87,7 +91,15 @@ pub async fn safe_switch_input_device(
     old_device_id: Option<String>,
     new_device_id: String,
     is_virtual: Option<bool>,
-) -> Result<(), String> {
+) -> Result<Option<crate::entities::configured_audio_device::Model>, String> {
+    log_command!(
+        "safe_switch_input_device",
+        "old: {:?}, new: {}, virtual: {:?}",
+        old_device_id,
+        new_device_id,
+        is_virtual
+    );
+
     // Check if switching to the same device - no-op to prevent unnecessary stream restart
     if let Some(ref old_id) = old_device_id {
         if old_id == &new_device_id {
@@ -95,7 +107,17 @@ pub async fn safe_switch_input_device(
                 "📋 Device switch no-op: already using device {}",
                 new_device_id
             );
-            return Ok(());
+            // Return the existing device configuration
+            let existing_device = crate::entities::configured_audio_device::Entity::find()
+                .filter(
+                    crate::entities::configured_audio_device::Column::DeviceIdentifier
+                        .eq(&new_device_id),
+                )
+                .filter(crate::entities::configured_audio_device::Column::DeletedAt.is_null())
+                .one(audio_state.database.sea_orm())
+                .await
+                .map_err(|e| format!("Failed to query existing device: {}", e))?;
+            return Ok(existing_device);
         }
     }
 
@@ -234,27 +256,33 @@ pub async fn safe_switch_input_device(
 
     // **FIX**: Create database entry BEFORE sending command
     // The audio pipeline needs to query the database for channel number during device setup
-    if let Some((device_name, sample_rate, channels)) = device_info.clone() {
-        if let Err(e) = crate::commands::configurations::create_device_configuration(
-            &audio_state,
-            &new_device_id,
-            &device_name,
-            sample_rate as i32,
-            channels as u32,
-            true, // is_input
-            is_app_audio
-                || new_device_id.contains("BlackHole")
-                || new_device_id.contains("SoundflowerBed"),
-            old_channel_number, // Preserve channel assignment from old device
-        )
-        .await
-        {
-            return Err(format!(
-                "Failed to create device configuration in database: {}",
-                e
-            ));
-        }
-    }
+    let created_device_model =
+        if let Some((device_name, sample_rate, channels)) = device_info.clone() {
+            match crate::commands::configurations::create_device_configuration(
+                &audio_state,
+                &new_device_id,
+                &device_name,
+                sample_rate as i32,
+                channels as u32,
+                true, // is_input
+                is_app_audio
+                    || new_device_id.contains("BlackHole")
+                    || new_device_id.contains("SoundflowerBed"),
+                old_channel_number, // Preserve channel assignment from old device
+            )
+            .await
+            {
+                Ok(model) => model,
+                Err(e) => {
+                    return Err(format!(
+                        "Failed to create device configuration in database: {}",
+                        e
+                    ));
+                }
+            }
+        } else {
+            None
+        };
 
     // Create command based on device type
     let buffer_capacity = 96000;
@@ -299,7 +327,7 @@ pub async fn safe_switch_input_device(
     match response_rx.await {
         Ok(Ok(())) => {
             tracing::info!("✅ Successfully added input device: {}", new_device_id);
-            Ok(())
+            Ok(created_device_model)
         }
         Ok(Err(e)) => {
             // If audio pipeline fails, clean up the database entry we created
@@ -340,6 +368,8 @@ pub async fn safe_switch_output_device(
     audio_state: State<'_, AudioState>,
     new_device_id: String,
 ) -> Result<(), String> {
+    log_command!("safe_switch_output_device", "device: {}", new_device_id);
+
     // Note: Duplicate output device detection is handled at client level in mixer store
     tracing::info!("🔊 Switching to output device: {}", new_device_id);
 
@@ -404,7 +434,7 @@ pub async fn safe_switch_output_device(
         Ok(Ok(())) => {
             // Sync with database: create new device configuration
             if let Some((device_name, sample_rate, channels)) = device_info {
-                if let Err(e) = crate::commands::configurations::create_device_configuration(
+                match crate::commands::configurations::create_device_configuration(
                     &audio_state,
                     &new_device_id,
                     &device_name,
@@ -416,10 +446,15 @@ pub async fn safe_switch_output_device(
                 )
                 .await
                 {
-                    tracing::warn!(
-                        "Failed to create output device configuration in database: {}",
-                        e
-                    );
+                    Ok(_) => {
+                        // Device configuration created successfully
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to create output device configuration in database: {}",
+                            e
+                        );
+                    }
                 }
             }
             Ok(())
@@ -434,11 +469,7 @@ pub async fn remove_input_stream(
     audio_state: State<'_, AudioState>,
     device_id: String,
 ) -> Result<(), String> {
-    // **STREAMLINED ARCHITECTURE**: Bypass VirtualMixer and send command directly to IsolatedAudioManager
-    println!(
-        "🗑️ Removing input stream directly via AudioCommand: {}",
-        device_id
-    );
+    log_command!("remove_input_stream", "device: {}", device_id);
 
     // Create command for removal
     let (response_tx, response_rx) = tokio::sync::oneshot::channel();
@@ -485,7 +516,7 @@ pub async fn set_output_stream(
     audio_state: State<'_, AudioState>,
     device_id: String,
 ) -> Result<(), String> {
-    // **CRASH FIX**: Validate device ID
+    log_command!("set_output_stream", "device: {}", device_id);
     if device_id.trim().is_empty() {
         return Err("Device ID cannot be empty".to_string());
     }
@@ -570,128 +601,4 @@ pub async fn start_device_monitoring(audio_state: State<'_, AudioState>) -> Resu
 pub async fn get_device_monitoring_stats() -> Result<Option<crate::DeviceMonitorStats>, String> {
     use crate::get_monitoring_stats_impl;
     Ok(get_monitoring_stats_impl().await)
-}
-
-#[tauri::command]
-pub async fn remove_output_device(
-    audio_state: State<'_, crate::AudioState>,
-    device_id: String,
-) -> Result<(), String> {
-    // let mixer_guard = audio_state.mixer.lock().await;
-    // if let Some(ref mixer) = *mixer_guard {
-    //     mixer
-    //         .remove_output_device(&device_id)
-    //         .await
-    //         .map_err(|e| e.to_string())?;
-    //     println!("✅ Removed output device via Tauri command: {}", device_id);
-    // } else {
-    //     return Err("No mixer created".to_string());
-    // }
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn update_output_device(
-    audio_state: State<'_, crate::AudioState>,
-    device_id: String,
-    device_name: Option<String>,
-    gain: Option<f32>,
-    enabled: Option<bool>,
-    is_monitor: Option<bool>,
-) -> Result<(), String> {
-    // let mixer_guard = audio_state.mixer.lock().await;
-    // if let Some(ref mixer) = *mixer_guard {
-    //     // Get current device configuration
-    //     let current_config = mixer.get_output_device(&device_id).await;
-
-    //     if let Some(mut updated_device) = current_config {
-    //         // Update specified fields
-    //         if let Some(name) = device_name {
-    //             updated_device.device_name = name;
-    //         }
-    //         if let Some(g) = gain {
-    //             updated_device.gain = g;
-    //         }
-    //         if let Some(e) = enabled {
-    //             updated_device.enabled = e;
-    //         }
-    //         if let Some(m) = is_monitor {
-    //             updated_device.is_monitor = m;
-    //         }
-
-    //         mixer
-    //             .update_output_device(&device_id, updated_device)
-    //             .await
-    //             .map_err(|e| e.to_string())?;
-    //         println!("✅ Updated output device via Tauri command: {}", device_id);
-    //     } else {
-    //         return Err(format!("Output device not found: {}", device_id));
-    //     }
-    // } else {
-    //     return Err("No mixer created".to_string());
-    // }
-    Ok(())
-}
-// CoreAudio specific commands
-#[tauri::command]
-pub async fn enumerate_coreaudio_devices(
-    audio_state: State<'_, AudioState>,
-) -> Result<Vec<AudioDeviceInfo>, String> {
-    let device_manager = audio_state.device_manager.lock().await;
-    let all_devices = device_manager
-        .enumerate_devices()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    // Filter to only CoreAudio devices
-    let coreaudio_devices: Vec<AudioDeviceInfo> = all_devices
-        .into_iter()
-        .filter(|device| device.host_api == "CoreAudio (Direct)")
-        .collect();
-
-    Ok(coreaudio_devices)
-}
-
-#[tauri::command]
-pub async fn get_device_type_info(
-    audio_state: State<'_, AudioState>,
-    device_id: String,
-) -> Result<Option<String>, String> {
-    let device_manager = audio_state.device_manager.lock().await;
-    if let Some(device_info) = device_manager.get_device(&device_id).await {
-        Ok(Some(device_info.host_api))
-    } else {
-        Ok(None)
-    }
-}
-
-#[tauri::command]
-pub async fn is_coreaudio_device(
-    audio_state: State<'_, AudioState>,
-    device_id: String,
-) -> Result<bool, String> {
-    let device_manager = audio_state.device_manager.lock().await;
-    if let Some(device_info) = device_manager.get_device(&device_id).await {
-        Ok(device_info.host_api == "CoreAudio (Direct)")
-    } else {
-        Ok(false)
-    }
-}
-
-#[tauri::command]
-pub async fn enumerate_application_audio_devices(
-    audio_state: State<'_, AudioState>,
-) -> Result<Vec<crate::audio::tap::ProcessInfo>, String> {
-    #[cfg(target_os = "macos")]
-    {
-        let app_manager = audio_state.app_audio_manager.lock().await;
-        app_manager
-            .get_available_applications()
-            .await
-            .map_err(|e| e.to_string())
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Ok(Vec::new())
-    }
 }

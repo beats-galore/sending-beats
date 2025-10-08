@@ -261,7 +261,7 @@ pub trait AudioWorker {
                     //     device_id,
                     //     remaining.len()
                     // );
-                    // break;
+                    break;
                 }
 
                 let chunk = &remaining[..chunk_size];
@@ -361,17 +361,6 @@ pub trait AudioWorker {
                     continue;
                 }
 
-                // VERIFY: Log on first few iterations
-                if samples_processed < 5 {
-                    info!(
-                        "🔍 {}: {} received {} samples from RTRB (first 10: {:?})",
-                        "AUDIO_WORKER_INPUT".on_cyan().white(),
-                        device_id,
-                        samples.len(),
-                        samples.iter().take(10).copied().collect::<Vec<f32>>()
-                    );
-                }
-
                 // Step 1: Check if resampling is needed
                 let sample_rate_difference =
                     (device_sample_rate as f32 - initial_target_sample_rate as f32).abs();
@@ -465,17 +454,6 @@ pub trait AudioWorker {
                         }
                     }
                     let post_process_duration = post_process_start.elapsed();
-
-                    // VERIFY: Log output samples on first few iterations
-                    if samples_processed < 5 {
-                        info!(
-                            "🔍 {}: {} writing {} samples to output (first 10: {:?})",
-                            "AUDIO_WORKER_OUTPUT".on_cyan().white(),
-                            device_id,
-                            final_samples.len(),
-                            final_samples.iter().take(10).copied().collect::<Vec<f32>>()
-                        );
-                    }
 
                     // Step 6: Write to output RTRB queue
                     let write_start = std::time::Instant::now();

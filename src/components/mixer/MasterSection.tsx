@@ -76,7 +76,6 @@ export const MasterSection = memo(() => {
         options.unshift({
           value: configuredOutputDevice.deviceIdentifier,
           label: `${deviceName} (unavailable)`,
-          disabled: true,
         });
       }
     }

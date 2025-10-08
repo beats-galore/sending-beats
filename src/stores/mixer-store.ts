@@ -53,6 +53,8 @@ type MixerStore = {
   clearConfigurationError: () => void;
   setConfigurationError: (error: string) => void;
   restoreDevicesFromSession: (sessionConfig: CompleteConfigurationData | null) => Promise<void>;
+  updateConfiguredDevice: (device: ConfiguredAudioDevice) => void;
+  removeConfiguredDevice: (deviceIdentifier: string) => void;
 
   // Real-time data updates
   updateChannelLevels: (levels: Record<number, [number, number, number, number]>) => void;
@@ -629,6 +631,62 @@ export const useMixerStore = create<MixerStore>()(
         });
       }
     },
+
+    updateConfiguredDevice: (device: ConfiguredAudioDevice) => {
+      set((state) => {
+        if (!state.activeSession) {
+          return state;
+        }
+
+        // Remove any existing device with the same deviceIdentifier and isInput/channelNumber
+        // Then add the new device
+        const filteredDevices = state.activeSession.configuredDevices.filter(
+          (d) => !(d.deviceIdentifier === device.deviceIdentifier && d.isInput === device.isInput)
+        );
+
+        const updatedDevices = [...filteredDevices, device];
+
+        console.log('📝 updateConfiguredDevice:', {
+          deviceId: device.id,
+          deviceIdentifier: device.deviceIdentifier,
+          channelNumber: device.channelNumber,
+          before: state.activeSession.configuredDevices.length,
+          after: updatedDevices.length,
+        });
+
+        return {
+          activeSession: {
+            ...state.activeSession,
+            configuredDevices: updatedDevices,
+          },
+        };
+      });
+    },
+
+    removeConfiguredDevice: (deviceIdentifier: string) => {
+      set((state) => {
+        if (!state.activeSession) {
+          return state;
+        }
+
+        const updatedDevices = state.activeSession.configuredDevices.filter(
+          (d) => d.deviceIdentifier !== deviceIdentifier
+        );
+
+        console.log('🗑️ removeConfiguredDevice:', {
+          deviceIdentifier,
+          before: state.activeSession.configuredDevices.length,
+          after: updatedDevices.length,
+        });
+
+        return {
+          activeSession: {
+            ...state.activeSession,
+            configuredDevices: updatedDevices,
+          },
+        };
+      });
+    },
   }))
 );
 
@@ -646,5 +704,7 @@ export const useConfigurationStore = () => {
     saveSessionAsNewReusable: store.saveSessionAsNewReusable,
     clearError: store.clearConfigurationError,
     setError: store.setConfigurationError,
+    updateConfiguredDevice: store.updateConfiguredDevice,
+    removeConfiguredDevice: store.removeConfiguredDevice,
   };
 };
