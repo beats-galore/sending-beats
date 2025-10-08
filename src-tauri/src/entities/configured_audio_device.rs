@@ -18,7 +18,6 @@ pub struct Model {
     pub configuration_id: String,
     pub created_at: ChronoDateTimeUtc,
     pub updated_at: ChronoDateTimeUtc,
-    pub deleted_at: Option<ChronoDateTimeUtc>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

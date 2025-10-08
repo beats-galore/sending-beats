@@ -393,14 +393,7 @@ key principles:
 ```sql
 created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-deleted_at TIMESTAMP WITH TIME ZONE NULL
 ```
-
-#### 3. Soft Delete Pattern
-
-- Use `deleted_at` column instead of hard deletes
-- When querying, always filter `WHERE deleted_at IS NULL` for active records
-- To "delete", set `deleted_at = CURRENT_TIMESTAMP`
 
 #### 4. Text Fields for Enums
 
@@ -429,23 +422,7 @@ Migration files should follow this naming pattern with timestamp prefixes:
 
 Example: `20250925160001_initial_schema.sql`
 
-### Database Commands
-
-```bash
-# Create new migration file
-touch src-tauri/migrations/XXX_migration_name.sql
-
-# Apply migrations (happens automatically on app startup)
-# Check migration status by examining the database
-
-# Connect to database for inspection
-sqlite3 ~/.sendin_beats/data/sendin_beats.db
-
-# Useful inspection commands
-.tables                              # List all tables
-.schema table_name                   # Show table structure
-SELECT COUNT(*) FROM table_name WHERE deleted_at IS NULL;  # Count active records
-```
+### D
 
 ### Example Table Schema
 
@@ -460,7 +437,6 @@ CREATE TABLE example_table (
     -- Required timestamp columns
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    deleted_at TIMESTAMP WITH TIME ZONE NULL,
 
     -- Foreign key constraints
     FOREIGN KEY (foreign_key_id) REFERENCES other_table(id)
@@ -469,7 +445,6 @@ CREATE TABLE example_table (
 -- Required indexes
 CREATE INDEX idx_example_foreign_key ON example_table(foreign_key_id);
 CREATE INDEX idx_example_created ON example_table(created_at);
-CREATE INDEX idx_example_active ON example_table(deleted_at) WHERE deleted_at IS NULL;
 ```
 
 ### Keeping Database Schema & Rust Types in Sync
@@ -513,7 +488,7 @@ SQLx requires explicit type hints for UUID fields in SQLite:
 // Correct - with type annotation
 let config = sqlx::query_as::<_, AudioMixerConfiguration>(
     "SELECT id as \"id: Uuid\", name, description, configuration_type,
-     created_at, updated_at, deleted_at
+     created_at, updated_at
      FROM audio_mixer_configurations
      WHERE id = ?"
 ).fetch_optional(pool).await?;
@@ -521,7 +496,7 @@ let config = sqlx::query_as::<_, AudioMixerConfiguration>(
 // Incorrect - missing type annotation will cause runtime errors
 let config = sqlx::query_as::<_, AudioMixerConfiguration>(
     "SELECT id, name, description, configuration_type,
-     created_at, updated_at, deleted_at
+     created_at, updated_at
      FROM audio_mixer_configurations
      WHERE id = ?"
 ).fetch_optional(pool).await?; // ❌ Will fail at runtime
@@ -531,8 +506,6 @@ let config = sqlx::query_as::<_, AudioMixerConfiguration>(
 
 - **Missing UUID type annotations**: Always use `id as \"id: Uuid\"` in SELECT
   queries
-- **Forgetting soft delete filters**: Always include `WHERE deleted_at IS NULL`
-  for active records
 - **Inconsistent field types**: Ensure Rust field types match SQL column types
 - **Missing foreign key relationships**: Update both migration FKs and Rust
   struct relationships

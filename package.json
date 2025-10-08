@@ -12,8 +12,8 @@
     "logs:filter": "bash scripts/filter_logs.sh logs/output.log --f \"$KEYWORDS\" logs/filtered.log && cat logs/filtered.log",
     "logs:clean": "rm  -f logs/output.log && rm -f logs/filtered.log",
     "tauri": "RUSTFLAGS=\"-A warnings\" tauri",
-    "tauri:dev": "clear && pnpm logs:clean && src-swift/build.sh && pnpm tauri dev 2>&1 | tee -a logs/output.log",
-    "tauri:release": "clear && pnpm logs:clean && src-swift/build.sh && pnpm tauri dev --release 2>&1 | tee -a logs/output.log",
+    "tauri:dev": "clear && pnpm logs:clean && src-swift/build.sh && CARGO_TERM_COLOR=always FORCE_COLOR=1 pnpm tauri dev 2>&1 | tee -a logs/output.log",
+    "tauri:release": "clear && pnpm logs:clean && src-swift/build.sh && CARGO_TERM_COLOR=always FORCE_COLOR=1 pnpm tauri dev --release 2>&1 | tee -a logs/output.log",
     "test": "cargo test  --manifest-path ./src-tauri/Cargo.toml",
     "test:rust": "cargo test --verbose  --manifest-path ./src-tauri/Cargo.toml",
     "test:audio": "cargo test audio  --manifest-path ./src-tauri/Cargo.toml",
@@ -28,14 +28,11 @@
     "rust:fmt:check": "cargo fmt --manifest-path ./src-tauri/Cargo.toml -- --check",
     "rust:clippy": "cargo clippy --all-targets --all-features  --manifest-path ./src-tauri/Cargo.toml",
     "migration": "node -e \"const desc = process.argv[2] || 'migration'; const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14); console.log('Creating migration:', \\`src-tauri/migrations/\\${timestamp}_\\${desc}.sql\\`); require('fs').writeFileSync(\\`src-tauri/migrations/\\${timestamp}_\\${desc}.sql\\`, '-- ' + desc.replace(/_/g, ' ') + '\\\\n\\\\n')\"",
+    "migrate": "cargo sqlx migrate run --source ./src-tauri/migrations --database-url sqlite:$HOME/.sendin_beats/data/sendin_beats.db",
     "quality": "turbo run quality",
     "quality:fix": "turbo run quality:fix",
     "pre-commit": "turbo run pre-commit",
-    "clean": "turbo run clean",
-    "// Legacy aliases for backward compatibility": "",
-    "check": "cargo check  --manifest-path ./src-tauri/Cargo.toml",
-    "fmt": "cargo fmt  --manifest-path ./src-tauri/Cargo.toml",
-    "clippy": "cargo clippy --all-targets --all-features  --manifest-path ./src-tauri/Cargo.toml"
+    "clean": "turbo run clean"
   },
   "dependencies": {
     "@headlessui/react": "^1.7.0",

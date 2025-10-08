@@ -28,7 +28,6 @@ export type BroadcastConfiguration = {
   enableQualityMonitoring: boolean;
   createdAt: Timestamp; // ISO timestamp
   updatedAt: Timestamp; // ISO timestamp
-  deletedAt?: Timestamp; // ISO timestamp
 };
 
 export type Broadcast = {
@@ -74,7 +73,6 @@ export type Broadcast = {
 
   createdAt: Timestamp; // ISO timestamp
   updatedAt: Timestamp; // ISO timestamp
-  deletedAt?: Timestamp; // ISO timestamp
 };
 
 export type BroadcastOutput = {
@@ -88,7 +86,6 @@ export type BroadcastOutput = {
   audioData?: number[]; // Optional: store actual audio data for analysis
   createdAt: Timestamp; // ISO timestamp
   updatedAt: Timestamp; // ISO timestamp
-  deletedAt?: Timestamp; // ISO timestamp
 };
 
 // Broadcasting status types for real-time UI

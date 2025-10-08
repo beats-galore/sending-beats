@@ -14,7 +14,6 @@ pub struct Model {
     pub parameters: String, // JSON string
     pub created_at: ChronoDateTimeUtc,
     pub updated_at: ChronoDateTimeUtc,
-    pub deleted_at: Option<ChronoDateTimeUtc>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

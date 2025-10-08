@@ -16,7 +16,6 @@ impl AudioMixerConfigurationService {
     ) -> Result<Vec<audio_mixer_configuration::Model>> {
         let configs = audio_mixer_configuration::Entity::find()
             .filter(audio_mixer_configuration::Column::ConfigurationType.eq("reusable"))
-            .filter(audio_mixer_configuration::Column::DeletedAt.is_null())
             .order_by_desc(audio_mixer_configuration::Column::CreatedAt)
             .all(db)
             .await?;
@@ -30,7 +29,6 @@ impl AudioMixerConfigurationService {
     ) -> Result<Option<audio_mixer_configuration::Model>> {
         let config = audio_mixer_configuration::Entity::find()
             .filter(audio_mixer_configuration::Column::SessionActive.eq(true))
-            .filter(audio_mixer_configuration::Column::DeletedAt.is_null())
             .one(db)
             .await?;
 
@@ -43,7 +41,6 @@ impl AudioMixerConfigurationService {
         id: Uuid,
     ) -> Result<Option<audio_mixer_configuration::Model>> {
         let config = audio_mixer_configuration::Entity::find_by_id(id.to_string())
-            .filter(audio_mixer_configuration::Column::DeletedAt.is_null())
             .one(db)
             .await?;
 
@@ -56,7 +53,6 @@ impl AudioMixerConfigurationService {
     ) -> Result<Option<audio_mixer_configuration::Model>> {
         let config = audio_mixer_configuration::Entity::find()
             .filter(audio_mixer_configuration::Column::IsDefault.eq(true))
-            .filter(audio_mixer_configuration::Column::DeletedAt.is_null())
             .one(db)
             .await?;
 
@@ -69,7 +65,6 @@ impl AudioMixerConfigurationService {
     ) -> Result<Option<audio_mixer_configuration::Model>> {
         let config = audio_mixer_configuration::Entity::find()
             .filter(audio_mixer_configuration::Column::ConfigurationType.eq("session"))
-            .filter(audio_mixer_configuration::Column::DeletedAt.is_null())
             .order_by_desc(audio_mixer_configuration::Column::UpdatedAt)
             .one(db)
             .await?;
@@ -148,7 +143,6 @@ impl AudioMixerConfigurationService {
             is_default: Set(false),
             created_at: Set(now),
             updated_at: Set(now),
-            deleted_at: Set(None),
         };
 
         // Deactivate all other sessions first
@@ -177,7 +171,6 @@ impl AudioMixerConfigurationService {
         // Copy related configured audio devices
         let audio_devices = configured_audio_device::Entity::find()
             .filter(configured_audio_device::Column::ConfigurationId.eq(reusable_id.to_string()))
-            .filter(configured_audio_device::Column::DeletedAt.is_null())
             .all(&txn)
             .await?;
 
@@ -195,7 +188,6 @@ impl AudioMixerConfigurationService {
                 configuration_id: Set(session_id.to_string()),       // Link to new session
                 created_at: Set(now),
                 updated_at: Set(now),
-                deleted_at: Set(None),
             };
 
             new_device.insert(&txn).await?;
@@ -208,7 +200,6 @@ impl AudioMixerConfigurationService {
         // Copy related AudioEffectsDefault settings
         let audio_defaults = audio_effects_default::Entity::find()
             .filter(audio_effects_default::Column::ConfigurationId.eq(reusable_id.to_string()))
-            .filter(audio_effects_default::Column::DeletedAt.is_null())
             .all(&txn)
             .await?;
 
@@ -223,7 +214,6 @@ impl AudioMixerConfigurationService {
                 solo: Set(original_default.solo),
                 created_at: Set(now),
                 updated_at: Set(now),
-                deleted_at: Set(None),
             };
 
             new_default.insert(&txn).await?;
@@ -236,7 +226,6 @@ impl AudioMixerConfigurationService {
         // Copy related AudioEffectsCustom
         let audio_effects = audio_effects_custom::Entity::find()
             .filter(audio_effects_custom::Column::ConfigurationId.eq(reusable_id.to_string()))
-            .filter(audio_effects_custom::Column::DeletedAt.is_null())
             .all(&txn)
             .await?;
 
@@ -249,7 +238,6 @@ impl AudioMixerConfigurationService {
                 parameters: Set(original_effect.parameters),
                 created_at: Set(now),
                 updated_at: Set(now),
-                deleted_at: Set(None),
             };
 
             new_effect.insert(&txn).await?;
@@ -300,62 +288,34 @@ impl AudioMixerConfigurationService {
         // Start transaction to replace all related models
         let txn = db.begin().await?;
 
-        // 1. First, soft delete all existing related models from the reusable configuration
+        // 1. First, delete all existing related models from the reusable configuration
         let now = chrono::Utc::now();
 
-        // Soft delete existing configured_audio_devices
-        configured_audio_device::Entity::update_many()
-            .col_expr(
-                configured_audio_device::Column::DeletedAt,
-                Expr::val(now).into(),
-            )
-            .col_expr(
-                configured_audio_device::Column::UpdatedAt,
-                Expr::current_timestamp().into(),
-            )
+        // Delete existing configured_audio_devices
+        configured_audio_device::Entity::delete_many()
             .filter(configured_audio_device::Column::ConfigurationId.eq(&reusable_id))
-            .filter(configured_audio_device::Column::DeletedAt.is_null())
             .exec(&txn)
             .await?;
 
-        // Soft delete existing audio_effects_default
-        audio_effects_default::Entity::update_many()
-            .col_expr(
-                audio_effects_default::Column::DeletedAt,
-                Expr::val(now).into(),
-            )
-            .col_expr(
-                audio_effects_default::Column::UpdatedAt,
-                Expr::current_timestamp().into(),
-            )
+        // Delete existing audio_effects_default
+        audio_effects_default::Entity::delete_many()
             .filter(audio_effects_default::Column::ConfigurationId.eq(&reusable_id))
-            .filter(audio_effects_default::Column::DeletedAt.is_null())
             .exec(&txn)
             .await?;
 
-        // Soft delete existing audio_effects_custom
-        audio_effects_custom::Entity::update_many()
-            .col_expr(
-                audio_effects_custom::Column::DeletedAt,
-                Expr::val(now).into(),
-            )
-            .col_expr(
-                audio_effects_custom::Column::UpdatedAt,
-                Expr::current_timestamp().into(),
-            )
+        // Delete existing audio_effects_custom
+        audio_effects_custom::Entity::delete_many()
             .filter(audio_effects_custom::Column::ConfigurationId.eq(&reusable_id))
-            .filter(audio_effects_custom::Column::DeletedAt.is_null())
             .exec(&txn)
             .await?;
 
-        tracing::info!("✅ Soft deleted existing related models from reusable configuration");
+        tracing::info!("✅ Deleted existing related models from reusable configuration");
 
         // 2. Copy all related models from the active session to the reusable configuration
 
         // Copy configured_audio_devices from session to reusable
         let session_devices = configured_audio_device::Entity::find()
             .filter(configured_audio_device::Column::ConfigurationId.eq(&active_session.id))
-            .filter(configured_audio_device::Column::DeletedAt.is_null())
             .all(&txn)
             .await?;
 
@@ -373,7 +333,6 @@ impl AudioMixerConfigurationService {
                 configuration_id: Set(reusable_id.clone()),          // Link to reusable config
                 created_at: Set(now),
                 updated_at: Set(now),
-                deleted_at: Set(None),
             };
 
             new_device.insert(&txn).await?;
@@ -386,7 +345,6 @@ impl AudioMixerConfigurationService {
         // Copy audio_effects_default from session to reusable
         let session_defaults = audio_effects_default::Entity::find()
             .filter(audio_effects_default::Column::ConfigurationId.eq(&active_session.id))
-            .filter(audio_effects_default::Column::DeletedAt.is_null())
             .all(&txn)
             .await?;
 
@@ -401,7 +359,6 @@ impl AudioMixerConfigurationService {
                 solo: Set(original_default.solo),
                 created_at: Set(now),
                 updated_at: Set(now),
-                deleted_at: Set(None),
             };
 
             new_default.insert(&txn).await?;
@@ -414,7 +371,6 @@ impl AudioMixerConfigurationService {
         // Copy audio_effects_custom from session to reusable
         let session_effects = audio_effects_custom::Entity::find()
             .filter(audio_effects_custom::Column::ConfigurationId.eq(&active_session.id))
-            .filter(audio_effects_custom::Column::DeletedAt.is_null())
             .all(&txn)
             .await?;
 
@@ -427,7 +383,6 @@ impl AudioMixerConfigurationService {
                 parameters: Set(original_effect.parameters),
                 created_at: Set(now),
                 updated_at: Set(now),
-                deleted_at: Set(None),
             };
 
             new_effect.insert(&txn).await?;
@@ -473,7 +428,6 @@ impl AudioMixerConfigurationService {
             is_default: Set(false),
             created_at: Set(now),
             updated_at: Set(now),
-            deleted_at: Set(None),
         };
 
         let new_reusable_model = new_reusable.insert(&txn).await?;
@@ -498,7 +452,6 @@ impl AudioMixerConfigurationService {
         // Copy configured_audio_devices from session to new reusable
         let session_devices = configured_audio_device::Entity::find()
             .filter(configured_audio_device::Column::ConfigurationId.eq(&active_session_id))
-            .filter(configured_audio_device::Column::DeletedAt.is_null())
             .all(&txn)
             .await?;
 
@@ -516,7 +469,6 @@ impl AudioMixerConfigurationService {
                 configuration_id: Set(new_reusable_id.to_string()),  // Link to new reusable config
                 created_at: Set(now),
                 updated_at: Set(now),
-                deleted_at: Set(None),
             };
 
             new_device.insert(&txn).await?;
@@ -529,7 +481,6 @@ impl AudioMixerConfigurationService {
         // Copy audio_effects_default from session to new reusable
         let session_defaults = audio_effects_default::Entity::find()
             .filter(audio_effects_default::Column::ConfigurationId.eq(&active_session_id))
-            .filter(audio_effects_default::Column::DeletedAt.is_null())
             .all(&txn)
             .await?;
 
@@ -544,7 +495,6 @@ impl AudioMixerConfigurationService {
                 solo: Set(original_default.solo),
                 created_at: Set(now),
                 updated_at: Set(now),
-                deleted_at: Set(None),
             };
 
             new_default.insert(&txn).await?;
@@ -557,7 +507,6 @@ impl AudioMixerConfigurationService {
         // Copy audio_effects_custom from session to new reusable
         let session_effects = audio_effects_custom::Entity::find()
             .filter(audio_effects_custom::Column::ConfigurationId.eq(&active_session_id))
-            .filter(audio_effects_custom::Column::DeletedAt.is_null())
             .all(&txn)
             .await?;
 
@@ -570,7 +519,6 @@ impl AudioMixerConfigurationService {
                 parameters: Set(original_effect.parameters),
                 created_at: Set(now),
                 updated_at: Set(now),
-                deleted_at: Set(None),
             };
 
             new_effect.insert(&txn).await?;
@@ -607,7 +555,6 @@ impl AudioMixerConfigurationService {
             is_default: Set(false),
             created_at: Set(now),
             updated_at: Set(now),
-            deleted_at: Set(None),
         };
 
         let model = new_config.insert(db).await?;
@@ -625,7 +572,6 @@ impl ConfiguredAudioDeviceService {
         id: &str,
     ) -> Result<Option<configured_audio_device::Model>> {
         let device = configured_audio_device::Entity::find_by_id(id)
-            .filter(configured_audio_device::Column::DeletedAt.is_null())
             .one(db)
             .await?;
 
@@ -639,7 +585,6 @@ impl ConfiguredAudioDeviceService {
     ) -> Result<Vec<configured_audio_device::Model>> {
         let devices = configured_audio_device::Entity::find()
             .filter(configured_audio_device::Column::ConfigurationId.eq(configuration_id))
-            .filter(configured_audio_device::Column::DeletedAt.is_null())
             .order_by_desc(configured_audio_device::Column::CreatedAt)
             .all(db)
             .await?;
@@ -655,7 +600,6 @@ impl ConfiguredAudioDeviceService {
         // First, get the active session configuration
         let active_config = audio_mixer_configuration::Entity::find()
             .filter(audio_mixer_configuration::Column::SessionActive.eq(true))
-            .filter(audio_mixer_configuration::Column::DeletedAt.is_null())
             .one(db)
             .await?;
 
@@ -668,7 +612,6 @@ impl ConfiguredAudioDeviceService {
         let device = configured_audio_device::Entity::find()
             .filter(configured_audio_device::Column::ConfigurationId.eq(&active_config.id))
             .filter(configured_audio_device::Column::DeviceIdentifier.eq(device_identifier))
-            .filter(configured_audio_device::Column::DeletedAt.is_null())
             .one(db)
             .await?;
 
@@ -688,7 +631,44 @@ impl AudioEffectsDefaultService {
     ) -> Result<Option<audio_effects_default::Model>> {
         let effect = audio_effects_default::Entity::find()
             .filter(audio_effects_default::Column::DeviceId.eq(device_id))
-            .filter(audio_effects_default::Column::DeletedAt.is_null())
+            .one(db)
+            .await?;
+
+        Ok(effect)
+    }
+
+    /// Find effects by device identifier string (not UUID) in the active configuration
+    pub async fn find_by_device_identifier_in_active_config(
+        db: &DatabaseConnection,
+        device_identifier: &str,
+    ) -> Result<Option<audio_effects_default::Model>> {
+        // First, get the active session configuration
+        let active_config = audio_mixer_configuration::Entity::find()
+            .filter(audio_mixer_configuration::Column::SessionActive.eq(true))
+            .one(db)
+            .await?;
+
+        let active_config = match active_config {
+            Some(config) => config,
+            None => return Ok(None),
+        };
+
+        // Find the configured_audio_device by device_identifier in the active config
+        let device = configured_audio_device::Entity::find()
+            .filter(configured_audio_device::Column::ConfigurationId.eq(&active_config.id))
+            .filter(configured_audio_device::Column::DeviceIdentifier.eq(device_identifier))
+            .one(db)
+            .await?;
+
+        let device = match device {
+            Some(d) => d,
+            None => return Ok(None),
+        };
+
+        // Now find the effects for this device
+        let effect = audio_effects_default::Entity::find()
+            .filter(audio_effects_default::Column::DeviceId.eq(&device.id))
+            .filter(audio_effects_default::Column::ConfigurationId.eq(&active_config.id))
             .one(db)
             .await?;
 
@@ -701,7 +681,6 @@ impl AudioEffectsDefaultService {
     ) -> Result<Vec<audio_effects_default::Model>> {
         let effects = audio_effects_default::Entity::find()
             .filter(audio_effects_default::Column::ConfigurationId.eq(configuration_id))
-            .filter(audio_effects_default::Column::DeletedAt.is_null())
             .all(db)
             .await?;
 
@@ -714,7 +693,6 @@ impl AudioEffectsDefaultService {
         gain: f32,
     ) -> Result<audio_effects_default::Model> {
         let effect = audio_effects_default::Entity::find_by_id(effects_id)
-            .filter(audio_effects_default::Column::DeletedAt.is_null())
             .one(db)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Audio effects default not found"))?;
@@ -733,7 +711,6 @@ impl AudioEffectsDefaultService {
         pan: f32,
     ) -> Result<audio_effects_default::Model> {
         let effect = audio_effects_default::Entity::find_by_id(effects_id)
-            .filter(audio_effects_default::Column::DeletedAt.is_null())
             .one(db)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Audio effects default not found"))?;
@@ -752,7 +729,6 @@ impl AudioEffectsDefaultService {
         muted: bool,
     ) -> Result<audio_effects_default::Model> {
         let effect = audio_effects_default::Entity::find_by_id(effects_id)
-            .filter(audio_effects_default::Column::DeletedAt.is_null())
             .one(db)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Audio effects default not found"))?;
@@ -781,13 +757,11 @@ impl AudioEffectsDefaultService {
                     Expr::current_timestamp().into(),
                 )
                 .filter(audio_effects_default::Column::ConfigurationId.eq(configuration_id))
-                .filter(audio_effects_default::Column::DeletedAt.is_null())
                 .exec(&txn)
                 .await?;
         }
 
         let effect = audio_effects_default::Entity::find_by_id(effects_id)
-            .filter(audio_effects_default::Column::DeletedAt.is_null())
             .one(&txn)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Audio effects default not found"))?;
