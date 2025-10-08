@@ -368,32 +368,59 @@ impl MixingLayer {
                 let mixing_duration = if !synchronized_samples.is_empty() {
                     let mixing_start = std::time::Instant::now();
 
-                    // **TEMPORAL SYNC FIX**: Use synchronized samples instead of raw available samples
+                    // **TEMPORAL SYNC FIX**: Concatenate chunks from same device before mixing
                     let prep_start = std::time::Instant::now();
-                    let input_samples_for_mixer: Vec<(String, &[f32])> = synchronized_samples
+
+                    // Group samples by device and concatenate them
+                    let mut device_samples: std::collections::HashMap<String, Vec<f32>> =
+                        std::collections::HashMap::new();
+                    for (device_id, processed_audio) in synchronized_samples.iter() {
+                        device_samples
+                            .entry(device_id.clone())
+                            .or_insert_with(Vec::new)
+                            .extend_from_slice(&processed_audio.samples);
+                    }
+
+                    // Convert to slice references for mixer
+                    let input_samples_for_mixer: Vec<(String, &[f32])> = device_samples
                         .iter()
-                        .map(|(device_id, processed_audio)| {
-                            (device_id.clone(), processed_audio.samples.as_slice())
-                        })
+                        .map(|(device_id, samples)| (device_id.clone(), samples.as_slice()))
                         .collect();
                     let prep_duration = prep_start.elapsed();
 
                     let active_inputs = input_samples_for_mixer.len();
 
-                    // **DIAGNOSTIC**: Log input sample counts before mixing
+                    // **DIAGNOSTIC**: Log input sample counts before mixing with detailed chunk info
                     static PREMIX_LOG_COUNT: std::sync::atomic::AtomicU64 =
                         std::sync::atomic::AtomicU64::new(0);
                     let premix_count =
                         PREMIX_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     if premix_count < 20 || premix_count % 500 == 0 {
-                        let sample_details: Vec<String> = input_samples_for_mixer
+                        // Count chunks per device
+                        let mut device_chunks: std::collections::HashMap<String, Vec<usize>> =
+                            std::collections::HashMap::new();
+                        for (id, samples) in input_samples_for_mixer.iter() {
+                            device_chunks
+                                .entry(id.clone())
+                                .or_insert_with(Vec::new)
+                                .push(samples.len());
+                        }
+
+                        let sample_details: Vec<String> = device_chunks
                             .iter()
-                            .map(|(id, samples)| format!("{}: {} samples", id, samples.len()))
+                            .map(|(id, chunks)| {
+                                if chunks.len() == 1 {
+                                    format!("{}: {} samples", id, chunks[0])
+                                } else {
+                                    format!("{}: {} chunks {:?}", id, chunks.len(), chunks)
+                                }
+                            })
                             .collect();
                         info!(
-                            "🎛️ {}: Preparing to mix {} inputs: [{}]",
+                            "🎛️ {}: Preparing to mix {} total chunks from {} devices: [{}]",
                             "PRE_MIX".magenta(),
-                            active_inputs,
+                            input_samples_for_mixer.len(),
+                            device_chunks.len(),
                             sample_details.join(", ")
                         );
                     }
@@ -431,12 +458,19 @@ impl MixingLayer {
                             while !remaining.is_empty() && samples_written < final_samples.len() {
                                 let chunk_size = remaining.len().min(producer_lock.slots());
                                 if chunk_size == 0 {
-                                    // warn!(
-                                    //     "⚠️ {}: Output '{}' RTRB queue full, dropping {} remaining samples",
-                                    //     "MIXING_LAYER".on_green().white(),
-                                    //     device_id,
-                                    //     remaining.len()
-                                    // );
+                                    static QUEUE_FULL_LOG: std::sync::atomic::AtomicU64 =
+                                        std::sync::atomic::AtomicU64::new(0);
+                                    let log_count = QUEUE_FULL_LOG
+                                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                    if log_count % 1000 == 0 {
+                                        warn!(
+                                            "⚠️ {}: Output '{}' RTRB queue full, dropping {} remaining samples (occurrence #{})",
+                                            "MIXING_LAYER".on_green().white(),
+                                            device_id,
+                                            remaining.len(),
+                                            log_count
+                                        );
+                                    }
                                     break;
                                 }
 
@@ -453,16 +487,6 @@ impl MixingLayer {
                             // Record samples written for queue tracking
                             if let Some(tracker) = output_queue_trackers.get(device_id) {
                                 tracker.record_samples_written(samples_written);
-                            }
-
-                            if samples_written < final_samples.len() {
-                                // warn!(
-                                //     "⚠️ {}: Partial write to output '{}': {} of {} samples",
-                                //     "MIXING_LAYER".on_green().white(),
-                                //     device_id,
-                                //     samples_written,
-                                //     final_samples.len()
-                                // );
                             }
                         }
                         let broadcast_duration = broadcast_start.elapsed();

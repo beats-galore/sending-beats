@@ -255,12 +255,19 @@ pub trait AudioWorker {
             while !remaining.is_empty() && samples_written < samples.len() {
                 let chunk_size = remaining.len().min(producer.slots());
                 if chunk_size == 0 {
-                    // warn!(
-                    //     "⚠️ {}: {} RTRB queue full, dropping {} remaining samples",
-                    //     "AUDIO_WORKER".on_cyan().white(),
-                    //     device_id,
-                    //     remaining.len()
-                    // );
+                    static QUEUE_FULL_LOG: std::sync::atomic::AtomicU64 =
+                        std::sync::atomic::AtomicU64::new(0);
+                    let log_count =
+                        QUEUE_FULL_LOG.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if log_count % 1000 == 0 {
+                        warn!(
+                            "⚠️ {}: {} RTRB queue full, dropping {} remaining samples (occurrence #{})",
+                            "AUDIO_WORKER".on_cyan().white(),
+                            device_id,
+                            remaining.len(),
+                            log_count
+                        );
+                    }
                     break;
                 }
 
