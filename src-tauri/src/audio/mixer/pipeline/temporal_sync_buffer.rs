@@ -14,6 +14,7 @@ use std::collections::{HashMap, VecDeque};
 use tracing::{info, warn};
 
 use super::queue_types::ProcessedAudioSamples;
+use crate::audio::mixer::queue_manager::DeliveryCadence;
 
 /// Temporal buffer for synchronizing samples from multiple devices
 /// Buffers samples until we have temporal alignment across devices
@@ -27,6 +28,8 @@ pub struct TemporalSyncBuffer {
     max_buffer_samples: usize,
     /// Track oldest sample timestamp for garbage collection
     oldest_sample_time: Option<std::time::Instant>,
+    /// Delivery cadence per device for accumulation decisions
+    device_cadences: HashMap<String, DeliveryCadence>,
 }
 
 impl TemporalSyncBuffer {
@@ -41,7 +44,25 @@ impl TemporalSyncBuffer {
             sync_window_ms,
             max_buffer_samples,
             oldest_sample_time: None,
+            device_cadences: HashMap::new(),
         }
+    }
+
+    /// Update cadence information for a device
+    pub fn update_cadence(&mut self, device_id: &str, cadence: DeliveryCadence) {
+        // Log every 1000th update per device
+        let update_count = cadence.write_count;
+        if update_count % 1000 == 0 {
+            info!(
+                "🎯 {}: Updating cadence for '{}' - chunk: {:.2}ms, interval: {:.2}ms, writes: {}",
+                "CADENCE_UPDATE".on_yellow().green(),
+                device_id,
+                cadence.chunk_duration_ms(),
+                cadence.avg_interval_ms,
+                cadence.write_count
+            );
+        }
+        self.device_cadences.insert(device_id.to_string(), cadence);
     }
 
     /// Add samples from a device to the temporal buffer
@@ -69,7 +90,7 @@ impl TemporalSyncBuffer {
         if log_count < 20 || log_count % 500 == 0 {
             info!(
                 "📥 {}: Device '{}' adding {} samples (channels: {}, buffer depth: {})",
-                "TEMPORAL_ADD".blue(),
+                "TEMPORAL_ADD".on_yellow().green(),
                 device_id,
                 samples.samples.len(),
                 samples.channels,
@@ -97,7 +118,7 @@ impl TemporalSyncBuffer {
 
                     warn!(
                         "⚠️ {}: Device '{}' buffer overflow (#{}).  Buffer states: [{}]",
-                        "TEMPORAL_BUFFER".red(),
+                        "TEMPORAL_BUFFER".on_yellow().green(),
                         device_id,
                         OVERFLOW_LOG_COUNT,
                         buffer_states.join(", ")
@@ -107,115 +128,248 @@ impl TemporalSyncBuffer {
         }
     }
 
+    /// Calculate the target time duration for mixing based on largest chunk duration
+    /// Returns the time duration in milliseconds that should be represented by each device
+    fn calculate_target_duration_ms(&self) -> Option<f64> {
+        let mut max_chunk_duration = 0.0;
+        let mut found_cadence = false;
+
+        for cadence in self.device_cadences.values() {
+            if cadence.is_initialized() {
+                found_cadence = true;
+                let chunk_dur = cadence.chunk_duration_ms();
+                if chunk_dur > max_chunk_duration {
+                    max_chunk_duration = chunk_dur;
+                }
+            }
+        }
+
+        if found_cadence && max_chunk_duration > 0.0 {
+            Some(max_chunk_duration)
+        } else {
+            None
+        }
+    }
+
+    /// Check if we have enough accumulated samples from a device for the target duration
+    fn has_sufficient_samples(&self, device_id: &str, target_duration_ms: f64) -> bool {
+        if let Some(buffer) = self.device_buffers.get(device_id) {
+            if let Some(cadence) = self.device_cadences.get(device_id) {
+                if !cadence.is_initialized() {
+                    return !buffer.is_empty();
+                }
+
+                let total_samples: usize = buffer.iter().map(|s| s.samples.len()).sum();
+                let samples_per_ms = cadence.samples_per_ms();
+
+                if samples_per_ms > 0.0 {
+                    let available_duration_ms = total_samples as f64 / samples_per_ms;
+                    available_duration_ms >= target_duration_ms
+                } else {
+                    !buffer.is_empty()
+                }
+            } else {
+                !buffer.is_empty()
+            }
+        } else {
+            false
+        }
+    }
+
     /// Extract synchronized samples from all devices within the sync window
     /// Returns samples that have timestamps within sync_window_ms of each other
     ///
-    /// This is the core synchronization logic:
-    /// 1. Find oldest sample across all devices (ignoring stale devices)
-    /// 2. Extract samples from each device within sync_window of that oldest sample
-    /// 3. Treat devices with only stale samples (>2x sync window old) as inactive
+    /// This is the core synchronization logic with cadence awareness:
+    /// 1. Find the slowest device's callback interval (target duration)
+    /// 2. Accumulate samples from faster devices until they cover the target duration
+    /// 3. Extract samples from all devices when each has sufficient accumulated samples
+    /// 4. Treat devices with only stale samples (>2x sync window old) as inactive
     pub fn extract_synchronized_samples(&mut self) -> Vec<(String, ProcessedAudioSamples)> {
         if self.device_buffers.is_empty() {
             return Vec::new();
         }
 
         let now = std::time::Instant::now();
-        let stale_threshold = std::time::Duration::from_millis(self.sync_window_ms * 2);
 
-        // Find the oldest sample across all devices, but ignore devices with only stale samples
-        let mut oldest_time: Option<std::time::Instant> = None;
-        for (_, buffer) in self.device_buffers.iter() {
-            if let Some(oldest_sample) = buffer.front() {
-                // Skip devices that have stale samples (likely silent/inactive)
-                if now.duration_since(oldest_sample.timestamp) <= stale_threshold {
-                    if oldest_time.is_none() || oldest_sample.timestamp < oldest_time.unwrap() {
-                        oldest_time = Some(oldest_sample.timestamp);
-                    }
+        // Calculate stale threshold based on slowest device's delivery cadence
+        // This prevents marking a slow device as stale when it's just between deliveries
+        let mut max_delivery_interval_ms = self.sync_window_ms * 2; // Default fallback
+        for cadence in self.device_cadences.values() {
+            if cadence.is_initialized() {
+                // Use the callback interval + buffer for stale detection
+                let delivery_interval = cadence.avg_interval_ms * 3.0; // 3x interval as threshold
+                if delivery_interval > max_delivery_interval_ms as f64 {
+                    max_delivery_interval_ms = delivery_interval as u64;
                 }
             }
         }
 
-        let sync_time = match oldest_time {
-            Some(time) => time,
-            None => return Vec::new(), // No fresh samples available
-        };
+        let stale_threshold = std::time::Duration::from_millis(max_delivery_interval_ms);
 
-        let sync_window = std::time::Duration::from_millis(self.sync_window_ms);
+        static STALE_THRESHOLD_LOG: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        let log_count = STALE_THRESHOLD_LOG.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if log_count < 5 || log_count % 1000 == 0 {
+            info!(
+                "⏱️ {}: Stale threshold = {}ms (devices: {})",
+                "TEMPORAL_STALE".on_yellow().green(),
+                max_delivery_interval_ms,
+                self.device_cadences.len()
+            );
+        }
+
+        // Calculate target duration based on slowest device's cadence
+        let target_duration = self.calculate_target_duration_ms();
+
+        // Check which devices are active (have fresh samples)
+        let mut active_device_ids: Vec<String> = Vec::new();
+        for (device_id, buffer) in self.device_buffers.iter() {
+            if let Some(oldest_sample) = buffer.front() {
+                if now.duration_since(oldest_sample.timestamp) <= stale_threshold {
+                    active_device_ids.push(device_id.clone());
+                }
+            }
+        }
+
+        if active_device_ids.is_empty() {
+            return Vec::new();
+        }
+
+        // If we have cadence information, check if actively delivering devices have sufficient samples
+        // Only wait for devices that have received samples recently (within last sync window)
+        if let Some(target_dur) = target_duration {
+            let sync_window_duration = std::time::Duration::from_millis(self.sync_window_ms);
+
+            // Identify devices that are actively delivering (received samples within sync window)
+            let mut actively_delivering: Vec<String> = Vec::new();
+            for device_id in &active_device_ids {
+                if let Some(buffer) = self.device_buffers.get(device_id) {
+                    if let Some(latest_sample) = buffer.back() {
+                        if now.duration_since(latest_sample.timestamp) <= sync_window_duration {
+                            actively_delivering.push(device_id.clone());
+                        }
+                    }
+                }
+            }
+
+            // If no devices are actively delivering, fall back to simple extraction
+            if actively_delivering.is_empty() {
+                static NO_ACTIVE_LOG: std::sync::atomic::AtomicU64 =
+                    std::sync::atomic::AtomicU64::new(0);
+                let log_count = NO_ACTIVE_LOG.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if log_count < 10 || log_count % 500 == 0 {
+                    info!(
+                        "⏸️ {}: No actively delivering devices, extracting available samples",
+                        "CADENCE_FALLBACK".on_yellow().green()
+                    );
+                }
+            } else {
+                // Only wait for actively delivering devices to have sufficient samples
+                let mut all_active_ready = true;
+                for device_id in &actively_delivering {
+                    if !self.has_sufficient_samples(device_id, target_dur * 0.9) {
+                        // 90% threshold for tolerance
+                        all_active_ready = false;
+
+                        static INSUFFICIENT_LOG: std::sync::atomic::AtomicU64 =
+                            std::sync::atomic::AtomicU64::new(0);
+                        let log_count =
+                            INSUFFICIENT_LOG.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if log_count < 20 || log_count % 1000 == 0 {
+                            if let Some(buffer) = self.device_buffers.get(device_id) {
+                                let total_samples: usize =
+                                    buffer.iter().map(|s| s.samples.len()).sum();
+                                if let Some(cadence) = self.device_cadences.get(device_id) {
+                                    let available_dur =
+                                        total_samples as f64 / cadence.samples_per_ms();
+                                    info!(
+                                        "⏳ {}: Device '{}' waiting for samples (have {:.2}ms, need {:.2}ms, {} active)",
+                                        "CADENCE_WAIT".on_yellow().green(),
+                                        device_id,
+                                        available_dur,
+                                        target_dur * 0.9,
+                                        actively_delivering.len()
+                                    );
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+
+                // If not all actively delivering devices are ready, don't extract anything yet
+                if !all_active_ready {
+                    return Vec::new();
+                }
+            }
+        }
+
+        // All devices have sufficient samples - extract based on target duration
         let mut synchronized_samples = Vec::new();
 
-        // Extract ALL samples from each device that fall within the sync window
-        // This allows proper mixing of devices with different callback rates
-        // (e.g., mic at 10ms intervals vs app at 20ms intervals)
-        for (device_id, buffer) in self.device_buffers.iter_mut() {
-            let mut extracted_count = 0;
-            while let Some(sample) = buffer.front() {
-                // Calculate time difference (handle both past and future samples)
-                let time_diff = if sample.timestamp >= sync_time {
-                    sample.timestamp.duration_since(sync_time)
-                } else {
-                    sync_time.duration_since(sample.timestamp)
-                };
+        for device_id in &active_device_ids {
+            let buffer = self.device_buffers.get_mut(device_id).unwrap();
 
-                // Check if this sample is within the sync window
-                if time_diff <= sync_window {
-                    if let Some(extracted_sample) = buffer.pop_front() {
-                        extracted_count += 1;
-                        synchronized_samples.push((device_id.clone(), extracted_sample));
+            if let Some(target_dur) = target_duration {
+                if let Some(cadence) = self.device_cadences.get(device_id) {
+                    let target_samples = (target_dur * cadence.samples_per_ms()).ceil() as usize;
+                    let mut accumulated_samples = 0;
+                    let mut extracted_count = 0;
+
+                    while accumulated_samples < target_samples && !buffer.is_empty() {
+                        if let Some(extracted_sample) = buffer.pop_front() {
+                            accumulated_samples += extracted_sample.samples.len();
+                            extracted_count += 1;
+                            synchronized_samples.push((device_id.clone(), extracted_sample));
+                        }
                     }
-                } else {
-                    // Sample is outside sync window, stop extracting from this device
-                    break;
+
+                    static CADENCE_EXTRACT_LOG: std::sync::atomic::AtomicU64 =
+                        std::sync::atomic::AtomicU64::new(0);
+                    let log_count =
+                        CADENCE_EXTRACT_LOG.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if log_count < 20 || log_count % 500 == 0 {
+                        info!(
+                            "📤 {}: Device '{}' extracted {} chunks ({} samples, target {:.0}ms)",
+                            "CADENCE_EXTRACT".on_yellow().green(),
+                            device_id,
+                            extracted_count,
+                            accumulated_samples,
+                            target_dur
+                        );
+                    }
+                    continue;
                 }
             }
 
-            // **DIAGNOSTIC**: Log extraction details per device
-            if extracted_count > 0 {
-                static EXTRACT_LOG_COUNT: std::sync::atomic::AtomicU64 =
-                    std::sync::atomic::AtomicU64::new(0);
-                let log_count =
-                    EXTRACT_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if log_count < 20 || log_count % 500 == 0 {
-                    info!(
-                        "📤 {}: Device '{}' extracted {} chunks from sync window",
-                        "TEMPORAL_EXTRACT".green(),
-                        device_id,
-                        extracted_count
-                    );
-                }
+            // Fallback: extract one chunk if no cadence info
+            if let Some(extracted_sample) = buffer.pop_front() {
+                synchronized_samples.push((device_id.clone(), extracted_sample));
             }
         }
 
-        // Return synchronized samples if we have ANY device ready
-        // The mixing layer will handle filling silence for missing devices
-        if !synchronized_samples.is_empty() {
-            // Log when we have partial sync (some devices not responding)
-            if synchronized_samples.len() < self.device_buffers.len() {
-                static PARTIAL_SYNC_LOG: std::sync::atomic::AtomicU64 =
-                    std::sync::atomic::AtomicU64::new(0);
-                let log_count = PARTIAL_SYNC_LOG.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if log_count < 10 || log_count % 500 == 0 {
-                    let active_devices: Vec<String> = synchronized_samples
-                        .iter()
-                        .map(|(id, _)| id.clone())
-                        .collect();
-                    let inactive_devices: Vec<String> = self
-                        .device_buffers
-                        .keys()
-                        .filter(|id| !active_devices.contains(id))
-                        .cloned()
-                        .collect();
-                    info!(
-                        "🔀 {}: Partial sync - active: [{}], inactive: [{}]",
-                        "TEMPORAL_PARTIAL_SYNC".yellow(),
-                        active_devices.join(", "),
-                        inactive_devices.join(", ")
-                    );
-                }
+        // Log partial sync if some devices are inactive
+        if active_device_ids.len() < self.device_buffers.len() {
+            static PARTIAL_SYNC_LOG: std::sync::atomic::AtomicU64 =
+                std::sync::atomic::AtomicU64::new(0);
+            let log_count = PARTIAL_SYNC_LOG.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if log_count < 10 || log_count % 500 == 0 {
+                let inactive_devices: Vec<String> = self
+                    .device_buffers
+                    .keys()
+                    .filter(|id| !active_device_ids.contains(id))
+                    .cloned()
+                    .collect();
+                info!(
+                    "🔀 {}: Partial sync - active: [{}], inactive: [{}]",
+                    "TEMPORAL_PARTIAL_SYNC".on_yellow().green(),
+                    active_device_ids.join(", "),
+                    inactive_devices.join(", ")
+                );
             }
-            synchronized_samples
-        } else {
-            Vec::new()
         }
+
+        synchronized_samples
     }
 
     /// Remove old samples that are beyond the sync window to prevent memory bloat
@@ -241,7 +395,7 @@ impl TemporalSyncBuffer {
         if let Some(buffer) = self.device_buffers.remove(device_id) {
             warn!(
                 "🗑️ {}: Removed device '{}' from temporal buffer ({} buffered samples discarded)",
-                "TEMPORAL_BUFFER".red(),
+                "TEMPORAL_BUFFER".on_yellow().green(),
                 device_id,
                 buffer.len()
             );

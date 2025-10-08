@@ -299,6 +299,13 @@ impl MixingLayer {
                 }
                 let command_duration = command_start.elapsed();
 
+                // **TEMPORAL SYNC STEP 0**: Update cadence info from all trackers (once per cycle)
+                for (device_id, tracker) in input_queue_trackers.iter() {
+                    if let Some(cadence) = tracker.get_cadence() {
+                        temporal_buffer.update_cadence(device_id, cadence);
+                    }
+                }
+
                 // **TEMPORAL SYNC STEP 1**: Collect samples from RTRB and add to temporal buffer
                 let collection_start = std::time::Instant::now();
                 for (device_id, consumer) in input_rtrb_consumers.iter() {

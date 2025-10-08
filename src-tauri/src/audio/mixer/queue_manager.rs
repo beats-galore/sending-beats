@@ -2,7 +2,7 @@
 use colored::*;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tracing::{info, trace, warn};
 
@@ -66,6 +66,103 @@ impl QueueInfo {
     }
 }
 
+/// Cadence tracking for a device's delivery pattern
+#[derive(Debug, Clone)]
+pub struct DeliveryCadence {
+    pub samples_per_write: usize,
+    pub last_write_time: Option<std::time::Instant>,
+    pub avg_interval_ms: f64,
+    pub write_count: u64,
+    pub sample_rate: u32,
+    pub device_id: String,
+}
+
+impl DeliveryCadence {
+    fn new(sample_rate: u32, device_id: String) -> Self {
+        Self {
+            samples_per_write: 0,
+            last_write_time: None,
+            avg_interval_ms: 0.0,
+            write_count: 0,
+            sample_rate,
+            device_id,
+        }
+    }
+
+    fn update(&mut self, sample_count: usize, timestamp: std::time::Instant) {
+        self.samples_per_write = sample_count;
+
+        if let Some(last_time) = self.last_write_time {
+            let interval_ms = timestamp.duration_since(last_time).as_secs_f64() * 1000.0;
+
+            // Exponential moving average (alpha = 0.1 for smooth averaging)
+            if self.write_count > 0 {
+                self.avg_interval_ms = self.avg_interval_ms * 0.9 + interval_ms * 0.1;
+            } else {
+                self.avg_interval_ms = interval_ms;
+            }
+        }
+
+        self.last_write_time = Some(timestamp);
+        self.write_count += 1;
+    }
+
+    pub fn is_initialized(&self) -> bool {
+        self.write_count >= 3 // Need a few samples to establish pattern
+    }
+
+    pub fn samples_per_ms(&self) -> f64 {
+        if self.sample_rate > 0 {
+            // Calculate based on actual sample rate, not callback interval
+            // e.g., 48000 Hz = 48 samples per ms
+            self.sample_rate as f64 / 1000.0
+        } else {
+            0.0
+        }
+    }
+
+    /// Get the actual audio duration in ms that each chunk represents
+    pub fn chunk_duration_ms(&self) -> f64 {
+        if self.sample_rate > 0 && self.samples_per_write > 0 {
+            // stereo interleaved: divide by 2 for frame count, then convert to ms
+            let frames = self.samples_per_write / 2;
+            let duration = (frames as f64 / self.sample_rate as f64) * 1000.0;
+
+            static DURATION_LOG: std::sync::atomic::AtomicU64 =
+                std::sync::atomic::AtomicU64::new(0);
+            let log_count = DURATION_LOG.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if log_count < 5 {
+                info!(
+                    "🎯 {}: Cadence duration calc (device: {}): {} samples ({} frames) @ {} Hz = {:.2}ms",
+                    "CADENCE_DURATION".on_purple().white(),
+                    self.device_id,
+                    self.samples_per_write,
+                    frames,
+                    self.sample_rate,
+                    duration,
+
+                );
+            }
+
+            duration
+        } else {
+            static ZERO_LOG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let log_count = ZERO_LOG.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if log_count < 5 {
+                warn!(
+                    "⚠️ {}: Cadence duration (device: {}) is 0! sample_rate={}, samples_per_write={}",
+                    "CADENCE_DURATION".on_purple().white(),
+                    self.device_id,
+                    self.sample_rate,
+                    self.samples_per_write,
+
+                );
+            }
+            0.0
+        }
+    }
+}
+
 /// Thread-safe queue state tracker using atomic counters
 /// Alternative approach for real-time contexts that can't use async commands
 #[derive(Clone)]
@@ -83,6 +180,10 @@ pub struct AtomicQueueTracker {
     kp: f32,
     ki: f32,
     max_ratio_adjust: f32,
+
+    // Delivery cadence tracking
+    cadence: Arc<Mutex<DeliveryCadence>>,
+    sample_rate: Arc<AtomicU32>, // Store sample rate for cadence calculations
 }
 
 impl AtomicQueueTracker {
@@ -94,6 +195,7 @@ impl AtomicQueueTracker {
             queue_id,
             capacity
         );
+        let device_id = queue_id.clone();
         Self {
             queue_id,
             capacity,
@@ -104,6 +206,22 @@ impl AtomicQueueTracker {
             kp: 0.0005,                                                 // proportional gain (tune!)
             ki: 0.000001,                                               // integral gain (tune!)
             max_ratio_adjust: 0.01, // max ±1% ratio change per update
+            cadence: Arc::new(Mutex::new(DeliveryCadence::new(0, device_id))),
+            sample_rate: Arc::new(AtomicU32::new(0)),
+        }
+    }
+
+    /// Set the sample rate for this tracker (must be called before cadence tracking works properly)
+    pub fn set_sample_rate(&self, rate: u32) {
+        self.sample_rate.store(rate, Ordering::Relaxed);
+        if let Ok(mut cadence) = self.cadence.lock() {
+            cadence.sample_rate = rate;
+            info!(
+                "🎯 {}: Set sample rate for '{}' to {} Hz",
+                "QUEUE_SAMPLE_RATE".on_purple().white(),
+                self.queue_id,
+                rate
+            );
         }
     }
 
@@ -118,6 +236,22 @@ impl AtomicQueueTracker {
         if samples_to_add > 0 {
             self.current_occupancy
                 .fetch_add(samples_to_add, Ordering::Relaxed);
+        }
+
+        // Update cadence tracking
+        if let Ok(mut cadence) = self.cadence.lock() {
+            let was_initialized = cadence.is_initialized();
+            cadence.update(count, std::time::Instant::now());
+            let now_initialized = cadence.is_initialized();
+
+            if !was_initialized && now_initialized {
+                info!(
+                    "✅ {}: Cadence initialized for '{}' after {} writes",
+                    "CADENCE_INIT".green(),
+                    self.queue_id,
+                    cadence.write_count
+                );
+            }
         }
     }
 
@@ -186,5 +320,18 @@ impl AtomicQueueTracker {
         // Store new ratio
         self.last_ratio.store(r_eff.to_bits(), Ordering::Relaxed);
         r_eff
+    }
+
+    /// Get cadence information for this device
+    pub fn get_cadence(&self) -> Option<DeliveryCadence> {
+        if let Ok(cadence) = self.cadence.lock() {
+            if cadence.is_initialized() {
+                Some(cadence.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     }
 }

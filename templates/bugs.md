@@ -12,7 +12,10 @@ Apply labels:
   - audio_devices
 - Add ui for UI only
 - All should have "bug" label
-- Choose from low_priority, medium_priority, high_priority
+- priority (clarify with the user if they don't mention it):
+  - high_priority
+  - medium_priority
+  - low_priority
 
 After creating summarizing the issue USE THE GITHUB CLI to file it on github.
 
