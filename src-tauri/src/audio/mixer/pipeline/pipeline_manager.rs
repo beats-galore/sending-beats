@@ -253,20 +253,24 @@ impl AudioPipeline {
             buffer_capacity,
         );
 
+        self.initialize_sample_rate(device_sample_rate);
+        let target_sample_rate = self.max_sample_rate.unwrap(); // Safe after initialize
+
+        // Set sample rates on trackers for cadence calculation
+        hardware_queue_tracker.set_sample_rate(target_sample_rate);
+        mixing_queue_tracker.set_sample_rate(target_sample_rate);
+
         // Connect RTRB consumer to mixing layer
         self.mixing_layer.add_input_consumer(
             device_id.clone(),
             Arc::new(tokio::sync::Mutex::new(rtrb_consumer_for_mixing)),
             mixing_queue_tracker.clone(),
         );
-        self.initialize_sample_rate(device_sample_rate);
 
         info!(
             "✅ PIPELINE: Connected input device '{}' to MixingLayer with RTRB queue",
             device_id
         );
-
-        let target_sample_rate = self.max_sample_rate.unwrap(); // Safe to unwrap after check above
 
         // Create input worker with RTRB consumer (from hardware) and producer (to mixing layer)
         let mut input_worker = InputWorker::new_with_rtrb(
