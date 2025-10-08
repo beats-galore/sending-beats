@@ -16,7 +16,6 @@ pub struct Model {
     pub is_default: bool,
     pub created_at: ChronoDateTimeUtc,
     pub updated_at: ChronoDateTimeUtc,
-    pub deleted_at: Option<ChronoDateTimeUtc>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
@@ -69,7 +68,6 @@ impl Model {
             is_default: Set(false),
             created_at: Set(now),
             updated_at: Set(now),
-            deleted_at: Set(None),
         }
     }
 

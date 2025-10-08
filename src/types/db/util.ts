@@ -5,19 +5,16 @@ export type AsCreationAttributes<
     id: Uuid<T>;
     createdAt: Timestamp;
     updatedAt: Timestamp;
-    deletedAt?: Timestamp;
   },
-> = Omit<T, 'id' | 'createdAt' | 'updatedAt' | 'deletedAt'>;
+> = Omit<T, 'id' | 'createdAt' | 'updatedAt'>;
 
 export type AsUpdateAttributes<
   T extends {
     id: Uuid<T>;
     createdAt: Timestamp;
     updatedAt: Timestamp;
-    deletedAt?: Timestamp;
   },
 > = Partial<T> & {
   createdAt?: never;
   updatedAt?: never;
-  deletedAt?: never;
 };

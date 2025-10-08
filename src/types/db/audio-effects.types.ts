@@ -15,7 +15,6 @@ export type AudioEffectsDefault = {
   solo: boolean;
   createdAt: Timestamp; // ISO timestamp
   updatedAt: Timestamp; // ISO timestamp
-  deletedAt?: Timestamp; // ISO timestamp
 };
 
 export const AudioEffectType = ['equalizer', 'limiter', 'compressor'] as const;
@@ -65,5 +64,4 @@ export type AudioEffectsCustom<T extends AudioEffectType = AudioEffectType> = {
   parameters: AudioEffectParameters<T>;
   createdAt: Timestamp; // ISO timestamp
   updatedAt: Timestamp; // ISO timestamp
-  deletedAt?: Timestamp; // ISO timestamp
 };

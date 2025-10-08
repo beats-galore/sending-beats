@@ -24,7 +24,6 @@ export type RecordingConfiguration = {
   bitDepth: number; // 16, 24, or 32
   createdAt: Timestamp; // ISO timestamp
   updatedAt: Timestamp; // ISO timestamp
-  deletedAt?: Timestamp; // ISO timestamp
 };
 
 export type Recording = {
@@ -62,7 +61,6 @@ export type Recording = {
 
   createdAt: Timestamp; // ISO timestamp
   updatedAt: Timestamp; // ISO timestamp
-  deletedAt?: Timestamp; // ISO timestamp
 };
 
 export type RecordingOutput = {
@@ -72,5 +70,4 @@ export type RecordingOutput = {
   outputData: number[]; // Binary audio data as byte array
   createdAt: Timestamp; // ISO timestamp
   updatedAt: Timestamp; // ISO timestamp
-  deletedAt?: Timestamp; // ISO timestamp
 };

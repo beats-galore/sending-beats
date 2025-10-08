@@ -313,7 +313,6 @@ pub async fn create_device_configuration(
             crate::entities::configured_audio_device::Column::ConfigurationId
                 .eq(&session_config.id),
         )
-        .filter(crate::entities::configured_audio_device::Column::DeletedAt.is_null())
         .one(state.database.sea_orm())
         .await
         .map_err(|e| e.to_string())?;
@@ -353,7 +352,6 @@ pub async fn create_device_configuration(
                     .eq(&session_config.id),
             )
             .filter(crate::entities::configured_audio_device::Column::IsInput.eq(true))
-            .filter(crate::entities::configured_audio_device::Column::DeletedAt.is_null())
             .all(state.database.sea_orm())
             .await
             .map_err(|e| e.to_string())?;
@@ -395,7 +393,6 @@ pub async fn create_device_configuration(
         configuration_id: sea_orm::Set(session_config.id.clone()),
         created_at: sea_orm::Set(now),
         updated_at: sea_orm::Set(now),
-        deleted_at: sea_orm::Set(None),
     };
 
     // Insert device configuration
@@ -418,7 +415,6 @@ pub async fn create_device_configuration(
                 solo: sea_orm::Set(false),
                 created_at: sea_orm::Set(now),
                 updated_at: sea_orm::Set(now),
-                deleted_at: sea_orm::Set(None),
             };
 
             match effects_entry.insert(state.database.sea_orm()).await {
@@ -446,7 +442,6 @@ pub async fn create_device_configuration(
 pub async fn get_device_channel_number(state: &AudioState, device_id: &str) -> Result<i32, String> {
     let device = crate::entities::configured_audio_device::Entity::find()
         .filter(crate::entities::configured_audio_device::Column::DeviceIdentifier.eq(device_id))
-        .filter(crate::entities::configured_audio_device::Column::DeletedAt.is_null())
         .one(state.database.sea_orm())
         .await
         .map_err(|e| e.to_string())?;
@@ -457,76 +452,59 @@ pub async fn get_device_channel_number(state: &AudioState, device_id: &str) -> R
     }
 }
 
-/// Remove a configured_audio_device and its related entries (soft delete)
+/// Remove a configured_audio_device and its related entries
 pub async fn remove_device_configuration(
     state: &AudioState,
     device_id: &str,
 ) -> Result<(), String> {
     tracing::info!("🗑️ Removing device configuration for: {}", device_id);
 
-    let now = chrono::Utc::now();
-
-    // Soft delete configured_audio_device entries
-    match crate::entities::configured_audio_device::Entity::update_many()
-        .col_expr(
-            crate::entities::configured_audio_device::Column::DeletedAt,
-            Expr::val(now).into(),
-        )
-        .col_expr(
-            crate::entities::configured_audio_device::Column::UpdatedAt,
-            Expr::val(now).into(),
-        )
+    // First, find all device config IDs to delete their effects
+    let device_configs = crate::entities::configured_audio_device::Entity::find()
         .filter(crate::entities::configured_audio_device::Column::DeviceIdentifier.eq(device_id))
-        .filter(crate::entities::configured_audio_device::Column::DeletedAt.is_null())
+        .all(state.database.sea_orm())
+        .await
+        .map_err(|e| format!("Failed to find device configurations: {}", e))?;
+
+    // Delete audio_effects_default entries for these devices
+    for device_config in &device_configs {
+        match crate::entities::audio_effects_default::Entity::delete_many()
+            .filter(crate::entities::audio_effects_default::Column::DeviceId.eq(&device_config.id))
+            .exec(state.database.sea_orm())
+            .await
+        {
+            Ok(result) => {
+                tracing::info!(
+                    "✅ Deleted {} audio_effects_default entries for device {}",
+                    result.rows_affected,
+                    device_config.id
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "⚠️ Failed to delete effects for device {}: {}",
+                    device_config.id,
+                    e
+                );
+            }
+        }
+    }
+
+    // Delete configured_audio_device entries
+    match crate::entities::configured_audio_device::Entity::delete_many()
+        .filter(crate::entities::configured_audio_device::Column::DeviceIdentifier.eq(device_id))
         .exec(state.database.sea_orm())
         .await
     {
         Ok(result) => {
             tracing::info!(
-                "✅ Soft deleted {} configured_audio_device entries",
+                "✅ Deleted {} configured_audio_device entries",
                 result.rows_affected
             );
-
-            // For now, we'll find device IDs manually and then soft delete effects
-            // This is a simpler approach that avoids complex subquery issues
-            let device_configs = crate::entities::configured_audio_device::Entity::find()
-                .filter(
-                    crate::entities::configured_audio_device::Column::DeviceIdentifier
-                        .eq(device_id),
-                )
-                .filter(crate::entities::configured_audio_device::Column::DeletedAt.is_null())
-                .all(state.database.sea_orm())
-                .await;
-
-            match device_configs {
-                Ok(configs) => {
-                    for config in configs {
-                        let _ = crate::entities::audio_effects_default::Entity::update_many()
-                            .col_expr(
-                                crate::entities::audio_effects_default::Column::DeletedAt,
-                                Expr::val(now).into(),
-                            )
-                            .col_expr(
-                                crate::entities::audio_effects_default::Column::UpdatedAt,
-                                Expr::val(now).into(),
-                            )
-                            .filter(
-                                crate::entities::audio_effects_default::Column::DeviceId
-                                    .eq(&config.id),
-                            )
-                            .exec(state.database.sea_orm())
-                            .await;
-                    }
-                    Ok(())
-                }
-                Err(e) => {
-                    tracing::error!("Failed to find device configs for effects cleanup: {}", e);
-                    Ok(()) // Don't fail the entire operation
-                }
-            }
+            Ok(())
         }
         Err(e) => {
-            tracing::error!("❌ Failed to soft delete configured_audio_device: {}", e);
+            tracing::error!("❌ Failed to delete configured_audio_device: {}", e);
             Err(format!("Failed to remove device configuration: {}", e))
         }
     }
@@ -573,7 +551,6 @@ async fn get_complete_configuration_data(
     );
     let configured_devices = crate::entities::configured_audio_device::Entity::find()
         .filter(crate::entities::configured_audio_device::Column::ConfigurationId.eq(&config.id))
-        .filter(crate::entities::configured_audio_device::Column::DeletedAt.is_null())
         .all(state.database.sea_orm())
         .await
         .map_err(|e| e.to_string())?;
@@ -601,7 +578,6 @@ async fn get_complete_configuration_data(
     );
     let audio_effects_default = crate::entities::audio_effects_default::Entity::find()
         .filter(crate::entities::audio_effects_default::Column::ConfigurationId.eq(&config.id))
-        .filter(crate::entities::audio_effects_default::Column::DeletedAt.is_null())
         .all(state.database.sea_orm())
         .await
         .map_err(|e| e.to_string())?;
@@ -620,7 +596,6 @@ async fn get_complete_configuration_data(
     );
     let audio_effects_custom = crate::entities::audio_effects_custom::Entity::find()
         .filter(crate::entities::audio_effects_custom::Column::ConfigurationId.eq(&config.id))
-        .filter(crate::entities::audio_effects_custom::Column::DeletedAt.is_null())
         .all(state.database.sea_orm())
         .await
         .map_err(|e| e.to_string())?;

@@ -17,7 +17,6 @@ export type ConfiguredAudioDevice = {
   channelNumber: number;
   createdAt: Timestamp; // ISO timestamp
   updatedAt: Timestamp; // ISO timestamp
-  deletedAt?: Timestamp; // ISO timestamp
 };
 
 export type CreateConfiguredAudioDevice = AsCreationAttributes<ConfiguredAudioDevice>;

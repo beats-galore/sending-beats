@@ -14,7 +14,6 @@ export type AudioMixerConfiguration = {
   isDefault: boolean; // Only one reusable configuration can be default
   createdAt: Timestamp; // ISO timestamp
   updatedAt: Timestamp; // ISO timestamp
-  deletedAt?: Timestamp; // ISO timestamp, null for active records
 };
 
 export type CreateAudioMixerConfiguration = AsCreationAttributes<AudioMixerConfiguration>;

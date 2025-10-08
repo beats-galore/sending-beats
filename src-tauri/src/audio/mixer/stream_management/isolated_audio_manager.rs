@@ -528,8 +528,11 @@ impl IsolatedAudioManager {
         let (initial_gain, initial_pan, initial_muted, initial_solo) = if let Some(ref db) =
             self.database
         {
-            match crate::db::AudioEffectsDefaultService::find_by_device_id(db.sea_orm(), &device_id)
-                .await
+            match crate::db::AudioEffectsDefaultService::find_by_device_identifier_in_active_config(
+                db.sea_orm(),
+                &device_id,
+            )
+            .await
             {
                 Ok(Some(effects)) => {
                     info!(
@@ -696,8 +699,11 @@ impl IsolatedAudioManager {
         let (initial_gain, initial_pan, initial_muted, initial_solo) = if let Some(ref db) =
             self.database
         {
-            match crate::db::AudioEffectsDefaultService::find_by_device_id(db.sea_orm(), &device_id)
-                .await
+            match crate::db::AudioEffectsDefaultService::find_by_device_identifier_in_active_config(
+                db.sea_orm(),
+                &device_id,
+            )
+            .await
             {
                 Ok(Some(effects)) => {
                     info!(

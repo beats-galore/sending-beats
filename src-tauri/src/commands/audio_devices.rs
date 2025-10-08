@@ -113,7 +113,6 @@ pub async fn safe_switch_input_device(
                     crate::entities::configured_audio_device::Column::DeviceIdentifier
                         .eq(&new_device_id),
                 )
-                .filter(crate::entities::configured_audio_device::Column::DeletedAt.is_null())
                 .one(audio_state.database.sea_orm())
                 .await
                 .map_err(|e| format!("Failed to query existing device: {}", e))?;
