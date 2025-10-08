@@ -241,6 +241,20 @@ impl AtomicQueueTracker {
         // Update cadence tracking
         if let Ok(mut cadence) = self.cadence.lock() {
             let was_initialized = cadence.is_initialized();
+
+            // Debug logging to track sample counts
+            static WRITE_LOG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let log_count = WRITE_LOG.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if log_count % 1000 == 0 {
+                info!(
+                    "📝 {}: Device '{}' recording {} samples (write #{})",
+                    "SAMPLES_WRITTEN".on_purple().white(),
+                    self.queue_id,
+                    count,
+                    log_count
+                );
+            }
+
             cadence.update(count, std::time::Instant::now());
             let now_initialized = cadence.is_initialized();
 
