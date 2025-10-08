@@ -226,12 +226,9 @@ impl InputWorker {
             VUChannelService::new(channel, self.state.target_sample_rate(), 8, 60)
         });
 
-        let post_process_fn = move |samples: &mut Vec<f32>,
-                                    processing_channels: u16,
-                                    device_id: &str|
-              -> Result<()> {
-            // Mono-to-stereo conversion
-            if channels == 1 && processing_channels == 2 {
+        let post_process_fn = move |samples: &mut Vec<f32>, device_id: &str| -> Result<()> {
+            // Mono-to-stereo conversion (always convert for mixing layer compatibility)
+            if channels == 1 {
                 let original_count = samples.len();
                 *samples = VirtualMixer::convert_mono_to_stereo(samples);
                 let converted_count = samples.len();
@@ -253,14 +250,10 @@ impl InputWorker {
                 }
             }
 
-            // Apply default effects
+            // Apply default effects (always stereo after conversion above)
             let any_solo = any_channel_solo.load(std::sync::atomic::Ordering::Relaxed);
             if let Ok(effects) = default_effects.lock() {
-                if processing_channels == 2 {
-                    effects.process_stereo_interleaved(samples, any_solo);
-                } else {
-                    effects.process_mono(samples, any_solo);
-                }
+                effects.process_stereo_interleaved(samples, any_solo);
             }
 
             // VU metering
