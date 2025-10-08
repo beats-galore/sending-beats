@@ -36,8 +36,8 @@ export const audioService = {
     oldDeviceId: Identifier<ConfiguredAudioDevice> | null,
     newDeviceId: Identifier<ConfiguredAudioDevice>,
     isVirtual?: boolean
-  ): Promise<void> {
-    return invoke('safe_switch_input_device', { oldDeviceId, newDeviceId, isVirtual });
+  ): Promise<ConfiguredAudioDevice | null> {
+    return invoke<ConfiguredAudioDevice | null>('safe_switch_input_device', { oldDeviceId, newDeviceId, isVirtual });
   },
 
   async setOutputStream(deviceId: Identifier<ConfiguredAudioDevice>): Promise<void> {
@@ -53,7 +53,7 @@ export const audioService = {
     return invoke('remove_channel_effect', { channelId, effectType });
   },
 
-  async getChannelEffects(channelId: number): Promise<string[]> {
+  async getChannelEffects(_channelId: number): Promise<string[]> {
     return [];
     // return invoke('get_channel_effects', { channelId });
   },

@@ -268,15 +268,6 @@ pub fn run() {
             set_output_stream,
             start_device_monitoring,
             get_device_monitoring_stats,
-            // Mixer commands
-            remove_output_device,
-            update_output_device,
-            // CoreAudio specific commands
-            enumerate_coreaudio_devices,
-            get_device_type_info,
-            is_coreaudio_device,
-            // Application audio commands
-            enumerate_application_audio_devices,
             // Audio effects commands
             update_channel_eq,
             update_channel_compressor,

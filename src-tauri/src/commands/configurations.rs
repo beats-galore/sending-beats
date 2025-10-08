@@ -1,6 +1,6 @@
 use crate::db::seaorm_services::{AudioMixerConfigurationService, ConfiguredAudioDeviceService};
 use crate::entities::{audio_mixer_configuration, configured_audio_device};
-use crate::AudioState;
+use crate::{log_command, AudioState};
 use anyhow::Result;
 use colored::*;
 use sea_orm::prelude::*;
@@ -13,6 +13,7 @@ use uuid::Uuid;
 pub async fn get_reusable_configurations(
     state: State<'_, AudioState>,
 ) -> Result<Vec<CompleteConfigurationData>, String> {
+    log_command!("get_reusable_configurations");
     tracing::info!("🔍 get_reusable_configurations: Starting query...");
 
     match AudioMixerConfigurationService::list_reusable(state.database.sea_orm()).await {
@@ -50,7 +51,7 @@ pub async fn get_reusable_configurations(
 pub async fn get_active_session_configuration(
     state: State<'_, AudioState>,
 ) -> Result<Option<CompleteConfigurationData>, String> {
-    tracing::info!("🔍 get_active_session_configuration: Starting query...");
+    log_command!("get_active_session_configuration");
 
     // First, check for an active session
     match AudioMixerConfigurationService::get_active_session(state.database.sea_orm()).await {
@@ -156,6 +157,12 @@ pub async fn create_session_from_reusable(
     session_name: Option<String>,
     state: State<'_, AudioState>,
 ) -> Result<audio_mixer_configuration::Model, String> {
+    log_command!(
+        "create_session_from_reusable",
+        "reusable id: {}, session name: {:?}",
+        reusable_id,
+        session_name
+    );
     let uuid = Uuid::parse_str(&reusable_id).map_err(|e| e.to_string())?;
 
     AudioMixerConfigurationService::create_session_from_reusable(
@@ -236,6 +243,7 @@ pub async fn get_configured_audio_devices_by_config(
 // Helper functions for syncing mixer state with database
 
 /// Create a configured_audio_device and corresponding audio_effects_default entry
+/// Returns the created device model for UI state updates
 pub async fn create_device_configuration(
     state: &AudioState,
     device_id: &str,
@@ -245,7 +253,7 @@ pub async fn create_device_configuration(
     is_input: bool,
     is_virtual: bool,
     channel_number: Option<i32>,
-) -> Result<(), String> {
+) -> Result<Option<configured_audio_device::Model>, String> {
     // Get the active session configuration
     let session_config = match AudioMixerConfigurationService::get_active_session(
         state.database.sea_orm(),
@@ -280,7 +288,7 @@ pub async fn create_device_configuration(
                         }
                         Ok(None) => {
                             tracing::warn!("No session or default configuration found, cannot create device configuration");
-                            return Ok(()); // Don't fail if no session
+                            return Ok(None); // Don't fail if no session
                         }
                         Err(e) => return Err(e.to_string()),
                     }
@@ -317,7 +325,7 @@ pub async fn create_device_configuration(
             device_id,
             existing.id
         );
-        return Ok(()); // Device already exists, skip creation
+        return Ok(Some(existing)); // Device already exists, return existing model
     }
 
     tracing::info!(
@@ -419,7 +427,7 @@ pub async fn create_device_configuration(
                         "✅ Created audio_effects_default for device: {}",
                         effects_model.device_id
                     );
-                    Ok(())
+                    Ok(Some(device_model))
                 }
                 Err(e) => {
                     tracing::error!("❌ Failed to create audio_effects_default: {}", e);
