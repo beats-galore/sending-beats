@@ -11,7 +11,7 @@
 
 use colored::*;
 use std::collections::{HashMap, VecDeque};
-use tracing::warn;
+use tracing::{info, warn};
 
 use super::queue_types::ProcessedAudioSamples;
 
@@ -60,6 +60,21 @@ impl TemporalSyncBuffer {
                 && samples.timestamp < self.oldest_sample_time.unwrap())
         {
             self.oldest_sample_time = Some(samples.timestamp);
+        }
+
+        // **DIAGNOSTIC**: Log sample addition to identify pitch/speed issues
+        static ADD_SAMPLES_LOG_COUNT: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        let log_count = ADD_SAMPLES_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if log_count < 20 || log_count % 500 == 0 {
+            info!(
+                "📥 {}: Device '{}' adding {} samples (channels: {}, buffer depth: {})",
+                "TEMPORAL_ADD".blue(),
+                device_id,
+                samples.samples.len(),
+                samples.channels,
+                device_buffer.len()
+            );
         }
 
         // Add samples to device buffer
@@ -135,6 +150,21 @@ impl TemporalSyncBuffer {
                 // Check if this sample is within the sync window
                 if time_diff <= sync_window {
                     if let Some(extracted_sample) = buffer.pop_front() {
+                        // **DIAGNOSTIC**: Log extraction details to identify sample count issues
+                        static EXTRACT_LOG_COUNT: std::sync::atomic::AtomicU64 =
+                            std::sync::atomic::AtomicU64::new(0);
+                        let extract_count =
+                            EXTRACT_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if extract_count < 20 || extract_count % 500 == 0 {
+                            info!(
+                                "📤 {}: Device '{}' extracted {} samples (channels: {}, time_diff: {}ms)",
+                                "TEMPORAL_EXTRACT".green(),
+                                device_id,
+                                extracted_sample.samples.len(),
+                                extracted_sample.channels,
+                                time_diff.as_millis()
+                            );
+                        }
                         synchronized_samples.push((device_id.clone(), extracted_sample));
                     }
                 }

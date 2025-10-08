@@ -315,6 +315,21 @@ impl MixingLayer {
                         }
 
                         if !samples.is_empty() {
+                            // **DIAGNOSTIC**: Log RTRB collection details
+                            static COLLECTION_LOG_COUNT: std::sync::atomic::AtomicU64 =
+                                std::sync::atomic::AtomicU64::new(0);
+                            let coll_count = COLLECTION_LOG_COUNT
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if coll_count < 20 || coll_count % 500 == 0 {
+                                info!(
+                                    "🔄 {}: Device '{}' collected {} samples from RTRB (available: {})",
+                                    "MIXING_COLLECT".cyan(),
+                                    device_id,
+                                    samples.len(),
+                                    available
+                                );
+                            }
+
                             // Construct ProcessedAudioSamples from raw RTRB data
                             let processed_audio = super::queue_types::ProcessedAudioSamples {
                                 device_id: device_id.clone(),
@@ -364,6 +379,24 @@ impl MixingLayer {
                     let prep_duration = prep_start.elapsed();
 
                     let active_inputs = input_samples_for_mixer.len();
+
+                    // **DIAGNOSTIC**: Log input sample counts before mixing
+                    static PREMIX_LOG_COUNT: std::sync::atomic::AtomicU64 =
+                        std::sync::atomic::AtomicU64::new(0);
+                    let premix_count =
+                        PREMIX_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if premix_count < 20 || premix_count % 500 == 0 {
+                        let sample_details: Vec<String> = input_samples_for_mixer
+                            .iter()
+                            .map(|(id, samples)| format!("{}: {} samples", id, samples.len()))
+                            .collect();
+                        info!(
+                            "🎛️ {}: Preparing to mix {} inputs: [{}]",
+                            "PRE_MIX".magenta(),
+                            active_inputs,
+                            sample_details.join(", ")
+                        );
+                    }
 
                     if !input_samples_for_mixer.is_empty() {
                         let mix_start = std::time::Instant::now();

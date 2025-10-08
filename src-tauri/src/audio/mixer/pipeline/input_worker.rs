@@ -228,11 +228,29 @@ impl InputWorker {
 
         let post_process_fn = move |samples: &mut Vec<f32>,
                                     processing_channels: u16,
-                                    _device_id: &str|
+                                    device_id: &str|
               -> Result<()> {
             // Mono-to-stereo conversion
             if channels == 1 && processing_channels == 2 {
+                let original_count = samples.len();
                 *samples = VirtualMixer::convert_mono_to_stereo(samples);
+                let converted_count = samples.len();
+
+                // **DIAGNOSTIC**: Log mono-to-stereo conversion to verify correct sample doubling
+                static MONO_STEREO_LOG_COUNT: std::sync::atomic::AtomicU64 =
+                    std::sync::atomic::AtomicU64::new(0);
+                let log_count =
+                    MONO_STEREO_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if log_count < 20 || log_count % 500 == 0 {
+                    info!(
+                        "🔄 {}: Device '{}' mono→stereo: {} → {} samples ({}x)",
+                        "MONO_TO_STEREO".yellow(),
+                        device_id,
+                        original_count,
+                        converted_count,
+                        converted_count as f32 / original_count as f32
+                    );
+                }
             }
 
             // Apply default effects
