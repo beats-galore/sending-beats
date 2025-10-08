@@ -290,7 +290,7 @@ pub trait AudioWorker {
     /// Takes an optional post-processing function that will be called on resampled audio
     fn start_processing_thread<F>(&mut self, mut post_process_fn: Option<F>) -> Result<()>
     where
-        F: FnMut(&mut Vec<f32>, u16, &str) -> Result<()> + Send + 'static,
+        F: FnMut(&mut Vec<f32>, &str) -> Result<()> + Send + 'static,
     {
         let device_id = self.device_id().to_string();
         let device_sample_rate = self.device_sample_rate();
@@ -446,7 +446,7 @@ pub trait AudioWorker {
                     let post_process_start = std::time::Instant::now();
                     let mut final_samples = processed_samples;
                     if let Some(ref mut process_fn) = post_process_fn {
-                        if let Err(e) = process_fn(&mut final_samples, channels, &device_id) {
+                        if let Err(e) = process_fn(&mut final_samples, &device_id) {
                             warn!(
                                 "⚠️ {}[{}]: Post-processing failed: {}",
                                 log_prefix, device_id, e

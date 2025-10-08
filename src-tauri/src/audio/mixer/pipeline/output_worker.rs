@@ -210,10 +210,7 @@ impl OutputWorker {
     }
 
     pub fn start(&mut self) -> Result<()> {
-        AudioWorker::start_processing_thread(
-            self,
-            None::<fn(&mut Vec<f32>, u16, &str) -> Result<()>>,
-        )
+        AudioWorker::start_processing_thread(self, None::<fn(&mut Vec<f32>, &str) -> Result<()>>)
     }
 
     pub async fn stop(&mut self) -> Result<()> {
