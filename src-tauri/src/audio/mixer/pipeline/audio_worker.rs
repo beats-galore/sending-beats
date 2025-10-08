@@ -242,12 +242,12 @@ pub trait AudioWorker {
     }
 
     /// Write samples to RTRB queue synchronously
+    /// Returns the number of samples successfully written
     fn write_samples_to_rtrb_sync(
         device_id: &str,
         samples: &[f32],
         rtrb_producer: &Arc<Mutex<rtrb::Producer<f32>>>,
-        queue_tracker: Option<&AtomicQueueTracker>,
-    ) {
+    ) -> usize {
         if let Ok(mut producer) = rtrb_producer.try_lock() {
             let mut samples_written = 0;
             let mut remaining = samples;
@@ -281,15 +281,14 @@ pub trait AudioWorker {
                 remaining = &remaining[chunk_size..];
             }
 
-            if let Some(tracker) = queue_tracker {
-                tracker.record_samples_written(samples_written);
-            }
+            samples_written
         } else {
             warn!(
                 "⚠️ AUDIO_WORKER: {} failed to lock RTRB producer, dropping {} samples",
                 device_id,
                 samples.len()
             );
+            0
         }
     }
 
@@ -377,6 +376,8 @@ pub trait AudioWorker {
                 input_accumulator.extend_from_slice(&samples);
 
                 // Step 3: Process all available chunks from the accumulator
+                // Track total samples written in this iteration for cadence tracking
+                let mut total_samples_written_this_iteration = 0;
                 loop {
                     let accumulated_samples = Self::process_with_pre_accumulation(
                         &mut resampler,
@@ -464,12 +465,12 @@ pub trait AudioWorker {
 
                     // Step 6: Write to output RTRB queue
                     let write_start = std::time::Instant::now();
-                    Self::write_samples_to_rtrb_sync(
+                    let samples_written = Self::write_samples_to_rtrb_sync(
                         &device_id,
                         &final_samples,
                         &rtrb_producer,
-                        Some(&queue_tracker),
                     );
+                    total_samples_written_this_iteration += samples_written;
                     let write_duration = write_start.elapsed();
 
                     samples_processed += 1;
@@ -501,6 +502,12 @@ pub trait AudioWorker {
                             write_duration.as_micros()
                         );
                     }
+                }
+
+                // Record total samples written for this outer loop iteration (cadence tracking)
+                // This tracks the actual hardware delivery rate, not the chunked processing rate
+                if total_samples_written_this_iteration > 0 {
+                    queue_tracker.record_samples_written(total_samples_written_this_iteration);
                 }
             }
         });

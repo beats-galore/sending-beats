@@ -170,16 +170,6 @@ extern "C" fn audio_sample_callback(
     // Convert raw pointer to slice
     let audio_data = unsafe { std::slice::from_raw_parts(samples, sample_count as usize) };
 
-    // VERIFY: Log first 10 samples on first callback
-    if count == 1 {
-        let first_10: Vec<f32> = audio_data.iter().take(10).copied().collect();
-        info!(
-            "🎵 {}: First 10 samples received in Rust: {:?}",
-            "SC_AUDIO_VERIFY".on_purple().cyan(),
-            first_10
-        );
-    }
-
     // Calculate peak for debugging
     let mut peak = 0.0f32;
     for &sample in audio_data {
