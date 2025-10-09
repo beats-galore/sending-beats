@@ -16,6 +16,7 @@ pub use broadcasts::*;
 pub use recordings::*;
 pub use seaorm_services::{
     AudioEffectsDefaultService, AudioMixerConfigurationService, ConfiguredAudioDeviceService,
+    SystemAudioStateService,
 };
 
 /// SQLite-based database manager for audio system

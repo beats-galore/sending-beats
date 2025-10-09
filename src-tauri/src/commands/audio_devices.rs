@@ -456,6 +456,16 @@ pub async fn safe_switch_output_device(
                     }
                 }
             }
+
+            // Divert system audio to dummy device when first output is added
+            #[cfg(target_os = "macos")]
+            {
+                let mut router = audio_state.system_audio_router.lock().await;
+                if let Err(e) = router.divert_to_dummy_device().await {
+                    tracing::warn!("Failed to divert system audio to dummy device: {}", e);
+                }
+            }
+
             Ok(())
         }
         Ok(Err(e)) => Err(format!("Failed to set output device: {}", e)),
