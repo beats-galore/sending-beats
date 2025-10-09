@@ -1,5 +1,6 @@
 use crate::entities::{
-    audio_effects_custom, audio_effects_default, audio_mixer_configuration, configured_audio_device,
+    audio_effects_custom, audio_effects_default, audio_mixer_configuration,
+    configured_audio_device, system_audio_state,
 };
 use anyhow::Result;
 use sea_orm::*;
@@ -774,5 +775,60 @@ impl AudioEffectsDefaultService {
 
         txn.commit().await?;
         Ok(updated)
+    }
+}
+
+pub struct SystemAudioStateService;
+
+impl SystemAudioStateService {
+    /// Get or create the system audio state (singleton pattern)
+    pub async fn get_or_create(db: &DatabaseConnection) -> Result<system_audio_state::Model> {
+        let state = system_audio_state::Entity::find().one(db).await?;
+
+        match state {
+            Some(state) => Ok(state),
+            None => {
+                let new_state = system_audio_state::Model::new();
+                let created = new_state.insert(db).await?;
+                Ok(created)
+            }
+        }
+    }
+
+    /// Update dummy aggregate device UID
+    pub async fn set_dummy_device_uid(
+        db: &DatabaseConnection,
+        device_uid: Option<String>,
+    ) -> Result<system_audio_state::Model> {
+        let state = Self::get_or_create(db).await?;
+
+        let mut active: system_audio_state::ActiveModel = state.into();
+        active.dummy_aggregate_device_uid = Set(device_uid);
+        active.updated_at = Set(chrono::Utc::now());
+
+        let updated = active.update(db).await?;
+        Ok(updated)
+    }
+
+    /// Set diversion state (whether system audio is diverted to dummy device)
+    pub async fn set_diversion_state(
+        db: &DatabaseConnection,
+        is_diverted: bool,
+        previous_default_uid: Option<String>,
+    ) -> Result<system_audio_state::Model> {
+        let state = Self::get_or_create(db).await?;
+
+        let mut active: system_audio_state::ActiveModel = state.into();
+        active.is_diverted = Set(is_diverted);
+        active.previous_default_device_uid = Set(previous_default_uid);
+        active.updated_at = Set(chrono::Utc::now());
+
+        let updated = active.update(db).await?;
+        Ok(updated)
+    }
+
+    /// Reset to non-diverted state (clear previous default)
+    pub async fn reset_diversion(db: &DatabaseConnection) -> Result<system_audio_state::Model> {
+        Self::set_diversion_state(db, false, None).await
     }
 }

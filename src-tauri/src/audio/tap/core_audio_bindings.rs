@@ -119,10 +119,10 @@ pub struct AudioAggregateDeviceDescription {
 // AudioHardwareCreateProcessTap and AudioHardwareDestroyProcessTap are now provided by objc2_core_audio
 
 extern "C" {
-    /// Create an aggregate device from multiple audio sources
-    /// This has been available longer but we use it with taps
-    pub fn AudioHardwareCreateAggregateDevice(
-        in_description: *const AudioAggregateDeviceDescription,
+    /// Create an aggregate device from CFDictionary description
+    #[link_name = "AudioHardwareCreateAggregateDevice"]
+    pub fn AudioHardwareCreateAggregateDeviceFromDict(
+        in_description: *const core_foundation::dictionary::__CFDictionary,
         out_device_object_id: *mut AudioObjectID,
     ) -> OSStatus;
 
@@ -140,6 +140,16 @@ extern "C" {
     /// Set property on Audio Hardware
     pub fn AudioHardwareSetProperty(
         in_address: *const AudioObjectPropertyAddress,
+        in_data_size: UInt32,
+        in_data: *const c_void,
+    ) -> OSStatus;
+
+    /// Set property on Audio Object (modern API)
+    pub fn AudioObjectSetPropertyData(
+        in_object_id: AudioObjectID,
+        in_address: *const AudioObjectPropertyAddress,
+        in_qualifier_data_size: UInt32,
+        in_qualifier_data: *const c_void,
         in_data_size: UInt32,
         in_data: *const c_void,
     ) -> OSStatus;

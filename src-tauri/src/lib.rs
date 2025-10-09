@@ -55,6 +55,8 @@ struct AudioState {
     audio_command_tx:
         tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>,
     app_audio_manager: Arc<AsyncMutex<ApplicationAudioManager>>,
+    #[cfg(target_os = "macos")]
+    system_audio_router: Arc<AsyncMutex<audio::devices::SystemAudioRouter>>,
 }
 struct RecordingState {
     service: Arc<RecordingService>,
@@ -214,12 +216,21 @@ pub fn run() {
         // Initialize application audio manager (shared between AudioState and ApplicationAudioState)
         let app_audio_manager_shared = Arc::new(AsyncMutex::new(ApplicationAudioManager::new()));
 
+        #[cfg(target_os = "macos")]
+        let system_audio_router = {
+            use audio::devices::SystemAudioRouter;
+            let router = SystemAudioRouter::new(database.sea_orm().clone());
+            Arc::new(AsyncMutex::new(router))
+        };
+
         AudioState {
             device_manager: audio_device_manager,
             mixer: Arc::new(AsyncMutex::new(None)),
             database,
             audio_command_tx,
             app_audio_manager: app_audio_manager_shared.clone(),
+            #[cfg(target_os = "macos")]
+            system_audio_router,
         }
     });
 
@@ -238,14 +249,34 @@ pub fn run() {
         manager: audio_state.app_audio_manager.clone(),
     };
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(StreamState(Mutex::new(None)))
         .manage(audio_state)
         .manage(recording_state)
         .manage(file_player_state)
-        .manage(application_audio_state)
+        .manage(application_audio_state);
+
+    #[cfg(target_os = "macos")]
+    let builder = builder.on_window_event(|window, event| {
+        if let tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed = event {
+            let app_handle = window.app_handle();
+            if let Some(audio_state) = app_handle.try_state::<AudioState>() {
+                let router = audio_state.system_audio_router.clone();
+                tauri::async_runtime::spawn(async move {
+                    let mut router = router.lock().await;
+                    if let Err(e) = router.restore_original_default().await {
+                        tracing::error!("Failed to restore system audio on app close: {}", e);
+                    } else {
+                        tracing::info!("✅ System audio restored to original default");
+                    }
+                });
+            }
+        }
+    });
+
+    builder
         .invoke_handler(tauri::generate_handler![
             // Streaming commands
             connect_to_stream,
