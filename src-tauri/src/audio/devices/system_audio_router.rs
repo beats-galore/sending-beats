@@ -12,9 +12,12 @@ use std::ffi::c_void;
 use std::ptr;
 use tracing::{error, info, warn};
 
-const KAUDIO_HARDWARE_PROPERTY_DEFAULT_OUTPUT_DEVICE: u32 = 1868981858; // 'dOut'
-const KAUDIO_HARDWARE_PROPERTY_TRANSLATE_UID_TO_DEVICE: u32 = 1969841252; // 'uidd'
-const KAUDIO_HARDWARE_PROPERTY_DEVICE_UID: u32 = 1969841252; // 'uidd' - wait, this should be different
+const KAUDIO_HARDWARE_PROPERTY_DEFAULT_OUTPUT_DEVICE: u32 = 1682929012; // 'dOut' (0x646F7574)
+const KAUDIO_HARDWARE_PROPERTY_DEFAULT_SYSTEM_OUTPUT_DEVICE: u32 = 1936747636; // 'sOut' (0x734F7574)
+const KAUDIO_HARDWARE_PROPERTY_TRANSLATE_UID_TO_DEVICE: u32 = 1969841252; // 'uidd' (0x75696464)
+const KAUDIO_DEVICE_PROPERTY_DEVICE_UID: u32 = 1969841184; // 'uid ' (0x75696420)
+const KAUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL: u32 = 1735159650; // 'glob' (0x676C6F62)
+const KAUDIO_OBJECT_PROPERTY_ELEMENT_MASTER: u32 = 0; // 0x00000000
 
 /// System audio routing manager
 /// Handles diverting system audio to a dummy aggregate device and restoring the original default
@@ -32,8 +35,8 @@ impl SystemAudioRouter {
         unsafe {
             let address = AudioObjectPropertyAddress {
                 mSelector: KAUDIO_HARDWARE_PROPERTY_DEFAULT_OUTPUT_DEVICE,
-                mScope: 0,   // kAudioObjectPropertyScopeGlobal
-                mElement: 0, // kAudioObjectPropertyElementMain
+                mScope: KAUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+                mElement: KAUDIO_OBJECT_PROPERTY_ELEMENT_MASTER,
             };
 
             let mut device_id: AudioObjectID = 0;
@@ -78,9 +81,9 @@ impl SystemAudioRouter {
 
         unsafe {
             let address = AudioObjectPropertyAddress {
-                mSelector: 1969841845, // 'uid ' (kAudioDevicePropertyDeviceUID)
-                mScope: 0,             // kAudioObjectPropertyScopeGlobal
-                mElement: 0,           // kAudioObjectPropertyElementMain
+                mSelector: KAUDIO_DEVICE_PROPERTY_DEVICE_UID,
+                mScope: KAUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+                mElement: KAUDIO_OBJECT_PROPERTY_ELEMENT_MASTER,
             };
 
             let mut cf_uid: *mut core_foundation::string::__CFString = ptr::null_mut();
@@ -113,39 +116,55 @@ impl SystemAudioRouter {
         unsafe {
             let device_id = self.translate_uid_to_device_id(device_uid)?;
 
-            let address = AudioObjectPropertyAddress {
-                mSelector: KAUDIO_HARDWARE_PROPERTY_DEFAULT_OUTPUT_DEVICE,
-                mScope: 0,   // kAudioObjectPropertyScopeGlobal
-                mElement: 0, // kAudioObjectPropertyElementMain
-            };
+            // Try setting both Default and System output properties
+            // Some macOS versions respect one vs the other
+            let properties = [
+                ("Default", KAUDIO_HARDWARE_PROPERTY_DEFAULT_OUTPUT_DEVICE),
+                (
+                    "System",
+                    KAUDIO_HARDWARE_PROPERTY_DEFAULT_SYSTEM_OUTPUT_DEVICE,
+                ),
+            ];
 
-            let status = AudioObjectSetPropertyData(
-                kAudioObjectSystemObject,
-                &address,
-                0,
-                ptr::null(),
-                std::mem::size_of::<AudioObjectID>() as u32,
-                &device_id as *const AudioObjectID as *const c_void,
-            );
+            let mut any_succeeded = false;
+            for (name, selector) in &properties {
+                let address = AudioObjectPropertyAddress {
+                    mSelector: *selector,
+                    mScope: KAUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+                    mElement: KAUDIO_OBJECT_PROPERTY_ELEMENT_MASTER,
+                };
 
-            if status != 0 {
-                error!(
-                    "{} Failed to set default output device to UID '{}': OSStatus {}",
-                    "SYS_AUDIO_ERROR".bright_red(),
-                    device_uid,
-                    status
+                let status = AudioObjectSetPropertyData(
+                    kAudioObjectSystemObject,
+                    &address,
+                    0,
+                    ptr::null(),
+                    std::mem::size_of::<AudioObjectID>() as u32,
+                    &device_id as *const AudioObjectID as *const c_void,
                 );
-                return Err(anyhow::anyhow!(
-                    "Failed to set default output device: OSStatus {}",
-                    status
-                ));
+
+                if status == 0 {
+                    info!(
+                        "{} Set {} output device to: UID='{}'",
+                        "SYS_AUDIO_SET".bright_green(),
+                        name,
+                        device_uid
+                    );
+                    any_succeeded = true;
+                } else {
+                    warn!(
+                        "{} Failed to set {} output device to UID '{}': OSStatus {}",
+                        "SYS_AUDIO_WARN".bright_yellow(),
+                        name,
+                        device_uid,
+                        status
+                    );
+                }
             }
 
-            info!(
-                "{} Set system default output device to: UID='{}'",
-                "SYS_AUDIO_SET".bright_green(),
-                device_uid
-            );
+            if !any_succeeded {
+                return Err(anyhow::anyhow!("Failed to set any output device property"));
+            }
 
             Ok(())
         }
@@ -158,8 +177,8 @@ impl SystemAudioRouter {
         unsafe {
             let translate_address = AudioObjectPropertyAddress {
                 mSelector: KAUDIO_HARDWARE_PROPERTY_TRANSLATE_UID_TO_DEVICE,
-                mScope: 0,   // kAudioObjectPropertyScopeGlobal
-                mElement: 0, // kAudioObjectPropertyElementMain
+                mScope: KAUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+                mElement: KAUDIO_OBJECT_PROPERTY_ELEMENT_MASTER,
             };
 
             let cf_uid = CFString::new(uid);
@@ -193,9 +212,9 @@ impl SystemAudioRouter {
         let state = SystemAudioStateService::get_or_create(&self.db).await?;
 
         if state.is_diverted {
-            warn!(
-                "{} System audio already diverted, skipping",
-                "SYS_AUDIO_WARN".bright_yellow()
+            info!(
+                "{} System audio already diverted to dummy device, skipping diversion",
+                "SYS_AUDIO_SKIP".bright_cyan()
             );
             return Ok(());
         }
@@ -233,6 +252,22 @@ impl SystemAudioRouter {
         );
 
         self.set_default_output_device(&dummy_uid)?;
+
+        // Verify the change actually took effect
+        let actual_default = self.get_current_default_output_uid()?;
+        if actual_default != dummy_uid {
+            error!(
+                "{} Verification failed! Expected '{}' but got '{}'. System may require permissions.",
+                "SYS_AUDIO_ERROR".bright_red(),
+                dummy_uid,
+                actual_default
+            );
+            return Err(anyhow::anyhow!(
+                "Failed to verify default output change. Expected '{}' but system default is still '{}'",
+                dummy_uid,
+                actual_default
+            ));
+        }
 
         SystemAudioStateService::set_diversion_state(
             &self.db,
@@ -303,6 +338,9 @@ impl SystemAudioRouter {
 
         let (_device_id, device_uid) =
             AggregateDeviceManager::create_silent_aggregate_device(name, &uid)?;
+
+        // Give the system a moment to register the new device
+        std::thread::sleep(std::time::Duration::from_millis(100));
 
         SystemAudioStateService::set_dummy_device_uid(&self.db, Some(device_uid.clone())).await?;
 

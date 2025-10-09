@@ -420,9 +420,8 @@ Migration files should follow this naming pattern with timestamp prefixes:
 - `YYYYMMDDHHMMSS_recordings.sql` - Recording system tables
 - `YYYYMMDDHHMMSS_broadcasts.sql` - Broadcasting/streaming tables
 
-Example: `20250925160001_initial_schema.sql`
-
-### D
+Example: `20250925160001_initial_schema.sql` Use `pnpm migrate <migration_name>`
+to generate new migration files.
 
 ### Example Table Schema
 
