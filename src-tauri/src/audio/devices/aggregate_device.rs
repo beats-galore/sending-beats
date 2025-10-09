@@ -17,6 +17,9 @@ const KAUDIO_AGGREGATE_DEVICE_SUB_DEVICE_LIST_KEY: &str = "subdevices";
 const KAUDIO_AGGREGATE_DEVICE_IS_PRIVATE_KEY: &str = "private";
 const KAUDIO_AGGREGATE_DEVICE_IS_STACKED_KEY: &str = "stacked";
 
+const KAUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL: u32 = 1735159650; // 'glob' (0x676C6F62)
+const KAUDIO_OBJECT_PROPERTY_ELEMENT_MASTER: u32 = 0; // 0x00000000
+
 /// Manager for creating and destroying silent aggregate audio devices
 pub struct AggregateDeviceManager;
 
@@ -128,8 +131,8 @@ impl AggregateDeviceManager {
         unsafe {
             let address = AudioObjectPropertyAddress {
                 mSelector: 1735354734, // 'glob' for kAudioObjectPropertyOwnedObjects
-                mScope: 0,             // kAudioObjectPropertyScopeGlobal
-                mElement: 0,           // kAudioObjectPropertyElementMain
+                mScope: KAUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+                mElement: KAUDIO_OBJECT_PROPERTY_ELEMENT_MASTER,
             };
 
             let mut data_size: u32 = 0;
@@ -162,8 +165,8 @@ impl AggregateDeviceManager {
         unsafe {
             let translate_address = AudioObjectPropertyAddress {
                 mSelector: 1969841252, // 'uidd' for kAudioHardwarePropertyTranslateUIDToDevice
-                mScope: 0,             // kAudioObjectPropertyScopeGlobal
-                mElement: 0,           // kAudioObjectPropertyElementMain
+                mScope: KAUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+                mElement: KAUDIO_OBJECT_PROPERTY_ELEMENT_MASTER,
             };
 
             let cf_uid = CFString::new(uid);

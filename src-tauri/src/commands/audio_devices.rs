@@ -379,24 +379,27 @@ pub async fn safe_switch_output_device(
         .await
         .map_err(|e| format!("Failed to find output device {}: {}", new_device_id, e))?;
 
-    // Extract device information for database sync before consuming device_handle
-    let device_info = match &device_handle {
-        #[cfg(target_os = "macos")]
-        crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => Some((
-            coreaudio_device.name.clone(),
-            coreaudio_device.sample_rate,
-            coreaudio_device.channels,
-        )),
-        #[cfg(target_os = "macos")]
+    // Extract device information for database sync and hog mode before consuming device_handle
+    #[cfg(target_os = "macos")]
+    let (device_info, audio_device_id) = match &device_handle {
+        crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => (
+            Some((
+                coreaudio_device.name.clone(),
+                coreaudio_device.sample_rate,
+                coreaudio_device.channels,
+            )),
+            Some(coreaudio_device.device_id),
+        ),
         crate::audio::types::AudioDeviceHandle::ApplicationAudio(_) => {
             return Err(
                 "Application audio devices are input-only and cannot be used as outputs"
                     .to_string(),
             );
         }
-        #[cfg(not(target_os = "macos"))]
-        _ => None,
     };
+
+    #[cfg(not(target_os = "macos"))]
+    let device_info = None;
 
     // Create command based on device type
     let (response_tx, response_rx) = tokio::sync::oneshot::channel();
@@ -457,12 +460,33 @@ pub async fn safe_switch_output_device(
                 }
             }
 
-            // Divert system audio to dummy device when first output is added
+            // Hog the output device to prevent system sounds from playing through it
             #[cfg(target_os = "macos")]
             {
-                let mut router = audio_state.system_audio_router.lock().await;
-                if let Err(e) = router.divert_to_dummy_device().await {
-                    tracing::warn!("Failed to divert system audio to dummy device: {}", e);
+                use crate::audio::devices::DeviceHogManager;
+                use colored::Colorize;
+                if let Some(device_id) = audio_device_id {
+                    match DeviceHogManager::hog_device(device_id) {
+                        Ok(true) => {
+                            tracing::info!(
+                                "{} Successfully hogged output device to prevent system sounds",
+                                "OUTPUT_HOG".on_blue().white()
+                            );
+                        }
+                        Ok(false) => {
+                            tracing::warn!(
+                                "{} Output device already hogged by another process",
+                                "OUTPUT_HOG".on_blue().white()
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "{} Failed to hog output device: {}",
+                                "OUTPUT_HOG".on_blue().white(),
+                                e
+                            );
+                        }
+                    }
                 }
             }
 
