@@ -12,6 +12,8 @@ use colored::Colorize;
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
 #[cfg(target_os = "macos")]
+use std::os::raw::c_void;
+#[cfg(target_os = "macos")]
 use std::sync::Arc;
 #[cfg(target_os = "macos")]
 use tokio::sync::Mutex;
@@ -24,9 +26,10 @@ use core_foundation::base::TCFType;
 use core_foundation::string::{CFString, CFStringRef};
 #[cfg(target_os = "macos")]
 use coreaudio_sys::{
-    kAudioDevicePropertyDeviceNameCFString, kAudioDevicePropertyStreams,
-    kAudioHardwarePropertyDefaultInputDevice, kAudioHardwarePropertyDefaultOutputDevice,
-    kAudioHardwarePropertyDevices, kAudioObjectPropertyElementMaster,
+    kAudioDevicePropertyDeviceNameCFString, kAudioDevicePropertyDeviceUID,
+    kAudioDevicePropertyStreams, kAudioHardwarePropertyDefaultInputDevice,
+    kAudioHardwarePropertyDefaultOutputDevice, kAudioHardwarePropertyDevices,
+    kAudioHardwarePropertyTranslateUIDToDevice, kAudioObjectPropertyElementMaster,
     kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyScopeInput,
     kAudioObjectPropertyScopeOutput, kAudioObjectSystemObject, AudioDeviceID,
     AudioObjectPropertyAddress,
@@ -193,6 +196,19 @@ impl CoreAudioIntegration {
             .replace(")", "")
             .to_lowercase();
 
+        let device_uid = match self.get_device_uid(device_id) {
+            Ok(uid) => Some(uid),
+            Err(e) => {
+                warn!(
+                    "{} Failed to fetch UID for device {}: {}",
+                    "DEVICE_UID_WARN".on_yellow().white(),
+                    device_id,
+                    e
+                );
+                None
+            }
+        };
+
         // For devices that support both input and output, we need to create separate entries
         let mut device_infos = Vec::new();
 
@@ -210,6 +226,7 @@ impl CoreAudioIntegration {
             device_infos.push(AudioDeviceInfo {
                 id: input_device_id,
                 name: device_name.clone(),
+                uid: device_uid.clone(),
                 is_input: true,
                 is_output: false,
                 is_default: is_default_input,
@@ -233,6 +250,7 @@ impl CoreAudioIntegration {
             device_infos.push(AudioDeviceInfo {
                 id: output_device_id,
                 name: device_name.clone(),
+                uid: device_uid.clone(),
                 is_input: false,
                 is_output: true,
                 is_default: is_default_output,
@@ -426,32 +444,113 @@ impl CoreAudioIntegration {
         device_info: &AudioDeviceInfo,
         _is_input: bool,
     ) -> Result<AudioDeviceHandle> {
-        // Extract the actual CoreAudio device ID from our device info
-        // We need to re-enumerate to get the raw device ID
-        match self.find_coreaudio_device_id(&device_info.name).await {
-            Ok(device_id) => {
-                info!(
-                    "Creating CoreAudio handle for device {} (ID: {})",
-                    device_info.name, device_id
-                );
-                // **DYNAMIC CHANNEL COUNT**: Use the detected channel count from device_info
-                let channels = device_info.supported_channels.get(0).copied().unwrap_or(2);
+        let mut resolved_id = None;
 
-                Ok(AudioDeviceHandle::CoreAudio(CoreAudioDevice {
-                    device_id,
-                    name: device_info.name.clone(),
-                    sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
-                    channels,     // Use detected channel count
-                    stream: None, // Stream will be created when needed
-                }))
+        if let Some(uid) = device_info.uid.as_ref() {
+            match self.translate_uid_to_device(uid) {
+                Ok(device_id) => resolved_id = Some(device_id),
+                Err(e) => {
+                    warn!(
+                        "{} Failed to resolve CoreAudio device UID '{}' for '{}': {}",
+                        "DEVICE_UID_WARN".on_yellow().white(),
+                        uid,
+                        device_info.name,
+                        e
+                    );
+                }
             }
-            Err(e) => {
-                warn!(
-                    "Failed to find CoreAudio device ID for {}: {}",
-                    device_info.name, e
-                );
-                Err(e)
-            }
+        }
+
+        let device_id = match resolved_id {
+            Some(id) => id,
+            None => self.find_coreaudio_device_id(&device_info.name).await?,
+        };
+
+        info!(
+            "Creating CoreAudio handle for device {} (ID: {})",
+            device_info.name, device_id
+        );
+
+        let channels = device_info.supported_channels.get(0).copied().unwrap_or(2);
+
+        Ok(AudioDeviceHandle::CoreAudio(CoreAudioDevice {
+            device_id,
+            name: device_info.name.clone(),
+            uid: device_info.uid.clone(),
+            sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
+            channels,     // Use detected channel count
+            stream: None, // Stream will be created when needed
+        }))
+    }
+
+    fn get_device_uid(&self, device_id: AudioDeviceID) -> Result<String> {
+        use std::mem;
+        use std::ptr;
+
+        let uid_property = AudioObjectPropertyAddress {
+            mSelector: kAudioDevicePropertyDeviceUID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMaster,
+        };
+
+        let mut uid_ref: CFStringRef = ptr::null();
+        let mut size = mem::size_of::<CFStringRef>() as u32;
+
+        let status = unsafe {
+            coreaudio_sys::AudioObjectGetPropertyData(
+                device_id,
+                &uid_property,
+                0,
+                ptr::null(),
+                &mut size,
+                &mut uid_ref as *mut CFStringRef as *mut c_void,
+            )
+        };
+
+        if status != 0 || uid_ref.is_null() {
+            return Err(anyhow::anyhow!(
+                "Failed to get UID for device {}: {}",
+                device_id,
+                status
+            ));
+        }
+
+        let cf_string = unsafe { CFString::wrap_under_get_rule(uid_ref) };
+        Ok(cf_string.to_string())
+    }
+
+    fn translate_uid_to_device(&self, uid: &str) -> Result<AudioDeviceID> {
+        use std::mem;
+
+        let address = AudioObjectPropertyAddress {
+            mSelector: kAudioHardwarePropertyTranslateUIDToDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMaster,
+        };
+
+        let cf_uid = CFString::new(uid);
+        let mut device_id: AudioDeviceID = 0;
+        let mut size = mem::size_of::<AudioDeviceID>() as u32;
+
+        let status = unsafe {
+            coreaudio_sys::AudioObjectGetPropertyData(
+                kAudioObjectSystemObject,
+                &address,
+                mem::size_of::<CFStringRef>() as u32,
+                &cf_uid as *const _ as *const c_void,
+                &mut size,
+                &mut device_id as *mut AudioDeviceID as *mut c_void,
+            )
+        };
+
+        if status == 0 && device_id != 0 {
+            Ok(device_id)
+        } else {
+            Err(anyhow::anyhow!(
+                "Failed to translate UID '{}' to device ID: {}",
+                uid,
+                status
+            ))
         }
     }
 

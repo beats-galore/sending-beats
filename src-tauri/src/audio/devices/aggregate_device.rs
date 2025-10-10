@@ -4,8 +4,9 @@ use crate::audio::tap::core_audio_bindings::{
 };
 use anyhow::{Context, Result};
 use colored::Colorize;
-use core_foundation::base::TCFType;
-use core_foundation::dictionary::CFMutableDictionary;
+use core_foundation::array::CFArray;
+use core_foundation::base::{CFType, TCFType};
+use core_foundation::dictionary::{CFDictionary, CFMutableDictionary};
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
 use std::ptr;
@@ -16,6 +17,8 @@ const KAUDIO_AGGREGATE_DEVICE_NAME_KEY: &str = "name";
 const KAUDIO_AGGREGATE_DEVICE_SUB_DEVICE_LIST_KEY: &str = "subdevices";
 const KAUDIO_AGGREGATE_DEVICE_IS_PRIVATE_KEY: &str = "private";
 const KAUDIO_AGGREGATE_DEVICE_IS_STACKED_KEY: &str = "stacked";
+const KAUDIO_AGGREGATE_DEVICE_MAIN_SUB_DEVICE_KEY: &str = "master";
+const KAUDIO_SUB_DEVICE_UID_KEY: &str = "uid";
 
 const KAUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL: u32 = 1735159650; // 'glob' (0x676C6F62)
 const KAUDIO_OBJECT_PROPERTY_ELEMENT_MASTER: u32 = 0; // 0x00000000
@@ -30,17 +33,45 @@ impl AggregateDeviceManager {
         name: &str,
         uid: &str,
     ) -> Result<(AudioObjectID, String)> {
-        info!(
-            "{} Creating silent aggregate device: name='{}', uid='{}'",
-            "AGGREGATE_CREATE".bright_cyan(),
-            name,
-            uid
-        );
+        Self::create_custom_aggregate_device(name, uid, &[], false)
+    }
+
+    /// Create a aggregate device that proxies specific hardware sub-devices
+    pub fn create_private_aggregate_device(
+        name: &str,
+        uid: &str,
+        sub_device_uids: &[&str],
+    ) -> Result<(AudioObjectID, String)> {
+        Self::create_custom_aggregate_device(name, uid, sub_device_uids, false)
+    }
+
+    fn create_custom_aggregate_device(
+        name: &str,
+        uid: &str,
+        sub_device_uids: &[&str],
+        is_private: bool,
+    ) -> Result<(AudioObjectID, String)> {
+        if sub_device_uids.is_empty() {
+            info!(
+                "{} Creating silent aggregate device: name='{}', uid='{}'",
+                "AGGREGATE_CREATE".bright_cyan(),
+                name,
+                uid
+            );
+        } else {
+            info!(
+                "{} Creating private aggregate device: name='{}', uid='{}', sub_devices={:?}",
+                "AGGREGATE_CREATE".bright_cyan(),
+                name,
+                uid,
+                sub_device_uids
+            );
+        }
 
         unsafe {
             let cf_name = CFString::new(name);
             let cf_uid = CFString::new(uid);
-            let cf_private = CFNumber::from(1i32);
+            let cf_private = CFNumber::from(if is_private { 1i32 } else { 0i32 });
             let cf_stacked = CFNumber::from(1i32);
 
             let mut dict = CFMutableDictionary::with_capacity(4);
@@ -61,6 +92,40 @@ impl AggregateDeviceManager {
                 cf_stacked.as_CFType(),
             );
 
+            let subdevice_cf_strings: Vec<CFString> = sub_device_uids
+                .iter()
+                .map(|uid| CFString::new(uid))
+                .collect();
+
+            if !subdevice_cf_strings.is_empty() {
+                let subdevice_dictionaries: Vec<CFDictionary<CFType, CFType>> =
+                    subdevice_cf_strings
+                        .iter()
+                        .map(|cf_uid_string| {
+                            let mut sub_dict = CFMutableDictionary::with_capacity(1);
+                            sub_dict.set(
+                                CFString::new(KAUDIO_SUB_DEVICE_UID_KEY).as_CFType(),
+                                cf_uid_string.as_CFType(),
+                            );
+                            sub_dict.to_immutable()
+                        })
+                        .collect();
+
+                let subdevices_array =
+                    CFArray::<CFDictionary<CFType, CFType>>::from_CFTypes(&subdevice_dictionaries);
+                dict.set(
+                    CFString::new(KAUDIO_AGGREGATE_DEVICE_SUB_DEVICE_LIST_KEY).as_CFType(),
+                    subdevices_array.as_CFType(),
+                );
+
+                // Use the first sub-device as the master clock by default
+                let master_uid = subdevice_cf_strings[0].clone();
+                dict.set(
+                    CFString::new(KAUDIO_AGGREGATE_DEVICE_MAIN_SUB_DEVICE_KEY).as_CFType(),
+                    master_uid.as_CFType(),
+                );
+            }
+
             let mut device_id: AudioObjectID = 0;
             let status: OSStatus = AudioHardwareCreateAggregateDeviceFromDict(
                 dict.as_concrete_TypeRef(),
@@ -80,7 +145,7 @@ impl AggregateDeviceManager {
             }
 
             info!(
-                "{} Successfully created silent aggregate device with ID: {}",
+                "{} Successfully created aggregate device with ID: {}",
                 "AGGREGATE_CREATED".bright_green(),
                 device_id
             );

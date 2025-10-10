@@ -4,6 +4,7 @@ import { DEFAULT_SAMPLE_RATE_HZ } from '../utils';
 export type AudioDeviceInfo = {
   id: string;
   name: string;
+  uid?: string;
   is_input: boolean;
   is_output: boolean;
   is_default: boolean;

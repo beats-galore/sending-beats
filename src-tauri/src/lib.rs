@@ -41,6 +41,7 @@ use commands::icecast::*;
 use commands::mixer::*;
 use commands::recording::*;
 use commands::streaming::*;
+use commands::system_audio::*;
 use commands::vu_channels::*;
 
 // File player state for managing multiple file players
@@ -299,6 +300,10 @@ pub fn run() {
             set_output_stream,
             start_device_monitoring,
             get_device_monitoring_stats,
+            // System audio commands
+            enable_system_audio_capture,
+            disable_system_audio_capture,
+            get_system_audio_status,
             // Audio effects commands
             update_channel_eq,
             update_channel_compressor,

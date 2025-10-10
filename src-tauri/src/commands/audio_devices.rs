@@ -381,15 +381,12 @@ pub async fn safe_switch_output_device(
 
     // Extract device information for database sync and hog mode before consuming device_handle
     #[cfg(target_os = "macos")]
-    let (device_info, audio_device_id) = match &device_handle {
-        crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => (
-            Some((
-                coreaudio_device.name.clone(),
-                coreaudio_device.sample_rate,
-                coreaudio_device.channels,
-            )),
-            Some(coreaudio_device.device_id),
-        ),
+    let device_info = match &device_handle {
+        crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => Some((
+            coreaudio_device.name.clone(),
+            coreaudio_device.sample_rate,
+            coreaudio_device.channels,
+        )),
         crate::audio::types::AudioDeviceHandle::ApplicationAudio(_) => {
             return Err(
                 "Application audio devices are input-only and cannot be used as outputs"
@@ -460,32 +457,24 @@ pub async fn safe_switch_output_device(
                 }
             }
 
-            // Hog the output device to prevent system sounds from playing through it
+            // Divert system audio to virtual device to prevent double playback
             #[cfg(target_os = "macos")]
             {
-                use crate::audio::devices::DeviceHogManager;
                 use colored::Colorize;
-                if let Some(device_id) = audio_device_id {
-                    match DeviceHogManager::hog_device(device_id) {
-                        Ok(true) => {
-                            tracing::info!(
-                                "{} Successfully hogged output device to prevent system sounds",
-                                "OUTPUT_HOG".on_blue().white()
-                            );
-                        }
-                        Ok(false) => {
-                            tracing::warn!(
-                                "{} Output device already hogged by another process",
-                                "OUTPUT_HOG".on_blue().white()
-                            );
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "{} Failed to hog output device: {}",
-                                "OUTPUT_HOG".on_blue().white(),
-                                e
-                            );
-                        }
+                let mut router = audio_state.system_audio_router.lock().await;
+                match router.divert_system_audio_to_virtual_device().await {
+                    Ok(_) => {
+                        tracing::info!(
+                            "{} System audio diverted to prevent double playback",
+                            "OUTPUT_DIVERTED".bright_green()
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "{} Failed to divert system audio: {}",
+                            "OUTPUT_DIVERT_WARN".bright_yellow(),
+                            e
+                        );
                     }
                 }
             }
