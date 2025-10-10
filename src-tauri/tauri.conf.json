@@ -36,6 +36,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": [
+      "../src-driver/build/SendinBeatsAudio.driver"
+    ],
     "macOS": {
       "entitlements": "./entitlements.plist",
       "exceptionDomain": null,

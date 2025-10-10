@@ -102,6 +102,7 @@ impl FilePlayerManager {
                 AudioDeviceInfo {
                     id: device.get_device_id().to_string(),
                     name: device.get_device_name().to_string(),
+                    uid: None,
                     is_input: true,
                     is_output: false,
                     is_default: false,

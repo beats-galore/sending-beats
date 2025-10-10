@@ -10,6 +10,8 @@ use coreaudio_sys::AudioDeviceID;
 pub struct AudioDeviceInfo {
     pub id: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uid: Option<String>,
     pub is_input: bool,
     pub is_output: bool,
     pub is_default: bool,
@@ -49,6 +51,7 @@ impl std::fmt::Debug for AudioDeviceHandle {
 pub struct CoreAudioDevice {
     pub device_id: AudioDeviceID,
     pub name: String,
+    pub uid: Option<String>,
     pub sample_rate: u32,
     pub channels: u16,
     pub stream: Option<CoreAudioOutputStream>,

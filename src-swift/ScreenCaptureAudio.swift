@@ -117,13 +117,7 @@ class ScreenCaptureAudioOutput: NSObject, SCStreamOutput {
             let isFloat = (formatFlags & kAudioFormatFlagIsFloat) != 0
             let bitsPerChannel = asbd.mBitsPerChannel
             let bytesPerFrame = asbd.mBytesPerFrame
-            let framesPerPacket = asbd.mFramesPerPacket
             let totalFloat32Values = length / MemoryLayout<Float>.size
-
-            // ACTUAL frame count calculation (not using broken bytesPerFrame)
-            let bytesPerSample = Int(bitsPerChannel / 8)
-            let expectedBytesPerFrame = bytesPerSample * Int(channels)
-            let actualFrames = length / expectedBytesPerFrame
 
             // Check if audio is interleaved or planar
             let isNonInterleaved = (formatFlags & kAudioFormatFlagIsNonInterleaved) != 0

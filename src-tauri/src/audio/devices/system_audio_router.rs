@@ -1,4 +1,5 @@
 use crate::audio::devices::aggregate_device::AggregateDeviceManager;
+use crate::audio::devices::virtual_driver::VirtualDriverManager;
 use crate::audio::tap::core_audio_bindings::{
     kAudioObjectSystemObject, AudioObjectGetPropertyData, AudioObjectID,
     AudioObjectPropertyAddress, AudioObjectSetPropertyData, OSStatus,
@@ -11,6 +12,7 @@ use sea_orm::DatabaseConnection;
 use std::ffi::c_void;
 use std::ptr;
 use tracing::{error, info, warn};
+use uuid::Uuid;
 
 const KAUDIO_HARDWARE_PROPERTY_DEFAULT_OUTPUT_DEVICE: u32 = 1682929012; // 'dOut' (0x646F7574)
 const KAUDIO_HARDWARE_PROPERTY_DEFAULT_SYSTEM_OUTPUT_DEVICE: u32 = 1936747636; // 'sOut' (0x734F7574)
@@ -206,81 +208,78 @@ impl SystemAudioRouter {
         }
     }
 
-    /// Divert system audio to a dummy aggregate device
-    /// Saves the current default device UID for later restoration
-    pub async fn divert_to_dummy_device(&mut self) -> Result<()> {
-        let state = SystemAudioStateService::get_or_create(&self.db).await?;
-
-        if state.is_diverted {
+    /// Ensure system audio is routed to the virtual driver so the physical output is free
+    pub async fn divert_system_audio_to_virtual_device(&mut self) -> Result<()> {
+        // Ensure virtual driver is installed
+        if !VirtualDriverManager::is_installed() {
             info!(
-                "{} System audio already diverted to dummy device, skipping diversion",
-                "SYS_AUDIO_SKIP".bright_cyan()
+                "{} Virtual driver not installed, installing now...",
+                "SYS_AUDIO_INSTALL".bright_cyan()
             );
-            return Ok(());
+            VirtualDriverManager::install().await?;
         }
 
-        let dummy_uid = if let Some(uid) = &state.dummy_aggregate_device_uid {
-            if AggregateDeviceManager::verify_device_by_uid(uid).is_some() {
-                info!(
-                    "{} Using existing dummy aggregate device: '{}'",
-                    "SYS_AUDIO_REUSE".bright_cyan(),
-                    uid
-                );
-                uid.clone()
-            } else {
-                info!(
-                    "{} Dummy device '{}' no longer exists, creating new one",
-                    "SYS_AUDIO_RECREATE".bright_yellow(),
-                    uid
-                );
-                self.create_and_save_dummy_device().await?
-            }
-        } else {
+        VirtualDriverManager::verify_installation()?;
+
+        let virtual_device_uid = VirtualDriverManager::get_device_uid()
+            .await
+            .context("Failed to get virtual device UID")?;
+        let state = SystemAudioStateService::get_or_create(&self.db).await?;
+
+        // Save current default if not already diverted
+        let mut previous_default_uid = state.previous_default_device_uid.clone();
+        if !state.is_diverted || previous_default_uid.is_none() {
+            let current_default = self.get_current_default_output_uid()?;
             info!(
-                "{} No dummy device found, creating new one",
-                "SYS_AUDIO_CREATE".bright_cyan()
+                "{} Caching previous default output device '{}'",
+                "SYS_AUDIO_SAVE".bright_blue(),
+                current_default
             );
-            self.create_and_save_dummy_device().await?
-        };
+            previous_default_uid = Some(current_default);
+        }
 
-        let previous_default = self.get_current_default_output_uid()?;
-
+        // Set virtual device as system default
         info!(
-            "{} Saving previous default device: '{}'",
-            "SYS_AUDIO_SAVE".bright_blue(),
-            previous_default
+            "{} Setting virtual device '{}' as system default output",
+            "SYS_AUDIO_DIVERT".bright_cyan(),
+            virtual_device_uid
         );
 
-        self.set_default_output_device(&dummy_uid)?;
+        self.set_default_output_device(&virtual_device_uid)?;
 
-        // Verify the change actually took effect
-        let actual_default = self.get_current_default_output_uid()?;
-        if actual_default != dummy_uid {
+        // Verify the change took effect
+        let mut actual_default = self.get_current_default_output_uid()?;
+        if actual_default != virtual_device_uid {
+            for _ in 0..10 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                actual_default = self.get_current_default_output_uid()?;
+                if actual_default == virtual_device_uid {
+                    break;
+                }
+            }
+        }
+
+        if actual_default != virtual_device_uid {
             error!(
-                "{} Verification failed! Expected '{}' but got '{}'. System may require permissions.",
+                "{} Failed to divert system audio. Expected '{}' but system reports '{}'",
                 "SYS_AUDIO_ERROR".bright_red(),
-                dummy_uid,
+                virtual_device_uid,
                 actual_default
             );
             return Err(anyhow::anyhow!(
-                "Failed to verify default output change. Expected '{}' but system default is still '{}'",
-                dummy_uid,
+                "Failed to set virtual device as system default. Expected '{}' but got '{}'",
+                virtual_device_uid,
                 actual_default
             ));
         }
 
-        SystemAudioStateService::set_diversion_state(
-            &self.db,
-            true,
-            Some(previous_default.clone()),
-        )
-        .await?;
+        SystemAudioStateService::set_diversion_state(&self.db, true, previous_default_uid.clone())
+            .await?;
 
         info!(
-            "{} System audio diverted from '{}' to dummy device '{}'",
+            "{} System audio now routed to virtual device '{}' (silent output)",
             "SYS_AUDIO_DIVERTED".bright_green(),
-            previous_default,
-            dummy_uid
+            virtual_device_uid
         );
 
         Ok(())
@@ -328,24 +327,42 @@ impl SystemAudioRouter {
 
         SystemAudioStateService::reset_diversion(&self.db).await?;
 
+        if let Some(aggregate_uid) = state.dummy_aggregate_device_uid {
+            if let Some(aggregate_id) = AggregateDeviceManager::verify_device_by_uid(&aggregate_uid)
+            {
+                info!(
+                    "{} Destroying silent aggregate '{}'",
+                    "SYS_AUDIO_CLEANUP".bright_cyan(),
+                    aggregate_uid
+                );
+                if let Err(e) = AggregateDeviceManager::destroy_aggregate_device(aggregate_id) {
+                    warn!(
+                        "{} Failed to destroy aggregate device '{}' during restore: {}",
+                        "SYS_AUDIO_WARN".bright_yellow(),
+                        aggregate_uid,
+                        e
+                    );
+                }
+            }
+            SystemAudioStateService::set_dummy_device_uid(&self.db, None).await?;
+        }
+
         Ok(())
     }
 
-    /// Create a new dummy aggregate device and save its UID to the database
-    async fn create_and_save_dummy_device(&self) -> Result<String> {
-        let uid = format!("sendin-beats-silent-{}", uuid::Uuid::new_v4());
+    async fn create_and_save_silent_device(&self) -> Result<String> {
+        let uid = format!("sendin-beats-silent-{}", Uuid::new_v4());
         let name = "Sendin Beats Silent Output";
 
         let (_device_id, device_uid) =
             AggregateDeviceManager::create_silent_aggregate_device(name, &uid)?;
 
-        // Give the system a moment to register the new device
         std::thread::sleep(std::time::Duration::from_millis(100));
 
         SystemAudioStateService::set_dummy_device_uid(&self.db, Some(device_uid.clone())).await?;
 
         info!(
-            "{} Created and saved dummy aggregate device: '{}'",
+            "{} Created and saved silent aggregate device: '{}'",
             "SYS_AUDIO_CREATED".bright_green(),
             device_uid
         );
@@ -353,7 +370,6 @@ impl SystemAudioRouter {
         Ok(device_uid)
     }
 
-    /// Ensure dummy device exists, creating it if necessary
     pub async fn ensure_dummy_device_exists(&mut self) -> Result<String> {
         let state = SystemAudioStateService::get_or_create(&self.db).await?;
 
@@ -363,6 +379,6 @@ impl SystemAudioRouter {
             }
         }
 
-        self.create_and_save_dummy_device().await
+        self.create_and_save_silent_device().await
     }
 }

@@ -28,6 +28,8 @@ pub mod coreaudio_stream;
 pub mod device_hog;
 #[cfg(target_os = "macos")]
 pub mod system_audio_router;
+#[cfg(target_os = "macos")]
+pub mod virtual_driver;
 
 pub use device_manager::AudioDeviceManager;
 
@@ -48,3 +50,5 @@ pub use coreaudio_stream::{CoreAudioInputStream, CoreAudioOutputStream};
 pub use device_hog::DeviceHogManager;
 #[cfg(target_os = "macos")]
 pub use system_audio_router::SystemAudioRouter;
+#[cfg(target_os = "macos")]
+pub use virtual_driver::VirtualDriverManager;
