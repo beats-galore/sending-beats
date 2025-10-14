@@ -432,6 +432,11 @@ impl IsolatedAudioManager {
         channels: u16,
         producer: Producer<f32>,
     ) -> Result<()> {
+        info!(
+            "🔍 HANDLE_ADD_INPUT: device_id='{}', coreaudio_device_id={}, device_name='{}', channels={}",
+            device_id, coreaudio_device_id, device_name, channels
+        );
+
         // Check if input stream is already active by checking with the stream manager
         // Note: StreamManager tracks active CoreAudio input streams internally
         if self.stream_manager.has_input_stream(&device_id) {
@@ -762,10 +767,11 @@ impl IsolatedAudioManager {
 
     async fn handle_remove_input_stream(&mut self, device_id: String) -> bool {
         info!(
-            "🗑️ {}: Removing input device '{}'",
+            "🗑️ {}: Removing input device '{}' (called from safe_switch_input_device)",
             "AUDIO_COORDINATOR".on_yellow().red(),
             device_id
         );
+        info!("🔍 HANDLE_REMOVE_INPUT: device_id='{}'", device_id);
 
         // **PIPELINE**: Remove device from AudioPipeline
         if let Err(e) = self.audio_pipeline.remove_input_device(&device_id).await {

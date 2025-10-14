@@ -224,7 +224,15 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
           const currentDeviceId = configuredInputDevice?.deviceIdentifier ?? null;
           const isAppAudio = deviceId.startsWith('app-');
           console.log(
-            `🔧 FRONTEND: Switching input device: ${currentDeviceId} → ${deviceId}${isAppAudio ? ' (app audio)' : ''}`
+            `🔧 FRONTEND CH${channel.id}: Switching input device: ${currentDeviceId} → ${deviceId}${isAppAudio ? ' (app audio)' : ''}`
+          );
+          console.log(
+            `🔧 FRONTEND CH${channel.id}: configuredInputDevice:`,
+            configuredInputDevice
+          );
+          console.log(
+            `🔧 FRONTEND CH${channel.id}: activeSession devices:`,
+            activeSession?.configuredDevices
           );
 
           // Remove old device from UI state first

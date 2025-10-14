@@ -58,6 +58,25 @@ impl StreamManager {
             "🎤 Creating CoreAudio input stream for device '{}' (ID: {}, CH: {})",
             device_id, coreaudio_device_id, channels
         );
+        info!(
+            "🔍 STREAM_MANAGER: Currently active input streams: {:?}",
+            self.coreaudio_input_streams.keys().collect::<Vec<_>>()
+        );
+
+        // Check if stream already exists for this device and remove it first
+        if self.coreaudio_input_streams.contains_key(&device_id) {
+            info!(
+                "🔄 Removing existing stream for device '{}' before adding new one",
+                device_id
+            );
+            if let Some(mut old_stream) = self.coreaudio_input_streams.remove(&device_id) {
+                let _ = old_stream.stop();
+                drop(old_stream);
+                // Wait for CoreAudio cleanup to complete (avoid -536870186 error)
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                info!("✅ Old stream cleanup complete for device '{}'", device_id);
+            }
+        }
 
         let mut coreaudio_input_stream =
             crate::audio::devices::CoreAudioInputStream::new_with_rtrb_producer(
