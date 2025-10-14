@@ -108,6 +108,32 @@ fn init_logging() {
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 
+/// Restore system audio to previous default on panic
+/// This function is called from the panic hook and uses a fresh database connection
+#[cfg(target_os = "macos")]
+async fn restore_system_audio_on_panic() -> Result<(), Box<dyn std::error::Error>> {
+    use audio::devices::SystemAudioRouter;
+
+    // Get database path (same logic as in main initialization)
+    let database_path = dirs::home_dir()
+        .map(|home| home.join(".sendin_beats").join("data"))
+        .unwrap_or_else(|| {
+            std::env::current_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                .join("data")
+        })
+        .join("sendin_beats.db");
+
+    // Create a fresh database connection
+    let database = AudioDatabase::new(&database_path).await?;
+
+    // Create a router and restore
+    let mut router = SystemAudioRouter::new(database.sea_orm().clone());
+    router.restore_original_default().await?;
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Initialize logging system that sends logs to macOS Console.app
@@ -116,6 +142,33 @@ pub fn run() {
     // Enable console logging for debugging signed app
     #[cfg(debug_assertions)]
     println!("🐛 DEBUG: Console logging enabled for signed app");
+
+    // Set up panic hook to restore system audio before crash
+    #[cfg(target_os = "macos")]
+    {
+        let default_panic = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            eprintln!("💥 PANIC DETECTED - Attempting to restore system audio before crash");
+
+            // Try to restore system audio using a blocking runtime
+            // This is safe in a panic scenario since we're crashing anyway
+            if let Ok(rt) = tokio::runtime::Runtime::new() {
+                rt.block_on(async {
+                    match restore_system_audio_on_panic().await {
+                        Ok(_) => eprintln!("✅ System audio restored successfully before crash"),
+                        Err(e) => {
+                            eprintln!("❌ Failed to restore system audio before crash: {}", e)
+                        }
+                    }
+                });
+            } else {
+                eprintln!("❌ Failed to create runtime for system audio restoration");
+            }
+
+            // Call the default panic handler
+            default_panic(info);
+        }));
+    }
 
     // Initialize the Tokio runtime for database initialization
     let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
@@ -249,6 +302,61 @@ pub fn run() {
     let application_audio_state = ApplicationAudioState {
         manager: audio_state.app_audio_manager.clone(),
     };
+
+    // Set up signal handlers for graceful shutdown (SIGTERM, SIGINT)
+    #[cfg(target_os = "macos")]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+
+        let router_for_signals = audio_state.system_audio_router.clone();
+        std::thread::spawn(move || {
+            let rt = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(e) => {
+                    eprintln!("❌ Failed to create runtime for signal handlers: {}", e);
+                    return;
+                }
+            };
+
+            rt.block_on(async {
+                let mut sigterm = match signal(SignalKind::terminate()) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("❌ Failed to set up SIGTERM handler: {}", e);
+                        return;
+                    }
+                };
+                let mut sigint = match signal(SignalKind::interrupt()) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("❌ Failed to set up SIGINT handler: {}", e);
+                        return;
+                    }
+                };
+
+                tokio::select! {
+                    _ = sigterm.recv() => {
+                        tracing::info!("📡 SIGTERM received - Gracefully shutting down...");
+                    }
+                    _ = sigint.recv() => {
+                        tracing::info!("📡 SIGINT received - Gracefully shutting down...");
+                    }
+                }
+
+                // Restore system audio before exiting
+                let mut router = router_for_signals.lock().await;
+                if let Err(e) = router.restore_original_default().await {
+                    eprintln!("❌ Failed to restore system audio on signal: {}", e);
+                } else {
+                    tracing::info!("✅ System audio restored successfully on signal");
+                }
+
+                std::process::exit(0);
+            });
+        });
+
+        tracing::info!("📡 Signal handlers (SIGTERM, SIGINT) initialized");
+    }
 
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
