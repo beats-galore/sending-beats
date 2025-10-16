@@ -12,23 +12,56 @@ use crate::audio::screencapture::{self, discovery};
 #[tauri::command]
 pub async fn get_known_audio_applications(
     app_audio_state: State<'_, ApplicationAudioState>,
+    audio_state: State<'_, crate::AudioState>,
 ) -> Result<Vec<ProcessInfo>, String> {
     println!("🎵 Getting known audio applications (ScreenCaptureKit)...");
 
     #[cfg(target_os = "macos")]
     {
+        use crate::entities::audio_application;
+        use sea_orm::EntityTrait;
+
         match screencapture::get_available_applications() {
             Ok(apps) => {
                 let total_apps = apps.len();
-                println!("🔍 Found {} applications via ScreenCaptureKit", total_apps);
+                println!(
+                    "🔍 Found {} applications via ScreenCaptureKit (after Swift-side filtering)",
+                    total_apps
+                );
 
-                // Deduplicate by PID (ScreenCaptureKit can return multiple entries for same app)
+                // Query database for known audio applications
+                let db = audio_state.database.sea_orm();
+                let known_audio_apps = audio_application::Entity::find()
+                    .all(db)
+                    .await
+                    .map_err(|e| format!("Failed to query audio applications: {}", e))?;
+
+                // Build a set of known bundle identifiers that are enabled
+                let known_bundle_ids: std::collections::HashSet<String> = known_audio_apps
+                    .iter()
+                    .filter(|app| app.is_enabled && app.operating_system == "macos")
+                    .map(|app| app.bundle_identifier.clone())
+                    .collect();
+
+                println!(
+                    "📋 Loaded {} enabled audio applications from database",
+                    known_bundle_ids.len()
+                );
+
+                // Filter and deduplicate by PID
                 let mut seen_pids = std::collections::HashSet::new();
                 let process_infos: Vec<ProcessInfo> = apps
                     .into_iter()
                     .filter_map(|app| {
                         let pid = app.pid as u32;
-                        if seen_pids.insert(pid) {
+
+                        // Skip duplicates
+                        if !seen_pids.insert(pid) {
+                            return None;
+                        }
+
+                        // Only include if in the known audio applications database
+                        if known_bundle_ids.contains(&app.bundle_identifier) {
                             Some(ProcessInfo {
                                 pid,
                                 name: app.application_name.clone(),
@@ -44,7 +77,7 @@ pub async fn get_known_audio_applications(
                     .collect();
 
                 println!(
-                    "✅ Returning {} known audio applications (deduplicated from {})",
+                    "✅ Returning {} known audio applications (filtered from {}, deduplicated)",
                     process_infos.len(),
                     total_apps
                 );
@@ -197,11 +230,12 @@ pub async fn get_application_info(
 #[tauri::command]
 pub async fn refresh_audio_applications(
     app_audio_state: State<'_, ApplicationAudioState>,
+    audio_state: State<'_, crate::AudioState>,
 ) -> Result<Vec<ProcessInfo>, String> {
     println!("🔄 Refreshing audio applications list...");
 
     // This will force a new scan by calling get_available_applications
-    get_known_audio_applications(app_audio_state).await
+    get_known_audio_applications(app_audio_state, audio_state).await
 }
 
 // ================================================================================================

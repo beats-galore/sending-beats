@@ -420,7 +420,14 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
                   data={inputDeviceOptions}
                   className={`${classes.inputSelect} ${classes.customSelectInput}`}
                 />
-                <ActionIcon size="xs" onClick={() => void refreshDevices()} variant="subtle">
+                <ActionIcon
+                  size="xs"
+                  onClick={() => {
+                    void refreshDevices();
+                    void applicationAudio.actions.refreshApplications();
+                  }}
+                  variant="subtle"
+                >
                   <IconRefresh size={10} />
                 </ActionIcon>
               </Group>
