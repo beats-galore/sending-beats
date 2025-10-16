@@ -3,7 +3,7 @@ import { Stack, Button } from '@mantine/core';
 import { memo } from 'react';
 
 import { useChannelEffects } from '../../hooks';
-import { AudioSlider } from '../ui';
+import { AudioSlider } from '../ui/AudioSlider';
 
 type ChannelEQProps = {
   channelId: number;
@@ -15,7 +15,9 @@ export const ChannelEQ = memo<ChannelEQProps>(({ channelId }) => {
 
   const eqValues = getEQValues();
 
-  if (!eqValues) {return null;}
+  if (!eqValues) {
+    return null;
+  }
 
   return (
     <Stack gap="sm">

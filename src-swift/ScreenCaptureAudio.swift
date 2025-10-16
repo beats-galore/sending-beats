@@ -318,15 +318,36 @@ public func sc_audio_get_available_applications(
         do {
             print("📡 SCREEN_CAPTURE_KIT_SWIFT: Requesting shareable content...")
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-            print("✅ SCREEN_CAPTURE_KIT_SWIFT: Got \(content.applications.count) applications")
+            print("✅ SCREEN_CAPTURE_KIT_SWIFT: Got \(content.applications.count) total applications")
 
-            apps = content.applications.map { app in
-                return SCAppInfo(
-                    pid: app.processID,
-                    bundleIdentifier: app.bundleIdentifier,
-                    applicationName: app.applicationName
-                )
+            // Filter applications using NSRunningApplication to check activation policy
+            // This filters out background processes, daemons, and system utilities
+            let runningApps = NSWorkspace.shared.runningApplications
+            let runningAppsByPID = Dictionary(uniqueKeysWithValues: runningApps.map { ($0.processIdentifier, $0) })
+
+            var filteredCount = 0
+            apps = content.applications.compactMap { app in
+                // Look up NSRunningApplication for this PID
+                guard let runningApp = runningAppsByPID[app.processID] else {
+                    return nil
+                }
+
+                // Only include regular applications (with dock icons) and accessory apps (menu bar apps)
+                // Exclude prohibited (background processes, daemons, agents)
+                let policy = runningApp.activationPolicy
+                if policy == .regular || policy == .accessory {
+                    return SCAppInfo(
+                        pid: app.processID,
+                        bundleIdentifier: app.bundleIdentifier,
+                        applicationName: app.applicationName
+                    )
+                } else {
+                    filteredCount += 1
+                    return nil
+                }
             }
+
+            print("✅ SCREEN_CAPTURE_KIT_SWIFT: Filtered to \(apps.count) user applications (excluded \(filteredCount) background processes)")
             errorCode = 0
         } catch {
             print("❌ SCREEN_CAPTURE_KIT_SWIFT error: \(error.localizedDescription)")
@@ -351,7 +372,7 @@ public func sc_audio_get_available_applications(
     }
 
     if apps.isEmpty {
-        print("⚠️ SCREEN_CAPTURE_KIT_SWIFT: No applications found")
+        print("⚠️ SCREEN_CAPTURE_KIT_SWIFT: No applications found after filtering")
         outApps?.pointee = nil
         outCount?.pointee = 0
         return 0
@@ -366,7 +387,7 @@ public func sc_audio_get_available_applications(
     outApps?.pointee = appsArray
     outCount?.pointee = Int32(apps.count)
 
-    print("✅ SCREEN_CAPTURE_KIT_SWIFT: Returning \(apps.count) applications")
+    print("✅ SCREEN_CAPTURE_KIT_SWIFT: Returning \(apps.count) filtered applications")
     return 0
 }
 

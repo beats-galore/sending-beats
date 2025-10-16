@@ -14,7 +14,8 @@ import { useConfigurationStore } from '../../stores/mixer-store';
 
 import type { ConfiguredAudioDevice } from '../../types/db';
 import type { Identifier } from '../../types/util.types';
-import { VUMeter, AudioSlider } from '../ui';
+import { AudioSlider } from '../ui/AudioSlider';
+import { VUMeter } from '../ui/VUMeter';
 
 const useStyles = createStyles(() => ({
   responsiveGrid: {

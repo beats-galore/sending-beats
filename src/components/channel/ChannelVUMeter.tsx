@@ -5,7 +5,7 @@ import { memo, useMemo, useRef } from 'react';
 
 import { useChannelLevels } from '../../hooks';
 import { VU_METER_OPTIMIZATIONS } from '../../utils/performance-helpers';
-import { VUMeter } from '../ui';
+import { VUMeter } from '../ui/VUMeter';
 
 const useStyles = createStyles((theme) => ({
   vuContainer: {
