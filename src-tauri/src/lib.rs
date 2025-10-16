@@ -459,6 +459,9 @@ pub fn run() {
             validate_audio_file,
             // Application audio commands
             get_known_audio_applications,
+            get_all_available_applications,
+            add_audio_application,
+            remove_audio_application,
             stop_application_audio_capture,
             get_active_audio_captures,
             stop_all_audio_captures,

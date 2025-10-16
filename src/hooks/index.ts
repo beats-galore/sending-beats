@@ -24,3 +24,4 @@ export { useRecording } from './use-recording';
 // Application audio hooks
 export { useApplicationAudio } from './use-application-audio';
 export { useAudioPermissions } from './use-audio-permissions';
+export { useApplicationManager } from './use-application-manager';
