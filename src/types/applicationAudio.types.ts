@@ -9,6 +9,13 @@ export type ProcessInfo = {
   is_playing_audio: boolean;
 }
 
+export type AvailableApplicationInfo = {
+  pid: number;
+  bundleIdentifier: string;
+  applicationName: string;
+  isInDatabase: boolean;
+}
+
 export type ApplicationAudioError = {
   type: 'PermissionDenied' | 'ApplicationNotFound' | 'CoreAudioError' | 'UnsupportedSystem' | 'TooManyCaptures' | 'TapNotInitialized' | 'SystemError';
   message: string;
