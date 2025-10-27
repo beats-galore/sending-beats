@@ -10,7 +10,7 @@ export const useApplicationAudio = () => {
       return;
     }
     store.refreshApplications();
-  }, [store.refreshApplications]);
+  }, [store, store.refreshApplications]);
 
   return useMemo(
     () => ({
@@ -32,6 +32,7 @@ export const useApplicationAudio = () => {
     }),
     [
       store.availableApps,
+      store.knownApps,
       store.activeCaptures,
       store.permissionsGranted,
       store.isLoading,
@@ -39,9 +40,10 @@ export const useApplicationAudio = () => {
       store.refreshApplications,
       store.requestPermissions,
       store.startCapturing,
+      store.stopCapturing,
+      store.createMixerInput,
       store.stopAllCaptures,
       store.clearError,
-      store.createMixerInput,
     ]
   );
 };

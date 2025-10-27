@@ -2,18 +2,27 @@ import { invoke } from '@tauri-apps/api/core';
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 
-import type { ProcessInfo } from '../types/applicationAudio.types';
+import type { AvailableApplicationInfo, ProcessInfo } from '../types/applicationAudio.types';
 
 type ApplicationAudioStore = {
   availableApps: ProcessInfo[];
   knownApps: ProcessInfo[];
   activeCaptures: ProcessInfo[];
+  allApplications: AvailableApplicationInfo[];
   permissionsGranted: boolean;
   isLoading: boolean;
   error: string | null;
   initialLoadCompleted: boolean;
 
   refreshApplications: () => Promise<void>;
+  loadAllApplications: () => Promise<void>;
+  addApplication: (
+    bundleIdentifier: string,
+    applicationName: string,
+    operatingSystem: string
+  ) => Promise<string>;
+  updateApplicationName: (bundleIdentifier: string, newApplicationName: string) => Promise<string>;
+  removeApplication: (bundleIdentifier: string) => Promise<string>;
   requestPermissions: () => Promise<{ granted: boolean; message: string }>;
   startCapturing: (pid: number) => Promise<string | null>;
   stopCapturing: (pid: number) => Promise<boolean>;
@@ -27,10 +36,74 @@ export const useApplicationAudioStore = create<ApplicationAudioStore>()(
     availableApps: [],
     knownApps: [],
     activeCaptures: [],
+    allApplications: [],
     permissionsGranted: false,
     isLoading: false,
     error: null,
     initialLoadCompleted: false,
+
+    loadAllApplications: async () => {
+      set({ isLoading: true, error: null });
+      try {
+        const apps = await invoke<AvailableApplicationInfo[]>('get_all_available_applications');
+        set({ allApplications: apps, isLoading: false });
+      } catch (error) {
+        console.error('Failed to load all applications:', error);
+        set({ isLoading: false, error: error as string });
+      }
+    },
+
+    addApplication: async (
+      bundleIdentifier: string,
+      applicationName: string,
+      operatingSystem: string
+    ) => {
+      set({ error: null });
+      try {
+        const result = await invoke<string>('add_audio_application', {
+          bundleIdentifier,
+          applicationName,
+          operatingSystem,
+        });
+        await get().loadAllApplications();
+        return result;
+      } catch (error) {
+        console.error('Failed to add application:', error);
+        set({ error: error as string });
+        throw error;
+      }
+    },
+
+    updateApplicationName: async (bundleIdentifier: string, newApplicationName: string) => {
+      set({ error: null });
+      try {
+        const result = await invoke<string>('update_audio_application_name', {
+          bundleIdentifier,
+          newApplicationName,
+        });
+        await get().loadAllApplications();
+        return result;
+      } catch (error) {
+        console.error('Failed to update application name:', error);
+        set({ error: error as string });
+        throw error;
+      }
+    },
+
+    removeApplication: async (bundleIdentifier: string) => {
+      set({ error: null });
+      try {
+        const result = await invoke<string>('remove_audio_application', {
+          bundleIdentifier,
+        });
+        await get().loadAllApplications();
+        return result;
+      } catch (error) {
+        console.error('Failed to remove application:', error);
+        set({ error: error as string });
+        throw error;
+      }
+    },
 
     refreshApplications: async () => {
       console.log('🔄 useApplicationAudioStore: Starting refreshApplications...');

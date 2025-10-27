@@ -268,16 +268,16 @@ pub async fn get_known_audio_applications(
                     .await
                     .map_err(|e| format!("Failed to query audio applications: {}", e))?;
 
-                // Build a set of known bundle identifiers that are enabled
-                let known_bundle_ids: std::collections::HashSet<String> = known_audio_apps
+                // Build a map of bundle_identifier -> saved application name
+                let known_apps_map: std::collections::HashMap<String, String> = known_audio_apps
                     .iter()
                     .filter(|app| app.is_enabled && app.operating_system == "macos")
-                    .map(|app| app.bundle_identifier.clone())
+                    .map(|app| (app.bundle_identifier.clone(), app.application_name.clone()))
                     .collect();
 
                 println!(
                     "📋 Loaded {} enabled audio applications from database",
-                    known_bundle_ids.len()
+                    known_apps_map.len()
                 );
 
                 // Filter and deduplicate by PID
@@ -293,10 +293,10 @@ pub async fn get_known_audio_applications(
                         }
 
                         // Only include if in the known audio applications database
-                        if known_bundle_ids.contains(&app.bundle_identifier) {
+                        if let Some(saved_name) = known_apps_map.get(&app.bundle_identifier) {
                             Some(ProcessInfo {
                                 pid,
-                                name: app.application_name.clone(),
+                                name: saved_name.clone(),
                                 bundle_id: Some(app.bundle_identifier),
                                 icon_path: None,
                                 is_audio_capable: true,

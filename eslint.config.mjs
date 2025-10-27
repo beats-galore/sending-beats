@@ -34,6 +34,7 @@ export const extendableBaseConfig = [
 
       import: importPlugin,
       'react-hooks': reactHooksPlugin,
+      react: reactPlugin,
     },
     languageOptions: {
       parser: tseslint.parser,
@@ -130,6 +131,49 @@ export const extendableBaseConfig = [
       ],
       'import/no-restricted-paths': ['error'],
       'no-restricted-imports': ['error'],
+      'react/no-unused-class-component-methods': 'warn',
+      'react/jsx-no-bind': [
+        'error',
+        {
+          allowArrowFunctions: true,
+          allowFunctions: true,
+          allowBind: false,
+        },
+      ],
+      'react/jsx-no-constructed-context-values': 'warn',
+      'react/react-in-jsx-scope': 'off',
+      'react/function-component-definition': 'off',
+
+      'react/jsx-filename-extension': [
+        'error',
+        {
+          extensions: ['.jsx', '.tsx'],
+          allow: 'as-needed',
+        },
+      ],
+
+      'react/jsx-no-duplicate-props': [
+        'error',
+        {
+          ignoreCase: false,
+        },
+      ],
+
+      'react/prefer-stateless-function': 'off',
+      'react/destructuring-assignment': 'off',
+      'react/default-props-match-prop-types': 'off',
+      'react/require-default-props': 'off',
+      'react/no-unescaped-entities': 'off',
+      'react/sort-comp': 'off',
+      'react/button-has-type': 'off',
+      'react/no-unused-state': 'off',
+      'react/jsx-no-target-blank': 'off',
+      'react/jsx-props-no-spreading': 'off',
+      'react/static-property-placement': 'off',
+      'react/no-unstable-nested-components': 'warn',
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'error',
+      'react/jsx-key': ['error'],
     },
   },
   {

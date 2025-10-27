@@ -28,7 +28,7 @@ import {
 } from '@tabler/icons-react';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 
-import { useApplicationManager } from '../../hooks';
+import { useApplicationAudioStore } from '../../stores/application-audio-store';
 
 import type { AvailableApplicationInfo } from '../../types/applicationAudio.types';
 
@@ -63,16 +63,15 @@ export const ApplicationAudioManager = memo<
   Omit<UseDisclosureHandlers, 'toggle'> & { opened: boolean }
 >(({ open: _open, close, opened }) => {
   const { classes } = useStyles();
-  const {
-    allApplications,
-    isLoading,
-    error,
-    loadAllApplications,
-    addApplication,
-    updateApplicationName,
-    removeApplication,
-    clearError,
-  } = useApplicationManager();
+  const allApplications = useApplicationAudioStore((state) => state.allApplications);
+  const isLoading = useApplicationAudioStore((state) => state.isLoading);
+  const error = useApplicationAudioStore((state) => state.error);
+  const loadAllApplications = useApplicationAudioStore((state) => state.loadAllApplications);
+  const addApplication = useApplicationAudioStore((state) => state.addApplication);
+  const updateApplicationName = useApplicationAudioStore((state) => state.updateApplicationName);
+  const removeApplication = useApplicationAudioStore((state) => state.removeApplication);
+  const refreshApplications = useApplicationAudioStore((state) => state.refreshApplications);
+  const clearError = useApplicationAudioStore((state) => state.clearError);
 
   const [originalApps, setOriginalApps] = useState<AvailableApplicationInfo[]>();
   const [updatedApps, setUpdatedApps] = useState<AvailableApplicationInfo[]>();
@@ -174,19 +173,24 @@ export const ApplicationAudioManager = memo<
   );
 
   const toAdd = useMemo(() => {
-    const originalSet = new Set((originalApps ?? []).map((o) => o.bundleIdentifier));
+    const originalSet = new Set(
+      (originalApps ?? []).filter((o) => o.isInDatabase).map((o) => o.bundleIdentifier)
+    );
     return (updatedApps ?? []).filter((u) => !originalSet.has(u.bundleIdentifier));
   }, [originalApps, updatedApps]);
 
   const toRemove = useMemo(() => {
     const updatedSet = new Set((updatedApps ?? []).map((u) => u.bundleIdentifier));
-    return (originalApps ?? []).filter((o) => !updatedSet.has(o.bundleIdentifier));
+    return (originalApps ?? []).filter(
+      (o) => !updatedSet.has(o.bundleIdentifier) && o.isInDatabase
+    );
   }, [originalApps, updatedApps]);
 
   const performSave = useCallback(async () => {
     try {
+      console.log('removing applications', toRemove);
       await Promise.all(toRemove.map((r) => handleDeleteApplication(r.bundleIdentifier)));
-
+      console.log('adding applications', toAdd);
       await Promise.all(
         toAdd.map((a) => {
           const customName = nameChanges[a.bundleIdentifier];
@@ -194,26 +198,31 @@ export const ApplicationAudioManager = memo<
         })
       );
 
-      const nameUpdates = Object.entries(nameChanges)
-        .filter(([bundleId, newName]) => {
-          const app = originalApps?.find((a) => a.bundleIdentifier === bundleId);
-          return app?.isInDatabase && app.applicationName !== newName;
-        })
-        .map(([bundleId, newName]) => updateApplicationName(bundleId, newName));
+      const toUpdateName = Object.entries(nameChanges).filter(([bundleId, newName]) => {
+        const app = originalApps?.find((a) => a.bundleIdentifier === bundleId);
+        return app?.isInDatabase && app.applicationName !== newName;
+      });
+      console.log('updating names for', toUpdateName);
+      const nameUpdates = toUpdateName.map(([bundleId, newName]) =>
+        updateApplicationName(bundleId, newName)
+      );
 
       await Promise.all(nameUpdates);
-    } finally {
+      await refreshApplications();
       close();
+    } catch (err) {
+      console.error('failed to save', err);
     }
   }, [
     toRemove,
     toAdd,
     nameChanges,
-    originalApps,
+    close,
     handleDeleteApplication,
     handleSaveApplication,
+    originalApps,
     updateApplicationName,
-    close,
+    refreshApplications,
   ]);
 
   const handleBulkSave = useCallback(() => {
@@ -369,16 +378,17 @@ export const ApplicationAudioManager = memo<
         }),
     [
       allApplications,
-      updatedApps,
-      originalApps,
       originalSort,
-      actionInProgress,
+      originalApps,
+      updatedApps,
+      nameChanges,
       editingBundleId,
       editedName,
-      nameChanges,
-      handleStartEdit,
       handleCancelEdit,
+      classes.clickableNameGroup,
+      actionInProgress,
       handleSaveEdit,
+      handleStartEdit,
     ]
   );
 
