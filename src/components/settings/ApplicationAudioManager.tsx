@@ -1,5 +1,4 @@
 import {
-  Card,
   Title,
   Stack,
   Table,
@@ -11,10 +10,23 @@ import {
   Loader,
   ActionIcon,
   Tooltip,
+  Modal,
+  ButtonGroup,
+  Flex,
+  ScrollArea,
+  TextInput,
 } from '@mantine/core';
+import type { UseDisclosureHandlers } from '@mantine/hooks';
 import { createStyles } from '@mantine/styles';
-import { IconCheck, IconPlus, IconTrash, IconRefresh, IconAlertCircle } from '@tabler/icons-react';
-import { memo, useEffect, useState } from 'react';
+import {
+  IconCheck,
+  IconPlus,
+  IconTrash,
+  IconRefresh,
+  IconAlertCircle,
+  IconPencil,
+} from '@tabler/icons-react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useApplicationManager } from '../../hooks';
 
@@ -38,7 +50,9 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export const ApplicationAudioManager = memo(() => {
+export const ApplicationAudioManager = memo<
+  Omit<UseDisclosureHandlers, 'toggle'> & { opened: boolean }
+>(({ open: _open, close, opened }) => {
   const { classes } = useStyles();
   const {
     allApplications,
@@ -50,148 +64,350 @@ export const ApplicationAudioManager = memo(() => {
     clearError,
   } = useApplicationManager();
 
+  const [originalApps, setOriginalApps] = useState<AvailableApplicationInfo[]>();
+  const [updatedApps, setUpdatedApps] = useState<AvailableApplicationInfo[]>();
+  const [originalSort, setOriginalSort] = useState<string[]>();
+
   const [actionInProgress, setActionInProgress] = useState<string | null>(null);
+  const [editingBundleId, setEditingBundleId] = useState<string | null>(null);
+  const [editedName, setEditedName] = useState<string>('');
+  const [nameChanges, setNameChanges] = useState<Record<string, string>>({});
 
   useEffect(() => {
     loadAllApplications();
   }, [loadAllApplications]);
 
-  const handleAddApplication = async (app: AvailableApplicationInfo) => {
-    setActionInProgress(app.bundleIdentifier);
-    try {
-      await addApplication(app.bundleIdentifier, app.applicationName, 'macos');
-    } catch (err) {
-      console.error('Failed to add application:', err);
-    } finally {
-      setActionInProgress(null);
+  useEffect(() => {
+    if (isLoading) {
+      return;
     }
-  };
+    setOriginalApps(allApplications);
+    setUpdatedApps(allApplications.filter((a) => a.isInDatabase));
+    setOriginalSort(
+      allApplications
+        .sort((a, b) => {
+          if (a.isInDatabase && !b.isInDatabase) {
+            return -1;
+          }
+          if (b.isInDatabase && !a.isInDatabase) {
+            return 1;
+          }
+          return a.applicationName < b.applicationName ? -1 : 1;
+        })
+        .map((a) => a.bundleIdentifier)
+    );
+  }, [isLoading, allApplications, setOriginalApps, setUpdatedApps]);
 
-  const handleRemoveApplication = async (bundleIdentifier: string) => {
-    setActionInProgress(bundleIdentifier);
-    try {
-      await removeApplication(bundleIdentifier);
-    } catch (err) {
-      console.error('Failed to remove application:', err);
-    } finally {
-      setActionInProgress(null);
-    }
-  };
+  const handleSaveApplication = useCallback(
+    async (app: AvailableApplicationInfo) => {
+      setActionInProgress(app.bundleIdentifier);
+      try {
+        await addApplication(app.bundleIdentifier, app.applicationName, 'macos');
+      } catch (err) {
+        console.error('Failed to add application:', err);
+      } finally {
+        setActionInProgress(null);
+        close();
+      }
+    },
+    [setActionInProgress, addApplication, setActionInProgress, close]
+  );
 
-  const handleRefresh = async () => {
+  const handleDeleteApplication = useCallback(
+    async (bundleIdentifier: string) => {
+      setActionInProgress(bundleIdentifier);
+      try {
+        await removeApplication(bundleIdentifier);
+      } catch (err) {
+        console.error('Failed to remove application:', err);
+      } finally {
+        setActionInProgress(null);
+      }
+    },
+    [removeApplication, setActionInProgress]
+  );
+
+  const handleRefresh = useCallback(async () => {
     clearError();
     await loadAllApplications();
-  };
+  }, [clearError, loadAllApplications]);
 
-  const rows = allApplications.map((app) => (
-    <Table.Tr key={app.bundleIdentifier}>
-      <Table.Td>
-        <Text fw={500}>{app.applicationName}</Text>
-      </Table.Td>
-      <Table.Td>
-        <Text size="sm" c="dimmed">
-          {app.bundleIdentifier}
-        </Text>
-      </Table.Td>
-      <Table.Td>
-        {app.isInDatabase ? (
-          <Badge color="green" variant="light" leftSection={<IconCheck size={14} />}>
-            In Database
-          </Badge>
-        ) : (
-          <Badge color="gray" variant="light">
-            Not Added
-          </Badge>
-        )}
-      </Table.Td>
-      <Table.Td>
-        <Group gap="xs" justify="flex-end">
-          {app.isInDatabase ? (
-            <Tooltip label="Remove from database">
-              <ActionIcon
-                color="red"
-                variant="light"
-                onClick={() => handleRemoveApplication(app.bundleIdentifier)}
-                loading={actionInProgress === app.bundleIdentifier}
-              >
-                <IconTrash size={18} />
-              </ActionIcon>
-            </Tooltip>
-          ) : (
-            <Tooltip label="Add to database">
-              <ActionIcon
-                color="blue"
-                variant="light"
-                onClick={() => handleAddApplication(app)}
-                loading={actionInProgress === app.bundleIdentifier}
-              >
-                <IconPlus size={18} />
-              </ActionIcon>
-            </Tooltip>
-          )}
-        </Group>
-      </Table.Td>
-    </Table.Tr>
-  ));
+  const handleStartEdit = useCallback(
+    (app: AvailableApplicationInfo) => {
+      setEditingBundleId(app.bundleIdentifier);
+      setEditedName(nameChanges[app.bundleIdentifier] ?? app.applicationName);
+    },
+    [nameChanges]
+  );
+
+  const handleCancelEdit = useCallback(() => {
+    setEditingBundleId(null);
+    setEditedName('');
+  }, []);
+
+  const handleSaveEdit = useCallback(
+    (bundleIdentifier: string) => {
+      if (editedName.trim() === '') {
+        handleCancelEdit();
+        return;
+      }
+
+      setNameChanges((prev) => ({
+        ...prev,
+        [bundleIdentifier]: editedName,
+      }));
+
+      setEditingBundleId(null);
+      setEditedName('');
+    },
+    [editedName, handleCancelEdit]
+  );
+
+  const toAdd = useMemo(() => {
+    const originalSet = new Set((originalApps ?? []).map((o) => o.bundleIdentifier));
+    return (updatedApps ?? []).filter((u) => !originalSet.has(u.bundleIdentifier));
+  }, [originalApps, updatedApps]);
+
+  const toRemove = useMemo(() => {
+    const updatedSet = new Set((updatedApps ?? []).map((u) => u.bundleIdentifier));
+    return (originalApps ?? []).filter((o) => !updatedSet.has(o.bundleIdentifier));
+  }, [originalApps, updatedApps]);
+
+  const performSave = useCallback(async () => {
+    try {
+      await Promise.all(toRemove.map((r) => handleDeleteApplication(r.bundleIdentifier)));
+      await Promise.all(toAdd.map((a) => handleSaveApplication(a)));
+    } finally {
+      close();
+    }
+  }, [toRemove, toAdd, handleDeleteApplication, handleSaveApplication, close]);
+
+  const handleBulkSave = useCallback(() => {
+    void performSave();
+  }, [performSave]);
+
+  const rows = useMemo(
+    () =>
+      allApplications
+        .sort(
+          (a, b) =>
+            (originalSort?.indexOf(a.bundleIdentifier) ?? 0) -
+            (originalSort?.indexOf(b.bundleIdentifier) ?? 0)
+        )
+        .map((app) => {
+          const isSaved = originalApps?.some(
+            (a) => a.bundleIdentifier === app.bundleIdentifier && a.isInDatabase
+          );
+          const isStagedForAdd =
+            updatedApps?.some((a) => a.bundleIdentifier === app.bundleIdentifier) && !isSaved;
+          const isStagedForRemove =
+            !updatedApps?.some((u) => u.bundleIdentifier === app.bundleIdentifier) &&
+            app.isInDatabase;
+
+          const displayName = nameChanges[app.bundleIdentifier] ?? app.applicationName;
+
+          return (
+            <Table.Tr key={app.bundleIdentifier}>
+              <Table.Td>
+                {editingBundleId === app.bundleIdentifier ? (
+                  <TextInput
+                    value={editedName}
+                    onChange={(e) => setEditedName(e.currentTarget.value)}
+                    onBlur={handleCancelEdit}
+                    size="sm"
+                    autoFocus
+                    rightSection={
+                      <Tooltip label="Save">
+                        <ActionIcon
+                          variant="subtle"
+                          color="blue"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            handleSaveEdit(app.bundleIdentifier);
+                          }}
+                        >
+                          <IconCheck size={16} />
+                        </ActionIcon>
+                      </Tooltip>
+                    }
+                  />
+                ) : (
+                  <Group
+                    gap="xs"
+                    onClick={() => handleStartEdit(app)}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <Text fw={500}>{displayName}</Text>
+                    <Tooltip label="Edit name">
+                      <ActionIcon variant="subtle" color="blue" size="sm">
+                        <IconPencil size={14} />
+                      </ActionIcon>
+                    </Tooltip>
+                  </Group>
+                )}
+              </Table.Td>
+              <Table.Td>
+                <Text size="sm" c="dimmed">
+                  {app.bundleIdentifier}
+                </Text>
+              </Table.Td>
+              <Table.Td>
+                {!isStagedForAdd && app.isInDatabase && !isStagedForRemove && (
+                  <Badge color="green" variant="light" leftSection={<IconCheck size={14} />}>
+                    In Database
+                  </Badge>
+                )}
+                {isStagedForAdd && (
+                  <Badge color="blue" variant="light" leftSection={<IconCheck size={14} />}>
+                    To be added
+                  </Badge>
+                )}
+
+                {!app.isInDatabase && !isStagedForAdd && (
+                  <Badge color="gray" variant="light">
+                    Not Added
+                  </Badge>
+                )}
+                {isStagedForRemove && (
+                  <Badge color="red" variant="light">
+                    To be removed
+                  </Badge>
+                )}
+              </Table.Td>
+              <Table.Td>
+                <Group gap="xs" justify="flex-end">
+                  {((isSaved && !isStagedForRemove) || isStagedForAdd) && (
+                    <Tooltip label="Remove from available applications">
+                      <ActionIcon
+                        color="red"
+                        variant="light"
+                        onClick={() => {
+                          setUpdatedApps((updated) =>
+                            updated?.filter((u) => u.bundleIdentifier !== app.bundleIdentifier)
+                          );
+                        }}
+                        loading={actionInProgress === app.bundleIdentifier}
+                      >
+                        <IconTrash size={18} />
+                      </ActionIcon>
+                    </Tooltip>
+                  )}
+                  {(isStagedForRemove || (!isSaved && !isStagedForAdd)) && (
+                    <Tooltip label="Add to available applications">
+                      <ActionIcon
+                        color="blue"
+                        variant="light"
+                        onClick={() => {
+                          setUpdatedApps((updated) => [...(updated ?? []), app]);
+                        }}
+                        loading={actionInProgress === app.bundleIdentifier}
+                      >
+                        <IconPlus size={18} />
+                      </ActionIcon>
+                    </Tooltip>
+                  )}
+                </Group>
+              </Table.Td>
+            </Table.Tr>
+          );
+        }),
+    [
+      allApplications,
+      updatedApps,
+      originalApps,
+      originalSort,
+      actionInProgress,
+      editingBundleId,
+      editedName,
+      nameChanges,
+      handleStartEdit,
+      handleCancelEdit,
+      handleSaveEdit,
+    ]
+  );
 
   return (
-    <Card className={classes.card} padding="lg" withBorder>
-      <Stack gap="md">
+    <Modal
+      title={
         <Group justify="space-between">
           <Title order={3}>Application Audio Manager</Title>
           <Tooltip label="Refresh application list">
             <Button
               leftSection={<IconRefresh size={16} />}
               variant="light"
-              onClick={handleRefresh}
+              onClick={() => {
+                void handleRefresh();
+              }}
               loading={isLoading}
             >
               Refresh
             </Button>
           </Tooltip>
         </Group>
-
-        {error && (
-          <Alert
-            icon={<IconAlertCircle size={16} />}
-            title="Error"
-            color="red"
-            withCloseButton
-            onClose={clearError}
-          >
-            {error}
-          </Alert>
-        )}
-
-        {isLoading && allApplications.length === 0 ? (
-          <Group justify="center" py="xl">
-            <Loader size="md" />
-            <Text c="dimmed">Loading applications...</Text>
-          </Group>
-        ) : allApplications.length === 0 ? (
-          <Alert icon={<IconAlertCircle size={16} />} color="blue">
-            No applications found. Make sure you have granted Screen Recording permission.
-          </Alert>
-        ) : (
-          <Table className={classes.table} striped highlightOnHover>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Application Name</Table.Th>
-                <Table.Th>Bundle Identifier</Table.Th>
-                <Table.Th>Status</Table.Th>
-                <Table.Th style={{ width: 120, textAlign: 'right' }}>Actions</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>{rows}</Table.Tbody>
-          </Table>
-        )}
-
-        <Text size="sm" c="dimmed">
+      }
+      opened={opened}
+      size="xl"
+      onClose={close}
+      className={classes.card}
+      padding="lg"
+    >
+      <Flex direction="column" style={{ height: '70vh' }}>
+        <Text size="sm" mb="sm" c="dimmed">
           Applications shown here are detected via ScreenCaptureKit. Add applications to enable
           audio capture from them.
         </Text>
-      </Stack>
-    </Card>
+
+        <ScrollArea style={{ flex: 1 }}>
+          <Stack gap="md" mr="sm">
+            {error && (
+              <Alert
+                icon={<IconAlertCircle size={16} />}
+                title="Error"
+                color="red"
+                withCloseButton
+                onClose={clearError}
+              >
+                {error}
+              </Alert>
+            )}
+
+            {isLoading && allApplications.length === 0 ? (
+              <Group justify="center" py="xl">
+                <Loader size="md" />
+                <Text c="dimmed">Loading applications...</Text>
+              </Group>
+            ) : allApplications.length === 0 ? (
+              <Alert icon={<IconAlertCircle size={16} />} color="blue">
+                No applications found. Make sure you have granted Screen Recording permission.
+              </Alert>
+            ) : (
+              <Table stickyHeader className={classes.table} striped highlightOnHover>
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Application Name</Table.Th>
+                    <Table.Th>Bundle Identifier</Table.Th>
+                    <Table.Th>Status</Table.Th>
+                    <Table.Th style={{ width: 120, textAlign: 'right' }}>Actions</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>{rows}</Table.Tbody>
+              </Table>
+            )}
+          </Stack>
+        </ScrollArea>
+
+        <Group justify="flex-end" mt="sm">
+          <ButtonGroup>
+            <Button onClick={close} variant="outline">
+              Cancel
+            </Button>
+            <Button onClick={handleBulkSave} variant="primary">
+              Save
+            </Button>
+          </ButtonGroup>
+        </Group>
+      </Flex>
+    </Modal>
   );
 });
 
