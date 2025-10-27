@@ -21,7 +21,8 @@ solution for professional radio streaming.
   Make sure you check the diff of code before committing. make sure to include
   ALL working changes, even if you didn't make them.
 - When executing git commits, you should run `turbo rust:fmt` and
-  `turbo lint:fix` so our code is properly formatted in the commits.
+  `turbo lint:fix -- <paths to changed files>` so our code is properly formatted
+  in the commits.
   - only need to apply the linter for the files you've changed.
   - `turbo rust:fmt` if you've changed any \*.rs files
   - `turbo lint:fix` if you've changed any _.ts, _.tsx files

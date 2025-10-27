@@ -13,6 +13,7 @@ type UseApplicationManagerReturn = {
     applicationName: string,
     operatingSystem: string
   ) => Promise<string>;
+  updateApplicationName: (bundleIdentifier: string, newApplicationName: string) => Promise<string>;
   removeApplication: (bundleIdentifier: string) => Promise<string>;
   clearError: () => void;
 };
@@ -61,6 +62,25 @@ export const useApplicationManager = (): UseApplicationManagerReturn => {
     [loadAllApplications]
   );
 
+  const updateApplicationName = useCallback(
+    async (bundleIdentifier: string, newApplicationName: string): Promise<string> => {
+      setError(null);
+      try {
+        const result = await invoke<string>('update_audio_application_name', {
+          bundleIdentifier,
+          newApplicationName,
+        });
+        await loadAllApplications();
+        return result;
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        setError(errorMessage);
+        throw err;
+      }
+    },
+    [loadAllApplications]
+  );
+
   const removeApplication = useCallback(
     async (bundleIdentifier: string): Promise<string> => {
       setError(null);
@@ -89,6 +109,7 @@ export const useApplicationManager = (): UseApplicationManagerReturn => {
     error,
     loadAllApplications,
     addApplication,
+    updateApplicationName,
     removeApplication,
     clearError,
   };
