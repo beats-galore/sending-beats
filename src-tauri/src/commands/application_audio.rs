@@ -160,6 +160,52 @@ pub async fn add_audio_application(
 }
 
 #[tauri::command]
+pub async fn update_audio_application_name(
+    audio_state: State<'_, crate::AudioState>,
+    bundle_identifier: String,
+    new_application_name: String,
+) -> Result<String, String> {
+    println!(
+        "📝 Updating audio application name for {}: {}",
+        bundle_identifier, new_application_name
+    );
+
+    use crate::entities::audio_application;
+    use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+
+    let db = audio_state.database.sea_orm();
+
+    let app = audio_application::Entity::find()
+        .filter(audio_application::Column::BundleIdentifier.eq(&bundle_identifier))
+        .one(db)
+        .await
+        .map_err(|e| format!("Failed to find application: {}", e))?;
+
+    if let Some(app_model) = app {
+        let mut active_model: audio_application::ActiveModel = app_model.into();
+        active_model.application_name = Set(new_application_name.clone());
+        active_model.updated_at = Set(chrono::Utc::now());
+
+        active_model
+            .update(db)
+            .await
+            .map_err(|e| format!("Failed to update application name: {}", e))?;
+
+        println!(
+            "✅ Updated application name for {}: {}",
+            bundle_identifier, new_application_name
+        );
+        Ok(format!(
+            "Successfully updated application name: {}",
+            new_application_name
+        ))
+    } else {
+        println!("⚠️ Application not found: {}", bundle_identifier);
+        Err(format!("Application not found: {}", bundle_identifier))
+    }
+}
+
+#[tauri::command]
 pub async fn remove_audio_application(
     audio_state: State<'_, crate::AudioState>,
     bundle_identifier: String,

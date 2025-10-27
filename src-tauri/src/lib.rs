@@ -461,6 +461,7 @@ pub fn run() {
             get_known_audio_applications,
             get_all_available_applications,
             add_audio_application,
+            update_audio_application_name,
             remove_audio_application,
             stop_application_audio_capture,
             get_active_audio_captures,

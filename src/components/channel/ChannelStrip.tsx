@@ -5,7 +5,6 @@ import {
   Title,
   Text,
   Button,
-  Select,
   Slider,
   Collapse,
   ActionIcon,
@@ -13,16 +12,9 @@ import {
   Menu,
 } from '@mantine/core';
 import { createStyles } from '@mantine/styles';
-import {
-  IconRefresh,
-  IconPlus,
-  IconAdjustmentsHorizontal,
-  IconVolume,
-  IconShield,
-} from '@tabler/icons-react';
+import { IconPlus, IconAdjustmentsHorizontal, IconVolume, IconShield } from '@tabler/icons-react';
 import { memo, useCallback, useMemo, useState, useEffect } from 'react';
 
-import { useAudioDevices, useApplicationAudio } from '../../hooks';
 import { audioService } from '../../services';
 import {
   useAudioEffectsDefaultStore,
@@ -31,10 +23,9 @@ import {
 import { useConfigurationStore } from '../../stores/mixer-store';
 
 import type { AudioChannel } from '../../types';
-import type { ConfiguredAudioDevice } from '../../types/db';
-import type { Identifier } from '../../types/util.types';
 import { ChannelEffects } from './ChannelEffects';
 import { ChannelVUMeter } from './ChannelVUMeter';
+import { InputAudioDeviceSelect } from './InputAudioDeviceSelect';
 
 const useStyles = createStyles(() => ({
   channelPaper: {
@@ -131,9 +122,7 @@ type ChannelStripProps = {
 export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
   const { classes } = useStyles();
 
-  const { inputDevices, refreshDevices } = useAudioDevices();
-  const { activeSession, updateConfiguredDevice, removeConfiguredDevice } = useConfigurationStore();
-  const applicationAudio = useApplicationAudio();
+  const { activeSession } = useConfigurationStore();
 
   // Select only the effects data we need from the store
   const effectsById = useAudioEffectsDefaultStore((state) => state.effectsById);
@@ -203,61 +192,6 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
     }
     void toggleSolo(deviceEffects.id, configuredInputDevice.id, activeSession.configuration.id);
   }, [deviceEffects, configuredInputDevice, activeSession, toggleSolo]);
-
-  const handleInputDeviceChange = useCallback(
-    async (deviceId: Identifier<ConfiguredAudioDevice> | null) => {
-      console.log(
-        `🔧 FRONTEND: handleInputDeviceChange called for channel ${channel.id} with deviceId:`,
-        deviceId
-      );
-      if (deviceId) {
-        // Check if trying to select an unavailable device
-        const isDeviceAvailable = inputDevices.some((device) => device.id === deviceId);
-        if (!isDeviceAvailable && !deviceId.startsWith('app-')) {
-          console.warn(`⚠️ Attempted to select unavailable device: ${deviceId}`);
-          // Could show a toast notification here in the future
-          return;
-        }
-
-        try {
-          // Use the audioService switchInputStream method which handles database sync
-          const currentDeviceId = configuredInputDevice?.deviceIdentifier ?? null;
-          const isAppAudio = deviceId.startsWith('app-');
-          console.log(
-            `🔧 FRONTEND CH${channel.id}: Switching input device: ${currentDeviceId} → ${deviceId}${isAppAudio ? ' (app audio)' : ''}`
-          );
-          console.log(
-            `🔧 FRONTEND CH${channel.id}: configuredInputDevice:`,
-            configuredInputDevice
-          );
-          console.log(
-            `🔧 FRONTEND CH${channel.id}: activeSession devices:`,
-            activeSession?.configuredDevices
-          );
-
-          // Remove old device from UI state first
-          if (currentDeviceId) {
-            removeConfiguredDevice(currentDeviceId);
-            console.log(`🗑️ Removed old device from UI state: ${currentDeviceId}`);
-          }
-
-          const updatedDevice = await audioService.switchInputStream(currentDeviceId, deviceId, isAppAudio);
-          console.debug(`✅ Channel ${channel.id} input device switched to: ${deviceId}`);
-
-          // Update the local state with the returned device configuration
-          if (updatedDevice) {
-            updateConfiguredDevice(updatedDevice);
-            console.log(`🔄 Updated UI state with new device configuration:`, updatedDevice);
-          }
-        } catch (error) {
-          console.error(`❌ Failed to switch input device for channel ${channel.id}:`, error);
-        }
-      } else {
-        console.log(`🔧 FRONTEND: deviceId is null, not setting input device`);
-      }
-    },
-    [channel.id, configuredInputDevice, inputDevices, updateConfiguredDevice, removeConfiguredDevice]
-  );
 
   // Handle gain slider change (during drag)
   const handleGainChange = useCallback((gainDb: number) => {
@@ -347,58 +281,6 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
         ? `R${Math.round(pan * 100)}`
         : `L${Math.round(Math.abs(pan) * 100)}`;
 
-  // Memoize input device options to prevent re-renders (including application sources)
-  const inputDeviceOptions = useMemo(() => {
-    const hardwareOptions = inputDevices.map((device) => ({
-      value: device.id,
-      label: device.name.length > 20 ? `${device.name.substring(0, 20)}...` : device.name,
-    }));
-
-    // Add configured device if it's not in the available devices list (missing/unplugged)
-    // BUT skip application devices (they're in the app list)
-    if (configuredInputDevice && !configuredInputDevice.deviceIdentifier.startsWith('app-')) {
-      const isDeviceAvailable = inputDevices.some(
-        (device) => device.id === configuredInputDevice.deviceIdentifier
-      );
-      if (!isDeviceAvailable) {
-        const deviceName =
-          configuredInputDevice.deviceName ?? configuredInputDevice.deviceIdentifier;
-        hardwareOptions.unshift({
-          value: configuredInputDevice.deviceIdentifier,
-          label: `${deviceName} (unavailable)`,
-        });
-      }
-    }
-
-    const appOptions = applicationAudio.knownApps.map((app) => ({
-      value: `app-${app.pid}`,
-      label: app.name.length > 20 ? `${app.name.substring(0, 20)}...` : app.name,
-    }));
-
-    console.log('🎛️ ChannelStrip device options:', {
-      hardware: hardwareOptions.length,
-      applications: appOptions.length,
-      totalKnownApps: applicationAudio.knownApps.length,
-      configuredInputDevice,
-    });
-
-    // Mantine Select expects grouped data in a different format
-    if (appOptions.length > 0) {
-      return [
-        {
-          group: 'Hardware Devices',
-          items: hardwareOptions,
-        },
-        {
-          group: 'Applications',
-          items: appOptions,
-        },
-      ];
-    }
-    // No apps available, just return flat array
-    return hardwareOptions;
-  }, [inputDevices, applicationAudio.knownApps, configuredInputDevice]);
-
   return (
     <Stack gap={0}>
       <Paper p="sm" withBorder radius="md" className={classes.channelPaper}>
@@ -408,30 +290,10 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
             <Title order={5} size="sm" c="blue" lh={1}>
               CH {channel.id}
             </Title>
-            <Box>
-              <Group gap={4} align="center">
-                <Select
-                  size="xs"
-                  placeholder="No Input"
-                  value={configuredInputDevice?.deviceIdentifier ?? null}
-                  onChange={(e) =>
-                    void handleInputDeviceChange(e as Identifier<ConfiguredAudioDevice> | null)
-                  }
-                  data={inputDeviceOptions}
-                  className={`${classes.inputSelect} ${classes.customSelectInput}`}
-                />
-                <ActionIcon
-                  size="xs"
-                  onClick={() => {
-                    void refreshDevices();
-                    void applicationAudio.actions.refreshApplications();
-                  }}
-                  variant="subtle"
-                >
-                  <IconRefresh size={10} />
-                </ActionIcon>
-              </Group>
-            </Box>
+            <InputAudioDeviceSelect
+              channelId={channel.id}
+              className={`${classes.inputSelect} ${classes.customSelectInput}`}
+            />
           </Stack>
 
           {/* VU Meter - Now wider and flexible */}

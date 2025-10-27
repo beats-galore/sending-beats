@@ -48,6 +48,15 @@ const useStyles = createStyles((theme) => ({
       borderBottom: `1px solid ${theme.colors.dark[5]}`,
     },
   },
+  clickableNameGroup: {
+    cursor: 'pointer',
+    padding: '4px 8px',
+    margin: '-4px -8px',
+    borderRadius: theme.radius.sm,
+    '&:hover': {
+      backgroundColor: theme.fn.rgba(theme.colors.blue[6], 0.1),
+    },
+  },
 }));
 
 export const ApplicationAudioManager = memo<
@@ -60,6 +69,7 @@ export const ApplicationAudioManager = memo<
     error,
     loadAllApplications,
     addApplication,
+    updateApplicationName,
     removeApplication,
     clearError,
   } = useApplicationManager();
@@ -99,18 +109,18 @@ export const ApplicationAudioManager = memo<
   }, [isLoading, allApplications, setOriginalApps, setUpdatedApps]);
 
   const handleSaveApplication = useCallback(
-    async (app: AvailableApplicationInfo) => {
+    async (app: AvailableApplicationInfo, customName?: string) => {
       setActionInProgress(app.bundleIdentifier);
       try {
-        await addApplication(app.bundleIdentifier, app.applicationName, 'macos');
+        const nameToUse = customName ?? app.applicationName;
+        await addApplication(app.bundleIdentifier, nameToUse, 'macos');
       } catch (err) {
         console.error('Failed to add application:', err);
       } finally {
         setActionInProgress(null);
-        close();
       }
     },
-    [setActionInProgress, addApplication, setActionInProgress, close]
+    [setActionInProgress, addApplication]
   );
 
   const handleDeleteApplication = useCallback(
@@ -176,11 +186,35 @@ export const ApplicationAudioManager = memo<
   const performSave = useCallback(async () => {
     try {
       await Promise.all(toRemove.map((r) => handleDeleteApplication(r.bundleIdentifier)));
-      await Promise.all(toAdd.map((a) => handleSaveApplication(a)));
+
+      await Promise.all(
+        toAdd.map((a) => {
+          const customName = nameChanges[a.bundleIdentifier];
+          return handleSaveApplication(a, customName);
+        })
+      );
+
+      const nameUpdates = Object.entries(nameChanges)
+        .filter(([bundleId, newName]) => {
+          const app = originalApps?.find((a) => a.bundleIdentifier === bundleId);
+          return app?.isInDatabase && app.applicationName !== newName;
+        })
+        .map(([bundleId, newName]) => updateApplicationName(bundleId, newName));
+
+      await Promise.all(nameUpdates);
     } finally {
       close();
     }
-  }, [toRemove, toAdd, handleDeleteApplication, handleSaveApplication, close]);
+  }, [
+    toRemove,
+    toAdd,
+    nameChanges,
+    originalApps,
+    handleDeleteApplication,
+    handleSaveApplication,
+    updateApplicationName,
+    close,
+  ]);
 
   const handleBulkSave = useCallback(() => {
     void performSave();
@@ -205,6 +239,12 @@ export const ApplicationAudioManager = memo<
             app.isInDatabase;
 
           const displayName = nameChanges[app.bundleIdentifier] ?? app.applicationName;
+          const hasNameChanged =
+            nameChanges[app.bundleIdentifier] &&
+            nameChanges[app.bundleIdentifier] !== app.applicationName;
+          const isInUpdatedApps = updatedApps?.some(
+            (a) => a.bundleIdentifier === app.bundleIdentifier
+          );
 
           return (
             <Table.Tr key={app.bundleIdentifier}>
@@ -214,6 +254,11 @@ export const ApplicationAudioManager = memo<
                     value={editedName}
                     onChange={(e) => setEditedName(e.currentTarget.value)}
                     onBlur={handleCancelEdit}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        handleSaveEdit(app.bundleIdentifier);
+                      }
+                    }}
                     size="sm"
                     autoFocus
                     rightSection={
@@ -231,19 +276,30 @@ export const ApplicationAudioManager = memo<
                       </Tooltip>
                     }
                   />
-                ) : (
-                  <Group
-                    gap="xs"
-                    onClick={() => handleStartEdit(app)}
-                    style={{ cursor: 'pointer' }}
+                ) : isInUpdatedApps ? (
+                  <Tooltip
+                    label={hasNameChanged ? `Original: ${app.applicationName}` : undefined}
+                    disabled={!hasNameChanged}
                   >
-                    <Text fw={500}>{displayName}</Text>
-                    <Tooltip label="Edit name">
+                    <Group
+                      gap="xs"
+                      onClick={() => handleStartEdit(app)}
+                      className={classes.clickableNameGroup}
+                    >
+                      <Text
+                        fw={500}
+                        c={hasNameChanged ? 'dimmed' : undefined}
+                        td={hasNameChanged ? 'underline' : undefined}
+                      >
+                        {displayName}
+                      </Text>
                       <ActionIcon variant="subtle" color="blue" size="sm">
                         <IconPencil size={14} />
                       </ActionIcon>
-                    </Tooltip>
-                  </Group>
+                    </Group>
+                  </Tooltip>
+                ) : (
+                  <Text fw={500}>{displayName}</Text>
                 )}
               </Table.Td>
               <Table.Td>
