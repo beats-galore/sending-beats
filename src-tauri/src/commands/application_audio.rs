@@ -51,6 +51,10 @@ pub async fn get_all_available_applications(
                 let available_apps: Vec<AvailableApplicationInfo> = apps
                     .into_iter()
                     .filter_map(|app| {
+                        if app.bundle_identifier.is_empty() {
+                            return None;
+                        }
+
                         if !seen_bundle_ids.insert(app.bundle_identifier.clone()) {
                             return None;
                         }
