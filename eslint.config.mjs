@@ -20,7 +20,7 @@ const compat = new FlatCompat({
 export const extendableBaseConfig = [
   eslint.configs.recommended,
   {
-    ignores: ['**/node_modules', '**/*.json', '**/dist/**', 'eslint.config.mjs'],
+    ignores: ['**/node_modules', '**/*.json', '**/dist/**', 'eslint.config.mjs', '**/target/**'],
   },
   ...compat.extends('prettier'),
   // Apply non-type-aware base rules globally; scope type-aware rules only to TS files below

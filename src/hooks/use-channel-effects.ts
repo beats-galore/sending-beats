@@ -1,7 +1,7 @@
 // Custom hook for audio effects management on channels
 import { useCallback } from 'react';
 
-import { audioCalculations } from '../utils';
+import { audioCalculations } from '../utils/audio-calculations';
 import { AUDIO } from '../utils/constants';
 
 import { useMixerState } from './use-mixer-state';
@@ -135,7 +135,9 @@ export const useChannelEffects = (channelId: number) => {
 
   // Get effect values with formatting
   const getEQValues = useCallback(() => {
-    if (!channel) {return null;}
+    if (!channel) {
+      return null;
+    }
 
     return {
       low: {
@@ -154,7 +156,9 @@ export const useChannelEffects = (channelId: number) => {
   }, [channel]);
 
   const getCompressorValues = useCallback(() => {
-    if (!channel) {return null;}
+    if (!channel) {
+      return null;
+    }
 
     return {
       threshold: {
@@ -178,7 +182,9 @@ export const useChannelEffects = (channelId: number) => {
   }, [channel]);
 
   const getLimiterValues = useCallback(() => {
-    if (!channel) {return null;}
+    if (!channel) {
+      return null;
+    }
 
     return {
       threshold: {

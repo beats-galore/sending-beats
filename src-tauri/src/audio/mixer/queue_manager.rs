@@ -161,6 +161,48 @@ impl DeliveryCadence {
             0.0
         }
     }
+
+    /// Calculate the effective sample rate based on measured delivery timing
+    /// This reveals the actual capture rate vs the nominal/reported rate
+    pub fn get_effective_sample_rate(&self) -> Option<u32> {
+        if !self.is_initialized() || self.avg_interval_ms <= 0.0 {
+            return None;
+        }
+
+        // Calculate frames per callback (stereo interleaved = samples / 2)
+        let frames_per_callback = (self.samples_per_write / 2) as f64;
+
+        // Effective rate = frames per second
+        // avg_interval_ms is in milliseconds, so multiply by 1000 to get Hz
+        let effective_rate = (frames_per_callback / self.avg_interval_ms) * 1000.0;
+
+        // Sanity check: effective rate should be within reasonable bounds (8kHz - 192kHz)
+        if effective_rate < 8000.0 || effective_rate > 192000.0 {
+            warn!(
+                "⚠️ {}: Calculated unreasonable effective rate {:.1} Hz for device '{}', ignoring",
+                "CADENCE_RATE".on_purple().white(),
+                effective_rate,
+                self.device_id
+            );
+            return None;
+        }
+
+        static RATE_LOG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let log_count = RATE_LOG.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if log_count < 10 || log_count % 500 == 0 {
+            info!(
+                "📊 {}: Device '{}' effective rate: {:.1} Hz (nominal: {} Hz, {} frames / {:.2}ms)",
+                "CADENCE_RATE".on_purple().white(),
+                self.device_id,
+                effective_rate,
+                self.sample_rate,
+                frames_per_callback,
+                self.avg_interval_ms
+            );
+        }
+
+        Some(effective_rate as u32)
+    }
 }
 
 /// Thread-safe queue state tracker using atomic counters
@@ -344,6 +386,16 @@ impl AtomicQueueTracker {
             } else {
                 None
             }
+        } else {
+            None
+        }
+    }
+
+    /// Get the effective sample rate based on measured delivery cadence
+    /// Returns None if cadence is not yet initialized
+    pub fn get_effective_sample_rate(&self) -> Option<u32> {
+        if let Ok(cadence) = self.cadence.lock() {
+            cadence.get_effective_sample_rate()
         } else {
             None
         }

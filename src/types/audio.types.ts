@@ -1,4 +1,4 @@
-import { DEFAULT_SAMPLE_RATE_HZ } from '../utils';
+import { DEFAULT_SAMPLE_RATE_HZ } from '../utils/constants';
 
 // Core audio types for the Sendin Beats application
 export type AudioDeviceInfo = {

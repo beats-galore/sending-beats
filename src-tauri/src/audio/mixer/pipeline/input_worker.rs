@@ -30,6 +30,9 @@ pub struct InputWorker {
     default_effects: Arc<Mutex<DefaultAudioEffectsChain>>,
     custom_effects: CustomAudioEffectsChain,
     any_channel_solo: Arc<std::sync::atomic::AtomicBool>,
+
+    // Track hardware delivery cadence (before resampling) for effective rate calculation
+    hardware_queue_tracker: AtomicQueueTracker,
 }
 
 impl InputWorker {
@@ -118,6 +121,7 @@ impl InputWorker {
             any_channel_solo,
             samples_processed: 0,
             processing_time_total: std::time::Duration::ZERO,
+            hardware_queue_tracker,
         }
     }
 
@@ -217,6 +221,9 @@ impl InputWorker {
         let channel_number = self.channel_number;
         let channels = self.state.channels();
 
+        // Clone hardware queue tracker for tracking hardware delivery cadence
+        let hardware_tracker = self.hardware_queue_tracker.clone();
+
         let vu_service = vu_channel.map(|channel| {
             info!(
                 "{}: VU channel enabled for {}",
@@ -226,45 +233,265 @@ impl InputWorker {
             VUChannelService::new(channel, self.state.target_sample_rate(), 8, 60)
         });
 
-        let post_process_fn = move |samples: &mut Vec<f32>, device_id: &str| -> Result<()> {
-            // Mono-to-stereo conversion (always convert for mixing layer compatibility)
-            if channels == 1 {
-                let original_count = samples.len();
-                *samples = VirtualMixer::convert_mono_to_stereo(samples);
-                let converted_count = samples.len();
+        // We need custom processing for InputWorker to track hardware cadence
+        // Instead of using AudioWorker::start_processing_thread directly, implement here
+        let device_id = self.state.device_id().to_string();
+        let device_sample_rate = self.state.device_sample_rate();
+        let target_sample_rate = self.state.target_sample_rate();
+        let chunk_size = self.state.chunk_size();
 
-                // **DIAGNOSTIC**: Log mono-to-stereo conversion to verify correct sample doubling
-                static MONO_STEREO_LOG_COUNT: std::sync::atomic::AtomicU64 =
-                    std::sync::atomic::AtomicU64::new(0);
-                let log_count =
-                    MONO_STEREO_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if log_count < 20 || log_count % 500 == 0 {
-                    info!(
-                        "🔄 {}: Device '{}' mono→stereo: {} → {} samples ({}x)",
-                        "MONO_TO_STEREO".yellow(),
-                        device_id,
-                        original_count,
-                        converted_count,
-                        converted_count as f32 / original_count as f32
+        let rtrb_consumer = self.state.rtrb_consumer().clone();
+        let rtrb_producer = self.state.rtrb_producer().clone();
+        let queue_tracker = self.state.queue_tracker().clone();
+
+        let mut resampler = self.state.resampler_mut().take();
+        let mut input_accumulator = Vec::with_capacity(96000);
+
+        info!(
+            "🚀 {}: Starting processing thread with hardware cadence tracking for device '{}'",
+            "INPUT_WORKER".on_cyan().white(),
+            device_id
+        );
+
+        let worker_handle = tokio::spawn(async move {
+            let mut samples_processed = 0u64;
+            let mut samples_buffer = Vec::with_capacity(96000);
+
+            loop {
+                // Read samples from hardware RTRB
+                samples_buffer.clear();
+                let samples_read = {
+                    let mut consumer = match rtrb_consumer.try_lock() {
+                        Ok(consumer) => consumer,
+                        Err(_) => {
+                            warn!(
+                                "⚠️ INPUT_WORKER[{}]: Failed to lock RTRB consumer",
+                                device_id
+                            );
+                            continue;
+                        }
+                    };
+
+                    let available = consumer.slots();
+                    if available == 0 {
+                        continue;
+                    }
+
+                    let mut read_count = 0;
+                    while read_count < available.min(96000) {
+                        match consumer.pop() {
+                            Ok(sample) => {
+                                samples_buffer.push(sample);
+                                read_count += 1;
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                    read_count
+                };
+
+                if samples_read == 0 {
+                    continue;
+                }
+
+                // IMPORTANT: Track hardware delivery cadence HERE (before resampling)
+                hardware_tracker.record_samples_written(samples_read);
+
+                // Pre-accumulate incoming samples
+                input_accumulator.extend_from_slice(&samples_buffer[..samples_read]);
+
+                // Process all available chunks from the accumulator
+                let mut total_samples_written_this_iteration = 0;
+                loop {
+                    let accumulated_samples =
+                        <InputWorker as AudioWorker>::process_with_pre_accumulation(
+                            &mut resampler,
+                            &mut input_accumulator,
+                            chunk_size,
+                            device_id.clone(),
+                        );
+
+                    let accumulated_samples = match accumulated_samples {
+                        Some(samples) => samples,
+                        None => break,
+                    };
+
+                    let processing_start = std::time::Instant::now();
+
+                    // Check for effective sample rate from HARDWARE cadence measurements
+                    let effective_rate = hardware_tracker.get_effective_sample_rate();
+                    let input_rate = effective_rate.unwrap_or(device_sample_rate);
+
+                    // Log when we detect a mismatch
+                    if let Some(eff_rate) = effective_rate {
+                        let rate_diff = (eff_rate as f32 - device_sample_rate as f32).abs();
+                        if rate_diff > 100.0 {
+                            static MISMATCH_LOG: std::sync::atomic::AtomicU64 =
+                                std::sync::atomic::AtomicU64::new(0);
+                            let log_count =
+                                MISMATCH_LOG.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if log_count < 20 || log_count % 500 == 0 {
+                                info!(
+                                    "⚠️ {}: Device '{}' rate mismatch - nominal: {} Hz, measured: {} Hz (diff: {:.0} Hz)",
+                                    "RATE_MISMATCH".on_red().white(),
+                                    device_id,
+                                    device_sample_rate,
+                                    eff_rate,
+                                    rate_diff
+                                );
+                            }
+                        }
+                    }
+
+                    // Always resample to handle clock drift and sample rate mismatches
+                    let resample_start = std::time::Instant::now();
+                    let processed_samples = if let Some(active_resampler) =
+                        <InputWorker as AudioWorker>::get_or_initialize_resampler_static(
+                            &mut resampler,
+                            input_rate,
+                            target_sample_rate,
+                            chunk_size,
+                            channels,
+                            &device_id,
+                        ) {
+                        let resampled = active_resampler.convert(&accumulated_samples);
+
+                        // Apply dynamic rate adjustment for fine drift correction
+                        let _ = <InputWorker as AudioWorker>::adjust_dynamic_sample_rate(
+                            active_resampler,
+                            &queue_tracker,
+                            input_rate,
+                            target_sample_rate,
+                            &device_id,
+                        );
+
+                        static RESAMPLE_LOG_COUNT: std::sync::atomic::AtomicU64 =
+                            std::sync::atomic::AtomicU64::new(0);
+                        let resample_count =
+                            RESAMPLE_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                        if resample_count < 10 || resample_count % 1000 == 0 {
+                            info!(
+                                "🔄 {}: Resampled {} input → {} output ({}Hz→{}Hz) {}",
+                                "AUDIO_RESAMPLE".on_cyan().white(),
+                                accumulated_samples.len(),
+                                resampled.len(),
+                                input_rate,
+                                target_sample_rate,
+                                device_id
+                            );
+                        }
+
+                        resampled
+                    } else {
+                        warn!(
+                            "⚠️ INPUT_WORKER[{}]: Failed to initialize resampler, passing through",
+                            device_id
+                        );
+                        accumulated_samples
+                    };
+                    let resample_duration = resample_start.elapsed();
+
+                    // Apply post-processing (effects, VU meters, etc.)
+                    let post_process_start = std::time::Instant::now();
+                    let mut final_samples = processed_samples;
+
+                    // Inline post-processing logic
+                    {
+                        let samples = &mut final_samples;
+                        let device_id_ref = device_id.as_str();
+
+                        // Mono-to-stereo conversion
+                        if channels == 1 {
+                            let original_count = samples.len();
+                            *samples = VirtualMixer::convert_mono_to_stereo(samples);
+                            let converted_count = samples.len();
+
+                            static MONO_STEREO_LOG_COUNT: std::sync::atomic::AtomicU64 =
+                                std::sync::atomic::AtomicU64::new(0);
+                            let log_count = MONO_STEREO_LOG_COUNT
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if log_count < 20 || log_count % 500 == 0 {
+                                info!(
+                                    "🔄 {}: Device '{}' mono→stereo: {} → {} samples ({}x)",
+                                    "MONO_TO_STEREO".yellow(),
+                                    device_id_ref,
+                                    original_count,
+                                    converted_count,
+                                    converted_count as f32 / original_count as f32
+                                );
+                            }
+                        }
+
+                        // Apply default effects
+                        let any_solo = any_channel_solo.load(std::sync::atomic::Ordering::Relaxed);
+                        if let Ok(effects) = default_effects.lock() {
+                            effects.process_stereo_interleaved(samples, any_solo);
+                        }
+
+                        // VU metering
+                        if let Some(ref vu) = vu_service {
+                            vu.queue_channel_audio(channel_number, samples);
+                        }
+                    }
+
+                    let post_process_duration = post_process_start.elapsed();
+
+                    // Write to output RTRB queue
+                    let write_start = std::time::Instant::now();
+                    let samples_written = <InputWorker as AudioWorker>::write_samples_to_rtrb_sync(
+                        &device_id,
+                        &final_samples,
+                        &rtrb_producer,
                     );
+                    total_samples_written_this_iteration += samples_written;
+                    let write_duration = write_start.elapsed();
+
+                    samples_processed += 1;
+                    let processing_duration = processing_start.elapsed();
+
+                    if samples_processed <= 5 || samples_processed % 1000 == 0 {
+                        info!(
+                            "🔄 {}: {} processed {} samples in {}μs (resample: {}μs, post: {}μs, write: {}μs) batch #{}",
+                            "INPUT_WORKER".on_cyan().white(),
+                            device_id,
+                            final_samples.len(),
+                            processing_duration.as_micros(),
+                            resample_duration.as_micros(),
+                            post_process_duration.as_micros(),
+                            write_duration.as_micros(),
+                            samples_processed
+                        );
+                    }
+
+                    if processing_duration.as_micros() > 500 {
+                        warn!(
+                            "⏱️ {}: {} SLOW processing: {}μs total (resample: {}μs, post: {}μs, write: {}μs)",
+                            "INPUT_WORKER".on_cyan().white(),
+                            device_id,
+                            processing_duration.as_micros(),
+                            resample_duration.as_micros(),
+                            post_process_duration.as_micros(),
+                            write_duration.as_micros()
+                        );
+                    }
+                }
+
+                // Track output cadence for mixing layer
+                if total_samples_written_this_iteration > 0 {
+                    queue_tracker.record_samples_written(total_samples_written_this_iteration);
                 }
             }
+        });
 
-            // Apply default effects (always stereo after conversion above)
-            let any_solo = any_channel_solo.load(std::sync::atomic::Ordering::Relaxed);
-            if let Ok(effects) = default_effects.lock() {
-                effects.process_stereo_interleaved(samples, any_solo);
-            }
+        self.state.set_worker_handle(worker_handle);
+        info!(
+            "✅ {}: Started worker thread with hardware cadence tracking for device '{}'",
+            "INPUT_WORKER".on_cyan().white(),
+            self.state.device_id()
+        );
 
-            // VU metering
-            if let Some(ref vu) = vu_service {
-                vu.queue_channel_audio(channel_number, samples);
-            }
-
-            Ok(())
-        };
-
-        AudioWorker::start_processing_thread(self, Some(post_process_fn))
+        Ok(())
     }
 
     pub async fn stop(&mut self) -> Result<()> {

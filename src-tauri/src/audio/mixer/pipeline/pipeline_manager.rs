@@ -257,7 +257,9 @@ impl AudioPipeline {
         let target_sample_rate = self.max_sample_rate.unwrap(); // Safe after initialize
 
         // Set sample rates on trackers for cadence calculation
-        hardware_queue_tracker.set_sample_rate(target_sample_rate);
+        // Hardware tracker measures actual device delivery rate (before resampling)
+        hardware_queue_tracker.set_sample_rate(device_sample_rate);
+        // Mixing tracker measures resampled output rate (after resampling)
         mixing_queue_tracker.set_sample_rate(target_sample_rate);
 
         // Connect RTRB consumer to mixing layer

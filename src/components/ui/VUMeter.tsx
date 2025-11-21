@@ -5,7 +5,7 @@ import { memo, useMemo, useRef, useCallback } from 'react';
 
 import { VU_METER_COLORS, VU_METER_ZONES } from '../../types';
 import type { VUMeterProps } from '../../types';
-import { audioCalculations } from '../../utils';
+import { audioCalculations } from '../../utils/audio-calculations';
 
 const useStyles = createStyles((theme) => ({
   container: {

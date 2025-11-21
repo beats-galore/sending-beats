@@ -174,12 +174,9 @@ pub trait AudioWorker {
         channels: u16,
         device_id: &str,
     ) -> Option<&'a mut RubatoSRC> {
-        let sample_rate_difference = (device_sample_rate as f32 - target_sample_rate as f32).abs();
-
-        // No resampling needed if rates are close (within 1 Hz)
-        if sample_rate_difference <= 1.0 {
-            return None;
-        }
+        // Always resample to handle clock drift and mismatched reported sample rates
+        // Even when rates appear to match, different hardware clocks can drift
+        // The resampler's dynamic adjustment handles fine-tuning
 
         // If resampler exists, adjust it dynamically; otherwise create new one
         match resampler {
@@ -367,22 +364,15 @@ pub trait AudioWorker {
                     continue;
                 }
 
-                // Step 1: Check if resampling is needed
-                let sample_rate_difference =
-                    (device_sample_rate as f32 - initial_target_sample_rate as f32).abs();
-                let needs_resampling = sample_rate_difference > 1.0; // Allow 1Hz tolerance
-
-                // Step 2: Pre-accumulate incoming samples
+                // Step 1: Pre-accumulate incoming samples
                 input_accumulator.extend_from_slice(&samples);
 
-                // Step 3: Process all available chunks from the accumulator
+                // Step 2: Process all available chunks from the accumulator
                 // Track total samples written in this iteration for cadence tracking
                 let mut total_samples_written_this_iteration = 0;
                 loop {
                     let accumulated_samples = Self::process_with_pre_accumulation(
                         &mut resampler,
-                        needs_resampling,
-                        &[],
                         &mut input_accumulator,
                         chunk_size,
                         device_id.clone(),
@@ -396,56 +386,78 @@ pub trait AudioWorker {
 
                     let processing_start = std::time::Instant::now();
 
-                    // Step 4: Resample accumulated samples if needed, otherwise pass through
+                    // Step 3: Check for effective sample rate from cadence measurements
+                    // This reveals mismatches between reported and actual sample rates
+                    let effective_rate = queue_tracker.get_effective_sample_rate();
+                    let input_rate = effective_rate.unwrap_or(device_sample_rate);
+
+                    // Log when we detect a mismatch
+                    if let Some(eff_rate) = effective_rate {
+                        let rate_diff = (eff_rate as f32 - device_sample_rate as f32).abs();
+                        if rate_diff > 100.0 {
+                            static MISMATCH_LOG: std::sync::atomic::AtomicU64 =
+                                std::sync::atomic::AtomicU64::new(0);
+                            let log_count =
+                                MISMATCH_LOG.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if log_count < 20 || log_count % 500 == 0 {
+                                info!(
+                                    "⚠️ {}: Device '{}' rate mismatch - nominal: {} Hz, measured: {} Hz (diff: {:.0} Hz)",
+                                    "RATE_MISMATCH".on_red().white(),
+                                    device_id,
+                                    device_sample_rate,
+                                    eff_rate,
+                                    rate_diff
+                                );
+                            }
+                        }
+                    }
+
+                    // Step 4: Always resample to handle clock drift and sample rate mismatches
                     let resample_start = std::time::Instant::now();
-                    let processed_samples = if needs_resampling {
-                        if let Some(active_resampler) = Self::get_or_initialize_resampler_static(
+                    let processed_samples = if let Some(active_resampler) =
+                        Self::get_or_initialize_resampler_static(
                             &mut resampler,
-                            device_sample_rate,
+                            input_rate, // Use measured effective rate if available
                             initial_target_sample_rate,
                             chunk_size,
                             channels,
                             &device_id,
                         ) {
-                            // Resample the accumulated samples
-                            let resampled = active_resampler.convert(&accumulated_samples);
+                        // Resample the accumulated samples
+                        let resampled = active_resampler.convert(&accumulated_samples);
 
-                            // Apply dynamic rate adjustment
-                            let _ = Self::adjust_dynamic_sample_rate(
-                                active_resampler,
-                                &queue_tracker,
-                                device_sample_rate,
+                        // Apply dynamic rate adjustment for fine drift correction
+                        let _ = Self::adjust_dynamic_sample_rate(
+                            active_resampler,
+                            &queue_tracker,
+                            input_rate, // Use measured rate
+                            initial_target_sample_rate,
+                            &device_id,
+                        );
+
+                        static RESAMPLE_LOG_COUNT: std::sync::atomic::AtomicU64 =
+                            std::sync::atomic::AtomicU64::new(0);
+                        let resample_count =
+                            RESAMPLE_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                        if resample_count < 10 || resample_count % 1000 == 0 {
+                            info!(
+                                "🔄 {}: Resampled {} input → {} output ({}Hz→{}Hz) {}",
+                                "AUDIO_RESAMPLE".on_cyan().white(),
+                                accumulated_samples.len(),
+                                resampled.len(),
+                                input_rate, // Show actual input rate used
                                 initial_target_sample_rate,
-                                &device_id,
+                                device_id
                             );
-
-                            static RESAMPLE_LOG_COUNT: std::sync::atomic::AtomicU64 =
-                                std::sync::atomic::AtomicU64::new(0);
-                            let resample_count = RESAMPLE_LOG_COUNT
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-                            if resample_count < 10 || resample_count % 1000 == 0 {
-                                info!(
-                                    "🔄 {}: Resampled {} input → {} output ({}Hz→{}Hz) {}",
-                                    "AUDIO_RESAMPLE".on_cyan().white(),
-                                    accumulated_samples.len(),
-                                    resampled.len(),
-                                    device_sample_rate,
-                                    initial_target_sample_rate,
-                                    device_id
-                                );
-                            }
-
-                            resampled
-                        } else {
-                            warn!(
-                                "⚠️ {}[{}]: Failed to initialize resampler, passing through",
-                                log_prefix, device_id
-                            );
-                            accumulated_samples
                         }
+
+                        resampled
                     } else {
-                        // No resampling needed - pass through accumulated samples
+                        warn!(
+                            "⚠️ {}[{}]: Failed to initialize resampler, passing through",
+                            log_prefix, device_id
+                        );
                         accumulated_samples
                     };
                     let resample_duration = resample_start.elapsed();
@@ -575,21 +587,16 @@ pub trait AudioWorker {
     /// accumulate input frames until we have enough to produce target output
     fn process_with_pre_accumulation(
         resampler: &mut Option<RubatoSRC>,
-        needs_resampling: bool,
-        _input_samples: &[f32],
         accumulation_buffer: &mut Vec<f32>,
         target_output_samples: usize,
         device_id: String,
     ) -> Option<Vec<f32>> {
-        // Check if we have enough input to produce target output
-        let input_frames_needed = if needs_resampling {
-            if let Some(ref mut active_resampler) = resampler {
-                let output_frames = target_output_samples / 2;
-                active_resampler.input_frames_needed(output_frames) * 2
-            } else {
-                target_output_samples
-            }
+        // Always calculate input frames needed based on resampler (always active now)
+        let input_frames_needed = if let Some(ref mut active_resampler) = resampler {
+            let output_frames = target_output_samples / 2;
+            active_resampler.input_frames_needed(output_frames) * 2
         } else {
+            // Fallback if resampler not initialized yet
             target_output_samples
         };
 
