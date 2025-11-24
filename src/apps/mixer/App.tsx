@@ -4,6 +4,7 @@ import { useDisclosure } from '@mantine/hooks';
 import { createStyles } from '@mantine/styles';
 import { memo, useCallback, useState } from 'react';
 
+import { useStartupPermissionCheck } from '../../hooks/use-startup-permission-check';
 import AdminPanel from './components/AdminPanel';
 import DJClient from './components/DJClient';
 import { ErrorBoundary } from './components/layout';
@@ -11,7 +12,6 @@ import ListenerPlayer from './components/ListenerPlayer';
 import { VirtualMixer } from './components/mixer';
 import { AppHeader, AppFooter, Navigation, HomeView } from './components/shell';
 import { PermissionModal } from './components/ui/PermissionModal';
-import { useStartupPermissionCheck } from './hooks/use-startup-permission-check';
 
 type ViewType = 'home' | 'dj' | 'admin' | 'listener' | 'mixer';
 

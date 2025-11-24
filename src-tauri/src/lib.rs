@@ -365,7 +365,33 @@ pub fn run() {
         .manage(audio_state)
         .manage(recording_state)
         .manage(file_player_state)
-        .manage(application_audio_state);
+        .manage(application_audio_state)
+        .setup(|app| {
+            // Get app mode from environment variable
+            let app_mode = std::env::var("VITE_APP_MODE")
+                .unwrap_or_else(|_| "mixer".to_string());
+
+            // Show/hide windows based on app mode
+            if app_mode == "volume-control" {
+                // Hide mixer window, show volume-control window
+                if let Some(mixer_window) = app.get_webview_window("mixer") {
+                    let _ = mixer_window.hide();
+                }
+                if let Some(vc_window) = app.get_webview_window("volume-control") {
+                    let _ = vc_window.show();
+                }
+            } else {
+                // Default to mixer mode: show mixer window, hide volume-control window
+                if let Some(mixer_window) = app.get_webview_window("mixer") {
+                    let _ = mixer_window.show();
+                }
+                if let Some(vc_window) = app.get_webview_window("volume-control") {
+                    let _ = vc_window.hide();
+                }
+            }
+
+            Ok(())
+        });
 
     #[cfg(target_os = "macos")]
     let builder = builder.on_window_event(|window, event| {
