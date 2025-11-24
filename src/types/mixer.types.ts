@@ -14,6 +14,10 @@ export type AudioChannel = {
   peak_right?: number;
   rms_right?: number;
 
+  // Channel-level gain control (0.0 = mute, 1.0 = unity, >1.0 = boost)
+  channel_gain: number;
+  channel_mute: boolean;
+
   // Effects (keeping original property names for Tauri compatibility)
   eq_low_gain: number;
   eq_mid_gain: number;
@@ -45,6 +49,10 @@ export const DEFAULT_CHANNEL: Omit<AudioChannel, 'id' | 'name'> = {
   effects_enabled: false,
   peak_level: 0,
   rms_level: 0,
+
+  // Channel gain defaults
+  channel_gain: 1.0, // Unity gain
+  channel_mute: false,
 
   // EQ defaults (flat response)
   eq_low_gain: 0,
