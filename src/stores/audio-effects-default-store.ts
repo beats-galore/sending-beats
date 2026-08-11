@@ -11,7 +11,6 @@ type AudioEffectsDefaultStore = {
   effectsById: Record<string, AudioEffectsDefault>;
   isLoading: boolean;
   error: string | null;
-  loadedConfigurationId: string | null;
 
   loadEffects: (configurationId: Uuid<AudioMixerConfiguration>) => Promise<void>;
   updateGain: (
@@ -47,13 +46,16 @@ const store = create<AudioEffectsDefaultStore>()(
     effectsById: {},
     isLoading: false,
     error: null,
-    loadedConfigurationId: null,
 
     loadEffects: async (configurationId: Uuid<AudioMixerConfiguration>) => {
-      const { isLoading, loadedConfigurationId } = get();
+      const { isLoading } = get();
 
-      // Skip if already loading or already loaded for this configuration
-      if (isLoading || loadedConfigurationId === configurationId) {
+      // Only guard against concurrent fetches. Effects rows are created when a
+      // device is registered, so a load that ran before a device existed has no
+      // entry for it — caching on configuration ID alone would strand that device
+      // without effects for the rest of the session, leaving its gain, mute and
+      // solo controls silently inert.
+      if (isLoading) {
         return;
       }
 
@@ -72,7 +74,7 @@ const store = create<AudioEffectsDefaultStore>()(
           {} as Record<string, AudioEffectsDefault>
         );
 
-        set({ effectsById, isLoading: false, loadedConfigurationId: configurationId });
+        set({ effectsById, isLoading: false });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Failed to load effects';
         set({ error: errorMessage, isLoading: false });

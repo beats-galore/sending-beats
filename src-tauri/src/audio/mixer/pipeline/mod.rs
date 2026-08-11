@@ -10,6 +10,7 @@
 // Layer 4: Output Workers → [Resample Mixed→Device Rate] → Device Output
 
 pub mod audio_worker;
+pub mod block_accumulator;
 pub mod input_worker;
 pub mod mixing_layer;
 pub mod output_worker;

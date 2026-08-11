@@ -165,6 +165,17 @@ pub trait AudioWorker {
     /// Get log prefix for this worker type (e.g., "INPUT_WORKER", "OUTPUT_WORKER")
     fn log_prefix(&self) -> &str;
 
+    /// Whether this worker may stop reading when its downstream queue is full
+    ///
+    /// Only true on the output path, where holding back propagates the hardware's
+    /// drain rate up the pipeline. Capture sources must never be held back: their
+    /// queues feed real-time callbacks owned by CoreAudio or ScreenCaptureKit, and
+    /// refusing to drain them stalls the applications being captured. An input that
+    /// cannot keep up has to drop instead.
+    fn applies_backpressure(&self) -> bool {
+        false
+    }
+
     /// Get or initialize resampler with dynamic rate adjustment support
     fn get_or_initialize_resampler_static<'a>(
         resampler: &'a mut Option<RubatoSRC>,
@@ -304,6 +315,7 @@ pub trait AudioWorker {
         let channels = self.channels();
         let chunk_size = self.chunk_size();
         let log_prefix = self.log_prefix().to_string();
+        let applies_backpressure = self.applies_backpressure();
 
         // Clone shared resources for the worker thread
         let rtrb_consumer = self.rtrb_consumer().clone();
@@ -330,42 +342,75 @@ pub trait AudioWorker {
                 device_id
             );
 
+            // Poll interval used whenever there is nothing to do. The loop is a
+            // spawned task with no other await point, so it must yield explicitly
+            // or it pins a runtime thread.
+            const IDLE_POLL: std::time::Duration = std::time::Duration::from_micros(250);
+
             loop {
-                // Read available samples from RTRB consumer
-                samples_buffer.clear();
-                let samples = {
-                    let mut consumer = match rtrb_consumer.try_lock() {
-                        Ok(consumer) => consumer,
-                        Err(_) => {
-                            warn!(
-                                "⚠️ {}[{}]: Failed to lock RTRB consumer",
-                                log_prefix, device_id
-                            );
-                            continue;
-                        }
-                    };
-
-                    let available = consumer.slots();
-                    if available == 0 {
-                        continue;
+                // **BACKPRESSURE**: never pull more input than the downstream queue
+                // can accept. Draining upstream and discarding the surplus here is
+                // what let the mixing layer free-run at twice real time, since its
+                // own queue never filled up.
+                // Locks are scoped so none is ever held across an await, which would
+                // make this future non-Send.
+                let output_room = {
+                    match rtrb_producer.try_lock() {
+                        Ok(producer) => producer.slots(),
+                        Err(_) => 0,
                     }
-
-                    let mut read_count = 0;
-                    while read_count < available.min(96000) {
-                        match consumer.pop() {
-                            Ok(sample) => {
-                                samples_buffer.push(sample);
-                                read_count += 1;
-                            }
-                            Err(_) => break,
-                        }
-                    }
-                    &samples_buffer
                 };
 
-                if samples.is_empty() {
+                // Only the output path waits for room. Capture sources are drained
+                // unconditionally so their real-time callbacks never back up.
+                if applies_backpressure && output_room < chunk_size {
+                    tokio::time::sleep(IDLE_POLL).await;
                     continue;
                 }
+
+                // Read available samples from RTRB consumer, never more than the
+                // downstream queue can take
+                samples_buffer.clear();
+                let consumer_locked = {
+                    match rtrb_consumer.try_lock() {
+                        Ok(mut consumer) => {
+                            let readable = if applies_backpressure {
+                                consumer.slots().min(output_room)
+                            } else {
+                                consumer.slots()
+                            };
+                            let to_read = readable.min(96000);
+                            let mut read_count = 0;
+                            while read_count < to_read {
+                                match consumer.pop() {
+                                    Ok(sample) => {
+                                        samples_buffer.push(sample);
+                                        read_count += 1;
+                                    }
+                                    Err(_) => break,
+                                }
+                            }
+                            true
+                        }
+                        Err(_) => false,
+                    }
+                };
+
+                if !consumer_locked {
+                    warn!(
+                        "⚠️ {}[{}]: Failed to lock RTRB consumer",
+                        log_prefix, device_id
+                    );
+                    tokio::time::sleep(IDLE_POLL).await;
+                    continue;
+                }
+
+                if samples_buffer.is_empty() {
+                    tokio::time::sleep(IDLE_POLL).await;
+                    continue;
+                }
+
+                let samples = &samples_buffer;
 
                 // Step 1: Check if resampling is needed
                 let sample_rate_difference =

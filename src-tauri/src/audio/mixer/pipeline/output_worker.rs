@@ -199,6 +199,10 @@ impl AudioWorker for OutputWorker {
         self.state.take_worker_handle()
     }
 
+    fn applies_backpressure(&self) -> bool {
+        true
+    }
+
     fn log_prefix(&self) -> &str {
         "OUTPUT_WORKER"
     }
