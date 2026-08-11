@@ -572,7 +572,7 @@ export const useMixerStore = create<MixerStore>()(
       set({ isLoadingConfigurations: true, configurationError: null });
 
       try {
-        const newReusable = await invoke<AudioMixerConfiguration>('save_session_as_new_reusable', {
+        await invoke<AudioMixerConfiguration>('save_session_as_new_reusable', {
           name,
           description: description ?? undefined,
         });
