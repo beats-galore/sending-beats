@@ -109,16 +109,19 @@ export const useStreamingStatus = (pollingInterval = 2000) => {
     }
   }, []);
 
-  const setVariableBitrate = useCallback(async (enabled: boolean, quality: number) => {
-    try {
-      await invoke<string>('set_variable_bitrate_streaming', { enabled, quality });
-      // Refresh status to get updated VBR info
-      await fetchStatus();
-    } catch (err) {
-      console.error('Failed to set variable bitrate:', err);
-      throw err;
-    }
-  }, [fetchStatus]);
+  const setVariableBitrate = useCallback(
+    async (enabled: boolean, quality: number) => {
+      try {
+        await invoke<string>('set_variable_bitrate_streaming', { enabled, quality });
+        // Refresh status to get updated VBR info
+        await fetchStatus();
+      } catch (err) {
+        console.error('Failed to set variable bitrate:', err);
+        throw err;
+      }
+    },
+    [fetchStatus]
+  );
 
   const getVariableBitrateSettings = useCallback(async (): Promise<[boolean, number]> => {
     try {

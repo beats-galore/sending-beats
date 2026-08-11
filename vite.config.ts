@@ -1,6 +1,8 @@
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
+import pkg from './package.json' with { type: 'json' };
+
 const host = process.env.TAURI_DEV_HOST;
 
 const isDev = process.env.NODE_ENV !== 'production';
@@ -28,7 +30,9 @@ export default defineConfig(() => ({
             name: 'react-scan',
             config(config) {
               // React Scan setup for development performance monitoring
-              if (!config.define) {config.define = {};}
+              if (!config.define) {
+                config.define = {};
+              }
               config.define['process.env.TURBO_RUN'] = JSON.stringify(isTurboRun.toString());
             },
           },
@@ -122,5 +126,6 @@ export default defineConfig(() => ({
     'process.env.TURBO_RUN': JSON.stringify(isTurboRun.toString()),
     'process.env.BUILD_TIME': JSON.stringify(new Date().toISOString()),
     'import.meta.env.REACT_SCAN_ENABLED': JSON.stringify(isDev ? 'true' : 'false'),
+    __APP_VERSION__: JSON.stringify(pkg.version),
   },
 }));

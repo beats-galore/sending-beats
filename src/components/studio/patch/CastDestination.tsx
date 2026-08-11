@@ -1,0 +1,84 @@
+import { Box, SimpleGrid, Stack, Text } from '@mantine/core';
+
+import { useStudioStore } from '../../../stores/studio-store';
+import { layout } from '../../../theme/layout';
+import { border, color } from '../../../theme/tokens';
+import { asBytes, asElapsed } from '../format';
+import { useListenerStats } from '../hooks/use-listener-stats';
+import { useStreamTransport } from '../hooks/use-stream-transport';
+import { NodeCard } from '../primitives/NodeCard';
+import { PortDot } from '../primitives/PortDot';
+import { StatRow } from '../primitives/StatRow';
+import { StatusDot } from '../primitives/StatusDot';
+
+const { destination } = layout;
+
+/** The stream, as seen from the patchbay. Opens the CAST view. */
+export const CastDestination = () => {
+  const setView = useStudioStore((state) => state.setView);
+  const stream = useStudioStore((state) => state.stream);
+  const { isLive, status, uptimeSeconds } = useStreamTransport();
+  const listeners = useListenerStats(isLive);
+
+  const bitrate = status?.bitrate_info.current_bitrate ?? stream.bitrate;
+  const sent = status?.icecast_stats?.bytes_sent;
+
+  return (
+    <NodeCard
+      position={{
+        left: destination.x,
+        top: destination.castTop,
+        width: destination.width,
+        height: destination.castHeight,
+      }}
+      borderColor={isLive ? color.hotBorder : color.line}
+      headerSurface={isLive ? 'hotBg' : 'bgRaised'}
+      onClick={() => setView('cast')}
+      ports={<PortDot tone={isLive ? 'hot' : 'dead'} side="left" top={83} />}
+      header={
+        <>
+          <StatusDot tone={isLive ? 'hot' : 'inert'} />
+          <Text
+            ff="var(--mantine-font-family-headings)"
+            fw={600}
+            fz="lg"
+            c={isLive ? color.hotText : color.textDim}
+            style={{ flex: 1, letterSpacing: layout.tracking.label }}
+          >
+            {isLive ? 'ICECAST · ON AIR' : 'ICECAST · OFFLINE'}
+          </Text>
+          <Text size="2xs" c={color.textDim}>
+            MP3 {bitrate}
+          </Text>
+        </>
+      }
+      bodyStyle={{ padding: 12 }}
+    >
+      <Stack gap="md" h="100%">
+        <Box
+          px="md"
+          py="sm"
+          style={{
+            background: color.bg,
+            border: border(),
+            borderRadius: 'var(--mantine-radius-sm)',
+          }}
+        >
+          <Text size="xs" truncate>
+            {stream.host}:{stream.port}
+            {stream.mount}
+          </Text>
+        </Box>
+
+        <SimpleGrid cols={2} spacing="sm" verticalSpacing="sm">
+          <StatRow label="LISTENERS" tone={color.acc}>
+            {listeners.current ?? '—'}
+          </StatRow>
+          <StatRow label="PEAK">{listeners.peak ?? '—'}</StatRow>
+          <StatRow label="UPTIME">{isLive ? asElapsed(uptimeSeconds) : '—'}</StatRow>
+          <StatRow label="SENT">{sent ? asBytes(sent) : '—'}</StatRow>
+        </SimpleGrid>
+      </Stack>
+    </NodeCard>
+  );
+};

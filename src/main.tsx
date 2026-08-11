@@ -1,7 +1,8 @@
 import { MantineProvider } from '@mantine/core';
 import { createRoot } from 'react-dom/client';
 
-import App from './App';
+import { App } from './App';
+import { studioCssVariablesResolver, studioTheme } from './theme/theme';
 
 import '@mantine/core/styles.css';
 
@@ -23,7 +24,11 @@ const container = document.getElementById('root');
 if (container) {
   const root = createRoot(container);
   root.render(
-    <MantineProvider>
+    <MantineProvider
+      theme={studioTheme}
+      cssVariablesResolver={studioCssVariablesResolver}
+      forceColorScheme="dark"
+    >
       <App />
     </MantineProvider>
   );

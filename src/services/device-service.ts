@@ -4,7 +4,6 @@ import { uniqBy } from 'lodash';
 import type { AudioDeviceInfo } from '../types';
 import { audioService } from './audio-service';
 
-
 export const deviceService = {
   // Device filtering and categorization
   getInputDevices(devices: AudioDeviceInfo[]): AudioDeviceInfo[] {
