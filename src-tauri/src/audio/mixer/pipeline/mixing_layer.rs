@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, warn};
 
-use super::temporal_sync_buffer::TemporalSyncBuffer;
+use super::block_accumulator::BlockAccumulator;
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::mixer::stream_management::virtual_mixer::VirtualMixer;
 use crate::audio::VUChannelService;
@@ -243,18 +243,20 @@ impl MixingLayer {
             );
 
             let mut mix_cycles = 0u64;
-            let mut cleanup_cycle_count = 0u64;
 
-            // **TEMPORAL SYNCHRONIZATION**: Initialize temporal sync buffer
-            // 25ms sync window allows for typical hardware callback timing variations
-            let mut temporal_buffer = TemporalSyncBuffer::new(25, 10); // 25ms window, max 10 samples per device
+            // **FIXED CADENCE**: Every cycle consumes the same block from each device
+            // so the mix advances at a constant rate regardless of how much any one
+            // device happened to deliver. 1024 stereo samples is 512 frames, ~10.7ms
+            // at 48kHz, matching the usual hardware buffer.
+            const MIX_BLOCK_SAMPLES: usize = 1024;
+            const MAX_BACKLOG_BLOCKS: usize = 8;
 
-            // **PERFORMANCE FIX**: Pre-allocate reusable vectors outside the loop
-            let mut input_samples_for_mixer: Vec<(String, &[f32])> = Vec::with_capacity(8);
+            let mut block_accumulator =
+                BlockAccumulator::new(MIX_BLOCK_SAMPLES, MAX_BACKLOG_BLOCKS);
 
             loop {
                 let cycle_start = std::time::Instant::now();
-                let mut mixed_something = false;
+                let mut produced_block = false;
 
                 // Handle commands (add/remove input/output streams dynamically)
                 let command_start = std::time::Instant::now();
@@ -275,7 +277,7 @@ impl MixingLayer {
                         MixingLayerCommand::RemoveInputStream { device_id } => {
                             input_rtrb_consumers.remove(&device_id);
                             input_queue_trackers.remove(&device_id);
-                            temporal_buffer.remove_device(&device_id);
+                            block_accumulator.remove_device(&device_id);
                             info!(
                                 "🗑️ MIXING_LAYER_WORKER: Removed input consumer for device '{}' (remaining: {})",
                                 device_id,
@@ -299,14 +301,7 @@ impl MixingLayer {
                 }
                 let command_duration = command_start.elapsed();
 
-                // **TEMPORAL SYNC STEP 0**: Update cadence info from all trackers (once per cycle)
-                for (device_id, tracker) in input_queue_trackers.iter() {
-                    if let Some(cadence) = tracker.get_cadence() {
-                        temporal_buffer.update_cadence(device_id, cadence);
-                    }
-                }
-
-                // **TEMPORAL SYNC STEP 1**: Collect samples from RTRB and add to temporal buffer
+                // **STEP 1**: Collect samples from RTRB and accumulate per device
                 let collection_start = std::time::Instant::now();
                 for (device_id, consumer) in input_rtrb_consumers.iter() {
                     let mut consumer_lock = consumer.lock().await;
@@ -337,59 +332,52 @@ impl MixingLayer {
                                 );
                             }
 
-                            // Construct ProcessedAudioSamples from raw RTRB data
-                            let processed_audio = super::queue_types::ProcessedAudioSamples {
-                                device_id: device_id.clone(),
-                                samples,
-                                channels: 2, // All inputs are converted to stereo by InputWorker
-                                timestamp: std::time::Instant::now(),
-                                effects_applied: true, // InputWorker applies effects
-                            };
-
-                            let sample_count = processed_audio.samples.len();
-                            temporal_buffer.add_samples(device_id.clone(), processed_audio);
+                            // All inputs are already stereo and effected by InputWorker
+                            let sample_count = samples.len();
+                            block_accumulator.push(device_id, &samples);
 
                             // Record samples read for queue tracking
                             if let Some(tracker) = input_queue_trackers.get(device_id) {
                                 tracker.record_samples_read(sample_count);
                             }
-
-                            mixed_something = true;
                         }
                     }
                 }
                 let collection_duration = collection_start.elapsed();
 
-                // **TEMPORAL SYNC STEP 2**: Extract synchronized samples from buffer
+                // **STEP 2**: Only produce when every output can take a full block.
+                //
+                // This is what paces the mixer. Without it the loop free-runs and
+                // overproduces, and the surplus is discarded at the output queue,
+                // which is audible as crunch. Waiting for room instead makes the
+                // output hardware's drain rate the mixer's clock.
                 let sync_start = std::time::Instant::now();
-                let synchronized_samples = temporal_buffer.extract_synchronized_samples();
-                let sync_duration = sync_start.elapsed();
 
-                // Periodic cleanup to prevent memory bloat (every 1000 cycles ≈ 20 seconds)
-                cleanup_cycle_count += 1;
-                if cleanup_cycle_count % 1000 == 0 {
-                    temporal_buffer.cleanup_old_samples();
+                let mut outputs_ready = !output_rtrb_producers.is_empty();
+                for producer in output_rtrb_producers.values() {
+                    let producer_lock = producer.lock().await;
+                    if producer_lock.slots() < MIX_BLOCK_SAMPLES {
+                        outputs_ready = false;
+                        break;
+                    }
                 }
 
-                // **TEMPORAL SYNC STEP 3**: Mix synchronized samples if we have any
-                let mixing_duration = if !synchronized_samples.is_empty() {
+                let synchronized_samples = if outputs_ready {
+                    block_accumulator.take_block()
+                } else {
+                    None
+                };
+                produced_block = synchronized_samples.is_some();
+                let sync_duration = sync_start.elapsed();
+
+                // **STEP 3**: Mix the block
+                let mixing_duration = if let Some(synchronized_samples) = synchronized_samples {
                     let mixing_start = std::time::Instant::now();
 
-                    // **TEMPORAL SYNC FIX**: Concatenate chunks from same device before mixing
+                    // Every block is already exactly MIX_BLOCK_SAMPLES long
                     let prep_start = std::time::Instant::now();
 
-                    // Group samples by device and concatenate them
-                    let mut device_samples: std::collections::HashMap<String, Vec<f32>> =
-                        std::collections::HashMap::new();
-                    for (device_id, processed_audio) in synchronized_samples.iter() {
-                        device_samples
-                            .entry(device_id.clone())
-                            .or_insert_with(Vec::new)
-                            .extend_from_slice(&processed_audio.samples);
-                    }
-
-                    // Convert to slice references for mixer
-                    let input_samples_for_mixer: Vec<(String, &[f32])> = device_samples
+                    let input_samples_for_mixer: Vec<(String, &[f32])> = synchronized_samples
                         .iter()
                         .map(|(device_id, samples)| (device_id.clone(), samples.as_slice()))
                         .collect();
@@ -545,8 +533,9 @@ impl MixingLayer {
                     );
                 }
 
-                // Small yield to prevent busy-waiting
-                if !mixed_something {
+                // Yield whenever no block was produced, which includes waiting for
+                // output room. Without this the backpressure check spins hot.
+                if !produced_block {
                     tokio::time::sleep(std::time::Duration::from_micros(25)).await;
                 }
             }

@@ -173,11 +173,13 @@ export const ChannelStrip = memo<ChannelStripProps>(({ channel }) => {
     void loadActiveEffects();
   }, [channel.id]);
 
+  // Reload when the channel's device changes as well as on configuration change:
+  // a device registered after the initial load has no effects row in the store yet
   useEffect(() => {
     if (activeSession?.configuration.id) {
       void loadEffects(activeSession.configuration.id);
     }
-  }, [activeSession?.configuration.id, loadEffects]);
+  }, [activeSession?.configuration.id, configuredInputDevice?.id, loadEffects]);
 
   const handleMuteToggle = useCallback(() => {
     if (!deviceEffects || !configuredInputDevice || !activeSession) {
