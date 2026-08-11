@@ -109,31 +109,27 @@ pub async fn get_audio_device(
 }
 
 // Device health monitoring commands
+//
+// These delegate to the DeviceHealthMonitor owned by AudioDeviceManager, which
+// tracks connection state and error counts per device.
+
+/// Health record for a single device, or None if it has never been seen
 #[tauri::command]
 pub async fn get_device_health(
     audio_state: State<'_, AudioState>,
     device_id: String,
-) -> Result<(), String> {
-    Ok(())
-    // let mixer_guard = audio_state.mixer.lock().await;
-    // if let Some(ref mixer) = *mixer_guard {
-    //     Ok(mixer.get_device_health_status(&device_id).await)
-    // } else {
-    //     Err("No mixer created".to_string())
-    // }
+) -> Result<Option<crate::audio::devices::DeviceHealth>, String> {
+    let device_manager = audio_state.device_manager.lock().await;
+    Ok(device_manager.get_device_health(&device_id).await)
 }
 
+/// Health records for every device the monitor has seen, keyed by device ID
 #[tauri::command]
 pub async fn get_all_device_health(
     audio_state: State<'_, AudioState>,
 ) -> Result<std::collections::HashMap<String, crate::audio::devices::DeviceHealth>, String> {
-    // TODO: return fake Hashmap
-    let mut health_map = std::collections::HashMap::new();
-    health_map.insert(
-        "fake_device".to_string(),
-        crate::audio::devices::DeviceHealth::new_healthy("".to_string(), "".to_string()),
-    );
-    Ok(health_map)
+    let device_manager = audio_state.device_manager.lock().await;
+    Ok(device_manager.get_all_device_health().await)
 }
 
 #[tauri::command]
@@ -142,17 +138,17 @@ pub async fn report_device_error(
     device_id: String,
     error: String,
 ) -> Result<(), String> {
+    log_command!(
+        "report_device_error",
+        "device: {}, error: {}",
+        device_id,
+        error
+    );
+
+    let device_manager = audio_state.device_manager.lock().await;
+    device_manager.report_device_error(&device_id, error).await;
+
     Ok(())
-    // let mixer_guard = audio_state.mixer.lock().await;
-    // if let Some(ref mixer) = *mixer_guard {
-    //     mixer
-    //         .audio_device_manager
-    //         .report_device_error(&device_id, error)
-    //         .await;
-    //     Ok(())
-    // } else {
-    //     Err("No mixer created".to_string())
-    // }
 }
 
 // Device switching commands
