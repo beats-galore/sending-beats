@@ -1,3 +1,4 @@
+use crate::audio::devices::DiversionOutcome;
 use crate::AudioState;
 use colored::Colorize;
 use tauri::State;
@@ -12,7 +13,7 @@ pub async fn enable_system_audio_capture(audio_state: State<'_, AudioState>) -> 
 
     // Divert system audio to virtual device
     let mut router = audio_state.system_audio_router.lock().await;
-    router
+    let outcome = router
         .divert_system_audio_to_virtual_device()
         .await
         .map_err(|e| {
@@ -23,6 +24,17 @@ pub async fn enable_system_audio_capture(audio_state: State<'_, AudioState>) -> 
             );
             format!("Failed to enable system audio capture: {}", e)
         })?;
+
+    if outcome == DiversionOutcome::RestartRequired {
+        info!(
+            "{} Virtual driver set up, relaunch required to finish diversion",
+            "SYSTEM_AUDIO_RESTART".bright_yellow()
+        );
+        return Err(
+            "Sendin Beats must be restarted to finish setting up the virtual audio driver"
+                .to_string(),
+        );
+    }
 
     info!(
         "{} System audio capture enabled - audio now routed through virtual device",

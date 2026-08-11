@@ -1,0 +1,10 @@
+engineStrict: true
+strictPeerDependencies: false
+confirmModulesPurge: false
+minimumReleaseAge: 10080 # prevents installing a dependency newer than 1 week
+blockExoticSubdeps: true # prevents subdependencies from installing directly from github or tarball urls
+trustPolicy: no-downgrade # prevents auto-upgrading dependencies to a version that is less trusted than the current install by pnpm
+trustPolicyIgnoreAfter: 131400 # expires the trust policy after this period, 1/4 of a year
+allowBuilds:
+  esbuild: true
+  unrs-resolver: false

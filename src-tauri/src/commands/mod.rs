@@ -1,3 +1,4 @@
+pub mod app;
 pub mod application_audio;
 pub mod audio_devices;
 pub mod audio_effects;
@@ -12,6 +13,7 @@ pub mod streaming;
 pub mod system_audio;
 pub mod vu_channels;
 
+pub use app::*;
 pub use application_audio::*;
 pub use audio_devices::*;
 pub use audio_effects::*;

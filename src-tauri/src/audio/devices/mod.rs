@@ -21,8 +21,6 @@ pub mod types;
 pub mod monitor;
 
 #[cfg(target_os = "macos")]
-pub mod aggregate_device;
-#[cfg(target_os = "macos")]
 pub mod coreaudio_stream;
 #[cfg(target_os = "macos")]
 pub mod device_hog;
@@ -43,12 +41,10 @@ pub use monitor::{
 };
 
 #[cfg(target_os = "macos")]
-pub use aggregate_device::AggregateDeviceManager;
-#[cfg(target_os = "macos")]
 pub use coreaudio_stream::{CoreAudioInputStream, CoreAudioOutputStream};
 #[cfg(target_os = "macos")]
 pub use device_hog::DeviceHogManager;
 #[cfg(target_os = "macos")]
-pub use system_audio_router::SystemAudioRouter;
+pub use system_audio_router::{DiversionOutcome, SystemAudioRouter};
 #[cfg(target_os = "macos")]
 pub use virtual_driver::VirtualDriverManager;

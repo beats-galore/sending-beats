@@ -26,8 +26,7 @@ struct AudioFormatInfo {
 #[cfg(target_os = "macos")]
 pub struct ApplicationAudioTap {
     process_info: ProcessInfo,
-    tap_id: Option<u32>,              // AudioObjectID placeholder
-    aggregate_device_id: Option<u32>, // AudioObjectID placeholder
+    tap_id: Option<u32>, // AudioObjectID placeholder
     audio_producer: Option<Arc<StdMutex<rtrb::Producer<f32>>>>, // RTRB producer for pipeline integration
     detected_sample_rate: Option<f64>,                          // Detected sample rate from the tap
     _stream_info: Option<String>, // Just store stream info for debugging
@@ -45,7 +44,6 @@ impl ApplicationAudioTap {
         Self {
             process_info,
             tap_id: None,
-            aggregate_device_id: None,
             audio_producer: None,
             detected_sample_rate: None,
             _stream_info: None,
@@ -642,199 +640,6 @@ impl ApplicationAudioTap {
         Ok(sample_rate)
     }
 
-    /// Create the actual Core Audio aggregate device
-    #[cfg(target_os = "macos")]
-    unsafe fn create_core_audio_aggregate_device(
-        &self,
-        device_dict: *const std::os::raw::c_void,
-    ) -> Result<coreaudio_sys::AudioObjectID> {
-        use coreaudio_sys::{AudioHardwareCreateAggregateDevice, AudioObjectID};
-
-        let mut aggregate_device_id: AudioObjectID = 0;
-
-        let status =
-            AudioHardwareCreateAggregateDevice(device_dict as *const _, &mut aggregate_device_id);
-
-        if status != 0 {
-            return Err(anyhow::anyhow!(
-                "AudioHardwareCreateAggregateDevice failed: OSStatus {}",
-                status
-            ));
-        }
-
-        if aggregate_device_id == 0 {
-            return Err(anyhow::anyhow!("Created aggregate device has invalid ID"));
-        }
-
-        info!(
-            "🎉 Successfully created Core Audio aggregate device: ID {}",
-            aggregate_device_id
-        );
-        Ok(aggregate_device_id)
-    }
-    /// Get the UUID from a Core Audio tap
-    #[cfg(target_os = "macos")]
-    fn get_tap_uuid(&self, tap_object_id: coreaudio_sys::AudioObjectID) -> Result<String> {
-        use core_foundation::base::{CFType, CFTypeRef, TCFType};
-        use core_foundation::string::CFString;
-        use coreaudio_sys::{AudioObjectGetPropertyData, AudioObjectPropertyAddress};
-        use std::os::raw::c_void;
-        use std::ptr;
-
-        let address = AudioObjectPropertyAddress {
-            mSelector: 0x74756964, // 'tuid' - kAudioTapPropertyUID (tap-specific UID property)
-            mScope: 0,             // kAudioObjectPropertyScopeGlobal
-            mElement: 0,           // kAudioObjectPropertyElementMain
-        };
-
-        let mut cf_string_ref: CFTypeRef = ptr::null();
-        let mut data_size = std::mem::size_of::<CFTypeRef>() as u32;
-
-        let status = unsafe {
-            AudioObjectGetPropertyData(
-                tap_object_id,
-                &address,
-                0,
-                ptr::null(),
-                &mut data_size,
-                &mut cf_string_ref as *mut CFTypeRef as *mut c_void,
-            )
-        };
-
-        if status != 0 {
-            return Err(anyhow::anyhow!(
-                "Failed to get tap UUID: OSStatus {}",
-                status
-            ));
-        }
-
-        if cf_string_ref.is_null() {
-            return Err(anyhow::anyhow!("Tap UUID is null"));
-        }
-
-        // Convert CFString to Rust String
-        let cf_string = unsafe { CFString::wrap_under_get_rule(cf_string_ref as *const _) };
-        let uuid_string = cf_string.to_string();
-
-        Ok(uuid_string)
-    }
-
-    /// Create CoreFoundation dictionary for aggregate device configuration
-    #[cfg(target_os = "macos")]
-    fn create_aggregate_device_dictionary(
-        &self,
-        tap_uuid: &str,
-    ) -> Result<*const std::os::raw::c_void> {
-        use core_foundation::array::CFArray;
-        use core_foundation::base::{CFTypeRef, TCFType};
-        use core_foundation::dictionary::CFDictionary;
-        use core_foundation::number::CFNumber;
-        use core_foundation::string::CFString;
-
-        info!(
-            "🔧 Creating proper CoreFoundation dictionary for AudioHardwareCreateAggregateDevice"
-        );
-        info!("📋 Using tap UUID: {}", tap_uuid);
-
-        // Create device name and UID
-        let device_name = format!("SendinBeats-Tap-{}", self.process_info.pid);
-        let device_uid = format!("com.sendinbeats.tap.{}", self.process_info.pid);
-
-        info!("📋 Aggregate device name: {}", device_name);
-        info!("📋 Aggregate device UID: {}", device_uid);
-
-        // Use the correct Core Audio constants for aggregate device dictionary
-        let name_key = CFString::new("name"); // kAudioAggregateDeviceNameKey
-        let uid_key = CFString::new("uid"); // kAudioAggregateDeviceUIDKey
-        let subdevices_key = CFString::new("subdevice list"); // kAudioAggregateDeviceSubDeviceListKey
-        let master_key = CFString::new("master"); // kAudioAggregateDeviceMasterSubDeviceKey
-        let is_stacked_key = CFString::new("stacked"); // kAudioAggregateDeviceIsStackedKey
-
-        // Values
-        let name_value = CFString::new(&device_name);
-        let uid_value = CFString::new(&device_uid);
-
-        // CRITICAL: Include the tap UUID in the subdevices array
-        // This is how Core Audio taps are supposed to work - tap becomes part of aggregate device
-        let tap_uuid_cf = CFString::new(tap_uuid);
-        let subdevices_array = CFArray::<CFString>::from_CFTypes(&[tap_uuid_cf]);
-
-        // Set is_stacked to 1 (true) for multi-output behavior
-        let is_stacked_value = CFNumber::from(1i32);
-
-        info!("🔧 Creating aggregate device dictionary with tap as subdevice");
-        info!("🔧 Including tap UUID {} in subdevices array", tap_uuid);
-
-        // Create the dictionary with proper Core Audio keys
-        let pairs = [
-            (name_key.as_CFType(), name_value.as_CFType()),
-            (uid_key.as_CFType(), uid_value.as_CFType()),
-            (subdevices_key.as_CFType(), subdevices_array.as_CFType()),
-            (is_stacked_key.as_CFType(), is_stacked_value.as_CFType()),
-        ];
-
-        let dict = CFDictionary::from_CFType_pairs(&pairs);
-
-        info!(
-            "📋 Created CoreFoundation dictionary with {} keys",
-            pairs.len()
-        );
-        info!("📋 Dictionary keys: name, uid, subdevice list, stacked");
-
-        // Keep the dictionary alive and return a retained reference
-        let dict_ref = dict.as_concrete_TypeRef() as *const std::os::raw::c_void;
-
-        // Explicitly retain the dictionary to prevent deallocation
-        unsafe {
-            core_foundation::base::CFRetain(dict_ref as CFTypeRef);
-        }
-
-        info!("📋 Dictionary retained and ready for AudioHardwareCreateAggregateDevice");
-        Ok(dict_ref)
-    }
-
-    /// Create an aggregate device that includes the Core Audio tap
-    #[cfg(target_os = "macos")]
-    async fn create_aggregate_device_with_tap(
-        &self,
-        tap_object_id: coreaudio_sys::AudioObjectID,
-    ) -> Result<coreaudio_sys::AudioObjectID> {
-        use core_foundation::array::CFArray;
-        use core_foundation::base::{CFTypeRef, ToVoid};
-        use core_foundation::dictionary::CFMutableDictionary;
-        use core_foundation::number::CFNumber;
-        use core_foundation::string::CFString;
-        use std::ptr;
-
-        info!(
-            "🔧 IMPLEMENTING: Creating aggregate device with tap {}",
-            tap_object_id
-        );
-
-        // Step 1: Get tap UUID - we need this for the dictionary
-        let tap_uuid = self.get_tap_uuid(tap_object_id)?;
-        info!("📋 Tap UUID: {}", tap_uuid);
-
-        // Step 2: Create CoreFoundation dictionary for aggregate device
-        let device_dict = self.create_aggregate_device_dictionary(&tap_uuid)?;
-
-        // Step 3: Create the aggregate device using Core Audio HAL
-        let aggregate_device_id = unsafe {
-            let result = self.create_core_audio_aggregate_device(device_dict);
-
-            // Release the dictionary now that the API call is complete
-            core_foundation::base::CFRelease(device_dict as core_foundation::base::CFTypeRef);
-
-            result?
-        };
-
-        info!(
-            "✅ Created aggregate device {} with tap {}",
-            aggregate_device_id, tap_object_id
-        );
-        Ok(aggregate_device_id)
-    }
-
     /// Get current error count
     pub async fn get_error_count(&self) -> u32 {
         if let Ok(error_count) = self.error_count.lock() {
@@ -895,11 +700,6 @@ impl ApplicationAudioTap {
         if let Some(tap_id) = self.tap_id.take() {
             // FIXME: Need to call Core Audio API to destroy tap (AudioHardwareDestroyProcessTap)
             info!("Cleaned up Core Audio tap ID {}", tap_id);
-        }
-
-        if let Some(aggregate_id) = self.aggregate_device_id.take() {
-            // FIXME: Need to call Core Audio API to destroy aggregate device
-            info!("Cleaned up aggregate device ID {}", aggregate_id);
         }
 
         self.is_capturing = false;

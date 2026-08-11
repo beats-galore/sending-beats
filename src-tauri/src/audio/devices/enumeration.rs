@@ -57,6 +57,22 @@ impl DeviceEnumerator {
             }
         }
 
+        // Our own virtual driver is a loopback device, so CoreAudio reports it as
+        // both input and output. Its input side is internal plumbing for system
+        // audio diversion, not something the user picks as a capture source, so
+        // hide that capability rather than offering it in device selection.
+        #[cfg(target_os = "macos")]
+        {
+            use crate::audio::devices::VirtualDriverManager;
+
+            let virtual_device_name = VirtualDriverManager::get_device_name();
+            for device in all_devices.iter_mut() {
+                if device.name == virtual_device_name && device.is_input {
+                    device.is_input = false;
+                }
+            }
+        }
+
         crate::device_debug!("\n=== FINAL DEVICE LIST ===");
         for (i, device) in all_devices.iter().enumerate() {
             crate::device_debug!("  {}: {} ({})", i, device.name, device.id);

@@ -387,6 +387,8 @@ pub fn run() {
 
     builder
         .invoke_handler(tauri::generate_handler![
+            // Application lifecycle commands
+            commands::app::quit_application,
             // Streaming commands
             connect_to_stream,
             disconnect_from_stream,
@@ -405,6 +407,7 @@ pub fn run() {
             get_all_device_health,
             report_device_error,
             remove_input_stream,
+            clear_session_devices,
             set_output_stream,
             start_device_monitoring,
             get_device_monitoring_stats,

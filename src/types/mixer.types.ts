@@ -92,5 +92,4 @@ export type CompleteConfigurationData = {
   configuredDevices: ConfiguredAudioDevice[];
   audioEffectsDefault: AudioEffectsDefault[];
   audioEffectsCustom: AudioEffectsCustom[];
-  devicesRestored?: boolean; // Client-side flag to track restoration state
 };

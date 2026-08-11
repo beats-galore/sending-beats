@@ -795,22 +795,7 @@ impl SystemAudioStateService {
         }
     }
 
-    /// Update dummy aggregate device UID
-    pub async fn set_dummy_device_uid(
-        db: &DatabaseConnection,
-        device_uid: Option<String>,
-    ) -> Result<system_audio_state::Model> {
-        let state = Self::get_or_create(db).await?;
-
-        let mut active: system_audio_state::ActiveModel = state.into();
-        active.dummy_aggregate_device_uid = Set(device_uid);
-        active.updated_at = Set(chrono::Utc::now());
-
-        let updated = active.update(db).await?;
-        Ok(updated)
-    }
-
-    /// Set diversion state (whether system audio is diverted to dummy device)
+    /// Set diversion state (whether system audio is diverted to the virtual driver)
     pub async fn set_diversion_state(
         db: &DatabaseConnection,
         is_diverted: bool,

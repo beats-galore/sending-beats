@@ -7,7 +7,7 @@
 #![allow(dead_code)]
 
 use std::ffi::CStr;
-use std::os::raw::{c_char, c_void};
+use std::os::raw::c_void;
 
 // Core Audio Types from coreaudio-sys
 pub use coreaudio_sys::{
@@ -104,31 +104,9 @@ pub fn create_process_tap_description(
     }
 }
 
-/// Aggregate device description for creating virtual audio devices
-#[repr(C)]
-#[derive(Debug)]
-pub struct AudioAggregateDeviceDescription {
-    pub device_name: *const c_char,
-    pub device_uid: *const c_char,
-    pub sub_device_list: *const AudioObjectID,
-    pub number_sub_devices: UInt32,
-    pub sample_rate: Float64,
-    pub is_private: bool,
-}
-
 // AudioHardwareCreateProcessTap and AudioHardwareDestroyProcessTap are now provided by objc2_core_audio
 
 extern "C" {
-    /// Create an aggregate device from CFDictionary description
-    #[link_name = "AudioHardwareCreateAggregateDevice"]
-    pub fn AudioHardwareCreateAggregateDeviceFromDict(
-        in_description: *const core_foundation::dictionary::__CFDictionary,
-        out_device_object_id: *mut AudioObjectID,
-    ) -> OSStatus;
-
-    /// Destroy an aggregate device
-    pub fn AudioHardwareDestroyAggregateDevice(in_device_object_id: AudioObjectID) -> OSStatus;
-
     /// Get property from Audio Hardware
     /// We use this to translate PID to AudioObjectID
     pub fn AudioHardwareGetProperty(

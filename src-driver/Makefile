@@ -46,6 +46,9 @@ $(BUNDLE_DIR): $(SRC) Info.plist
 	@echo "Copying Info.plist..."
 	@cp Info.plist $(CONTENTS_DIR)/Info.plist
 
+	@echo "Ad-hoc signing bundle..."
+	@codesign --force --sign - $(BUNDLE_DIR)
+
 	@echo "Build complete: $(BUNDLE_DIR)"
 
 clean:

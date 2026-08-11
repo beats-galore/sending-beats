@@ -221,3 +221,20 @@ export type MetadataPreset = {
   name: string;
   metadata: RecordingMetadata;
 };
+
+/**
+ * Result of switching the master output device.
+ *
+ * The device switch and the system audio diversion succeed independently: the
+ * output can be live while diversion failed, which leaves every source audible
+ * twice.
+ */
+export type OutputDeviceSwitchResult = {
+  systemAudioDiverted: boolean;
+  /**
+   * The virtual driver was set up, but coreaudiod restarted underneath the app,
+   * so diversion can only finish after a relaunch.
+   */
+  restartRequired: boolean;
+  diversionError: string | null;
+};
