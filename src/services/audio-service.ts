@@ -1,7 +1,13 @@
 // Audio service layer - abstraction over Tauri audio commands
 import { invoke } from '@tauri-apps/api/core';
 
-import type { AudioDeviceInfo, AudioMetrics, OutputDevice, DeviceHealth } from '../types';
+import type {
+  AudioDeviceInfo,
+  AudioMetrics,
+  OutputDevice,
+  DeviceHealth,
+  OutputDeviceSwitchResult,
+} from '../types';
 import type { ConfiguredAudioDevice } from '../types/db';
 import type { Identifier } from '../types/util.types';
 
@@ -32,16 +38,32 @@ export const audioService = {
     return invoke('remove_input_stream', { deviceId });
   },
 
+  /**
+   * Tear down every device registered by the current session.
+   *
+   * Resolves to the number of devices removed. Recording and Icecast output taps
+   * are left running.
+   */
+  async clearSessionDevices(): Promise<number> {
+    return invoke<number>('clear_session_devices');
+  },
+
   async switchInputStream(
     oldDeviceId: Identifier<ConfiguredAudioDevice> | null,
     newDeviceId: Identifier<ConfiguredAudioDevice>,
     isVirtual?: boolean
   ): Promise<ConfiguredAudioDevice | null> {
-    return invoke<ConfiguredAudioDevice | null>('safe_switch_input_device', { oldDeviceId, newDeviceId, isVirtual });
+    return invoke<ConfiguredAudioDevice | null>('safe_switch_input_device', {
+      oldDeviceId,
+      newDeviceId,
+      isVirtual,
+    });
   },
 
-  async setOutputStream(deviceId: Identifier<ConfiguredAudioDevice>): Promise<void> {
-    return invoke('safe_switch_output_device', { newDeviceId: deviceId });
+  async setOutputStream(
+    deviceId: Identifier<ConfiguredAudioDevice>
+  ): Promise<OutputDeviceSwitchResult> {
+    return invoke<OutputDeviceSwitchResult>('safe_switch_output_device', { newDeviceId: deviceId });
   },
 
   // Effects management

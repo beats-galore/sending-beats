@@ -610,6 +610,16 @@ impl AudioPipeline {
         Ok(())
     }
 
+    /// Device IDs of every registered input worker
+    pub fn input_device_ids(&self) -> Vec<String> {
+        self.input_workers.keys().cloned().collect()
+    }
+
+    /// Device IDs of every registered output worker
+    pub fn output_device_ids(&self) -> Vec<String> {
+        self.output_workers.keys().cloned().collect()
+    }
+
     /// Remove an input device from the pipeline
     pub async fn remove_input_device(&mut self, device_id: &str) -> Result<()> {
         if !self.input_workers.contains_key(device_id) {

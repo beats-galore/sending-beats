@@ -1,7 +1,78 @@
 use crate::{log_command, AudioDeviceInfo, AudioState};
 use colored::*;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use serde::Serialize;
 use tauri::State;
+
+/// Outcome of switching the master output device
+///
+/// The switch and the system audio diversion fail independently: the output can
+/// be live while diversion is refused, which leaves the user hearing every
+/// source twice, so the diversion result is reported separately rather than
+/// folded into the command's error.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputDeviceSwitchResult {
+    pub system_audio_diverted: bool,
+    /// The driver was set up but coreaudiod restarted underneath this process,
+    /// so diversion can only finish once the app is relaunched
+    pub restart_required: bool,
+    pub diversion_error: Option<String>,
+}
+
+/// Route system output to the virtual driver so the mix is not played twice
+#[cfg(target_os = "macos")]
+async fn divert_system_audio(audio_state: &AudioState) -> OutputDeviceSwitchResult {
+    use crate::audio::devices::DiversionOutcome;
+
+    let mut router = audio_state.system_audio_router.lock().await;
+
+    match router.divert_system_audio_to_virtual_device().await {
+        Ok(DiversionOutcome::Diverted) => {
+            tracing::info!(
+                "{} System audio diverted to prevent double playback",
+                "OUTPUT_DIVERTED".bright_green()
+            );
+            OutputDeviceSwitchResult {
+                system_audio_diverted: true,
+                restart_required: false,
+                diversion_error: None,
+            }
+        }
+        Ok(DiversionOutcome::RestartRequired) => {
+            tracing::info!(
+                "{} Virtual driver set up, relaunch required to finish diversion",
+                "OUTPUT_DIVERT_RESTART".bright_yellow()
+            );
+            OutputDeviceSwitchResult {
+                system_audio_diverted: false,
+                restart_required: true,
+                diversion_error: None,
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                "{} Failed to divert system audio: {}",
+                "OUTPUT_DIVERT_WARN".bright_yellow(),
+                e
+            );
+            OutputDeviceSwitchResult {
+                system_audio_diverted: false,
+                restart_required: false,
+                diversion_error: Some(e.to_string()),
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn divert_system_audio(_audio_state: &AudioState) -> OutputDeviceSwitchResult {
+    OutputDeviceSwitchResult {
+        system_audio_diverted: false,
+        restart_required: false,
+        diversion_error: None,
+    }
+}
 
 #[tauri::command]
 pub async fn enumerate_audio_devices(
@@ -373,7 +444,7 @@ pub async fn safe_switch_input_device(
 pub async fn safe_switch_output_device(
     audio_state: State<'_, AudioState>,
     new_device_id: String,
-) -> Result<(), String> {
+) -> Result<OutputDeviceSwitchResult, String> {
     log_command!("safe_switch_output_device", "device: {}", new_device_id);
 
     // Note: Duplicate output device detection is handled at client level in mixer store
@@ -464,29 +535,7 @@ pub async fn safe_switch_output_device(
                 }
             }
 
-            // Divert system audio to virtual device to prevent double playback
-            #[cfg(target_os = "macos")]
-            {
-                use colored::Colorize;
-                let mut router = audio_state.system_audio_router.lock().await;
-                match router.divert_system_audio_to_virtual_device().await {
-                    Ok(_) => {
-                        tracing::info!(
-                            "{} System audio diverted to prevent double playback",
-                            "OUTPUT_DIVERTED".bright_green()
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "{} Failed to divert system audio: {}",
-                            "OUTPUT_DIVERT_WARN".bright_yellow(),
-                            e
-                        );
-                    }
-                }
-            }
-
-            Ok(())
+            Ok(divert_system_audio(&audio_state).await)
         }
         Ok(Err(e)) => Err(format!("Failed to set output device: {}", e)),
         Err(_) => Err("Audio system did not respond".to_string()),
@@ -536,6 +585,38 @@ pub async fn remove_input_stream(
             Ok(())
         }
         Ok(Err(e)) => Err(format!("Failed to remove input stream: {}", e)),
+        Err(_) => Err("Audio system did not respond".to_string()),
+    }
+}
+
+/// Tear down every device registered by the current session
+///
+/// Called before restoring a different session so its devices register against a
+/// clean pipeline. Recording and Icecast output taps are left running.
+#[tauri::command]
+pub async fn clear_session_devices(audio_state: State<'_, AudioState>) -> Result<usize, String> {
+    log_command!("clear_session_devices");
+
+    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+    let command =
+        crate::audio::mixer::stream_management::AudioCommand::ClearSessionDevices { response_tx };
+
+    if let Err(e) = audio_state.audio_command_tx.send(command).await {
+        let error_msg = format!("Audio system not available - failed to send command: {}", e);
+        tracing::error!("{}", error_msg);
+        return Err(error_msg);
+    }
+
+    match response_rx.await {
+        Ok(Ok(removed)) => {
+            tracing::info!(
+                "{} Cleared {} session devices",
+                "SESSION_DEVICES_CLEARED".bright_green(),
+                removed
+            );
+            Ok(removed)
+        }
+        Ok(Err(e)) => Err(format!("Failed to clear session devices: {}", e)),
         Err(_) => Err("Audio system did not respond".to_string()),
     }
 }

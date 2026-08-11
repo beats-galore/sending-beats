@@ -11,6 +11,8 @@ import { RecordingControlsCard, RecordingConfigCard, RecordingHistoryCard } from
 import { ChannelGrid } from './ChannelGrid';
 import { MasterSection } from './MasterSection';
 import { MixerControls } from './MixerControls';
+import { SystemAudioRestartModal } from './SystemAudioRestartModal';
+import { SystemAudioWarning } from './SystemAudioWarning';
 
 // Import recording components
 
@@ -116,6 +118,10 @@ export const VirtualMixer = memo(() => {
         <Title order={1} c="blue">
           Virtual Mixer
         </Title>
+
+        <SystemAudioRestartModal />
+
+        <SystemAudioWarning />
 
         {/* Mixer Controls */}
         <MixerControls />

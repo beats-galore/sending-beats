@@ -31,6 +31,11 @@ pub enum AudioCommand {
         device_id: String,
         response_tx: oneshot::Sender<Result<bool>>,
     },
+    /// Tear down every device belonging to the current session, so a new session
+    /// can register its own devices from a clean slate
+    ClearSessionDevices {
+        response_tx: oneshot::Sender<Result<usize>>,
+    },
     #[cfg(target_os = "macos")]
     AddCoreAudioOutputStream {
         device_id: String,
@@ -282,6 +287,10 @@ impl IsolatedAudioManager {
                 response_tx,
             } => {
                 let result = self.handle_remove_input_stream(device_id).await;
+                let _ = response_tx.send(Ok(result));
+            }
+            AudioCommand::ClearSessionDevices { response_tx } => {
+                let result = self.handle_clear_session_devices().await;
                 let _ = response_tx.send(Ok(result));
             }
             #[cfg(target_os = "macos")]
@@ -789,6 +798,72 @@ impl IsolatedAudioManager {
         true
     }
 
+    /// Device IDs that are internal taps rather than session devices
+    ///
+    /// Recording and Icecast register themselves as outputs to receive the mix,
+    /// so a session teardown must leave them running.
+    fn is_internal_output(device_id: &str) -> bool {
+        device_id == "recording_output" || device_id.starts_with("icecast_output_")
+    }
+
+    /// Remove every session device so a new session can register from scratch
+    ///
+    /// Returns the number of devices removed.
+    async fn handle_clear_session_devices(&mut self) -> usize {
+        let input_ids = self.audio_pipeline.input_device_ids();
+        let output_ids: Vec<String> = self
+            .audio_pipeline
+            .output_device_ids()
+            .into_iter()
+            .filter(|id| !Self::is_internal_output(id))
+            .collect();
+
+        info!(
+            "🧹 {}: Clearing session devices ({} inputs, {} outputs)",
+            "AUDIO_COORDINATOR".on_yellow().red(),
+            input_ids.len(),
+            output_ids.len()
+        );
+
+        let mut removed = 0;
+
+        for device_id in input_ids {
+            if self.handle_remove_input_stream(device_id).await {
+                removed += 1;
+            }
+        }
+
+        for device_id in output_ids {
+            if let Err(e) = self.audio_pipeline.remove_output_device(&device_id).await {
+                warn!(
+                    "⚠️ Failed to remove output device '{}' from pipeline: {}",
+                    device_id, e
+                );
+                continue;
+            }
+
+            self.stream_manager.remove_stream(&device_id);
+            self.output_rtrb_producers.remove(&device_id);
+            removed += 1;
+
+            info!(
+                "🗑️ {}: Removed output device '{}'",
+                "AUDIO_COORDINATOR".on_yellow().red(),
+                device_id
+            );
+        }
+
+        self.metrics.output_streams = self.output_rtrb_producers.len();
+
+        info!(
+            "✅ {}: Cleared {} session devices",
+            "AUDIO_COORDINATOR".on_yellow().red(),
+            removed
+        );
+
+        removed
+    }
+
     #[cfg(target_os = "macos")]
     /// Update hardware buffer size for a CoreAudio output stream
     #[cfg(target_os = "macos")]
@@ -890,8 +965,13 @@ impl IsolatedAudioManager {
         );
 
         // **PIPELINE INTEGRATION**: Connect output device to AudioPipeline Layer 4 FIRST
-        if let Err(e) = self
-            .audio_pipeline
+        //
+        // This must abort on failure. The producer above is moved into the call and
+        // dropped with the error, so continuing would hand the hardware stream a
+        // consumer nothing writes to, while the already-registered OutputWorker keeps
+        // filling a buffer nothing reads. Both halves go quiet and the device appears
+        // to be working because the level meters read from the mixing layer.
+        self.audio_pipeline
             .add_output_device_with_rtrb_producer_and_tracker(
                 device_id.clone(),
                 native_sample_rate,
@@ -900,17 +980,17 @@ impl IsolatedAudioManager {
                 Some(rtrb_producer), // Pass raw producer - OutputWorker will own it
                 queue_tracker.clone(),
             )
-        {
-            error!(
-                "❌ PIPELINE: Failed to connect output device '{}' to Layer 4: {}",
-                device_id, e
-            );
-        } else {
-            info!(
-                "✅ PIPELINE: Connected output device '{}' to Layer 4 with SPMC writer at {} Hz (chunk: {} samples)",
-                device_id, native_sample_rate, chunk_size
-            );
-        }
+            .inspect_err(|e| {
+                error!(
+                    "❌ PIPELINE: Failed to connect output device '{}' to Layer 4: {}",
+                    device_id, e
+                );
+            })?;
+
+        info!(
+            "✅ PIPELINE: Connected output device '{}' to Layer 4 with SPMC writer at {} Hz (chunk: {} samples)",
+            device_id, native_sample_rate, chunk_size
+        );
 
         // **HARDWARE STREAM**: Create CoreAudio stream AFTER pipeline worker is ready
         // Update the coreaudio_device to use the detected native sample rate

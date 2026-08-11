@@ -1,4 +1,3 @@
-use crate::audio::devices::aggregate_device::AggregateDeviceManager;
 use crate::audio::devices::virtual_driver::VirtualDriverManager;
 use crate::audio::tap::core_audio_bindings::{
     kAudioObjectSystemObject, AudioObjectGetPropertyData, AudioObjectID,
@@ -12,7 +11,6 @@ use sea_orm::DatabaseConnection;
 use std::ffi::c_void;
 use std::ptr;
 use tracing::{error, info, warn};
-use uuid::Uuid;
 
 const KAUDIO_HARDWARE_PROPERTY_DEFAULT_OUTPUT_DEVICE: u32 = 1682929012; // 'dOut' (0x646F7574)
 const KAUDIO_HARDWARE_PROPERTY_DEFAULT_SYSTEM_OUTPUT_DEVICE: u32 = 1936747636; // 'sOut' (0x734F7574)
@@ -21,8 +19,20 @@ const KAUDIO_DEVICE_PROPERTY_DEVICE_UID: u32 = 1969841184; // 'uid ' (0x75696420
 const KAUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL: u32 = 1735159650; // 'glob' (0x676C6F62)
 const KAUDIO_OBJECT_PROPERTY_ELEMENT_MASTER: u32 = 0; // 0x00000000
 
+/// Result of routing system audio through the virtual driver
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiversionOutcome {
+    /// System output is now the virtual driver
+    Diverted,
+    /// The driver was installed or reloaded, which restarts coreaudiod and
+    /// invalidates this process's Core Audio client. The new device stays
+    /// invisible to us until the app is relaunched, so diversion cannot finish
+    /// in this run.
+    RestartRequired,
+}
+
 /// System audio routing manager
-/// Handles diverting system audio to a dummy aggregate device and restoring the original default
+/// Handles diverting system audio to the virtual driver and restoring the original default
 pub struct SystemAudioRouter {
     db: DatabaseConnection,
 }
@@ -209,21 +219,39 @@ impl SystemAudioRouter {
     }
 
     /// Ensure system audio is routed to the virtual driver so the physical output is free
-    pub async fn divert_system_audio_to_virtual_device(&mut self) -> Result<()> {
-        // Ensure virtual driver is installed
+    pub async fn divert_system_audio_to_virtual_device(&mut self) -> Result<DiversionOutcome> {
+        // Installing restarts coreaudiod, so stop here rather than chasing a
+        // device this process can no longer see. Continuing would only raise a
+        // second authorization prompt for a lookup that cannot succeed yet.
         if !VirtualDriverManager::is_installed() {
             info!(
                 "{} Virtual driver not installed, installing now...",
                 "SYS_AUDIO_INSTALL".bright_cyan()
             );
             VirtualDriverManager::install().await?;
+
+            return Ok(DiversionOutcome::RestartRequired);
         }
 
         VirtualDriverManager::verify_installation()?;
 
-        let virtual_device_uid = VirtualDriverManager::get_device_uid()
-            .await
-            .context("Failed to get virtual device UID")?;
+        // The bundle can be on disk while coreaudiod has never published the
+        // device, which leaves the driver permanently unloaded because the
+        // install path short-circuits on the files already existing
+        let virtual_device_uid = match VirtualDriverManager::get_device_uid().await {
+            Ok(uid) => uid,
+            Err(e) => {
+                warn!(
+                    "{} Virtual device not published ({}), restarting coreaudiod",
+                    "SYS_AUDIO_RELOAD".bright_yellow(),
+                    e
+                );
+
+                VirtualDriverManager::reload_coreaudiod().await?;
+
+                return Ok(DiversionOutcome::RestartRequired);
+            }
+        };
         let state = SystemAudioStateService::get_or_create(&self.db).await?;
 
         // Save current default if not already diverted
@@ -282,7 +310,7 @@ impl SystemAudioRouter {
             virtual_device_uid
         );
 
-        Ok(())
+        Ok(DiversionOutcome::Diverted)
     }
 
     /// Restore the original default output device
@@ -327,58 +355,6 @@ impl SystemAudioRouter {
 
         SystemAudioStateService::reset_diversion(&self.db).await?;
 
-        if let Some(aggregate_uid) = state.dummy_aggregate_device_uid {
-            if let Some(aggregate_id) = AggregateDeviceManager::verify_device_by_uid(&aggregate_uid)
-            {
-                info!(
-                    "{} Destroying silent aggregate '{}'",
-                    "SYS_AUDIO_CLEANUP".bright_cyan(),
-                    aggregate_uid
-                );
-                if let Err(e) = AggregateDeviceManager::destroy_aggregate_device(aggregate_id) {
-                    warn!(
-                        "{} Failed to destroy aggregate device '{}' during restore: {}",
-                        "SYS_AUDIO_WARN".bright_yellow(),
-                        aggregate_uid,
-                        e
-                    );
-                }
-            }
-            SystemAudioStateService::set_dummy_device_uid(&self.db, None).await?;
-        }
-
         Ok(())
-    }
-
-    async fn create_and_save_silent_device(&self) -> Result<String> {
-        let uid = format!("sendin-beats-silent-{}", Uuid::new_v4());
-        let name = "Sendin Beats Silent Output";
-
-        let (_device_id, device_uid) =
-            AggregateDeviceManager::create_silent_aggregate_device(name, &uid)?;
-
-        std::thread::sleep(std::time::Duration::from_millis(100));
-
-        SystemAudioStateService::set_dummy_device_uid(&self.db, Some(device_uid.clone())).await?;
-
-        info!(
-            "{} Created and saved silent aggregate device: '{}'",
-            "SYS_AUDIO_CREATED".bright_green(),
-            device_uid
-        );
-
-        Ok(device_uid)
-    }
-
-    pub async fn ensure_dummy_device_exists(&mut self) -> Result<String> {
-        let state = SystemAudioStateService::get_or_create(&self.db).await?;
-
-        if let Some(uid) = &state.dummy_aggregate_device_uid {
-            if AggregateDeviceManager::verify_device_by_uid(uid).is_some() {
-                return Ok(uid.clone());
-            }
-        }
-
-        self.create_and_save_silent_device().await
     }
 }

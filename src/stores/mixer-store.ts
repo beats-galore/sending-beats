@@ -26,6 +26,12 @@ type MixerStore = {
   config: MixerConfig | null;
   state: MixerState;
   error: string | null;
+  // Non-fatal: the output device is live but system audio was not diverted,
+  // so sources are audible twice. Kept apart from `error`, which blanks the mixer.
+  systemAudioWarning: string | null;
+  // The virtual audio driver was installed, which restarts coreaudiod and
+  // leaves it unusable until the app is relaunched
+  systemAudioRestartRequired: boolean;
   metrics: AudioMetrics | null;
   masterLevels: MasterLevels;
   channelLevels: ChannelLevels;
@@ -37,6 +43,11 @@ type MixerStore = {
   initialConfigurationLoadingComplete: boolean;
   configurationError: string | null;
   restoringDevicesForSession: string | null; // session ID currently being restored
+  // Session IDs whose devices are currently registered in the audio pipeline. Held
+  // here rather than on activeSession, which every backend refetch replaces
+  // wholesale — a flag stored there is silently lost and devices get restored
+  // (and re-registered) again. Reset when a session teardown clears the pipeline.
+  restoredSessionIds: string[];
 
   // Actions
   initializeMixer: () => Promise<void>;
@@ -69,6 +80,7 @@ type MixerStore = {
   // Error handling
   setError: (error: string | null) => void;
   clearError: () => void;
+  clearSystemAudioWarning: () => void;
 };
 
 export const useMixerStore = create<MixerStore>()(
@@ -76,6 +88,8 @@ export const useMixerStore = create<MixerStore>()(
     config: null,
     state: MixerState.STOPPED,
     error: null,
+    systemAudioWarning: null,
+    systemAudioRestartRequired: false,
     metrics: null,
     masterLevels: {
       left: { peak_level: 0, rms_level: 0 },
@@ -89,6 +103,7 @@ export const useMixerStore = create<MixerStore>()(
     initialConfigurationLoadingComplete: false,
     configurationError: null,
     restoringDevicesForSession: null,
+    restoredSessionIds: [],
 
     // Initialize mixer (now automatically starts - always-running mode)
     initializeMixer: async () => {
@@ -258,7 +273,7 @@ export const useMixerStore = create<MixerStore>()(
         }
 
         // Update backend first
-        await audioService.setOutputStream(deviceId);
+        const switchResult = await audioService.setOutputStream(deviceId);
 
         // Refetch active session to update configuredDevices list in UI
         const updatedSession = await invoke<CompleteConfigurationData | null>(
@@ -274,6 +289,8 @@ export const useMixerStore = create<MixerStore>()(
               }
             : null,
           activeSession: updatedSession,
+          systemAudioWarning: switchResult.systemAudioDiverted ? null : switchResult.diversionError,
+          systemAudioRestartRequired: switchResult.restartRequired,
         }));
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -357,6 +374,10 @@ export const useMixerStore = create<MixerStore>()(
 
     clearError: () => {
       set({ error: null });
+    },
+
+    clearSystemAudioWarning: () => {
+      set({ systemAudioWarning: null });
     },
 
     // Batch update for efficient VU meter updates
@@ -457,7 +478,7 @@ export const useMixerStore = create<MixerStore>()(
         const shouldRestore =
           sessionId &&
           currentState.activeSession?.configuredDevices?.length &&
-          !currentState.activeSession.devicesRestored &&
+          !currentState.restoredSessionIds.includes(sessionId) &&
           currentState.restoringDevicesForSession !== sessionId;
 
         if (shouldRestore) {
@@ -477,6 +498,22 @@ export const useMixerStore = create<MixerStore>()(
       set({ isLoadingConfigurations: true, configurationError: null });
 
       try {
+        // Tear down the outgoing session's devices before the new session
+        // registers its own. Leaving them registered makes the incoming
+        // restoration collide with device IDs that are already in the pipeline.
+        await audioService.clearSessionDevices();
+
+        // Nothing is registered any more, so no session counts as restored.
+        // Without this, switching back to a previous session would skip its
+        // restoration and leave it with no devices. master_output_device_id is
+        // cleared for the same reason: updateMasterOutputDevice treats a matching
+        // ID as a no-op, which would refuse to re-register the torn-down device.
+        set((state) => ({
+          restoredSessionIds: [],
+          restoringDevicesForSession: null,
+          config: state.config ? { ...state.config, master_output_device_id: undefined } : null,
+        }));
+
         await invoke<AudioMixerConfiguration>('create_session_from_reusable', {
           reusableId: configId,
           sessionName: undefined,
@@ -492,7 +529,8 @@ export const useMixerStore = create<MixerStore>()(
           isLoadingConfigurations: false,
         });
 
-        // Mark that devices need restoration (will be handled by loadConfigurations after this)
+        // Devices are restored by loadConfigurations, which now sees an
+        // unrestored session ID and a pipeline with nothing registered
       } catch (error) {
         set({
           configurationError:
@@ -563,8 +601,9 @@ export const useMixerStore = create<MixerStore>()(
       // Check if already restoring/restored this session
       const currentState = get();
       if (
-        currentState?.restoringDevicesForSession === sessionId ||
-        sessionConfig?.devicesRestored
+        !sessionId ||
+        currentState.restoringDevicesForSession === sessionId ||
+        currentState.restoredSessionIds.includes(sessionId)
       ) {
         console.log(
           `📋 Device restoration already in progress or completed for session: ${sessionId}`
@@ -615,12 +654,9 @@ export const useMixerStore = create<MixerStore>()(
 
         // Mark devices as restored and clear loading state
         set((state) => ({
-          activeSession: state.activeSession
-            ? {
-                ...state.activeSession,
-                devicesRestored: true,
-              }
-            : null,
+          restoredSessionIds: state.restoredSessionIds.includes(sessionId)
+            ? state.restoredSessionIds
+            : [...state.restoredSessionIds, sessionId],
           restoringDevicesForSession: null,
         }));
       } catch (error) {

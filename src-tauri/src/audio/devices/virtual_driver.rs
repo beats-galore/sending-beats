@@ -1,12 +1,42 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
-use tracing::{error, info, warn};
+use std::time::Duration;
+use tracing::info;
 
 const DRIVER_NAME: &str = "SendinBeatsAudio.driver";
 const DRIVER_DEVICE_NAME: &str = "Sendin Beats Audio";
 const HAL_PLUGIN_DIR: &str = "/Library/Audio/Plug-Ins/HAL";
+/// Restart coreaudiod so it rescans the HAL plug-in directory
+///
+/// `launchctl kickstart` has been observed to report success without actually
+/// replacing the running daemon, which leaves a freshly copied driver unloaded,
+/// so fall back to killing it and letting launchd bring it straight back up.
+const RELOAD_COREAUDIOD_COMMAND: &str =
+    "launchctl kickstart -kp system/com.apple.audio.coreaudiod || killall coreaudiod";
+
+/// Time coreaudiod needs to restart and re-enumerate devices before the new
+/// driver shows up in device enumeration
+const COREAUDIOD_RESTART_DELAY: Duration = Duration::from_millis(1500);
+
+const INSTALL_PROMPT: &str =
+    "Sendin Beats needs to install its virtual audio driver so system audio can be routed through the mixer.";
+
+const RELOAD_PROMPT: &str =
+    "Sendin Beats needs to restart the macOS audio daemon to load its virtual audio driver.";
+
+const UNINSTALL_PROMPT: &str = "Sendin Beats needs to remove its virtual audio driver.";
+
+/// Wrap a value in single quotes for safe interpolation into a /bin/sh command
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+/// Escape a shell command so it can be embedded in an AppleScript string literal
+fn applescript_quote(value: &str) -> String {
+    value.replace('\\', r"\\").replace('"', "\\\"")
+}
 
 pub struct VirtualDriverManager;
 
@@ -39,28 +69,104 @@ impl VirtualDriverManager {
     }
 
     /// Get the path to the bundled driver
+    ///
+    /// The location differs between a bundled .app and `tauri dev`, which runs the
+    /// bare binary with no surrounding bundle, so each candidate is probed in turn.
     fn get_bundled_driver_path() -> Result<PathBuf> {
-        // The driver is bundled in Resources/driver/
-        let exe_path = std::env::current_exe()?;
-        let app_dir = exe_path
-            .parent()
-            .and_then(|p| p.parent())
-            .context("Failed to get app directory")?;
+        let mut candidates: Vec<PathBuf> = Vec::new();
 
-        let driver_path = app_dir.join("Resources").join("driver").join(DRIVER_NAME);
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(contents_dir) = exe_path.parent().and_then(|p| p.parent()) {
+                let resources = contents_dir.join("Resources");
+                // Tauri rewrites the leading `..` of a bundled resource path to `_up_`,
+                // so `../src-driver/build/X.driver` lands here
+                candidates.push(
+                    resources
+                        .join("_up_")
+                        .join("src-driver")
+                        .join("build")
+                        .join(DRIVER_NAME),
+                );
+                candidates.push(resources.join("driver").join(DRIVER_NAME));
+                candidates.push(resources.join(DRIVER_NAME));
+            }
+        }
 
-        if !driver_path.exists() {
+        #[cfg(debug_assertions)]
+        candidates.push(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .join("src-driver")
+                .join("build")
+                .join(DRIVER_NAME),
+        );
+
+        for candidate in &candidates {
+            if candidate.exists() {
+                info!(
+                    "{} Located bundled driver at: {}",
+                    "DRIVER_SOURCE".bright_blue(),
+                    candidate.display()
+                );
+                return Ok(candidate.clone());
+            }
+        }
+
+        Err(anyhow::anyhow!(
+            "Bundled driver '{}' not found. Searched: {}",
+            DRIVER_NAME,
+            candidates
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    }
+
+    /// Run a shell command as root via the macOS authorization prompt
+    ///
+    /// `sudo` is unusable here because a GUI-launched app has no controlling
+    /// terminal for it to prompt on, so it fails before doing any work.
+    ///
+    /// `prompt` is shown in the authorization dialog. macOS still attributes the
+    /// request to osascript, since naming the app itself would require shipping a
+    /// signed privileged helper.
+    async fn run_elevated(script: String, prompt: &str, action: &'static str) -> Result<()> {
+        let applescript = format!(
+            "do shell script \"{}\" with prompt \"{}\" with administrator privileges",
+            applescript_quote(&script),
+            applescript_quote(prompt)
+        );
+
+        let output = tokio::task::spawn_blocking(move || {
+            Command::new("osascript")
+                .arg("-e")
+                .arg(&applescript)
+                .output()
+        })
+        .await
+        .context("Privileged helper task failed to run")?
+        .context("Failed to invoke osascript for privileged operation")?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        // osascript reports a user-cancelled authorization dialog as error -128
+        if stderr.contains("-128") {
             return Err(anyhow::anyhow!(
-                "Bundled driver not found at: {}",
-                driver_path.display()
+                "Administrator authorization was cancelled, so we could not {}",
+                action
             ));
         }
 
-        Ok(driver_path)
+        Err(anyhow::anyhow!("Failed to {}: {}", action, stderr.trim()))
     }
 
     /// Install the virtual audio driver
-    /// This requires sudo privileges and will prompt the user
+    /// Prompts the user once for administrator authorization
     pub async fn install() -> Result<()> {
         if Self::is_installed() {
             info!(
@@ -78,19 +184,6 @@ impl VirtualDriverManager {
         let bundled_driver = Self::get_bundled_driver_path()?;
         let target_path = PathBuf::from(HAL_PLUGIN_DIR).join(DRIVER_NAME);
 
-        // Ensure HAL plugin directory exists
-        let mkdir_status = Command::new("sudo")
-            .args(&["mkdir", "-p", HAL_PLUGIN_DIR])
-            .status()
-            .context("Failed to create HAL plugin directory")?;
-
-        if !mkdir_status.success() {
-            return Err(anyhow::anyhow!(
-                "Failed to create HAL plugin directory (requires sudo)"
-            ));
-        }
-
-        // Copy driver bundle
         info!(
             "{} Copying driver from {} to {}",
             "DRIVER_COPY".bright_blue(),
@@ -98,32 +191,23 @@ impl VirtualDriverManager {
             target_path.display()
         );
 
-        let cp_status = Command::new("sudo")
-            .args(&["cp", "-R", bundled_driver.to_str().unwrap(), HAL_PLUGIN_DIR])
-            .status()
-            .context("Failed to copy driver bundle")?;
+        let source = shell_quote(&bundled_driver.to_string_lossy());
+        let target = shell_quote(&target_path.to_string_lossy());
+        let plugin_dir = shell_quote(HAL_PLUGIN_DIR);
 
-        if !cp_status.success() {
-            return Err(anyhow::anyhow!(
-                "Failed to copy driver bundle (requires sudo)"
-            ));
-        }
+        // Every privileged step runs in one invocation so the user authenticates
+        // once. coreaudiod refuses to load HAL plugins that are not root-owned.
+        let script = format!(
+            "mkdir -p {plugin_dir} && rm -rf {target} && cp -R {source} {target} \
+             && chown -R root:wheel {target} && chmod -R 755 {target} \
+             && {RELOAD_COREAUDIOD_COMMAND}"
+        );
 
-        // Set proper permissions
-        let chmod_status = Command::new("sudo")
-            .args(&["chmod", "-R", "755", target_path.to_str().unwrap()])
-            .status()
-            .context("Failed to set driver permissions")?;
+        Self::run_elevated(script, INSTALL_PROMPT, "install the virtual audio driver").await?;
 
-        if !chmod_status.success() {
-            warn!(
-                "{} Failed to set driver permissions, may cause issues",
-                "DRIVER_WARN".bright_yellow()
-            );
-        }
+        tokio::time::sleep(COREAUDIOD_RESTART_DELAY).await;
 
-        // Restart coreaudiod to load the driver
-        Self::restart_coreaudiod()?;
+        Self::verify_installation()?;
 
         info!(
             "{} Virtual audio driver installed successfully",
@@ -148,21 +232,22 @@ impl VirtualDriverManager {
             "DRIVER_UNINSTALL".bright_cyan()
         );
 
-        let driver_path = PathBuf::from(HAL_PLUGIN_DIR).join(DRIVER_NAME);
+        let target = shell_quote(
+            &PathBuf::from(HAL_PLUGIN_DIR)
+                .join(DRIVER_NAME)
+                .to_string_lossy(),
+        );
 
-        let rm_status = Command::new("sudo")
-            .args(&["rm", "-rf", driver_path.to_str().unwrap()])
-            .status()
-            .context("Failed to remove driver bundle")?;
+        let script = format!("rm -rf {target} && {RELOAD_COREAUDIOD_COMMAND}");
 
-        if !rm_status.success() {
-            return Err(anyhow::anyhow!(
-                "Failed to remove driver bundle (requires sudo)"
-            ));
-        }
+        Self::run_elevated(
+            script,
+            UNINSTALL_PROMPT,
+            "uninstall the virtual audio driver",
+        )
+        .await?;
 
-        // Restart coreaudiod to unload the driver
-        Self::restart_coreaudiod()?;
+        tokio::time::sleep(COREAUDIOD_RESTART_DELAY).await;
 
         info!(
             "{} Virtual audio driver uninstalled successfully",
@@ -172,39 +257,26 @@ impl VirtualDriverManager {
         Ok(())
     }
 
-    /// Restart coreaudiod to reload drivers
-    fn restart_coreaudiod() -> Result<()> {
+    /// Restart coreaudiod so it rescans the HAL plug-in directory
+    ///
+    /// Recovers the case where the driver bundle is on disk but the daemon was
+    /// never restarted, so the device is never published.
+    pub async fn reload_coreaudiod() -> Result<()> {
         info!(
-            "{} Restarting coreaudiod to reload drivers...",
-            "DRIVER_RESTART".bright_blue()
+            "{} Restarting coreaudiod to load the virtual driver...",
+            "DRIVER_RELOAD".bright_cyan()
         );
 
-        // Use launchctl to restart coreaudiod
-        let status = Command::new("sudo")
-            .args(&[
-                "launchctl",
-                "kickstart",
-                "-kp",
-                "system/com.apple.audio.coreaudiod",
-            ])
-            .status()
-            .context("Failed to restart coreaudiod")?;
+        Self::run_elevated(
+            RELOAD_COREAUDIOD_COMMAND.to_string(),
+            RELOAD_PROMPT,
+            "restart the macOS audio daemon",
+        )
+        .await?;
 
-        if !status.success() {
-            error!(
-                "{} Failed to restart coreaudiod, driver may not be loaded",
-                "DRIVER_ERROR".bright_red()
-            );
-            return Err(anyhow::anyhow!("Failed to restart coreaudiod"));
-        }
+        tokio::time::sleep(COREAUDIOD_RESTART_DELAY).await;
 
-        // Give coreaudiod time to restart and enumerate devices
-        std::thread::sleep(std::time::Duration::from_millis(500));
-
-        info!(
-            "{} coreaudiod restarted successfully",
-            "DRIVER_RESTARTED".bright_green()
-        );
+        info!("{} coreaudiod restarted", "DRIVER_RELOADED".bright_green());
 
         Ok(())
     }
