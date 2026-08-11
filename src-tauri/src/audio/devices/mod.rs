@@ -23,8 +23,6 @@ pub mod monitor;
 #[cfg(target_os = "macos")]
 pub mod coreaudio_stream;
 #[cfg(target_os = "macos")]
-pub mod device_hog;
-#[cfg(target_os = "macos")]
 pub mod system_audio_router;
 #[cfg(target_os = "macos")]
 pub mod virtual_driver;
@@ -42,8 +40,6 @@ pub use monitor::{
 
 #[cfg(target_os = "macos")]
 pub use coreaudio_stream::{CoreAudioInputStream, CoreAudioOutputStream};
-#[cfg(target_os = "macos")]
-pub use device_hog::DeviceHogManager;
 #[cfg(target_os = "macos")]
 pub use system_audio_router::{DiversionOutcome, SystemAudioRouter};
 #[cfg(target_os = "macos")]
