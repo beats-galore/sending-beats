@@ -1,61 +1,41 @@
 // Application audio manager - High-level orchestration and API
 //
-// This module provides the main public API for application audio capture,
-// orchestrating between process discovery, tap creation, and mixer integration.
+// This module provides the public API for application audio discovery and
+// capture permissions. Capture itself is handled by ScreenCaptureKit.
 
 use anyhow::Result;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex as StdMutex};
-use tokio::sync::{broadcast, Mutex, RwLock};
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
 use tracing::{error, info, warn};
 
 use super::process_discovery::ApplicationDiscovery;
-use super::types::{ApplicationAudioError, ProcessInfo, TapStats};
-use super::virtual_stream::get_virtual_input_registry;
+use super::types::{ProcessInfo, TapStats};
 
-#[cfg(target_os = "macos")]
-use super::core_audio_tap::ApplicationAudioTap;
-
-/// High-level manager for application audio capture
+/// High-level manager for application audio discovery and capture permissions
+///
+/// Per-application capture itself runs through ScreenCaptureKit
+/// (`audio::screencapture`). The CoreAudio process-tap implementation this
+/// manager was originally built around was a dead end and has been removed, so
+/// there are no taps to track here — the capture-lifecycle methods below report
+/// empty state rather than pretending otherwise.
 #[derive(Clone)]
 pub struct ApplicationAudioManager {
     discovery: Arc<Mutex<ApplicationDiscovery>>,
-    #[cfg(target_os = "macos")]
-    active_taps: Arc<RwLock<HashMap<u32, ApplicationAudioTap>>>, // PID -> Tap
-    #[cfg(not(target_os = "macos"))]
-    active_taps: Arc<RwLock<HashMap<u32, ()>>>,
     permission_granted: Arc<RwLock<bool>>,
-    max_concurrent_captures: usize,
-    cleanup_handle: Arc<StdMutex<Option<tokio::task::JoinHandle<()>>>>,
-    should_stop_cleanup: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl ApplicationAudioManager {
     pub fn new() -> Self {
         Self {
             discovery: Arc::new(Mutex::new(ApplicationDiscovery::new())),
-            active_taps: Arc::new(RwLock::new(HashMap::new())),
             permission_granted: Arc::new(RwLock::new(false)),
-            max_concurrent_captures: 4, // Limit to prevent performance issues
-            cleanup_handle: Arc::new(StdMutex::new(None)),
-            should_stop_cleanup: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        }
-    }
-
-    /// Ensure cleanup task is running (lazy startup)
-    fn ensure_cleanup_task_started(&self) {
-        if let Ok(cleanup_handle_guard) = self.cleanup_handle.try_lock() {
-            if cleanup_handle_guard.is_none() {
-                drop(cleanup_handle_guard);
-                self.start_cleanup_task();
-            }
         }
     }
 
     /// Check and request audio capture permissions
     pub async fn request_permissions(&self) -> Result<bool> {
         info!("Requesting audio capture permissions...");
-        self.ensure_cleanup_task_started();
 
         #[cfg(target_os = "macos")]
         {
@@ -121,177 +101,21 @@ impl ApplicationAudioManager {
     }
 
     /// Stop capturing audio from a specific application
-    pub async fn stop_capturing_app(&self, pid: u32) -> Result<()> {
-        #[cfg(target_os = "macos")]
-        {
-            if let Some(mut tap) = self.active_taps.write().await.remove(&pid) {
-                tap.cleanup().await?;
-                info!("Stopped capturing audio from PID {}", pid);
-            }
-        }
-
-        #[cfg(not(target_os = "macos"))]
-        {
-            self.active_taps.write().await.remove(&pid);
-        }
-
+    ///
+    /// No-op: capture lifecycle is owned by the ScreenCaptureKit streams held in
+    /// the mixer's stream manager, not by this type.
+    pub async fn stop_capturing_app(&self, _pid: u32) -> Result<()> {
         Ok(())
     }
 
-    /// Get statistics for all active taps
+    /// Statistics for taps owned by this manager, of which there are none
     pub async fn get_tap_stats(&self) -> Vec<TapStats> {
-        let taps = self.active_taps.read().await;
-        let mut stats = Vec::new();
-
-        for tap in taps.values() {
-            stats.push(tap.get_stats().await);
-        }
-
-        stats.sort_by_key(|s| s.pid);
-        stats
+        Vec::new()
     }
 
     /// Check if audio capture permissions are granted
     async fn check_audio_capture_permissions(&self) -> bool {
         *self.permission_granted.read().await
-    }
-    /// Synchronously add virtual stream to global mixer registry (STUBBED for command channel architecture)
-    async fn add_to_global_mixer_sync(
-        &self,
-        device_id: String,
-        _audio_input_stream_placeholder: (), // Stubbed out for command channel architecture
-    ) -> Result<()> {
-        info!(
-            "🔗 SYNC: [STUBBED] Adding virtual stream {} to global mixer registry (command channel architecture)",
-            device_id
-        );
-
-        // TODO: Implement command channel integration for virtual streams
-        warn!("STUBBED: add_to_global_mixer_sync - implement command channel communication");
-
-        Ok(())
-    }
-
-    /// Bridge tap audio data to an existing registered stream
-    async fn bridge_tap_audio_to_existing_stream(
-        &self,
-        pid: u32,
-        mut audio_receiver: broadcast::Receiver<Vec<f32>>,
-        bridge_buffer: Arc<tokio::sync::Mutex<Vec<f32>>>,
-    ) -> Result<()> {
-        let virtual_device_id = format!("app-{}", pid);
-        info!(
-            "🌉 Setting up audio bridge for existing stream {}",
-            virtual_device_id
-        );
-
-        let bridge_buffer_for_task = bridge_buffer.clone();
-        let virtual_device_id_for_task = virtual_device_id.clone();
-
-        tokio::spawn(async move {
-            info!(
-                "🔗 Audio bridge task started for {}",
-                virtual_device_id_for_task
-            );
-            let mut sample_count = 0u64;
-
-            while let Ok(audio_samples) = audio_receiver.recv().await {
-                sample_count += audio_samples.len() as u64;
-
-                // Calculate levels for monitoring
-                let peak_level = audio_samples
-                    .iter()
-                    .map(|&s| s.abs())
-                    .fold(0.0f32, f32::max);
-                let rms_level = (audio_samples.iter().map(|&s| s * s).sum::<f32>()
-                    / audio_samples.len() as f32)
-                    .sqrt();
-
-                if let Ok(mut buffer) = bridge_buffer_for_task.try_lock() {
-                    buffer.extend_from_slice(&audio_samples);
-
-                    let max_buffer_size = crate::types::DEFAULT_SAMPLE_RATE as usize; // 1 second at 48kHz
-                    if buffer.len() > max_buffer_size * 2 {
-                        let keep_size = max_buffer_size;
-                        let buffer_len = buffer.len();
-                        let new_buffer = buffer.split_off(buffer_len - keep_size);
-                        *buffer = new_buffer;
-                    }
-
-                    // Log periodically
-                    if sample_count % 4800 == 0 || (peak_level > 0.01 && sample_count % 1000 == 0) {
-                        info!("🌉 BRIDGE [{}]: {} samples bridged to mixer, peak: {:.4}, rms: {:.4}, buffer: {} samples",
-                            virtual_device_id_for_task, audio_samples.len(), peak_level, rms_level, buffer.len());
-                    }
-                } else {
-                    warn!(
-                        "Failed to lock bridge buffer for {}",
-                        virtual_device_id_for_task
-                    );
-                }
-            }
-
-            info!(
-                "🔗 Audio bridge task ended for {}",
-                virtual_device_id_for_task
-            );
-        });
-
-        Ok(())
-    }
-
-    /// Start cleanup task for managing tap lifecycle
-    fn start_cleanup_task(&self) {
-        let active_taps = self.active_taps.clone();
-        let should_stop = self.should_stop_cleanup.clone();
-        let cleanup_handle = self.cleanup_handle.clone();
-
-        let handle = tokio::spawn(async move {
-            info!("🧹 Application audio cleanup task started");
-
-            while !should_stop.load(std::sync::atomic::Ordering::Relaxed) {
-                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-
-                // Check for dead processes and clean up their taps
-                #[cfg(target_os = "macos")]
-                {
-                    let mut taps_to_remove = Vec::new();
-                    let taps = active_taps.read().await;
-
-                    for (pid, tap) in taps.iter() {
-                        let stats = tap.get_stats().await;
-                        if !stats.process_alive || stats.error_count > 5 {
-                            info!(
-                                "🧹 Marking tap for cleanup: PID {} (alive: {}, errors: {})",
-                                pid, stats.process_alive, stats.error_count
-                            );
-                            taps_to_remove.push(*pid);
-                        }
-                    }
-
-                    drop(taps);
-
-                    // Clean up dead taps
-                    if !taps_to_remove.is_empty() {
-                        let mut taps = active_taps.write().await;
-                        for pid in taps_to_remove {
-                            if let Some(mut tap) = taps.remove(&pid) {
-                                if let Err(e) = tap.cleanup().await {
-                                    warn!("Failed to cleanup tap for PID {}: {}", pid, e);
-                                }
-                                info!("🧹 Cleaned up tap for PID {}", pid);
-                            }
-                        }
-                    }
-                }
-            }
-
-            info!("🧹 Application audio cleanup task stopped");
-        });
-
-        if let Ok(mut cleanup_guard) = cleanup_handle.try_lock() {
-            *cleanup_guard = Some(handle);
-        };
     }
 
     /// Get a virtual input stream from the ApplicationAudioManager registry (STUBBED for command channel architecture)
@@ -318,87 +142,28 @@ impl ApplicationAudioManager {
         *self.permission_granted.read().await
     }
 
-    /// Get list of active captures with process info
+    /// Captures owned by this manager, of which there are none
     pub async fn get_active_captures(&self) -> Vec<ProcessInfo> {
-        let pids: Vec<u32> = self.active_taps.read().await.keys().copied().collect();
-        let mut result = Vec::new();
-
-        // Get process info for each active capture
-        if let Ok(available_apps) = self.get_available_applications().await {
-            for pid in pids {
-                if let Some(process_info) = available_apps.iter().find(|app| app.pid == pid) {
-                    result.push(process_info.clone());
-                }
-            }
-        }
-
-        result
+        Vec::new()
     }
 
-    /// Stop all active captures
+    /// Stop all captures owned by this manager
+    ///
+    /// No-op: see `stop_capturing_app`.
     pub async fn stop_all_captures(&self) -> Result<()> {
-        let pids: Vec<u32> = self.active_taps.read().await.keys().copied().collect();
-
-        for pid in pids {
-            if let Err(e) = self.stop_capturing_app(pid).await {
-                warn!("Failed to stop capture for PID {}: {}", pid, e);
-            }
-        }
-
         Ok(())
     }
 
-    /// Clean up stale/dead taps
+    /// Clean up stale captures owned by this manager
+    ///
+    /// Always zero: there is no tap state to go stale.
     pub async fn cleanup_stale_taps(&self) -> Result<usize> {
-        #[cfg(target_os = "macos")]
-        {
-            let mut taps_to_remove = Vec::new();
-            let taps = self.active_taps.read().await;
-
-            for (pid, tap) in taps.iter() {
-                let stats = tap.get_stats().await;
-                if !stats.process_alive || stats.error_count > 5 {
-                    taps_to_remove.push(*pid);
-                }
-            }
-
-            drop(taps);
-
-            let removed_count = taps_to_remove.len();
-
-            for pid in taps_to_remove {
-                if let Err(e) = self.stop_capturing_app(pid).await {
-                    warn!("Failed to cleanup tap for PID {}: {}", pid, e);
-                }
-            }
-
-            return Ok(removed_count);
-        }
-
-        #[cfg(not(target_os = "macos"))]
         Ok(0)
     }
 
     /// Shutdown the manager and cleanup resources
     pub async fn shutdown(&self) -> Result<()> {
         info!("Shutting down ApplicationAudioManager");
-
-        // Stop cleanup task
-        self.should_stop_cleanup
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-
-        // Stop all captures
-        self.stop_all_captures().await?;
-
-        info!("ApplicationAudioManager shutdown complete");
         Ok(())
-    }
-}
-
-impl Drop for ApplicationAudioManager {
-    fn drop(&mut self) {
-        // Signal cleanup task to stop
-        self.should_stop_cleanup
-            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 }

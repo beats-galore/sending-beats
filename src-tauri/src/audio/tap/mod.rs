@@ -10,8 +10,6 @@ pub mod virtual_stream;
 
 // Platform-specific modules
 #[cfg(target_os = "macos")]
-pub mod core_audio_tap;
-
 // FFI bindings for Core Audio Taps API
 #[cfg(target_os = "macos")]
 pub mod core_audio_bindings;
@@ -28,8 +26,6 @@ pub use virtual_stream::{
 };
 
 // Platform-specific re-exports
-#[cfg(target_os = "macos")]
-pub use core_audio_tap::ApplicationAudioTap;
 
 #[cfg(target_os = "macos")]
 pub use types::CoreAudioTapCallbackContext;
