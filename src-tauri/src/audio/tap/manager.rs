@@ -4,7 +4,6 @@
 // capture permissions. Capture itself is handled by ScreenCaptureKit.
 
 use anyhow::Result;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{error, info, warn};
@@ -111,30 +110,6 @@ impl ApplicationAudioManager {
     /// Statistics for taps owned by this manager, of which there are none
     pub async fn get_tap_stats(&self) -> Vec<TapStats> {
         Vec::new()
-    }
-
-    /// Check if audio capture permissions are granted
-    async fn check_audio_capture_permissions(&self) -> bool {
-        *self.permission_granted.read().await
-    }
-
-    /// Get a virtual input stream from the ApplicationAudioManager registry (STUBBED for command channel architecture)
-    pub async fn get_virtual_input_stream(&self, device_id: &str) -> Option<()> {
-        info!(
-            "🔍 [STUBBED] Looking up virtual input stream for device: {} (command channel architecture)",
-            device_id
-        );
-
-        // TODO: Implement command channel lookup for virtual streams
-        warn!("STUBBED: get_virtual_input_stream - implement command channel communication");
-        None
-    }
-
-    /// Get all registered virtual input streams (STUBBED for command channel architecture)
-    pub fn get_virtual_input_streams() -> HashMap<String, ()> {
-        // STUBBED: Return empty HashMap for command channel architecture
-        warn!("STUBBED: get_virtual_input_streams - implement command channel communication");
-        HashMap::new()
     }
 
     /// Check if permissions are currently granted
