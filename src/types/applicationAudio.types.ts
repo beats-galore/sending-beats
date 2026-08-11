@@ -7,24 +7,31 @@ export type ProcessInfo = {
   icon_path?: string;
   is_audio_capable: boolean;
   is_playing_audio: boolean;
-}
+};
 
 export type AvailableApplicationInfo = {
   pid: number;
   bundleIdentifier: string;
   applicationName: string;
   isInDatabase: boolean;
-}
+};
 
 export type ApplicationAudioError = {
-  type: 'PermissionDenied' | 'ApplicationNotFound' | 'CoreAudioError' | 'UnsupportedSystem' | 'TooManyCaptures' | 'TapNotInitialized' | 'SystemError';
+  type:
+    | 'PermissionDenied'
+    | 'ApplicationNotFound'
+    | 'CoreAudioError'
+    | 'UnsupportedSystem'
+    | 'TooManyCaptures'
+    | 'TapNotInitialized'
+    | 'SystemError';
   message: string;
   details?: {
     pid?: number;
     status?: number;
     max?: number;
   };
-}
+};
 
 export type ApplicationAudioSource = {
   type: 'application';
@@ -37,7 +44,7 @@ export type ApplicationAudioSource = {
   isKnown: boolean; // True for recognized apps like Spotify, iTunes
   isPlaying: boolean;
   isCapturing: boolean;
-}
+};
 
 export type HardwareAudioSource = {
   type: 'hardware';
@@ -47,17 +54,20 @@ export type HardwareAudioSource = {
   isDefault: boolean;
   hostApi: string;
   supportedChannels: number[];
-}
+};
 
 export type AudioSource = ApplicationAudioSource | HardwareAudioSource;
 
 export type AudioSourceGroup = {
   label: string;
   sources: AudioSource[];
-}
+};
 
 // Utility functions for working with audio sources
-export const createApplicationSource = (processInfo: ProcessInfo, isCapturing = false): ApplicationAudioSource => ({
+export const createApplicationSource = (
+  processInfo: ProcessInfo,
+  isCapturing = false
+): ApplicationAudioSource => ({
   type: 'application',
   id: `app-${processInfo.pid}`,
   pid: processInfo.pid,
@@ -82,31 +92,35 @@ export const createHardwareSource = (device: any): HardwareAudioSource => ({
 
 export const groupAudioSources = (sources: AudioSource[]): AudioSourceGroup[] => {
   const hardwareSources = sources.filter((s): s is HardwareAudioSource => s.type === 'hardware');
-  const knownAppSources = sources.filter((s): s is ApplicationAudioSource => s.type === 'application' && s.isKnown);
-  const otherAppSources = sources.filter((s): s is ApplicationAudioSource => s.type === 'application' && !s.isKnown);
-  
+  const knownAppSources = sources.filter(
+    (s): s is ApplicationAudioSource => s.type === 'application' && s.isKnown
+  );
+  const otherAppSources = sources.filter(
+    (s): s is ApplicationAudioSource => s.type === 'application' && !s.isKnown
+  );
+
   const groups: AudioSourceGroup[] = [];
-  
+
   if (hardwareSources.length > 0) {
     groups.push({
       label: 'Hardware Devices',
       sources: hardwareSources,
     });
   }
-  
+
   if (knownAppSources.length > 0) {
     groups.push({
       label: 'Audio Applications',
       sources: knownAppSources,
     });
   }
-  
+
   if (otherAppSources.length > 0) {
     groups.push({
       label: 'Other Applications',
       sources: otherAppSources,
     });
   }
-  
+
   return groups;
 };

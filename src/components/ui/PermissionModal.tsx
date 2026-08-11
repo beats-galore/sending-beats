@@ -6,7 +6,7 @@ type PermissionModalProps = {
   onClose: () => void;
   onOpenSystemPreferences: () => void;
   isLoading?: boolean;
-}
+};
 
 export const PermissionModal = ({
   isOpen,

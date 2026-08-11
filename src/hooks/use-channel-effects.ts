@@ -135,7 +135,9 @@ export const useChannelEffects = (channelId: number) => {
 
   // Get effect values with formatting
   const getEQValues = useCallback(() => {
-    if (!channel) {return null;}
+    if (!channel) {
+      return null;
+    }
 
     return {
       low: {
@@ -154,7 +156,9 @@ export const useChannelEffects = (channelId: number) => {
   }, [channel]);
 
   const getCompressorValues = useCallback(() => {
-    if (!channel) {return null;}
+    if (!channel) {
+      return null;
+    }
 
     return {
       threshold: {
@@ -178,7 +182,9 @@ export const useChannelEffects = (channelId: number) => {
   }, [channel]);
 
   const getLimiterValues = useCallback(() => {
-    if (!channel) {return null;}
+    if (!channel) {
+      return null;
+    }
 
     return {
       threshold: {
