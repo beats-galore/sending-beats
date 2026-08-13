@@ -5,7 +5,6 @@ import type { LogEntry } from '../hooks/use-cast-telemetry';
 import { Panel } from '../primitives/Panel';
 import { SectionLabel } from '../primitives/SectionLabel';
 
-
 type ConnectionLogProps = {
   entries: LogEntry[];
 };

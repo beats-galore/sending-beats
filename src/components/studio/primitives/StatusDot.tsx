@@ -3,7 +3,6 @@ import { Box } from '@mantine/core';
 import type { MouseEventHandler } from 'react';
 import { color, glow } from '../../../theme/tokens';
 
-
 export const StatusTone = ['accent', 'warn', 'hot', 'inert', 'dead'] as const;
 export type StatusTone = (typeof StatusTone)[number];
 

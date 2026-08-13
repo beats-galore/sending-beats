@@ -1,6 +1,5 @@
 import { Title } from '@mantine/core';
 
-
 import type { TitleOrder } from '@mantine/core';
 import type { ReactNode } from 'react';
 import { layout } from '../../../theme/layout';

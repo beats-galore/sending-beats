@@ -13,7 +13,6 @@ import { SectionLabel } from '../primitives/SectionLabel';
 import { ChannelCompressor } from './ChannelCompressor';
 import { ChannelEqualizer } from './ChannelEqualizer';
 
-
 type ChannelInspectorProps = {
   channel: AudioChannel;
   pan: number;

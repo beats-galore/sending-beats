@@ -5,7 +5,6 @@ import type { MouseEventHandler, ReactNode } from 'react';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
 
-
 export const PillTone = ['accent', 'warn', 'hot', 'neutral', 'muted'] as const;
 export type PillTone = (typeof PillTone)[number];
 

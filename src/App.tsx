@@ -5,7 +5,11 @@ import { StudioShell } from './components/studio/StudioShell';
 import { PermissionModal } from './components/ui/PermissionModal';
 import { useStartupPermissionCheck } from './hooks/use-startup-permission-check';
 
-export const App = memo(() => {
+// Kept separate from App so that everything, including the startup permission
+// hook, runs inside the error boundary. Calling the hook in App itself put it
+// above the boundary, where a throw takes down the whole tree and renders a
+// blank page instead of the fallback.
+const Studio = () => {
   const {
     showPermissionModal,
     handleCloseModal,
@@ -14,7 +18,7 @@ export const App = memo(() => {
   } = useStartupPermissionCheck();
 
   return (
-    <ErrorBoundary>
+    <>
       <StudioShell />
 
       <PermissionModal
@@ -23,8 +27,14 @@ export const App = memo(() => {
         onOpenSystemPreferences={() => void handleOpenSystemPreferences()}
         isLoading={permissionLoading}
       />
-    </ErrorBoundary>
+    </>
   );
-});
+};
+
+export const App = memo(() => (
+  <ErrorBoundary>
+    <Studio />
+  </ErrorBoundary>
+));
 
 App.displayName = 'App';

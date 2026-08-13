@@ -10,7 +10,6 @@ import { LevelColumn } from '../primitives/LevelColumn';
 import { SectionLabel } from '../primitives/SectionLabel';
 import { StatRow } from '../primitives/StatRow';
 
-
 const SCALE_MARKS = ['0', '-6', '-12', '-18', '-24', '-36', '-60'];
 const GAIN_MIN = -60;
 const GAIN_MAX = 12;

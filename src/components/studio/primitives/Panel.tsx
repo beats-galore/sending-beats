@@ -1,6 +1,5 @@
 import { Group, Paper, Stack } from '@mantine/core';
 
-
 import type { MantineSpacing, PaperProps } from '@mantine/core';
 import type { ReactNode } from 'react';
 import { PanelHeading } from './PanelHeading';

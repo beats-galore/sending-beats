@@ -9,7 +9,6 @@ import { useConfigurationStore } from '../../../stores/mixer-store';
 import type { AudioChannel } from '../../../types';
 import { dbToLinear, linearToDb } from '../format';
 
-
 /**
  * Everything one patchbay channel node needs, assembled from the three places
  * the data actually lives.

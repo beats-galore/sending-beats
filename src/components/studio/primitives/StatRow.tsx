@@ -1,6 +1,5 @@
 import { Group, Text } from '@mantine/core';
 
-
 import type { MantineFontSize } from '@mantine/core';
 import type { MouseEventHandler, ReactNode } from 'react';
 import { color } from '../../../theme/tokens';

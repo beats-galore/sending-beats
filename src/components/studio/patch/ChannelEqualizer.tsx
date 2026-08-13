@@ -7,7 +7,6 @@ import { asGain } from '../format';
 import { DragColumn } from '../primitives/DragColumn';
 import { SectionLabel } from '../primitives/SectionLabel';
 
-
 const EQ_MIN = -12;
 const EQ_MAX = 12;
 

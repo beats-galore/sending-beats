@@ -16,7 +16,6 @@ import { StatusDot } from '../primitives/StatusDot';
 import { ChannelInspector } from './ChannelInspector';
 import { channelHeight, channelWidth } from './patch-geometry';
 
-
 const GAIN_MIN = -60;
 const GAIN_MAX = 12;
 

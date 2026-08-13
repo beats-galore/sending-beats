@@ -32,7 +32,6 @@ import {
 } from './patch-geometry';
 import { TapeDestination } from './TapeDestination';
 
-
 const { source, bus, destination, canvas } = layout;
 
 const CAST_PORT_OFFSET = 83;

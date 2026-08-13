@@ -8,7 +8,6 @@ import { ActionButton } from '../primitives/ActionButton';
 import { Panel } from '../primitives/Panel';
 import { FORMAT_CHOICES, formatFromLabel, formatLabel } from './recording-format';
 
-
 const SPLIT_MINUTES = 60;
 
 type TapeOutputSettingsProps = {
