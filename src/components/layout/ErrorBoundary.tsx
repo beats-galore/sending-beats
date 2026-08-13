@@ -93,7 +93,7 @@ function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
                 {showDetails ? <IconChevronUp size={16} /> : <IconChevronDown size={16} />}
               </Group>
 
-              <Collapse in={showDetails}>
+              <Collapse expanded={showDetails}>
                 <Stack gap="md">
                   {/* Error Message */}
                   <Stack gap="xs">
