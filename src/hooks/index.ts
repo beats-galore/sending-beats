@@ -4,7 +4,6 @@ export { useMixerState } from './use-mixer-state';
 export { useChannelEffects } from './use-channel-effects';
 
 // New focused hooks for performance optimization
-export { useMixerControls } from './use-mixer-controls';
 export { useChannelsData } from './use-channels-data';
 export { useMasterSectionData } from './use-master-section-data';
 export { useMixerInitialization } from './use-mixer-initialization';

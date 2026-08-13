@@ -4,7 +4,6 @@ import type { PointerEvent as ReactPointerEvent } from 'react';
 import { color } from '../../../theme/tokens';
 import { percentOf, useDragValue } from '../hooks/use-drag-value';
 
-
 export const DragTone = ['accent', 'warn', 'muted', 'text'] as const;
 export type DragTone = (typeof DragTone)[number];
 

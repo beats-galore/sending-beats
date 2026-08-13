@@ -12,7 +12,6 @@ import { PortDot } from '../primitives/PortDot';
 import { SectionLabel } from '../primitives/SectionLabel';
 import { StatusDot } from '../primitives/StatusDot';
 
-
 const { destination } = layout;
 
 const ROLE_PILL: Record<DestinationRole, 'accent' | 'warn' | 'neutral'> = {

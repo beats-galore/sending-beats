@@ -9,7 +9,6 @@ import { DashedTarget } from '../primitives/DashedTarget';
 import { SectionLabel } from '../primitives/SectionLabel';
 import { StatusDot } from '../primitives/StatusDot';
 
-
 const { destination } = layout;
 
 type AddDestinationProps = {

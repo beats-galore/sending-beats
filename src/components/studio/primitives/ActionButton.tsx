@@ -6,7 +6,6 @@ import type { MouseEventHandler, ReactNode } from 'react';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
 
-
 export const ActionTone = ['accent', 'ghost', 'hot', 'danger'] as const;
 export type ActionTone = (typeof ActionTone)[number];
 

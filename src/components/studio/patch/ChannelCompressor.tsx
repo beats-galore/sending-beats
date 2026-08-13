@@ -7,7 +7,6 @@ import { ParamTile } from '../primitives/ParamTile';
 import { Pill } from '../primitives/Pill';
 import { SectionLabel } from '../primitives/SectionLabel';
 
-
 type ChannelCompressorProps = {
   channel: AudioChannel;
 };

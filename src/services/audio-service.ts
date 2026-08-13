@@ -1,13 +1,7 @@
 // Audio service layer - abstraction over Tauri audio commands
 import { invoke } from '@tauri-apps/api/core';
 
-import type {
-  AudioDeviceInfo,
-  AudioMetrics,
-  OutputDevice,
-  DeviceHealth,
-  OutputDeviceSwitchResult,
-} from '../types';
+import type { AudioDeviceInfo, DeviceHealth, OutputDeviceSwitchResult } from '../types';
 import type { ConfiguredAudioDevice } from '../types/db';
 import type { Identifier } from '../types/util.types';
 
@@ -22,16 +16,8 @@ export const audioService = {
   },
 
   // Real-time data
-  async getMixerMetrics(): Promise<AudioMetrics> {
-    return invoke<AudioMetrics>('get_mixer_metrics');
-  },
-
   async getChannelLevels(): Promise<Record<number, [number, number, number, number]>> {
     return invoke<Record<number, [number, number, number, number]>>('get_channel_levels');
-  },
-
-  async getMasterLevels(): Promise<[number, number, number, number]> {
-    return invoke<[number, number, number, number]>('get_master_levels');
   },
 
   async removeInputStream(deviceId: Identifier<ConfiguredAudioDevice>): Promise<void> {
@@ -129,32 +115,6 @@ export const audioService = {
       thresholdDb: options.thresholdDb,
       enabled: options.enabled,
     });
-  },
-
-  async removeOutputDevice(deviceId: string): Promise<void> {
-    return invoke('remove_output_device', { deviceId });
-  },
-
-  async updateOutputDevice(
-    deviceId: string,
-    options: {
-      deviceName?: string;
-      gain?: number;
-      enabled?: boolean;
-      isMonitor?: boolean;
-    }
-  ): Promise<void> {
-    return invoke('update_output_device', {
-      deviceId,
-      deviceName: options.deviceName,
-      gain: options.gain,
-      enabled: options.enabled,
-      isMonitor: options.isMonitor,
-    });
-  },
-
-  async getOutputDevices(): Promise<OutputDevice[]> {
-    return invoke('get_output_devices');
   },
 
   // Device health monitoring

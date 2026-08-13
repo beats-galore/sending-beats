@@ -30,11 +30,3 @@ export const formatFromLabel = (label: string): RecordingFormat => {
       return { mp3: { bitrate: 192 } };
   }
 };
-
-/** The extension a take will land on disk with. */
-export const formatExtension = (format: RecordingFormat | undefined): string => {
-  if (format?.mp3) {
-    return 'mp3';
-  }
-  return format?.flac ? 'flac' : 'wav';
-};

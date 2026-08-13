@@ -6,7 +6,6 @@ import { layout } from './layout';
 import { amber, carbon, dark, ice, rose, surface } from './palette';
 import { color } from './tokens';
 
-
 const MONO = "'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace";
 const CONDENSED = "'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif";
 

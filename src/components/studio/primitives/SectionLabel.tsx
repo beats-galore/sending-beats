@@ -5,7 +5,6 @@ import type { CSSProperties, ReactNode } from 'react';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
 
-
 type SectionLabelProps = {
   children: ReactNode;
   /** How far the capitals are tracked out. Wider reads as a higher-level heading. */

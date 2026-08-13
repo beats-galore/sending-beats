@@ -6,7 +6,6 @@ import { useStudioStore } from '../../../stores/studio-store';
 import type { DestinationRole } from '../../../stores/studio-store';
 import { asDeviceIdentifier } from '../../../types/device-identifier';
 
-
 export type PatchOutput = {
   id: string;
   name: string;

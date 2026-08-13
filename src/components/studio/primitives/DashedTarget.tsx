@@ -5,7 +5,6 @@ import type { CSSProperties } from 'react';
 import { layout } from '../../../theme/layout';
 import { color, dashedBorder } from '../../../theme/tokens';
 
-
 type DashedTargetProps = {
   label: string;
   /** Quiet second line naming what the target accepts. */

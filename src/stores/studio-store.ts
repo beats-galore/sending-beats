@@ -78,10 +78,7 @@ type StudioStore = {
 };
 
 /** The slice written to local storage — durable preferences only. */
-type PersistedStudioState = Pick<
-  StudioStore,
-  'stream' | 'launch' | 'outputRoles' | 'outputGains'
->;
+type PersistedStudioState = Pick<StudioStore, 'stream' | 'launch' | 'outputRoles' | 'outputGains'>;
 
 const DEFAULT_STREAM: StreamSettings = {
   host: 'localhost',

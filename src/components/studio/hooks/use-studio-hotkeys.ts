@@ -9,7 +9,6 @@ import { usePatchChannel } from './use-patch-channel';
 import { useStreamTransport } from './use-stream-transport';
 import { useTapeTransport } from './use-tape-transport';
 
-
 // Stands in when nothing is patched, so the hook order stays stable. Its setters
 // no-op because it resolves to no configured device.
 const NO_CHANNEL: AudioChannel = { ...DEFAULT_CHANNEL, id: -1, name: '' };

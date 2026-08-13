@@ -11,7 +11,6 @@ import { Panel } from '../primitives/Panel';
 import { Pill } from '../primitives/Pill';
 import { StatusDot } from '../primitives/StatusDot';
 
-
 type PickerRowProps = {
   device: AudioDeviceInfo;
   onPick: (deviceId: string) => void;

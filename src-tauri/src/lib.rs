@@ -471,6 +471,7 @@ pub fn run() {
             stop_all_audio_captures,
             get_application_info,
             refresh_audio_applications,
+            request_audio_capture_permissions,
             // Tap lifecycle management commands
             get_tap_statistics,
             cleanup_stale_taps,

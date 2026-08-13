@@ -7,7 +7,6 @@ import { ActionButton } from '../primitives/ActionButton';
 import { Panel } from '../primitives/Panel';
 import { SectionLabel } from '../primitives/SectionLabel';
 
-
 const FIELDS = [
   { key: 'title', label: 'TITLE' },
   { key: 'artist', label: 'ARTIST' },

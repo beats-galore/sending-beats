@@ -11,7 +11,6 @@ import { Pill } from '../primitives/Pill';
 import { StatRow } from '../primitives/StatRow';
 import { formatLabel } from './recording-format';
 
-
 type TapeTransportProps = {
   tape: ReturnType<typeof useTapeTransport>;
 };

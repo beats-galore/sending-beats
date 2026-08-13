@@ -5,7 +5,6 @@ import type { ReactNode } from 'react';
 import { color } from '../../../theme/tokens';
 import { SectionLabel } from './SectionLabel';
 
-
 type StatTileProps = {
   label: ReactNode;
   value: ReactNode;

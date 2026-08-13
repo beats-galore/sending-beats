@@ -9,7 +9,6 @@ import { Panel } from '../primitives/Panel';
 import { SectionLabel } from '../primitives/SectionLabel';
 import { formatLabel } from './recording-format';
 
-
 type TapeHistoryProps = {
   history: RecordingHistoryEntry[];
 };

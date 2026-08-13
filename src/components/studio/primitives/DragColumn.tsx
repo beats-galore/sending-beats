@@ -5,7 +5,6 @@ import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
 import { percentOf, useDragValue } from '../hooks/use-drag-value';
 
-
 type DragColumnProps = {
   value: number;
   min: number;
