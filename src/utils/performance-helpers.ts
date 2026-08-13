@@ -3,7 +3,7 @@ import { useCallback, useMemo, useRef } from 'react';
 
 // Debounce hook for audio parameter updates
 export const useDebounce = <T extends (...args: any[]) => void>(callback: T, delay: number): T => {
-  const timeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   return useCallback(
     ((...args: any[]) => {
@@ -41,8 +41,8 @@ export const useShallowMemo = <T>(factory: () => T, deps: React.DependencyList):
 
 // Deep comparison for complex objects (use sparingly)
 export const useDeepMemo = <T>(factory: () => T, deps: React.DependencyList): T => {
-  const depsRef = useRef<React.DependencyList>();
-  const valueRef = useRef<T>();
+  const depsRef = useRef<React.DependencyList | undefined>(undefined);
+  const valueRef = useRef<T | undefined>(undefined);
 
   // Simple deep equality check for deps
   const depsEqual =
