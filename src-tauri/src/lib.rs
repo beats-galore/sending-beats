@@ -515,6 +515,7 @@ pub fn run() {
             get_audio_effects_defaults,
             update_audio_effects_default_gain,
             update_audio_effects_default_pan,
+            update_audio_effects_default_effects_enabled,
             update_audio_effects_default_mute,
             update_audio_effects_default_solo,
             // VU Events commands

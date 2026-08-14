@@ -22,7 +22,8 @@ export const usePatchChannel = (channel: AudioChannel) => {
   const effectsById = useAudioEffectsDefaultStore((state) => state.effectsById);
   const levels = useChannelLevels(channel.id);
 
-  const { loadEffects, updateGain, updatePan, toggleMute, toggleSolo } = audioEffectsDefaultActions;
+  const { loadEffects, updateGain, updatePan, setEffectsEnabled, toggleMute, toggleSolo } =
+    audioEffectsDefaultActions;
 
   const device = useMemo(
     () =>
@@ -52,6 +53,13 @@ export const usePatchChannel = (channel: AudioChannel) => {
 
   const configurationId = activeSession?.configuration.id;
   const canEdit = Boolean(effects && device && configurationId);
+
+  useEffect(() => {
+    if (!device) {
+      return;
+    }
+    void setEffectsEnabled(device.id, channel.effects_enabled);
+  }, [device, channel.effects_enabled, setEffectsEnabled]);
 
   const setGain = useCallback(
     (gainDb: number) => {

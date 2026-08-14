@@ -112,6 +112,50 @@ pub async fn update_audio_effects_default_pan(
     Ok(())
 }
 
+/// Switch a channel's effects chain on or off in the engine.
+///
+/// Only pan answers to this today, and the flag is not persisted — the
+/// interface owns it and pushes its state whenever a channel loads, so the two
+/// cannot disagree about whether a stored pan is being applied.
+#[tauri::command]
+pub async fn update_audio_effects_default_effects_enabled(
+    device_id: String,
+    enabled: bool,
+    state: State<'_, AudioState>,
+) -> Result<(), String> {
+    tracing::info!(
+        "{}: Effects {} for device {}",
+        "UPDATE_EFFECTS_ENABLED".on_yellow().purple(),
+        if enabled { "enabled" } else { "disabled" },
+        device_id
+    );
+
+    let device =
+        crate::db::ConfiguredAudioDeviceService::get_by_id(state.database.sea_orm(), &device_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Configured device {} not found", device_id))?;
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    state
+        .audio_command_tx
+        .send(
+            crate::audio::mixer::stream_management::AudioCommand::UpdateInputEffectsEnabled {
+                device_id: device.device_identifier,
+                enabled,
+                response_tx: tx,
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    rx.await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn update_audio_effects_default_mute(
     effects_id: String,

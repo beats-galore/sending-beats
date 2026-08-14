@@ -110,6 +110,11 @@ pub enum AudioCommand {
         pan: f32,
         response_tx: oneshot::Sender<Result<()>>,
     },
+    UpdateInputEffectsEnabled {
+        device_id: String,
+        enabled: bool,
+        response_tx: oneshot::Sender<Result<()>>,
+    },
     UpdateInputMuted {
         device_id: String,
         muted: bool,
@@ -426,6 +431,16 @@ impl IsolatedAudioManager {
                 response_tx,
             } => {
                 let result = self.audio_pipeline.update_input_pan(&device_id, pan);
+                let _ = response_tx.send(result);
+            }
+            AudioCommand::UpdateInputEffectsEnabled {
+                device_id,
+                enabled,
+                response_tx,
+            } => {
+                let result = self
+                    .audio_pipeline
+                    .update_input_effects_enabled(&device_id, enabled);
                 let _ = response_tx.send(result);
             }
             AudioCommand::UpdateInputMuted {

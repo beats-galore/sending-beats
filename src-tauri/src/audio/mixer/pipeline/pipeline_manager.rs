@@ -832,6 +832,22 @@ impl AudioPipeline {
         Ok(())
     }
 
+    pub fn update_input_effects_enabled(&mut self, device_id: &str, enabled: bool) -> Result<()> {
+        let worker = self
+            .input_workers
+            .get_mut(device_id)
+            .ok_or_else(|| anyhow::anyhow!("Input device '{}' not found", device_id))?;
+
+        worker.update_effects_enabled(enabled);
+        info!(
+            "✅ {}: Effects {} for input device '{}'",
+            "AUDIO_PIPELINE".on_purple().blue(),
+            if enabled { "enabled" } else { "disabled" },
+            device_id
+        );
+        Ok(())
+    }
+
     pub fn update_input_muted(&mut self, device_id: &str, muted: bool) -> Result<()> {
         let worker = self
             .input_workers

@@ -331,6 +331,12 @@ impl InputWorker {
         }
     }
 
+    pub fn update_effects_enabled(&mut self, enabled: bool) {
+        if let Ok(mut effects) = self.default_effects.lock() {
+            effects.set_effects_enabled(enabled);
+        }
+    }
+
     pub fn update_muted(&mut self, muted: bool) {
         if let Ok(mut effects) = self.default_effects.lock() {
             effects.set_muted(muted);

@@ -7,6 +7,9 @@ pub struct DefaultAudioEffectsChain {
     pan: f32,
     muted: bool,
     solo: bool,
+    /// Whether the channel's effects are switched on. Only pan answers to this —
+    /// gain, mute and solo are routing and apply whatever the effects are doing.
+    effects_enabled: bool,
     device_id: String,
 }
 
@@ -17,6 +20,7 @@ impl DefaultAudioEffectsChain {
             pan: 0.0,
             muted: false,
             solo: false,
+            effects_enabled: false,
             device_id,
         }
     }
@@ -38,6 +42,16 @@ impl DefaultAudioEffectsChain {
             "{}: Set pan to {:.2} for device {}",
             "DEFAULT_FX".on_cyan().white(),
             self.pan,
+            self.device_id
+        );
+    }
+
+    pub fn set_effects_enabled(&mut self, enabled: bool) {
+        self.effects_enabled = enabled;
+        debug!(
+            "{}: Effects {} for device {}",
+            "DEFAULT_FX".on_cyan().white(),
+            if enabled { "enabled" } else { "disabled" },
             self.device_id
         );
     }
@@ -72,8 +86,13 @@ impl DefaultAudioEffectsChain {
             return;
         }
 
-        let left_gain = self.gain * if self.pan <= 0.0 { 1.0 } else { 1.0 - self.pan };
-        let right_gain = self.gain * if self.pan >= 0.0 { 1.0 } else { 1.0 + self.pan };
+        // Pan is part of the effects chain, so it sits centred while the chain is
+        // switched off rather than placing the channel from a control the
+        // interface is not showing.
+        let pan = if self.effects_enabled { self.pan } else { 0.0 };
+
+        let left_gain = self.gain * if pan <= 0.0 { 1.0 } else { 1.0 - pan };
+        let right_gain = self.gain * if pan >= 0.0 { 1.0 } else { 1.0 + pan };
 
         for i in 0..(samples.len() / 2) {
             samples[i * 2] *= left_gain;
