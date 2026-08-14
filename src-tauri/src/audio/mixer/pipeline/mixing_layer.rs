@@ -14,6 +14,7 @@ use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, warn};
 
 use super::block_accumulator::BlockAccumulator;
+use crate::audio::mixer::latency_probe::{LatencyProbe, LatencyStage, StageGauge};
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::mixer::stream_management::virtual_mixer::VirtualMixer;
 use crate::audio::VUChannelService;
@@ -60,6 +61,9 @@ pub struct MixingLayer {
     target_sample_rate: Arc<AtomicU32>, // Use AtomicU32 for thread-safe dynamic updates
     master_gain: Arc<AtomicU32>,        // Use AtomicU32 to store f32 bits for thread-safe sharing
 
+    // Latency accounting for the block accumulator and the mix block itself
+    latency_probe: Arc<LatencyProbe>,
+
     // Worker thread
     worker_handle: Option<tokio::task::JoinHandle<()>>,
 
@@ -74,7 +78,7 @@ impl MixingLayer {
         self.target_sample_rate.load(Ordering::Relaxed)
     }
     /// Create new mixing layer with dynamic sample rate detection
-    pub fn new() -> Self {
+    pub fn new(latency_probe: Arc<LatencyProbe>) -> Self {
         let (command_tx, _command_rx) = mpsc::unbounded_channel();
 
         Self {
@@ -85,6 +89,7 @@ impl MixingLayer {
             command_tx,
             target_sample_rate: Arc::new(AtomicU32::new(0)),
             master_gain: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
+            latency_probe,
             worker_handle: None,
             mix_cycles: 0,
             samples_mixed: 0,
@@ -274,6 +279,8 @@ impl MixingLayer {
             60,
         ));
 
+        let latency_probe = self.latency_probe.clone();
+
         // Spawn mixing worker thread
         let worker_handle = tokio::spawn(async move {
             info!(
@@ -294,6 +301,11 @@ impl MixingLayer {
 
             let mut block_accumulator =
                 BlockAccumulator::new(MIX_BLOCK_SAMPLES, MAX_BACKLOG_BLOCKS);
+
+            // Resolved once per device: looking a gauge up in the registry takes a
+            // lock and allocates, neither of which belongs in the mixing loop.
+            let mix_gauge = latency_probe.mix_gauge();
+            let mut backlog_gauges: HashMap<String, StageGauge> = HashMap::new();
 
             loop {
                 let cycle_start = std::time::Instant::now();
@@ -319,6 +331,8 @@ impl MixingLayer {
                             input_rtrb_consumers.remove(&device_id);
                             input_queue_trackers.remove(&device_id);
                             block_accumulator.remove_device(&device_id);
+                            backlog_gauges.remove(&device_id);
+                            latency_probe.remove_device(&device_id);
                             info!(
                                 "🗑️ MIXING_LAYER_WORKER: Removed input consumer for device '{}' (remaining: {})",
                                 device_id,
@@ -345,6 +359,7 @@ impl MixingLayer {
                             // would hold the mix at a standstill forever.
                             output_rtrb_producers.remove(&device_id);
                             output_queue_trackers.remove(&device_id);
+                            latency_probe.remove_device(&device_id);
                             info!(
                                 "🗑️ MIXING_LAYER_WORKER: Removed output producer for device '{}' (remaining: {})",
                                 device_id,
@@ -397,6 +412,35 @@ impl MixingLayer {
                         }
                     }
                 }
+
+                // Read here rather than captured at start so the reported figures
+                // follow the mix rate when a device changes it.
+                let mix_rate = target_sample_rate.load(Ordering::Relaxed);
+                mix_gauge.set_samples(MIX_BLOCK_SAMPLES, 2, mix_rate);
+
+                // Published for every device, not just those that delivered this
+                // cycle: a device that went quiet still has whatever it left behind
+                // waiting, and that is still delay.
+                for device_id in input_rtrb_consumers.keys() {
+                    // Looked up rather than `entry`, which would allocate a key
+                    // every cycle for devices that are already registered.
+                    if !backlog_gauges.contains_key(device_id) {
+                        backlog_gauges.insert(
+                            device_id.clone(),
+                            latency_probe.gauge(device_id, LatencyStage::InputBacklog),
+                        );
+                    }
+
+                    // Everything reaching the accumulator has been widened to stereo
+                    if let Some(gauge) = backlog_gauges.get(device_id) {
+                        gauge.set_samples(
+                            block_accumulator.backlog_samples(device_id),
+                            2,
+                            mix_rate,
+                        );
+                    }
+                }
+
                 let collection_duration = collection_start.elapsed();
 
                 // **STEP 2**: Only produce when every output can take a full block.

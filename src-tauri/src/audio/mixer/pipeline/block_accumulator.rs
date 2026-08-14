@@ -72,6 +72,16 @@ impl BlockAccumulator {
         self.device_samples.remove(device_id);
     }
 
+    /// How much audio a device is still holding, in samples
+    ///
+    /// Everything past the first block is delay: it was captured but has to wait
+    /// for as many cycles as it takes to drain ahead of it.
+    pub fn backlog_samples(&self, device_id: &str) -> usize {
+        self.device_samples
+            .get(device_id)
+            .map_or(0, |queue| queue.len())
+    }
+
     /// Take one block of exactly `block_samples` from every device holding audio
     ///
     /// Devices with no audio at all are omitted, contributing nothing to the mix.

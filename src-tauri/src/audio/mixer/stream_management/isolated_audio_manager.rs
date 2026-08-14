@@ -17,6 +17,7 @@ use super::stream_manager::{AudioMetrics, StreamManager};
 use crate::audio::devices::coreaudio_stream::CoreAudioInputStream;
 
 // Lock-free audio buffer imports
+use crate::audio::mixer::latency_probe::LatencyStage;
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use rtrb::{Consumer, Producer, RingBuffer};
 
@@ -443,6 +444,37 @@ impl IsolatedAudioManager {
         }
     }
 
+    /// Publish what a device's own hardware costs on the latency path
+    ///
+    /// Fixed for the life of the stream: the buffer CoreAudio hands over each
+    /// callback, plus the presentation latency and safety offset the device
+    /// reports. Nothing in the pipeline can reduce it.
+    #[cfg(target_os = "macos")]
+    fn record_hardware_latency(
+        &self,
+        device_id: &str,
+        coreaudio_device_id: coreaudio_sys::AudioDeviceID,
+        buffer_frames: u32,
+        sample_rate: u32,
+        is_output: bool,
+    ) {
+        let extra_frames = crate::audio::devices::coreaudio_stream::get_device_extra_latency_frames(
+            coreaudio_device_id,
+            is_output,
+        );
+
+        let stage = if is_output {
+            LatencyStage::OutputHardware
+        } else {
+            LatencyStage::InputHardware
+        };
+
+        self.audio_pipeline
+            .latency_probe()
+            .gauge(device_id, stage)
+            .set_frames((buffer_frames + extra_frames) as usize, sample_rate);
+    }
+
     #[cfg(target_os = "macos")]
     async fn handle_add_coreaudio_input_stream(
         &mut self,
@@ -612,6 +644,14 @@ impl IsolatedAudioManager {
                 initial_muted,
                 initial_solo,
             )?;
+
+        self.record_hardware_latency(
+            &device_id,
+            coreaudio_device_id,
+            actual_buffer_frames,
+            native_sample_rate,
+            false,
+        );
 
         // **HARDWARE STREAM**: Create CoreAudio stream AFTER pipeline worker is ready
         // Creating before will causes the queue to become full before starting and breaks audio processing.
@@ -1039,6 +1079,14 @@ impl IsolatedAudioManager {
         info!(
             "✅ PIPELINE: Connected output device '{}' to Layer 4 with SPMC writer at {} Hz (chunk: {} samples)",
             device_id, native_sample_rate, chunk_size
+        );
+
+        self.record_hardware_latency(
+            &device_id,
+            coreaudio_device_id,
+            actual_buffer_frames,
+            native_sample_rate,
+            true,
         );
 
         // **HARDWARE STREAM**: Create CoreAudio stream AFTER pipeline worker is ready
