@@ -17,6 +17,25 @@ use tracing::{info, warn};
 use crate::audio::mixer::latency_probe::WorkerLatencyGauges;
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::mixer::resampling::RubatoSRC;
+
+/// How much audio to keep queued downstream, in chunks
+///
+/// Producing whenever there is *any* room fills a ring to its capacity and holds
+/// it there, so ring size becomes latency: measured at 42.7ms in a 4-chunk
+/// hardware ring and 57ms in an 8-chunk mixing ring, for 100ms of standing delay
+/// on the playback path alone.
+///
+/// What that depth actually buys is time to survive the producer stalling, and
+/// the cushion is the occupancy rather than the capacity — a ring with room to
+/// spare still underruns if it is empty when the consumer asks. The mixing task
+/// has been seen to lose the runtime for 25.7ms mid-`await`, so the two rings
+/// together need to cover that. Two chunks each is ~43ms, comfortably over it,
+/// and less than half of what was being held before.
+///
+/// Capacity is deliberately left alone. It is what absorbs a burst arriving
+/// faster than the consumer drains, which is a different failure from a stall,
+/// and shrinking it would trade against that for nothing.
+pub const TARGET_DOWNSTREAM_CHUNKS: usize = 2;
 /// Shared state for audio workers
 pub struct AudioWorkerState {
     pub device_id: String,
@@ -392,9 +411,17 @@ pub trait AudioWorker {
                     );
                 }
 
-                // Only the output path waits for room. Capture sources are drained
+                // Only the output path holds back. Capture sources are drained
                 // unconditionally so their real-time callbacks never back up.
-                if applies_backpressure && output_room < chunk_size {
+                //
+                // Waiting on occupancy rather than on room is what keeps this ring
+                // from sitting full: with room as the condition it refills to
+                // capacity every time the hardware takes a chunk, and every sample
+                // of that capacity is delay.
+                let queued_downstream = outbound_capacity.saturating_sub(output_room);
+                let holding_enough = queued_downstream >= chunk_size * TARGET_DOWNSTREAM_CHUNKS;
+
+                if applies_backpressure && (output_room < chunk_size || holding_enough) {
                     // Still publish what is waiting upstream. This branch is where
                     // a back-pressured worker spends most of its time, so skipping
                     // it would leave the inbound queue sampled only at the instants

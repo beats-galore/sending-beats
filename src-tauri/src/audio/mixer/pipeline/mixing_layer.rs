@@ -13,6 +13,7 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, warn};
 
+use super::audio_worker::TARGET_DOWNSTREAM_CHUNKS;
 use super::block_accumulator::BlockAccumulator;
 use crate::audio::mixer::latency_probe::{LatencyProbe, LatencyStage, StageGauge};
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
@@ -443,18 +444,34 @@ impl MixingLayer {
 
                 let collection_duration = collection_start.elapsed();
 
-                // **STEP 2**: Only produce when every output can take a full block.
+                // **STEP 2**: Only produce while every output is still short of the
+                // amount of audio we want it holding.
                 //
                 // This is what paces the mixer. Without it the loop free-runs and
                 // overproduces, and the surplus is discarded at the output queue,
-                // which is audible as crunch. Waiting for room instead makes the
-                // output hardware's drain rate the mixer's clock.
+                // which is audible as crunch. Holding back instead makes the output
+                // hardware's drain rate the mixer's clock.
+                //
+                // The condition is how much the output is *holding*, not whether it
+                // has room. Producing on room refills the ring to capacity every
+                // time a chunk drains, so the whole ring becomes standing delay —
+                // 57ms of it, measured, on a ring sized for bursts rather than for
+                // how far ahead the mix should run.
                 let sync_start = std::time::Instant::now();
 
+                let target_queued = MIX_BLOCK_SAMPLES * TARGET_DOWNSTREAM_CHUNKS;
                 let mut outputs_ready = !output_rtrb_producers.is_empty();
-                for producer in output_rtrb_producers.values() {
+                for (device_id, producer) in output_rtrb_producers.iter() {
                     let producer_lock = producer.lock().await;
-                    if producer_lock.slots() < MIX_BLOCK_SAMPLES {
+                    let free = producer_lock.slots();
+
+                    // Without a tracker there is no capacity to compare against, so
+                    // fall back to the room check rather than stalling the mix.
+                    let queued = output_queue_trackers
+                        .get(device_id)
+                        .map_or(0, |tracker| tracker.capacity.saturating_sub(free));
+
+                    if free < MIX_BLOCK_SAMPLES || queued >= target_queued {
                         outputs_ready = false;
                         break;
                     }
