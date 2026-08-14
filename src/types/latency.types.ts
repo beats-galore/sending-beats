@@ -20,12 +20,16 @@ export type LatencyStage = (typeof LatencyStage)[number];
 
 export type StageLatency = {
   stage: LatencyStage;
-  micros: number;
+  /** Time-weighted mean over the last window — the figure that sums along a path */
+  mean_micros: number;
+  /** Highest single reading in that window, which shows burst size and stalls */
+  peak_micros: number;
 };
 
 export type ChainLatency = {
   device_id: string;
   stages: StageLatency[];
+  /** Sum of the stage means */
   total_micros: number;
 };
 

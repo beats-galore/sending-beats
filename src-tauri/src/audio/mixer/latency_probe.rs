@@ -1,21 +1,38 @@
 // End-to-end latency accounting for the capture-to-playback path
 //
-// Every stage that holds audio publishes how much it is currently holding,
-// expressed as microseconds of audio at whatever rate and channel count that
-// stage runs at. Summing a chain gives the delay a sample actually experiences
-// travelling through it.
+// Every stage that holds audio publishes how much it is holding. What a stage
+// contributes is not that reading but its *mean* over time: by Little's Law the
+// mean time a sample spends in a stage is its mean occupancy divided by the rate
+// audio flows through it, so time-weighted means are the quantity that can be
+// summed along a path to give end-to-end latency.
+//
+// The distinction matters. A queue that a burst fills and a worker immediately
+// drains is empty for most of its cycle; sampling it at the instant it is full
+// reports the burst size, which is the buffer upstream of it and already counted
+// there. Weighting by how long each level was actually held reports the ~1ms the
+// audio really waited.
 //
 // Stages publish their own occupancy rather than being sampled from outside, so
-// reading a snapshot never locks a queue or touches the audio path. Publishing
-// is a single relaxed atomic store from a place that already computed the value.
+// nothing here locks a queue or touches the audio path. Each gauge has exactly
+// one writer and is drained by exactly one sampler.
 
 use colored::*;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::sync::{Arc, OnceLock, RwLock};
+use std::time::{Duration, Instant};
 use tracing::info;
+
+/// Common zero point, so every gauge can keep its timestamps in a plain atomic
+fn epoch() -> Instant {
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    *EPOCH.get_or_init(Instant::now)
+}
+
+fn now_nanos() -> u64 {
+    epoch().elapsed().as_nanos() as u64
+}
 
 /// A stage of the pipeline that holds audio, in path order
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
@@ -86,16 +103,43 @@ impl LatencyStage {
     }
 }
 
+/// What a gauge held over one sampling window
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StageStats {
+    /// Time-weighted mean, the figure that sums along a path
+    pub mean_micros: u64,
+    /// Highest single reading, which shows burst size and stalls
+    pub peak_micros: u64,
+}
+
+#[derive(Debug, Default)]
+struct GaugeState {
+    /// Occupancy as of the last publish, in microseconds of audio
+    current: AtomicU64,
+    /// When that value was published, nanoseconds since the epoch
+    since: AtomicU64,
+    /// Occupancy integrated over time: microseconds of audio × nanoseconds
+    integral: AtomicU64,
+    /// Highest value published in the window
+    peak: AtomicU64,
+    /// When the window opened
+    window_start: AtomicU64,
+}
+
 /// Handle a stage uses to publish how much audio it is holding
 #[derive(Debug, Clone)]
 pub struct StageGauge {
-    micros: Arc<AtomicU64>,
+    state: Arc<GaugeState>,
 }
 
 impl StageGauge {
-    fn new() -> Self {
+    fn new(now: u64) -> Self {
+        let state = GaugeState::default();
+        state.since.store(now, Ordering::Relaxed);
+        state.window_start.store(now, Ordering::Relaxed);
+
         Self {
-            micros: Arc::new(AtomicU64::new(0)),
+            state: Arc::new(state),
         }
     }
 
@@ -106,7 +150,7 @@ impl StageGauge {
         } else {
             (frames as u64 * 1_000_000) / sample_rate as u64
         };
-        self.micros.store(micros, Ordering::Relaxed);
+        self.set_micros_at(micros, now_nanos());
     }
 
     /// Publish an interleaved sample count held at `sample_rate`
@@ -115,8 +159,48 @@ impl StageGauge {
         self.set_frames(samples / channels, sample_rate);
     }
 
-    pub fn micros(&self) -> u64 {
-        self.micros.load(Ordering::Relaxed)
+    /// Publish at an explicit time, so tests can drive the clock
+    ///
+    /// The value replaces what was there, and however long the *previous* value
+    /// was held is what gets integrated. That is what makes a level held for a
+    /// long time count for more than one held briefly.
+    fn set_micros_at(&self, micros: u64, now: u64) {
+        let held_since = self.state.since.swap(now, Ordering::Relaxed);
+        let previous = self.state.current.swap(micros, Ordering::Relaxed);
+        let held_for = now.saturating_sub(held_since);
+
+        self.state
+            .integral
+            .fetch_add(previous.saturating_mul(held_for), Ordering::Relaxed);
+        self.state.peak.fetch_max(micros, Ordering::Relaxed);
+    }
+
+    /// Close the window and start a new one
+    fn drain_at(&self, now: u64) -> StageStats {
+        let held_since = self.state.since.swap(now, Ordering::Relaxed);
+        let current = self.state.current.load(Ordering::Relaxed);
+        let held_for = now.saturating_sub(held_since);
+
+        let integral = self
+            .state
+            .integral
+            .swap(0, Ordering::Relaxed)
+            .saturating_add(current.saturating_mul(held_for));
+
+        let window_start = self.state.window_start.swap(now, Ordering::Relaxed);
+        let elapsed = now.saturating_sub(window_start);
+
+        // With no window to average over, the last reading is all there is
+        let mean_micros = if elapsed == 0 {
+            current
+        } else {
+            integral / elapsed
+        };
+
+        StageStats {
+            mean_micros,
+            peak_micros: self.state.peak.swap(0, Ordering::Relaxed).max(current),
+        }
     }
 }
 
@@ -153,14 +237,15 @@ impl WorkerLatencyGauges {
     }
 }
 
-/// What one stage of one device currently contributes
+/// What one stage of one device contributed over the last window
 #[derive(Debug, Clone, Serialize)]
 pub struct StageLatency {
     pub stage: LatencyStage,
-    pub micros: u64,
+    pub mean_micros: u64,
+    pub peak_micros: u64,
 }
 
-/// Every stage one device contributes, and their sum
+/// Every stage one device contributes, and the sum of their means
 #[derive(Debug, Clone, Serialize)]
 pub struct ChainLatency {
     pub device_id: String,
@@ -169,15 +254,16 @@ pub struct ChainLatency {
 }
 
 impl ChainLatency {
-    /// Compact `stage=1.2ms` rendering for log lines
+    /// Compact `stage mean/peak` rendering for log lines
     pub fn describe(&self) -> String {
         self.stages
             .iter()
             .map(|stage| {
                 format!(
-                    "{} {:.1}ms",
+                    "{} {:.1}/{:.1}ms",
                     stage.stage.label(),
-                    stage.micros as f32 / 1000.0
+                    stage.mean_micros as f32 / 1000.0,
+                    stage.peak_micros as f32 / 1000.0
                 )
             })
             .collect::<Vec<_>>()
@@ -185,8 +271,8 @@ impl ChainLatency {
     }
 }
 
-/// The full latency picture at one instant
-#[derive(Debug, Clone, Serialize)]
+/// The latency picture over one sampling window
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct LatencySnapshot {
     pub inputs: Vec<ChainLatency>,
     pub outputs: Vec<ChainLatency>,
@@ -211,17 +297,10 @@ impl LatencySnapshot {
 #[derive(Debug, Default)]
 pub struct LatencyProbe {
     gauges: RwLock<BTreeMap<(String, LatencyStage), StageGauge>>,
-    mix: StageGaugeCell,
-}
-
-/// Newtype so `LatencyProbe` can derive Default with a live gauge
-#[derive(Debug)]
-struct StageGaugeCell(StageGauge);
-
-impl Default for StageGaugeCell {
-    fn default() -> Self {
-        Self(StageGauge::new())
-    }
+    mix: OnceLock<StageGauge>,
+    /// Last completed window, so every reader sees the same averaged figures
+    /// rather than racing each other to drain the gauges
+    latest: RwLock<LatencySnapshot>,
 }
 
 impl LatencyProbe {
@@ -234,6 +313,11 @@ impl LatencyProbe {
     /// Callers hold onto the returned handle; this is not meant to be called
     /// from a processing loop.
     pub fn gauge(&self, device_id: &str, stage: LatencyStage) -> StageGauge {
+        self.gauge_at(device_id, stage, now_nanos())
+    }
+
+    /// Create at an explicit time, so tests can drive the clock
+    fn gauge_at(&self, device_id: &str, stage: LatencyStage, now: u64) -> StageGauge {
         let key = (device_id.to_string(), stage);
 
         if let Ok(gauges) = self.gauges.read() {
@@ -243,26 +327,33 @@ impl LatencyProbe {
         }
 
         match self.gauges.write() {
-            Ok(mut gauges) => gauges.entry(key).or_insert_with(StageGauge::new).clone(),
+            Ok(mut gauges) => gauges
+                .entry(key)
+                .or_insert_with(|| StageGauge::new(now))
+                .clone(),
             // A poisoned registry only costs this caller its readings, which is
             // never worth taking the audio pipeline down for.
             Err(poisoned) => poisoned
                 .into_inner()
                 .entry(key)
-                .or_insert_with(StageGauge::new)
+                .or_insert_with(|| StageGauge::new(now))
                 .clone(),
         }
     }
 
     /// Gauge for the mix block, which every path shares
     pub fn mix_gauge(&self) -> StageGauge {
-        self.mix.0.clone()
+        self.mix_gauge_at(now_nanos())
+    }
+
+    fn mix_gauge_at(&self, now: u64) -> StageGauge {
+        self.mix.get_or_init(|| StageGauge::new(now)).clone()
     }
 
     /// Drop every gauge belonging to a device that has gone away
     ///
     /// Stale entries would otherwise keep contributing their last reading to
-    /// every snapshot.
+    /// every window.
     pub fn remove_device(&self, device_id: &str) {
         let mut gauges = match self.gauges.write() {
             Ok(gauges) => gauges,
@@ -271,7 +362,26 @@ impl LatencyProbe {
         gauges.retain(|(id, _), _| id != device_id);
     }
 
-    pub fn snapshot(&self) -> LatencySnapshot {
+    /// Close the current window and cache what it measured
+    ///
+    /// Only the sampler calls this. Draining resets each gauge, so two callers
+    /// would each see a fraction of the window and neither would see the whole.
+    pub fn sample(&self) -> LatencySnapshot {
+        self.sample_at(now_nanos())
+    }
+
+    fn sample_at(&self, now: u64) -> LatencySnapshot {
+        let snapshot = self.measure_at(now);
+
+        match self.latest.write() {
+            Ok(mut latest) => *latest = snapshot.clone(),
+            Err(poisoned) => *poisoned.into_inner() = snapshot.clone(),
+        }
+
+        snapshot
+    }
+
+    fn measure_at(&self, now: u64) -> LatencySnapshot {
         let gauges = match self.gauges.read() {
             Ok(gauges) => gauges,
             Err(poisoned) => poisoned.into_inner(),
@@ -296,17 +406,21 @@ impl LatencyProbe {
                     total_micros: 0,
                 });
 
-            let micros = gauge.micros();
+            let stats = gauge.drain_at(now);
             entry.stages.push(StageLatency {
                 stage: *stage,
-                micros,
+                mean_micros: stats.mean_micros,
+                peak_micros: stats.peak_micros,
             });
-            entry.total_micros += micros;
+            entry.total_micros += stats.mean_micros;
         }
 
         let inputs: Vec<ChainLatency> = inputs.into_values().collect();
         let outputs: Vec<ChainLatency> = outputs.into_values().collect();
-        let mix_micros = self.mix.0.micros();
+        let mix_micros = self
+            .mix
+            .get()
+            .map_or(0, |gauge| gauge.drain_at(now).mean_micros);
 
         let fastest_input = inputs.iter().map(|chain| chain.total_micros).min();
         let fastest_output = outputs.iter().map(|chain| chain.total_micros).min();
@@ -324,23 +438,43 @@ impl LatencyProbe {
             monitor_micros,
         }
     }
+
+    /// The last completed window, without disturbing the one in progress
+    pub fn snapshot(&self) -> LatencySnapshot {
+        match self.latest.read() {
+            Ok(latest) => latest.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
+    }
 }
 
-/// Log the latency breakdown on an interval
+/// Sample the probe on a fixed interval, logging every `log_every` windows
 ///
-/// Returns the task handle so reporting stops when the pipeline does.
-pub fn spawn_reporter(probe: Arc<LatencyProbe>, interval: Duration) -> tokio::task::JoinHandle<()> {
+/// One task owns sampling so every reader shares the same averaged figures.
+/// Returns the handle so sampling stops when the pipeline does.
+pub fn spawn_reporter(
+    probe: Arc<LatencyProbe>,
+    interval: Duration,
+    log_every: u32,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        let mut windows = 0u32;
+
         loop {
             tokio::time::sleep(interval).await;
 
-            let snapshot = probe.snapshot();
+            let snapshot = probe.sample();
+            windows += 1;
+
+            if windows % log_every.max(1) != 0 {
+                continue;
+            }
             if snapshot.inputs.is_empty() && snapshot.outputs.is_empty() {
                 continue;
             }
 
             info!(
-                "📏 {}: monitor path {:.1}ms (mix block {:.1}ms)",
+                "📏 {}: monitor path {:.1}ms (mix block {:.1}ms) — mean/peak per stage",
                 "LATENCY_PROBE".on_white().black(),
                 snapshot.monitor_ms(),
                 snapshot.mix_micros as f32 / 1000.0
@@ -373,25 +507,70 @@ pub fn spawn_reporter(probe: Arc<LatencyProbe>, interval: Duration) -> tokio::ta
 mod tests {
     use super::*;
 
+    const MS: u64 = 1_000_000; // nanoseconds
+
+    #[test]
+    fn a_level_counts_for_as_long_as_it_was_held() {
+        let gauge = StageGauge::new(0);
+
+        // 10ms of audio held for one millisecond, then empty for nine.
+        gauge.set_micros_at(10_000, 0);
+        gauge.set_micros_at(0, MS);
+
+        let stats = gauge.drain_at(10 * MS);
+
+        // A tenth of the window at 10ms, the rest at nothing.
+        assert_eq!(stats.mean_micros, 1_000);
+        // The burst is still visible, it just does not stand in for the mean.
+        assert_eq!(stats.peak_micros, 10_000);
+    }
+
+    #[test]
+    fn a_queue_that_never_drains_reports_what_it_holds() {
+        let gauge = StageGauge::new(0);
+
+        // Oscillating near full, the way a back-pressured output ring does.
+        gauge.set_micros_at(42_000, 0);
+        gauge.set_micros_at(32_000, 5 * MS);
+
+        let stats = gauge.drain_at(10 * MS);
+
+        assert_eq!(stats.mean_micros, 37_000);
+        assert_eq!(stats.peak_micros, 42_000);
+    }
+
+    #[test]
+    fn a_window_closes_when_it_is_drained() {
+        let gauge = StageGauge::new(0);
+
+        gauge.set_micros_at(10_000, 0);
+        assert_eq!(gauge.drain_at(MS).mean_micros, 10_000);
+
+        // The next window starts empty rather than inheriting the last one.
+        gauge.set_micros_at(0, MS);
+        assert_eq!(gauge.drain_at(2 * MS).mean_micros, 0);
+        assert_eq!(gauge.drain_at(3 * MS).peak_micros, 0);
+    }
+
     #[test]
     fn sums_each_chain_and_the_fastest_path() {
         let probe = LatencyProbe::new();
 
         probe
-            .gauge("mic", LatencyStage::InputHardware)
-            .set_frames(512, 48_000);
+            .gauge_at("mic", LatencyStage::InputHardware, 0)
+            .set_micros_at(10_000, 0);
         probe
-            .gauge("mic", LatencyStage::InputCaptureQueue)
-            .set_frames(48, 48_000);
+            .gauge_at("mic", LatencyStage::InputCaptureQueue, 0)
+            .set_micros_at(1_000, 0);
         probe
-            .gauge("music", LatencyStage::InputHardware)
-            .set_frames(960, 48_000);
+            .gauge_at("music", LatencyStage::InputHardware, 0)
+            .set_micros_at(20_000, 0);
         probe
-            .gauge("headphones", LatencyStage::OutputHardware)
-            .set_frames(512, 48_000);
-        probe.mix_gauge().set_frames(512, 48_000);
+            .gauge_at("headphones", LatencyStage::OutputHardware, 0)
+            .set_micros_at(10_000, 0);
+        probe.mix_gauge_at(0).set_micros_at(10_000, 0);
 
-        let snapshot = probe.snapshot();
+        let snapshot = probe.sample_at(MS);
 
         assert_eq!(snapshot.inputs.len(), 2);
         assert_eq!(snapshot.outputs.len(), 1);
@@ -401,10 +580,31 @@ mod tests {
             .iter()
             .find(|chain| chain.device_id == "mic")
             .expect("mic chain");
-        assert_eq!(mic.total_micros, 10_666 + 1_000);
+        assert_eq!(mic.total_micros, 11_000);
 
         // The 20ms app tap must not stand in for the monitored path.
-        assert_eq!(snapshot.monitor_micros, 11_666 + 10_666 + 10_666);
+        assert_eq!(snapshot.monitor_micros, 11_000 + 10_000 + 10_000);
+    }
+
+    #[test]
+    fn readers_share_the_last_completed_window() {
+        let probe = LatencyProbe::new();
+
+        probe
+            .gauge_at("mic", LatencyStage::InputHardware, 0)
+            .set_micros_at(10_000, 0);
+        probe
+            .gauge_at("headphones", LatencyStage::OutputHardware, 0)
+            .set_micros_at(10_000, 0);
+
+        // Nothing has been sampled yet, so there is nothing to report.
+        assert_eq!(probe.snapshot().monitor_micros, 0);
+
+        probe.sample_at(MS);
+
+        // Two readers see the same figures rather than draining it from each other.
+        assert_eq!(probe.snapshot().monitor_micros, 20_000);
+        assert_eq!(probe.snapshot().monitor_micros, 20_000);
     }
 
     #[test]
@@ -412,14 +612,14 @@ mod tests {
         let probe = LatencyProbe::new();
 
         probe
-            .gauge("mic", LatencyStage::InputHardware)
-            .set_frames(512, 48_000);
+            .gauge_at("mic", LatencyStage::InputHardware, 0)
+            .set_micros_at(10_000, 0);
         probe
-            .gauge("headphones", LatencyStage::OutputHardware)
-            .set_frames(512, 48_000);
+            .gauge_at("headphones", LatencyStage::OutputHardware, 0)
+            .set_micros_at(10_000, 0);
 
         probe.remove_device("mic");
-        let snapshot = probe.snapshot();
+        let snapshot = probe.sample_at(MS);
 
         assert!(snapshot.inputs.is_empty());
         assert_eq!(snapshot.monitor_micros, 0);
@@ -431,9 +631,9 @@ mod tests {
         let gauge = probe.gauge("mic", LatencyStage::InputCaptureQueue);
 
         gauge.set_samples(1024, 2, 48_000);
-        assert_eq!(gauge.micros(), 10_666);
+        assert_eq!(gauge.state.current.load(Ordering::Relaxed), 10_666);
 
         gauge.set_samples(1024, 1, 48_000);
-        assert_eq!(gauge.micros(), 21_333);
+        assert_eq!(gauge.state.current.load(Ordering::Relaxed), 21_333);
     }
 }
