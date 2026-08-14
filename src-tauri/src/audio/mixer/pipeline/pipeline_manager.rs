@@ -394,6 +394,11 @@ impl AudioPipeline {
             mixing_to_output_tracker.clone(),
         );
 
+        // The mixer produces one block per output callback, so the block has to be
+        // what this device's hardware actually settled on rather than a guess.
+        self.mixing_layer
+            .constrain_mix_block_to(chunk_size / channels.max(1) as usize);
+
         self.initialize_sample_rate(device_sample_rate);
 
         // Get the current mix rate (target sample rate for the pipeline)
