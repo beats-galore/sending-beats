@@ -38,7 +38,9 @@ pub struct AudioPipeline {
     hardware_update_tx:
         Option<tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>>,
 
-    vu_channel: Option<tauri::ipc::Channel<crate::audio::VUChannelData>>,
+    /// Shared with every VU service, so a channel registered by a reloaded
+    /// webview replaces the dead one for workers that are already running
+    vu_channel: crate::audio::SharedVUChannel,
 
     // State tracking
     is_running: bool,
@@ -67,7 +69,7 @@ impl AudioPipeline {
             output_workers: HashMap::new(),
             #[cfg(target_os = "macos")]
             hardware_update_tx: None,
-            vu_channel: None,
+            vu_channel: crate::audio::new_shared_vu_channel(),
             is_running: false,
             devices_registered: 0,
             any_channel_solo: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -93,7 +95,7 @@ impl AudioPipeline {
             mixing_layer: MixingLayer::new(),
             output_workers: HashMap::new(),
             hardware_update_tx,
-            vu_channel: None,
+            vu_channel: crate::audio::new_shared_vu_channel(),
             is_running: false,
             devices_registered: 0,
             any_channel_solo: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -113,7 +115,10 @@ impl AudioPipeline {
     }
 
     pub fn set_vu_channel(&mut self, channel: tauri::ipc::Channel<crate::audio::VUChannelData>) {
-        self.vu_channel = Some(channel);
+        match self.vu_channel.write() {
+            Ok(mut current) => *current = Some(channel),
+            Err(poisoned) => *poisoned.into_inner() = Some(channel),
+        }
         tracing::info!(
             "{}: VU channel connected, will be used by all workers",
             "VU_CHANNEL_PIPELINE".on_purple().blue()

@@ -207,24 +207,27 @@ impl AudioWorker for InputWorker {
 }
 
 impl InputWorker {
-    pub fn start(
-        &mut self,
-        vu_channel: Option<tauri::ipc::Channel<crate::audio::VUChannelData>>,
-    ) -> Result<()> {
+    pub fn start(&mut self, vu_channel: crate::audio::SharedVUChannel) -> Result<()> {
         // Clone state for the post-processing closure
         let default_effects = self.default_effects.clone();
         let any_channel_solo = self.any_channel_solo.clone();
         let channel_number = self.channel_number;
         let channels = self.state.channels();
 
-        let vu_service = vu_channel.map(|channel| {
-            info!(
-                "{}: VU channel enabled for {}",
-                "VU_SETUP".on_cyan().white(),
-                self.state.device_id()
-            );
-            VUChannelService::new(channel, self.state.target_sample_rate(), 8, 60)
-        });
+        // Started unconditionally: the frontend may register its channel after
+        // this worker exists, and the service simply drops batches until one
+        // arrives rather than needing to be created later.
+        info!(
+            "{}: VU metering enabled for {}",
+            "VU_SETUP".on_cyan().white(),
+            self.state.device_id()
+        );
+        let vu_service = Some(VUChannelService::new(
+            vu_channel,
+            self.state.target_sample_rate(),
+            8,
+            60,
+        ));
 
         let post_process_fn = move |samples: &mut Vec<f32>, device_id: &str| -> Result<()> {
             // Mono-to-stereo conversion (always convert for mixing layer compatibility)

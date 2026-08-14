@@ -65,4 +65,4 @@ pub use file_player::{
 };
 
 pub use events::{MasterVULevelEvent, VUChannelData, VULevelEvent};
-pub use vu_channel_service::VUChannelService;
+pub use vu_channel_service::{new_shared_vu_channel, SharedVUChannel, VUChannelService};

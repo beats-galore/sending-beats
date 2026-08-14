@@ -236,10 +236,7 @@ impl MixingLayer {
     }
 
     /// Start the mixing processing thread
-    pub fn start(
-        &mut self,
-        vu_channel: Option<tauri::ipc::Channel<crate::audio::VUChannelData>>,
-    ) -> Result<()> {
+    pub fn start(&mut self, vu_channel: crate::audio::SharedVUChannel) -> Result<()> {
         // No-op if no sample rate is set (no devices added yet)
         let current_sample_rate = self.target_sample_rate.load(Ordering::Relaxed);
         if current_sample_rate == 0 {
@@ -262,13 +259,20 @@ impl MixingLayer {
         let mut input_queue_trackers = std::mem::take(&mut self.input_queue_trackers);
         let mut output_rtrb_producers = std::mem::take(&mut self.output_rtrb_producers);
         let mut output_queue_trackers = std::mem::take(&mut self.output_queue_trackers);
-        let master_vu_service = vu_channel.map(|channel| {
-            info!(
-                "{}: VU channel enabled for master output",
-                "VU_SETUP".on_green().white()
-            );
-            VUChannelService::new(channel, current_sample_rate, 1, 60)
-        });
+        // Started unconditionally. The mixing layer starts with the first device,
+        // which can be before the frontend has registered a channel, and it is
+        // only ever started once — so creating this conditionally left master
+        // metering dead for the whole session whenever the ordering went that way.
+        info!(
+            "{}: VU metering enabled for master output",
+            "VU_SETUP".on_green().white()
+        );
+        let master_vu_service = Some(VUChannelService::new(
+            vu_channel,
+            current_sample_rate,
+            1,
+            60,
+        ));
 
         // Spawn mixing worker thread
         let worker_handle = tokio::spawn(async move {
