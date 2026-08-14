@@ -9,6 +9,7 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: String,
     pub previous_default_device_uid: Option<String>,
+    pub previous_system_output_device_uid: Option<String>,
     pub is_diverted: bool,
     pub created_at: ChronoDateTimeUtc,
     pub updated_at: ChronoDateTimeUtc,
@@ -26,6 +27,7 @@ impl Model {
         ActiveModel {
             id: Set(uuid::Uuid::new_v4().to_string()),
             previous_default_device_uid: Set(None),
+            previous_system_output_device_uid: Set(None),
             is_diverted: Set(false),
             created_at: Set(now),
             updated_at: Set(now),
@@ -38,6 +40,7 @@ impl Default for Model {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             previous_default_device_uid: None,
+            previous_system_output_device_uid: None,
             is_diverted: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),

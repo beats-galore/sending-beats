@@ -796,24 +796,29 @@ impl SystemAudioStateService {
     }
 
     /// Set diversion state (whether system audio is diverted to the virtual driver)
+    ///
+    /// The default output and the device carrying system sounds are recorded
+    /// separately: macOS lets them differ, and diversion moves both.
     pub async fn set_diversion_state(
         db: &DatabaseConnection,
         is_diverted: bool,
         previous_default_uid: Option<String>,
+        previous_system_output_uid: Option<String>,
     ) -> Result<system_audio_state::Model> {
         let state = Self::get_or_create(db).await?;
 
         let mut active: system_audio_state::ActiveModel = state.into();
         active.is_diverted = Set(is_diverted);
         active.previous_default_device_uid = Set(previous_default_uid);
+        active.previous_system_output_device_uid = Set(previous_system_output_uid);
         active.updated_at = Set(chrono::Utc::now());
 
         let updated = active.update(db).await?;
         Ok(updated)
     }
 
-    /// Reset to non-diverted state (clear previous default)
+    /// Reset to non-diverted state (clear the recorded devices)
     pub async fn reset_diversion(db: &DatabaseConnection) -> Result<system_audio_state::Model> {
-        Self::set_diversion_state(db, false, None).await
+        Self::set_diversion_state(db, false, None, None).await
     }
 }

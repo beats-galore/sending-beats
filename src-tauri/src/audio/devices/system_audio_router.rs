@@ -4,6 +4,7 @@ use crate::audio::tap::core_audio_bindings::{
     AudioObjectPropertyAddress, AudioObjectSetPropertyData, OSStatus,
 };
 use crate::db::SystemAudioStateService;
+use crate::entities::system_audio_state;
 use anyhow::{Context, Result};
 use colored::Colorize;
 use core_foundation::string::CFString;
@@ -37,6 +38,13 @@ pub enum DiversionOutcome {
     /// invisible to us until the app is relaunched, so diversion cannot finish
     /// in this run.
     RestartRequired,
+}
+
+/// The devices diversion displaced, each to be put back on its own selector
+#[derive(Debug, Clone, Default)]
+struct PreviousDefaults {
+    default_output: Option<String>,
+    system_output: Option<String>,
 }
 
 /// System audio routing manager
@@ -160,61 +168,67 @@ impl SystemAudioRouter {
     }
 
     /// Set the system default output device by UID
-    fn set_default_output_device(&self, device_uid: &str) -> Result<()> {
+    /// Point one of the default-output selectors at a device
+    fn set_output_device(&self, selector: u32, label: &str, device_uid: &str) -> Result<()> {
         unsafe {
             let device_id = self.translate_uid_to_device_id(device_uid)?;
 
-            // Try setting both Default and System output properties
-            // Some macOS versions respect one vs the other
-            let properties = [
-                ("Default", KAUDIO_HARDWARE_PROPERTY_DEFAULT_OUTPUT_DEVICE),
-                (
-                    "System",
-                    KAUDIO_HARDWARE_PROPERTY_DEFAULT_SYSTEM_OUTPUT_DEVICE,
-                ),
-            ];
+            let address = AudioObjectPropertyAddress {
+                mSelector: selector,
+                mScope: KAUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+                mElement: KAUDIO_OBJECT_PROPERTY_ELEMENT_MASTER,
+            };
 
-            let mut any_succeeded = false;
-            for (name, selector) in &properties {
-                let address = AudioObjectPropertyAddress {
-                    mSelector: *selector,
-                    mScope: KAUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
-                    mElement: KAUDIO_OBJECT_PROPERTY_ELEMENT_MASTER,
-                };
+            let status = AudioObjectSetPropertyData(
+                kAudioObjectSystemObject,
+                &address,
+                0,
+                ptr::null(),
+                std::mem::size_of::<AudioObjectID>() as u32,
+                &device_id as *const AudioObjectID as *const c_void,
+            );
 
-                let status = AudioObjectSetPropertyData(
-                    kAudioObjectSystemObject,
-                    &address,
-                    0,
-                    ptr::null(),
-                    std::mem::size_of::<AudioObjectID>() as u32,
-                    &device_id as *const AudioObjectID as *const c_void,
-                );
-
-                if status == 0 {
-                    info!(
-                        "{} Set {} output device to: UID='{}'",
-                        "SYS_AUDIO_SET".bright_green(),
-                        name,
-                        device_uid
-                    );
-                    any_succeeded = true;
-                } else {
-                    warn!(
-                        "{} Failed to set {} output device to UID '{}': OSStatus {}",
-                        "SYS_AUDIO_WARN".bright_yellow(),
-                        name,
-                        device_uid,
-                        status
-                    );
-                }
+            if status != 0 {
+                return Err(anyhow::anyhow!(
+                    "Failed to set {} device to UID '{}': OSStatus {}",
+                    label,
+                    device_uid,
+                    status
+                ));
             }
 
-            if !any_succeeded {
-                return Err(anyhow::anyhow!("Failed to set any output device property"));
-            }
+            info!(
+                "{} Set {} device to: UID='{}'",
+                "SYS_AUDIO_SET".bright_green(),
+                label,
+                device_uid
+            );
 
             Ok(())
+        }
+    }
+
+    /// Point both default-output selectors at the same device
+    ///
+    /// A failure here is not decisive on its own — coreaudiod can reject a set
+    /// that succeeds a moment later, so the caller verifies rather than trusting
+    /// the status.
+    fn set_both_output_devices(&self, device_uid: &str) {
+        let targets = [
+            (
+                KAUDIO_HARDWARE_PROPERTY_DEFAULT_OUTPUT_DEVICE,
+                DEFAULT_OUTPUT_LABEL,
+            ),
+            (
+                KAUDIO_HARDWARE_PROPERTY_DEFAULT_SYSTEM_OUTPUT_DEVICE,
+                SYSTEM_OUTPUT_LABEL,
+            ),
+        ];
+
+        for (selector, label) in targets {
+            if let Err(e) = self.set_output_device(selector, label, device_uid) {
+                warn!("{} {}", "SYS_AUDIO_WARN".bright_yellow(), e);
+            }
         }
     }
 
@@ -252,6 +266,43 @@ impl SystemAudioRouter {
 
             Ok(device_id)
         }
+    }
+
+    /// The devices to put back when diversion ends.
+    ///
+    /// An already-diverted record wins over what the system currently reports:
+    /// reading again while diverted would cache the virtual device and strand
+    /// the real one.
+    fn devices_to_restore(&self, state: &system_audio_state::Model) -> Result<PreviousDefaults> {
+        let mut previous = PreviousDefaults {
+            default_output: state.previous_default_device_uid.clone(),
+            system_output: state.previous_system_output_device_uid.clone(),
+        };
+
+        if !state.is_diverted || previous.default_output.is_none() {
+            previous.default_output = Some(self.get_default_uid(
+                KAUDIO_HARDWARE_PROPERTY_DEFAULT_OUTPUT_DEVICE,
+                DEFAULT_OUTPUT_LABEL,
+            )?);
+        }
+
+        if !state.is_diverted || previous.system_output.is_none() {
+            previous.system_output = Some(self.get_default_uid(
+                KAUDIO_HARDWARE_PROPERTY_DEFAULT_SYSTEM_OUTPUT_DEVICE,
+                SYSTEM_OUTPUT_LABEL,
+            )?);
+        }
+
+        info!(
+            "{} Caching previous devices — {}: '{:?}', {}: '{:?}'",
+            "SYS_AUDIO_SAVE".bright_blue(),
+            DEFAULT_OUTPUT_LABEL,
+            previous.default_output,
+            SYSTEM_OUTPUT_LABEL,
+            previous.system_output
+        );
+
+        Ok(previous)
     }
 
     /// Check that both default-output selectors now point at the virtual device.
@@ -331,18 +382,7 @@ impl SystemAudioRouter {
             }
         };
         let state = SystemAudioStateService::get_or_create(&self.db).await?;
-
-        // Save current default if not already diverted
-        let mut previous_default_uid = state.previous_default_device_uid.clone();
-        if !state.is_diverted || previous_default_uid.is_none() {
-            let current_default = self.get_current_default_output_uid()?;
-            info!(
-                "{} Caching previous default output device '{}'",
-                "SYS_AUDIO_SAVE".bright_blue(),
-                current_default
-            );
-            previous_default_uid = Some(current_default);
-        }
+        let previous = self.devices_to_restore(&state)?;
 
         // Set virtual device as system default
         info!(
@@ -351,12 +391,17 @@ impl SystemAudioRouter {
             virtual_device_uid
         );
 
-        self.set_default_output_device(&virtual_device_uid)?;
+        self.set_both_output_devices(&virtual_device_uid);
 
         self.verify_diversion(&virtual_device_uid)?;
 
-        SystemAudioStateService::set_diversion_state(&self.db, true, previous_default_uid.clone())
-            .await?;
+        SystemAudioStateService::set_diversion_state(
+            &self.db,
+            true,
+            previous.default_output.clone(),
+            previous.system_output.clone(),
+        )
+        .await?;
 
         info!(
             "{} System audio now routed to virtual device '{}' (silent output)",
@@ -379,32 +424,48 @@ impl SystemAudioRouter {
             return Ok(());
         }
 
-        if let Some(previous_uid) = &state.previous_default_device_uid {
+        // Each selector goes back to its own device. They are free to differ —
+        // the sound-effects device is chosen separately in Sound settings — and
+        // restoring one to the other's value would quietly rewrite that choice.
+        let restores = [
+            (
+                KAUDIO_HARDWARE_PROPERTY_DEFAULT_OUTPUT_DEVICE,
+                DEFAULT_OUTPUT_LABEL,
+                &state.previous_default_device_uid,
+            ),
+            (
+                KAUDIO_HARDWARE_PROPERTY_DEFAULT_SYSTEM_OUTPUT_DEVICE,
+                SYSTEM_OUTPUT_LABEL,
+                &state.previous_system_output_device_uid,
+            ),
+        ];
+
+        for (selector, label, previous) in restores {
+            let Some(previous_uid) = previous else {
+                warn!(
+                    "{} No previous {} device saved, leaving it as it is",
+                    "SYS_AUDIO_WARN".bright_yellow(),
+                    label
+                );
+                continue;
+            };
+
             info!(
-                "{} Restoring previous default device: '{}'",
+                "{} Restoring previous {} device: '{}'",
                 "SYS_AUDIO_RESTORE".bright_magenta(),
+                label,
                 previous_uid
             );
 
-            if let Err(e) = self.set_default_output_device(previous_uid) {
-                warn!(
-                    "{} Failed to restore device '{}': {}. Falling back to system default",
-                    "SYS_AUDIO_WARN".bright_yellow(),
-                    previous_uid,
-                    e
-                );
-            } else {
-                info!(
-                    "{} Successfully restored system audio to '{}'",
+            match self.set_output_device(selector, label, previous_uid) {
+                Ok(()) => info!(
+                    "{} Successfully restored {} to '{}'",
                     "SYS_AUDIO_RESTORED".bright_green(),
+                    label,
                     previous_uid
-                );
+                ),
+                Err(e) => warn!("{} {}", "SYS_AUDIO_WARN".bright_yellow(), e),
             }
-        } else {
-            warn!(
-                "{} No previous default device saved, skipping restore",
-                "SYS_AUDIO_WARN".bright_yellow()
-            );
         }
 
         SystemAudioStateService::reset_diversion(&self.db).await?;
