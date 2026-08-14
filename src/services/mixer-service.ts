@@ -9,6 +9,11 @@ export const mixerService = {
     return invoke<MixerConfig>('get_dj_mixer_config');
   },
 
+  /** Name a channel, or pass an empty string to clear it back to its device name */
+  async renameChannel(channelNumber: number, name: string): Promise<void> {
+    return invoke('rename_mixer_channel', { channelNumber, name });
+  },
+
   // Channel management
   //
   // NOTE: `add_mixer_channel` is not registered in the Rust invoke_handler, so

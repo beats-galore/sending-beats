@@ -60,6 +60,8 @@ type MixerStore = {
   addChannel: () => Promise<void>;
   updateChannel: (channelId: number, updates: ChannelUpdate) => Promise<void>;
   updateMasterGain: (gain: number) => Promise<void>;
+  /** Name a channel, or pass an empty string to clear it back to its device name */
+  renameChannel: (channelId: number, name: string) => Promise<void>;
   updateMasterOutputDevice: (deviceId: Identifier<ConfiguredAudioDevice>) => Promise<void>;
   /**
    * Re-point an existing destination at a different output device.
@@ -269,6 +271,22 @@ export const useMixerStore = create<MixerStore>()(
           ? {
               ...state.config,
               master_gain: gainDb,
+            }
+          : null,
+      }));
+    },
+
+    renameChannel: async (channelId: number, name: string) => {
+      const trimmed = name.trim();
+      await mixerService.renameChannel(channelId, trimmed);
+
+      set((state) => ({
+        config: state.config
+          ? {
+              ...state.config,
+              channels: state.config.channels.map((channel) =>
+                channel.id === channelId ? { ...channel, name: trimmed } : channel
+              ),
             }
           : null,
       }));
