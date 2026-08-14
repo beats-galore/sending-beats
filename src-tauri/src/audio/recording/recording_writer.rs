@@ -6,11 +6,12 @@
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
+use std::io::SeekFrom;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
-use tokio::fs::File;
-use tokio::io::{AsyncWriteExt, BufWriter};
+use tokio::fs::{File, OpenOptions};
+use tokio::io::{AsyncSeekExt, AsyncWriteExt, BufWriter};
 use tracing::{debug, info, warn};
 
 use super::encoders::{AudioEncoder, EncoderFactory};
@@ -269,6 +270,12 @@ impl RecordingWriter {
         self.is_writing = false;
         let end_time = SystemTime::now();
 
+        let patches = self.encoder.finalize_patches();
+        let write_path = self.session.get_write_path().clone();
+        Self::apply_encoder_patches(&write_path, patches)
+            .await
+            .with_context(|| "Failed to patch container header")?;
+
         // Move temporary file to final destination (atomic operation)
         self.session
             .finalize_recording()
@@ -286,6 +293,28 @@ impl RecordingWriter {
         );
 
         Ok(history_entry)
+    }
+
+    /// Write back the header fields the encoder could only fill in once the stream ended
+    async fn apply_encoder_patches(path: &PathBuf, patches: Vec<(u64, Vec<u8>)>) -> Result<()> {
+        if patches.is_empty() {
+            return Ok(());
+        }
+
+        let mut file = OpenOptions::new()
+            .write(true)
+            .open(path)
+            .await
+            .with_context(|| format!("Failed to reopen {} for patching", path.display()))?;
+
+        for (offset, bytes) in patches {
+            file.seek(SeekFrom::Start(offset)).await?;
+            file.write_all(&bytes).await?;
+        }
+        file.flush().await?;
+
+        debug!("Patched container header for {}", path.display());
+        Ok(())
     }
 
     /// Get current recording status
@@ -717,5 +746,80 @@ mod tests {
         let history = writer.stop().await.unwrap();
         assert!(!writer.is_writing);
         assert!(history.file_size_bytes > 0);
+    }
+
+    fn read_u32(bytes: &[u8], offset: usize) -> u32 {
+        u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+    }
+
+    /// Records `samples` to a temp directory and returns the finished file's bytes
+    async fn record_wav(samples: &[f32]) -> Vec<u8> {
+        let temp_dir = TempDir::new().unwrap();
+        let config = RecordingConfig {
+            output_directory: temp_dir.path().to_path_buf(),
+            ..Default::default()
+        };
+
+        let mut writer = RecordingWriter::new(config).await.unwrap();
+        writer.start().await.unwrap();
+        if !samples.is_empty() {
+            writer.process_samples(samples).await.unwrap();
+        }
+        let history = writer.stop().await.unwrap();
+
+        std::fs::read(&history.file_path).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_finished_wav_declares_its_real_sizes() {
+        // 24-bit stereo default, so 300 samples occupy 900 bytes
+        let bytes = record_wav(&[0.25; 300]).await;
+
+        assert_eq!(bytes.len(), 44 + 900);
+        assert_eq!(&bytes[0..4], b"RIFF");
+        assert_eq!(&bytes[8..12], b"WAVE");
+        assert_eq!(
+            read_u32(&bytes, 4) as usize,
+            bytes.len() - 8,
+            "RIFF size must cover the rest of the file"
+        );
+        assert_eq!(
+            read_u32(&bytes, 40) as usize,
+            bytes.len() - 44,
+            "data size must cover the samples"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_wav_with_no_samples_is_still_a_valid_container() {
+        let bytes = record_wav(&[]).await;
+
+        assert_eq!(bytes.len(), 44);
+        assert_eq!(&bytes[0..4], b"RIFF");
+        assert_eq!(read_u32(&bytes, 4), 36);
+        assert_eq!(read_u32(&bytes, 40), 0);
+    }
+
+    #[tokio::test]
+    async fn test_no_temp_file_survives_a_completed_recording() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = RecordingConfig {
+            output_directory: temp_dir.path().to_path_buf(),
+            ..Default::default()
+        };
+
+        let mut writer = RecordingWriter::new(config).await.unwrap();
+        writer.start().await.unwrap();
+        writer.process_samples(&[0.1; 64]).await.unwrap();
+        writer.stop().await.unwrap();
+
+        let leftovers: Vec<_> = std::fs::read_dir(temp_dir.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "tmp"))
+            .collect();
+
+        assert!(leftovers.is_empty(), "left behind {:?}", leftovers);
     }
 }

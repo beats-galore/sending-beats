@@ -25,6 +25,15 @@ pub trait AudioEncoder: Send {
 
     /// Get encoder-specific metadata
     fn get_metadata(&self) -> EncoderMetadata;
+
+    /// Byte patches to apply to the closed file, as `(offset, little-endian bytes)`.
+    ///
+    /// Container formats that record total lengths in a fixed-size header cannot know
+    /// those lengths until the stream ends, so the writer seeks back and applies these
+    /// once the file is complete. Streaming formats return nothing.
+    fn finalize_patches(&self) -> Vec<(u64, Vec<u8>)> {
+        Vec::new()
+    }
 }
 
 /// Metadata about an encoder's current state
@@ -50,6 +59,13 @@ impl Default for EncoderMetadata {
         }
     }
 }
+
+/// Canonical WAV header: RIFF descriptor (12) + 16-byte fmt chunk (24) + data chunk header (8)
+const WAV_HEADER_LEN: u32 = 44;
+/// Offset of the RIFF chunk size field, which covers everything after it
+const WAV_RIFF_SIZE_OFFSET: u64 = 4;
+/// Offset of the data chunk size field, which covers the samples alone
+const WAV_DATA_SIZE_OFFSET: u64 = 40;
 
 /// WAV format encoder - simple uncompressed PCM
 pub struct WavEncoder {
@@ -77,7 +93,7 @@ impl WavEncoder {
 
         let mut header = Vec::with_capacity(44);
 
-        // RIFF header
+        // RIFF header - sizes are patched in by finalize_patches once the stream ends
         header.extend_from_slice(b"RIFF");
         header.extend_from_slice(&[0, 0, 0, 0]); // File size placeholder
         header.extend_from_slice(b"WAVE");
@@ -123,7 +139,9 @@ impl WavEncoder {
             32 => {
                 let mut output = Vec::with_capacity(samples.len() * 4);
                 for &sample in samples {
-                    output.extend_from_slice(&sample.to_le_bytes());
+                    // Scaled in f64 because i32::MAX has no exact f32 representation
+                    let sample_i32 = (f64::from(sample.clamp(-1.0, 1.0)) * 2147483647.0) as i32;
+                    output.extend_from_slice(&sample_i32.to_le_bytes());
                 }
                 output
             }
@@ -178,8 +196,14 @@ impl AudioEncoder for WavEncoder {
     }
 
     fn finalize(&mut self) -> Result<Vec<u8>> {
-        // WAV doesn't need special finalization - header updates would be handled by writer
-        Ok(Vec::new())
+        // A recording stopped before any samples arrived still needs a header to be a
+        // readable, empty WAV rather than a zero-byte file
+        if self.header_written {
+            return Ok(Vec::new());
+        }
+
+        self.header_written = true;
+        Ok(self.generate_wav_header())
     }
 
     fn file_extension(&self) -> &'static str {
@@ -188,6 +212,21 @@ impl AudioEncoder for WavEncoder {
 
     fn get_metadata(&self) -> EncoderMetadata {
         self.metadata.clone()
+    }
+
+    fn finalize_patches(&self) -> Vec<(u64, Vec<u8>)> {
+        if !self.header_written {
+            return Vec::new();
+        }
+
+        // RIFF sizes are 32-bit, so a WAV cannot describe more than 4GiB
+        let data_size = self.metadata.bytes_written.min(u32::MAX as u64) as u32;
+        let riff_size = data_size.saturating_add(WAV_HEADER_LEN - 8);
+
+        vec![
+            (WAV_RIFF_SIZE_OFFSET, riff_size.to_le_bytes().to_vec()),
+            (WAV_DATA_SIZE_OFFSET, data_size.to_le_bytes().to_vec()),
+        ]
     }
 }
 
@@ -460,6 +499,114 @@ mod tests {
         let metadata = encoder.get_metadata();
         assert_eq!(metadata.sample_rate, config.sample_rate);
         assert_eq!(metadata.channels, config.channels);
+    }
+
+    fn wav_encoder_for(bit_depth: u16) -> WavEncoder {
+        let mut encoder = WavEncoder::new();
+        encoder
+            .initialize(&RecordingConfig {
+                sample_rate: 48000,
+                channels: 2,
+                bit_depth,
+                ..Default::default()
+            })
+            .unwrap();
+        encoder
+    }
+
+    fn read_u32(bytes: &[u8], offset: usize) -> u32 {
+        u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+    }
+
+    fn read_u16(bytes: &[u8], offset: usize) -> u16 {
+        u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap())
+    }
+
+    #[test]
+    fn test_wav_header_matches_canonical_layout() {
+        let mut encoder = wav_encoder_for(24);
+        let output = encoder.encode(&[0.0; 4]).unwrap();
+        let header = &output[..WAV_HEADER_LEN as usize];
+
+        assert_eq!(&header[0..4], b"RIFF");
+        assert_eq!(&header[8..12], b"WAVE");
+        assert_eq!(&header[12..16], b"fmt ");
+        assert_eq!(read_u32(header, 16), 16, "fmt chunk size");
+        assert_eq!(read_u16(header, 20), 1, "PCM format tag");
+        assert_eq!(read_u16(header, 22), 2, "channels");
+        assert_eq!(read_u32(header, 24), 48000, "sample rate");
+        assert_eq!(read_u32(header, 28), 48000 * 2 * 3, "byte rate");
+        assert_eq!(read_u16(header, 32), 6, "block align");
+        assert_eq!(read_u16(header, 34), 24, "bit depth");
+        assert_eq!(&header[36..40], b"data");
+
+        // The size fields live where the patch offsets say they do
+        assert_eq!(WAV_RIFF_SIZE_OFFSET, 4);
+        assert_eq!(WAV_DATA_SIZE_OFFSET as usize, WAV_HEADER_LEN as usize - 4);
+    }
+
+    #[test]
+    fn test_wav_finalize_patches_describe_the_written_data() {
+        let mut encoder = wav_encoder_for(16);
+        encoder.encode(&[0.5; 100]).unwrap();
+        encoder.finalize().unwrap();
+
+        let patches = encoder.finalize_patches();
+        assert_eq!(patches.len(), 2);
+
+        let data_bytes = 100 * 2;
+        assert_eq!(patches[0].0, WAV_RIFF_SIZE_OFFSET);
+        assert_eq!(
+            read_u32(&patches[0].1, 0),
+            data_bytes + WAV_HEADER_LEN - 8,
+            "RIFF size covers everything after the size field itself"
+        );
+        assert_eq!(patches[1].0, WAV_DATA_SIZE_OFFSET);
+        assert_eq!(read_u32(&patches[1].1, 0), data_bytes, "data size");
+    }
+
+    #[test]
+    fn test_wav_finalize_emits_header_when_no_samples_were_encoded() {
+        let mut encoder = wav_encoder_for(16);
+
+        let trailing = encoder.finalize().unwrap();
+        assert_eq!(trailing.len(), WAV_HEADER_LEN as usize);
+        assert_eq!(&trailing[0..4], b"RIFF");
+
+        let patches = encoder.finalize_patches();
+        assert_eq!(read_u32(&patches[0].1, 0), WAV_HEADER_LEN - 8);
+        assert_eq!(read_u32(&patches[1].1, 0), 0);
+    }
+
+    #[test]
+    fn test_wav_sample_conversion_widths_match_bit_depth() {
+        for (bit_depth, bytes_per_sample) in [(16, 2), (24, 3), (32, 4)] {
+            let mut encoder = wav_encoder_for(bit_depth);
+            let output = encoder.encode(&[0.0; 8]).unwrap();
+            assert_eq!(
+                output.len(),
+                WAV_HEADER_LEN as usize + 8 * bytes_per_sample,
+                "{}-bit sample width",
+                bit_depth
+            );
+        }
+    }
+
+    #[test]
+    fn test_wav_full_scale_samples_stay_in_range() {
+        // Every depth is integer PCM, so full-scale input must land on the type's
+        // extremes rather than wrapping around to the opposite sign
+        let mut encoder = wav_encoder_for(16);
+        let output = encoder.encode(&[1.0, -1.0]).unwrap();
+        let data = &output[WAV_HEADER_LEN as usize..];
+        assert_eq!(read_u16(data, 0) as i16, 32767);
+        assert_eq!(read_u16(data, 2) as i16, -32767);
+
+        let mut encoder = wav_encoder_for(32);
+        let output = encoder.encode(&[1.0, -1.0]).unwrap();
+        let data = &output[WAV_HEADER_LEN as usize..];
+        assert_eq!(read_u32(data, 0) as i32, i32::MAX);
+        assert_eq!(read_u32(data, 4) as i32, -i32::MAX);
     }
 
     #[test]
