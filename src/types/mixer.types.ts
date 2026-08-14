@@ -93,3 +93,16 @@ export type CompleteConfigurationData = {
   audioEffectsDefault: AudioEffectsDefault[];
   audioEffectsCustom: AudioEffectsCustom[];
 };
+
+/**
+ * A device saved in the session that could not be reconnected on startup.
+ *
+ * The configuration still lists it, so the mixer would otherwise show the source
+ * as patched while no audio flows through it.
+ */
+export type DeviceRestoreFailure = {
+  deviceIdentifier: string;
+  deviceName: string | null;
+  isInput: boolean;
+  reason: string;
+};
