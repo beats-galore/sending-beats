@@ -264,24 +264,19 @@ pub fn is_core_audio_taps_available() -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_tap_description_creation() {
-        let desc = CATapDescription::new_for_process(1234);
-        assert_eq!(desc.process_array[0], 1234);
-        assert_eq!(desc.number_processes, 1);
-        assert_eq!(desc.tap_format_type, kAudioTapFormatType_Process);
-    }
+    // The tests that built a CATapDescription by hand are gone with the struct
+    // they tested: descriptions now come from objc2_core_audio, and constructing
+    // one means translating a live PID through CoreAudio, which is not something
+    // a unit test can stand in for.
 
     #[test]
-    fn test_system_tap_description() {
-        let desc = CATapDescription::new_for_system();
-        assert_eq!(desc.number_processes, 0);
-        assert_eq!(desc.tap_format_type, kAudioTapFormatType_Output);
-    }
-
-    #[test]
-    fn test_error_formatting() {
+    fn known_statuses_are_named_and_the_rest_carry_their_code() {
         assert_eq!(format_osstatus_error(0), "No error");
-        assert_ne!(format_osstatus_error(-50), "Unknown OSStatus error: -50");
+        assert_eq!(format_osstatus_error(-50), "Parameter error");
+        assert_eq!(format_osstatus_error(-4), "Unimplemented error");
+        assert_eq!(
+            format_osstatus_error(12345),
+            "Unknown OSStatus error: 12345"
+        );
     }
 }
