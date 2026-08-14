@@ -8,32 +8,68 @@
 // This gives the mix a single stable cadence: a device that is behind contributes
 // silence for the remainder of the block instead of stalling the mix, and a device
 // that is ahead simply keeps its surplus for the next block.
+//
+// A device is only ever *one* block behind, though. The mixer is paced by the
+// output hardware, so it consumes at exactly realtime and never faster, and a
+// queue holding more than one delivery has no way to work the surplus off — every
+// sample of it is delay for the rest of the session. So anything beyond what the
+// device delivers at a time is shed rather than carried.
 
 use colored::*;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
+use std::collections::VecDeque;
 use tracing::warn;
+
+/// What one device is holding, and how much it tends to arrive with
+#[derive(Debug, Default)]
+struct DeviceBacklog {
+    /// Samples waiting, already converted to the mix channel layout
+    samples: VecDeque<f32>,
+    /// Largest of the last two deliveries
+    ///
+    /// A device cannot be trimmed below what it hands over at a time or its
+    /// audio would be cut apart on arrival — a ScreenCaptureKit tap delivers 960
+    /// frames at once and legitimately needs to hold all of them. Tracking only
+    /// the last two means a one-off surge, from the mixer being descheduled and
+    /// draining a full queue at once, stops counting almost immediately.
+    last_delivery: usize,
+    previous_delivery: usize,
+}
+
+impl DeviceBacklog {
+    fn record_delivery(&mut self, samples: usize) {
+        self.previous_delivery = self.last_delivery;
+        self.last_delivery = samples;
+    }
+
+    /// Most this device should be holding once the mixer has taken its block
+    fn steady_state(&self, block_samples: usize) -> usize {
+        self.last_delivery
+            .max(self.previous_delivery)
+            .max(block_samples)
+    }
+}
 
 /// Per-device sample accumulation feeding fixed-size mix blocks
 #[derive(Debug)]
 pub struct BlockAccumulator {
-    /// Flat sample queue per device, already converted to the mix channel layout
-    device_samples: HashMap<String, VecDeque<f32>>,
+    device_samples: HashMap<String, DeviceBacklog>,
     /// Number of samples emitted per device per block
     block_samples: usize,
-    /// Maximum backlog per device before the oldest audio is discarded
+    /// Hard ceiling per device, whatever its delivery size
     max_samples: usize,
 }
 
 impl BlockAccumulator {
     /// # Arguments
     /// * `block_samples` - samples emitted per device per mix block
-    /// * `max_samples` - backlog allowed per device before dropping oldest audio
+    /// * `max_samples` - absolute ceiling per device, however it delivers
     ///
-    /// The cap is in samples rather than blocks on purpose. It is a drop
-    /// threshold, not a latency target — what a device is actually holding is
-    /// what costs delay, and that gets measured. Scaling the cap with the block
-    /// would shrink it as blocks get smaller, and a ScreenCaptureKit tap hands
-    /// over 960 frames at once, already seven blocks at 128.
+    /// The ceiling is in samples rather than blocks on purpose: it is a last
+    /// resort against a device that delivers pathologically, and scaling it with
+    /// the block would shrink it as blocks get smaller. In normal running it is
+    /// never reached, because [`take_block`](Self::take_block) sheds down to what
+    /// the device actually delivers at a time.
     pub fn new(block_samples: usize, max_samples: usize) -> Self {
         Self {
             device_samples: HashMap::new(),
@@ -56,19 +92,20 @@ impl BlockAccumulator {
 
     /// Append freshly collected samples for a device
     pub fn push(&mut self, device_id: &str, samples: &[f32]) {
-        let queue = self
+        let backlog = self
             .device_samples
             .entry(device_id.to_string())
             .or_default();
 
-        queue.extend(samples.iter().copied());
+        backlog.samples.extend(samples.iter().copied());
+        backlog.record_delivery(samples.len());
 
-        // Backpressure should keep this from triggering. If it does, the device is
-        // producing faster than the output consumes and the oldest audio is the
+        // Shedding on take keeps this from being reached. A device this far ahead
+        // is delivering faster than the mix consumes, and the oldest audio is the
         // least useful to keep.
-        if queue.len() > self.max_samples {
-            let excess = queue.len() - self.max_samples;
-            queue.drain(..excess);
+        if backlog.samples.len() > self.max_samples {
+            let excess = backlog.samples.len() - self.max_samples;
+            backlog.samples.drain(..excess);
 
             static OVERFLOW_LOG: std::sync::atomic::AtomicU64 =
                 std::sync::atomic::AtomicU64::new(0);
@@ -97,7 +134,7 @@ impl BlockAccumulator {
     pub fn backlog_samples(&self, device_id: &str) -> usize {
         self.device_samples
             .get(device_id)
-            .map_or(0, |queue| queue.len())
+            .map_or(0, |backlog| backlog.samples.len())
     }
 
     /// Take one block of exactly `block_samples` from every device holding audio
@@ -106,18 +143,44 @@ impl BlockAccumulator {
     /// A device holding a partial block is padded with silence so every returned
     /// block is the same length and the mix advances by exactly one block.
     ///
+    /// Anything a device still holds beyond one delivery afterwards is dropped.
+    /// The mixer runs at exactly the output's rate and can never catch up by
+    /// consuming faster, so a surplus left in place is not a buffer — it is delay
+    /// on every sample behind it, for as long as the device stays connected. One
+    /// audible discontinuity now costs less than permanent latency.
+    ///
     /// Returns `None` when no device has any audio.
     pub fn take_block(&mut self) -> Option<Vec<(String, Vec<f32>)>> {
         let mut blocks: Vec<(String, Vec<f32>)> = Vec::new();
 
-        for (device_id, queue) in self.device_samples.iter_mut() {
-            if queue.is_empty() {
+        for (device_id, backlog) in self.device_samples.iter_mut() {
+            if backlog.samples.is_empty() {
                 continue;
             }
 
-            let take = queue.len().min(self.block_samples);
-            let mut block: Vec<f32> = queue.drain(..take).collect();
+            let take = backlog.samples.len().min(self.block_samples);
+            let mut block: Vec<f32> = backlog.samples.drain(..take).collect();
             block.resize(self.block_samples, 0.0);
+
+            let steady_state = backlog.steady_state(self.block_samples);
+            if backlog.samples.len() > steady_state {
+                let shed = backlog.samples.len() - steady_state;
+                backlog.samples.drain(..shed);
+
+                static SHED_LOG: std::sync::atomic::AtomicU64 =
+                    std::sync::atomic::AtomicU64::new(0);
+                let log_count = SHED_LOG.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if log_count % 100 == 0 {
+                    warn!(
+                        "⚠️ {}: Device '{}' was {} samples behind, shed to {} (occurrence #{})",
+                        "BLOCK_ACCUMULATOR".on_yellow().green(),
+                        device_id,
+                        shed,
+                        steady_state,
+                        log_count
+                    );
+                }
+            }
 
             blocks.push((device_id.clone(), block));
         }
@@ -127,5 +190,87 @@ impl BlockAccumulator {
         } else {
             Some(blocks)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BLOCK: usize = 256;
+    const CEILING: usize = 8192;
+
+    fn accumulator() -> BlockAccumulator {
+        BlockAccumulator::new(BLOCK, CEILING)
+    }
+
+    #[test]
+    fn a_device_delivering_one_block_at_a_time_holds_nothing_extra() {
+        let mut accumulator = accumulator();
+
+        for _ in 0..10 {
+            accumulator.push("mic", &vec![0.5; BLOCK]);
+            accumulator.take_block();
+        }
+
+        assert_eq!(accumulator.backlog_samples("mic"), 0);
+    }
+
+    #[test]
+    fn a_surplus_is_shed_rather_than_carried_forever() {
+        let mut accumulator = accumulator();
+
+        // A descheduled mixer drains a whole queue at once when it resumes
+        accumulator.push("mic", &vec![0.5; BLOCK * 30]);
+        accumulator.take_block();
+        assert_eq!(accumulator.backlog_samples("mic"), BLOCK * 29);
+
+        for _ in 0..3 {
+            accumulator.push("mic", &vec![0.5; BLOCK]);
+            accumulator.take_block();
+        }
+
+        // Down to one delivery, not the twenty-nine blocks it would otherwise
+        // carry as delay on everything behind them for the rest of the session
+        assert_eq!(accumulator.backlog_samples("mic"), BLOCK);
+    }
+
+    #[test]
+    fn a_coarse_source_keeps_the_whole_delivery() {
+        let mut accumulator = accumulator();
+
+        // A ScreenCaptureKit tap hands over 960 frames at once, seven blocks
+        let delivery = 960 * 2;
+        accumulator.push("music", &vec![0.5; delivery]);
+        accumulator.take_block();
+
+        // Shedding to the block size here would cut every delivery apart on arrival
+        assert_eq!(accumulator.backlog_samples("music"), delivery - BLOCK);
+    }
+
+    #[test]
+    fn a_coarse_source_is_still_bounded_at_one_delivery() {
+        let mut accumulator = accumulator();
+        let delivery = 960 * 2;
+
+        // Three deliveries arrive before the mixer takes anything
+        for _ in 0..3 {
+            accumulator.push("music", &vec![0.5; delivery]);
+        }
+        accumulator.take_block();
+
+        assert_eq!(accumulator.backlog_samples("music"), delivery);
+    }
+
+    #[test]
+    fn a_partial_block_is_padded_not_stretched() {
+        let mut accumulator = accumulator();
+        accumulator.push("mic", &vec![0.5; BLOCK / 2]);
+
+        let blocks = accumulator.take_block().expect("a block");
+        let (_, block) = &blocks[0];
+
+        assert_eq!(block.len(), BLOCK);
+        assert_eq!(block[BLOCK / 2], 0.0);
     }
 }

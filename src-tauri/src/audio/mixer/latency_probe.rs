@@ -9,8 +9,8 @@
 // The distinction matters. A queue that a burst fills and a worker immediately
 // drains is empty for most of its cycle; sampling it at the instant it is full
 // reports the burst size, which is the buffer upstream of it and already counted
-// there. Weighting by how long each level was actually held reports the ~1ms the
-// audio really waited.
+// there. Weighting by how long each level was held reports what the audio
+// actually waited.
 //
 // Stages publish their own occupancy rather than being sampled from outside, so
 // nothing here locks a queue or touches the audio path. Each gauge has exactly

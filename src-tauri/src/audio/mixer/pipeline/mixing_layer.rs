@@ -481,14 +481,12 @@ impl MixingLayer {
                 //
                 // This is what paces the mixer. Without it the loop free-runs and
                 // overproduces, and the surplus is discarded at the output queue,
-                // which is audible as crunch. Holding back instead makes the output
+                // which is audible as crunch. Holding back makes the output
                 // hardware's drain rate the mixer's clock.
                 //
                 // The condition is how much the output is *holding*, not whether it
-                // has room. Producing on room refills the ring to capacity every
-                // time a chunk drains, so the whole ring becomes standing delay —
-                // 57ms of it, measured, on a ring sized for bursts rather than for
-                // how far ahead the mix should run.
+                // has room: producing on room refills the ring to capacity each time
+                // a chunk drains, making the whole ring standing delay.
                 let sync_start = std::time::Instant::now();
 
                 let target_queued = block_samples * TARGET_DOWNSTREAM_CHUNKS;
