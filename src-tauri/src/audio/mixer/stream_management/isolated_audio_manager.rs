@@ -935,8 +935,14 @@ impl IsolatedAudioManager {
         device_id: String,
         coreaudio_device: crate::audio::types::CoreAudioDevice,
     ) -> Result<()> {
-        // Check if output device is already active - prevent unnecessary stream restart
-        if self.output_rtrb_producers.contains_key(&device_id) {
+        // Check if output device is already active - prevent unnecessary stream restart.
+        // Both books have to be consulted: this coordinator tracks outputs by RTRB
+        // producer while the pipeline tracks them by worker, and a device present in
+        // only one of them would otherwise be rejected as a duplicate registration
+        // instead of being recognised as already connected.
+        if self.output_rtrb_producers.contains_key(&device_id)
+            || self.audio_pipeline.has_output_device(&device_id)
+        {
             info!(
                 "📋 {}: Output device '{}' already active, skipping duplicate creation",
                 "DUPLICATE_OUTPUT_SKIP".on_yellow().red(),
