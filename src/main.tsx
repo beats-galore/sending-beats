@@ -6,8 +6,13 @@ import { studioCssVariablesResolver, studioTheme } from './theme/theme';
 
 import '@mantine/core/styles.css';
 
-// React Scan setup for development performance monitoring
-if (typeof window !== 'undefined' && import.meta.env.REACT_SCAN_ENABLED === 'true') {
+// React Scan is opt-in: it only loads in a dev build and only when
+// VITE_REACT_SCAN=true is set, so profiling never turns itself on.
+if (
+  typeof window !== 'undefined' &&
+  import.meta.env.DEV &&
+  import.meta.env.VITE_REACT_SCAN === 'true'
+) {
   import('react-scan')
     .then((ReactScan) => {
       ReactScan.scan({
