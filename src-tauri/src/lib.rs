@@ -2,6 +2,7 @@ pub mod audio;
 pub mod db;
 pub mod entities;
 pub mod log;
+pub mod process_metrics;
 pub mod types;
 
 #[cfg(target_os = "macos")]
@@ -39,6 +40,7 @@ use commands::debug::*;
 use commands::file_player::*;
 use commands::icecast::*;
 use commands::mixer::*;
+use commands::process_metrics::*;
 use commands::recording::*;
 use commands::streaming::*;
 use commands::system_audio::*;
@@ -365,7 +367,10 @@ pub fn run() {
         .manage(audio_state)
         .manage(recording_state)
         .manage(file_player_state)
-        .manage(application_audio_state);
+        .manage(application_audio_state)
+        .manage(ProcessMonitorState(
+            crate::process_metrics::ProcessMonitor::new(),
+        ));
 
     // Exposes the webview to `tauri-wd` over a local HTTP server so the app can
     // be driven from WebDriver clients. Debug builds only - a release build has
@@ -432,6 +437,7 @@ pub fn run() {
             rename_mixer_channel,
             update_master_gain,
             get_pipeline_latency,
+            get_process_metrics,
             set_debug_log_config,
             get_debug_log_config,
             // Icecast commands

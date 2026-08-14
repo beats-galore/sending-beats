@@ -8,6 +8,7 @@ pub mod debug;
 pub mod file_player;
 pub mod icecast;
 pub mod mixer;
+pub mod process_metrics;
 pub mod recording;
 pub mod streaming;
 pub mod system_audio;

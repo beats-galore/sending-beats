@@ -1,9 +1,10 @@
 import { Group, SimpleGrid, Text } from '@mantine/core';
 
-import { useAudioMetrics } from '../../../hooks/use-audio-metrics';
 import { usePipelineLatency } from '../../../hooks/use-pipeline-latency';
+import { useProcessMetrics } from '../../../hooks/use-process-metrics';
 import { useMixerStore } from '../../../stores';
 import { border, color } from '../../../theme/tokens';
+import { formatBytes } from '../../../types/process-metrics.types';
 import { Panel } from '../primitives/Panel';
 import { StatTile } from '../primitives/StatTile';
 
@@ -18,8 +19,8 @@ import { StatTile } from '../primitives/StatTile';
 export const AudioEnginePanel = () => {
   const config = useMixerStore((state) => state.config);
   const state = useMixerStore((store) => store.state);
-  const metrics = useAudioMetrics();
   const latency = usePipelineLatency();
+  const process = useProcessMetrics();
 
   const latencyMs =
     latency && latency.monitor_micros > 0 ? (latency.monitor_micros / 1000).toFixed(1) : '—';
@@ -40,13 +41,13 @@ export const AudioEnginePanel = () => {
         <Text size="xs" c={color.textDim}>
           CPU{' '}
           <Text span c={color.text}>
-            {metrics ? `${Math.round(metrics.cpu_usage)}%` : '—'}
+            {process?.cpu_ready ? `${Math.round(process.cpu_percent)}%` : '—'}
           </Text>
         </Text>
         <Text size="xs" c={color.textDim}>
-          UNDERRUNS{' '}
+          MEMORY{' '}
           <Text span c={color.text}>
-            {metrics?.buffer_underruns ?? '—'}
+            {process ? formatBytes(process.memory_bytes) : '—'}
           </Text>
         </Text>
         <Text size="xs" c={color.textDim}>
