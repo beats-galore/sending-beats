@@ -14,6 +14,7 @@ import { Pill } from '../primitives/Pill';
 import { PortDot } from '../primitives/PortDot';
 import { StatusDot } from '../primitives/StatusDot';
 import { ChannelInspector } from './ChannelInspector';
+import { ChannelName } from './ChannelName';
 import { channelHeight, channelWidth } from './patch-geometry';
 
 const GAIN_MIN = -60;
@@ -71,15 +72,11 @@ export const ChannelNode = ({ channel, index, top, expanded }: ChannelNodeProps)
           >
             {String(index + 1).padStart(2, '0')}
           </Pill>
-          <Text
-            ff="var(--mantine-font-family-headings)"
-            fw={600}
-            fz="lg"
-            truncate
-            style={{ flex: 1, letterSpacing: layout.tracking.tight }}
-          >
-            {channel.name}
-          </Text>
+          <ChannelName
+            channelId={channel.id}
+            name={channel.name}
+            deviceName={source.configuredDevice?.deviceName ?? null}
+          />
           <Text size="2xs" c={color.textFaint}>
             ⌥{index + 1}
           </Text>

@@ -199,28 +199,17 @@ impl AudioConfigFactory {
         MixerConfig {
             sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
             buffer_size: 256, // ~5.3ms latency at 48kHz
-            channels: vec![
-                AudioChannel {
-                    id: 0,
-                    name: "Deck A".to_string(),
+            // Unnamed by default. A channel is whatever the user patches into it,
+            // and presetting "Deck A" or "Microphone" describes a rig they may not
+            // have — the UI falls back to the patched device's own name until the
+            // channel is given one.
+            channels: (0..4)
+                .map(|id| AudioChannel {
+                    id,
+                    name: String::new(),
                     ..Default::default()
-                },
-                AudioChannel {
-                    id: 1,
-                    name: "Deck B".to_string(),
-                    ..Default::default()
-                },
-                AudioChannel {
-                    id: 2,
-                    name: "Microphone".to_string(),
-                    ..Default::default()
-                },
-                AudioChannel {
-                    id: 3,
-                    name: "System Audio".to_string(),
-                    ..Default::default()
-                },
-            ],
+                })
+                .collect(),
             master_gain: 1.0,
             enable_loopback: true,
             ..Default::default()

@@ -429,6 +429,7 @@ pub fn run() {
             remove_channel_effect,
             get_channel_effects,
             get_dj_mixer_config,
+            rename_mixer_channel,
             update_master_gain,
             set_debug_log_config,
             get_debug_log_config,
