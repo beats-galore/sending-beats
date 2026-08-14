@@ -395,6 +395,18 @@ pub trait AudioWorker {
                 // Only the output path waits for room. Capture sources are drained
                 // unconditionally so their real-time callbacks never back up.
                 if applies_backpressure && output_room < chunk_size {
+                    // Still publish what is waiting upstream. This branch is where
+                    // a back-pressured worker spends most of its time, so skipping
+                    // it would leave the inbound queue sampled only at the instants
+                    // it gets drained — which is exactly the peak, not the mean.
+                    if let Ok(consumer) = rtrb_consumer.try_lock() {
+                        latency_gauges.inbound.set_samples(
+                            consumer.slots(),
+                            inbound_channels,
+                            device_sample_rate,
+                        );
+                    }
+
                     tokio::time::sleep(IDLE_POLL).await;
                     continue;
                 }
@@ -405,19 +417,15 @@ pub trait AudioWorker {
                 let consumer_locked = {
                     match rtrb_consumer.try_lock() {
                         Ok(mut consumer) => {
-                            // Published before draining: how much was waiting is the
-                            // delay the oldest sample in it experienced. Nothing is
-                            // published when the queue is empty, since that just means
-                            // this loop outpaced the hardware and the audio is still
-                            // in the capture buffer, which is accounted for separately.
-                            let pending = consumer.slots();
-                            if pending > 0 {
-                                latency_gauges.inbound.set_samples(
-                                    pending,
-                                    inbound_channels,
-                                    device_sample_rate,
-                                );
-                            }
+                            // Published before draining, empty included: a queue
+                            // that is empty most of its cycle really did hold the
+                            // audio for almost no time, and the time-weighted mean
+                            // is what turns that into the delay it contributed.
+                            latency_gauges.inbound.set_samples(
+                                consumer.slots(),
+                                inbound_channels,
+                                device_sample_rate,
+                            );
 
                             let readable = if applies_backpressure {
                                 consumer.slots().min(output_room)

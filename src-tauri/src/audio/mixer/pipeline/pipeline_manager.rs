@@ -16,8 +16,15 @@ use tracing::{error, info, warn};
 use crate::audio::mixer::latency_probe::{self, LatencyProbe, LatencySnapshot};
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 
-/// How often the pipeline logs its latency breakdown
-const LATENCY_REPORT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+/// How often the latency gauges are averaged and their window closed
+///
+/// Every reader shares the result, so this is also the age of the figures the
+/// frontend sees. Short enough to follow a change, long enough to smooth the
+/// sawtooth of a queue filling and draining.
+const LATENCY_SAMPLE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Log the breakdown every this many sampling windows
+const LATENCY_WINDOWS_PER_LOG: u32 = 10;
 
 use super::{
     audio_worker::AudioWorker,
@@ -544,7 +551,8 @@ impl AudioPipeline {
 
         self.latency_reporter = Some(latency_probe::spawn_reporter(
             self.latency_probe.clone(),
-            LATENCY_REPORT_INTERVAL,
+            LATENCY_SAMPLE_INTERVAL,
+            LATENCY_WINDOWS_PER_LOG,
         ));
 
         self.is_running = true;
