@@ -685,9 +685,17 @@ impl AudioPipeline {
     }
 
     /// Remove an input device from the pipeline
+    ///
+    /// A device the pipeline never held is already in the state the caller is
+    /// asking for, so it reports success rather than an error.
     pub async fn remove_input_device(&mut self, device_id: &str) -> Result<()> {
         if !self.input_workers.contains_key(device_id) {
-            return Err(anyhow::anyhow!("Input device '{}' not found", device_id));
+            info!(
+                "📋 {}: Input device '{}' is not registered, nothing to remove",
+                "AUDIO_PIPELINE".on_purple().blue(),
+                device_id
+            );
+            return Ok(());
         }
 
         // Stop the input worker
@@ -730,7 +738,6 @@ impl AudioPipeline {
         Ok(())
     }
 
-    /// Remove an output device from the pipeline
     /// Whether this output already has a worker in the pipeline.
     ///
     /// The coordinator tracks outputs by RTRB producer, which does not always
@@ -740,9 +747,21 @@ impl AudioPipeline {
         self.output_workers.contains_key(device_id)
     }
 
+    /// Remove an output device from the pipeline
+    ///
+    /// A device the pipeline never held — a destination whose device was
+    /// unplugged before it could be attached — is already in the state the
+    /// caller is asking for, so it reports success rather than an error.
+    /// Re-pointing such a destination tears the old device down first, and an
+    /// error here would abort the switch and strand it on a device that is gone.
     pub async fn remove_output_device(&mut self, device_id: &str) -> Result<()> {
         if !self.output_workers.contains_key(device_id) {
-            return Err(anyhow::anyhow!("Output device '{}' not found", device_id));
+            info!(
+                "📋 {}: Output device '{}' is not registered, nothing to remove",
+                "AUDIO_PIPELINE".on_purple().blue(),
+                device_id
+            );
+            return Ok(());
         }
 
         // Detach from the mixing layer before stopping the worker. The mixer only
