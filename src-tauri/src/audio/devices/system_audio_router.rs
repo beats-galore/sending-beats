@@ -12,12 +12,20 @@ use std::ffi::c_void;
 use std::ptr;
 use tracing::{error, info, warn};
 
-const KAUDIO_HARDWARE_PROPERTY_DEFAULT_OUTPUT_DEVICE: u32 = 1682929012; // 'dOut' (0x646F7574)
-const KAUDIO_HARDWARE_PROPERTY_DEFAULT_SYSTEM_OUTPUT_DEVICE: u32 = 1936747636; // 'sOut' (0x734F7574)
-const KAUDIO_HARDWARE_PROPERTY_TRANSLATE_UID_TO_DEVICE: u32 = 1969841252; // 'uidd' (0x75696464)
-const KAUDIO_DEVICE_PROPERTY_DEVICE_UID: u32 = 1969841184; // 'uid ' (0x75696420)
-const KAUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL: u32 = 1735159650; // 'glob' (0x676C6F62)
-const KAUDIO_OBJECT_PROPERTY_ELEMENT_MASTER: u32 = 0; // 0x00000000
+// Taken from the generated Core Audio bindings rather than written out as
+// four-character codes. A selector transcribed by hand compiles regardless of
+// whether it names a real property, and only fails at runtime as a bad object.
+use coreaudio_sys::{
+    kAudioDevicePropertyDeviceUID as KAUDIO_DEVICE_PROPERTY_DEVICE_UID,
+    kAudioHardwarePropertyDefaultOutputDevice as KAUDIO_HARDWARE_PROPERTY_DEFAULT_OUTPUT_DEVICE,
+    kAudioHardwarePropertyDefaultSystemOutputDevice as KAUDIO_HARDWARE_PROPERTY_DEFAULT_SYSTEM_OUTPUT_DEVICE,
+    kAudioHardwarePropertyTranslateUIDToDevice as KAUDIO_HARDWARE_PROPERTY_TRANSLATE_UID_TO_DEVICE,
+    kAudioObjectPropertyElementMain as KAUDIO_OBJECT_PROPERTY_ELEMENT_MASTER,
+    kAudioObjectPropertyScopeGlobal as KAUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+};
+
+const DEFAULT_OUTPUT_LABEL: &str = "default output";
+const SYSTEM_OUTPUT_LABEL: &str = "system output";
 
 /// Result of routing system audio through the virtual driver
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,9 +52,16 @@ impl SystemAudioRouter {
 
     /// Get the current system default output device UID
     pub fn get_current_default_output_uid(&self) -> Result<String> {
+        self.get_default_uid(
+            KAUDIO_HARDWARE_PROPERTY_DEFAULT_OUTPUT_DEVICE,
+            DEFAULT_OUTPUT_LABEL,
+        )
+    }
+
+    fn get_default_uid(&self, selector: u32, label: &str) -> Result<String> {
         unsafe {
             let address = AudioObjectPropertyAddress {
-                mSelector: KAUDIO_HARDWARE_PROPERTY_DEFAULT_OUTPUT_DEVICE,
+                mSelector: selector,
                 mScope: KAUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
                 mElement: KAUDIO_OBJECT_PROPERTY_ELEMENT_MASTER,
             };
@@ -65,26 +80,47 @@ impl SystemAudioRouter {
 
             if status != 0 {
                 error!(
-                    "{} Failed to get current default output device: OSStatus {}",
+                    "{} Failed to get current {} device: OSStatus {}",
                     "SYS_AUDIO_ERROR".bright_red(),
+                    label,
                     status
                 );
                 return Err(anyhow::anyhow!(
-                    "Failed to get default output device: OSStatus {}",
+                    "Failed to get {} device: OSStatus {}",
+                    label,
                     status
                 ));
             }
 
             let uid = self.get_device_uid_from_id(device_id)?;
             info!(
-                "{} Current default output device: UID='{}' (ID={})",
+                "{} Current {} device: UID='{}' (ID={})",
                 "SYS_AUDIO_QUERY".bright_blue(),
+                label,
                 uid,
                 device_id
             );
 
             Ok(uid)
         }
+    }
+
+    /// Wait for a default-output selector to report `expected_uid`.
+    ///
+    /// coreaudiod applies the change asynchronously, so the first read back can
+    /// still show the old device.
+    fn await_default(&self, selector: u32, label: &str, expected_uid: &str) -> Result<String> {
+        let mut actual = self.get_default_uid(selector, label)?;
+
+        for _ in 0..10 {
+            if actual == expected_uid {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            actual = self.get_default_uid(selector, label)?;
+        }
+
+        Ok(actual)
     }
 
     /// Get device UID from its AudioObjectID
@@ -218,6 +254,48 @@ impl SystemAudioRouter {
         }
     }
 
+    /// Check that both default-output selectors now point at the virtual device.
+    ///
+    /// Both matter, for different reasons. The default output is where audio
+    /// plays, and diverting it is what stops system audio doubling up with the
+    /// mix. The system output is what the volume and mute keys act on, and
+    /// leaving it on a physical device means a mute sets that device's own mute
+    /// property — which silences the mixer's stream too, since a device mute
+    /// applies underneath every app playing through it.
+    fn verify_diversion(&self, virtual_device_uid: &str) -> Result<()> {
+        let checks = [
+            (
+                KAUDIO_HARDWARE_PROPERTY_DEFAULT_OUTPUT_DEVICE,
+                DEFAULT_OUTPUT_LABEL,
+            ),
+            (
+                KAUDIO_HARDWARE_PROPERTY_DEFAULT_SYSTEM_OUTPUT_DEVICE,
+                SYSTEM_OUTPUT_LABEL,
+            ),
+        ];
+
+        for (selector, label) in checks {
+            let actual = self.await_default(selector, label, virtual_device_uid)?;
+            if actual != virtual_device_uid {
+                error!(
+                    "{} Failed to divert {}. Expected '{}' but system reports '{}'",
+                    "SYS_AUDIO_ERROR".bright_red(),
+                    label,
+                    virtual_device_uid,
+                    actual
+                );
+                return Err(anyhow::anyhow!(
+                    "Failed to set virtual device as {}. Expected '{}' but got '{}'",
+                    label,
+                    virtual_device_uid,
+                    actual
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Ensure system audio is routed to the virtual driver so the physical output is free
     pub async fn divert_system_audio_to_virtual_device(&mut self) -> Result<DiversionOutcome> {
         // Installing restarts coreaudiod, so stop here rather than chasing a
@@ -275,31 +353,7 @@ impl SystemAudioRouter {
 
         self.set_default_output_device(&virtual_device_uid)?;
 
-        // Verify the change took effect
-        let mut actual_default = self.get_current_default_output_uid()?;
-        if actual_default != virtual_device_uid {
-            for _ in 0..10 {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-                actual_default = self.get_current_default_output_uid()?;
-                if actual_default == virtual_device_uid {
-                    break;
-                }
-            }
-        }
-
-        if actual_default != virtual_device_uid {
-            error!(
-                "{} Failed to divert system audio. Expected '{}' but system reports '{}'",
-                "SYS_AUDIO_ERROR".bright_red(),
-                virtual_device_uid,
-                actual_default
-            );
-            return Err(anyhow::anyhow!(
-                "Failed to set virtual device as system default. Expected '{}' but got '{}'",
-                virtual_device_uid,
-                actual_default
-            ));
-        }
+        self.verify_diversion(&virtual_device_uid)?;
 
         SystemAudioStateService::set_diversion_state(&self.db, true, previous_default_uid.clone())
             .await?;
