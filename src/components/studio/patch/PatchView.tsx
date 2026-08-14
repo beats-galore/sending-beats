@@ -4,6 +4,7 @@ import { useElementSize } from '@mantine/hooks';
 import { useStudioStore } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
+import { useStreamTransport } from '../hooks/use-stream-transport';
 import { OnAirDrawer } from '../shell/OnAirDrawer';
 import { OnAirRail } from '../shell/OnAirRail';
 import { PatchCanvas } from './PatchCanvas';
@@ -21,6 +22,7 @@ type PatchViewProps = {
  */
 export const PatchView = ({ ready }: PatchViewProps) => {
   const drawerOpen = useStudioStore((state) => state.drawerOpen);
+  const { isLive } = useStreamTransport();
   const { ref: viewportRef, width: viewportWidth } = useElementSize();
   const { ref: canvasRef, height: canvasNaturalHeight } = useElementSize();
 
@@ -60,7 +62,10 @@ export const PatchView = ({ ready }: PatchViewProps) => {
         )}
       </Box>
 
-      {drawerOpen ? <OnAirDrawer /> : <OnAirRail />}
+      {/* Only meaningful while something is actually being broadcast — off air it
+          has no now-playing to show, and asserting "ON AIR" beside an OFF AIR
+          transport is a plain contradiction. */}
+      {isLive ? drawerOpen ? <OnAirDrawer /> : <OnAirRail /> : null}
     </Box>
   );
 };
