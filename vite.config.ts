@@ -76,17 +76,9 @@ export default defineConfig(() => ({
     },
   },
 
-  // 4. optimize for audio streaming and Turbo pipeline
+  // 4. optimize for Turbo pipeline
   optimizeDeps: {
-    include: [
-      'lamejs',
-      'opus-recorder',
-      'hls.js',
-      '@mantine/core',
-      '@mantine/hooks',
-      'lodash',
-      'zod',
-    ],
+    include: ['@mantine/core', '@mantine/hooks', 'lodash'],
     exclude: ['@tauri-apps/api'],
   },
 
@@ -98,14 +90,10 @@ export default defineConfig(() => ({
     rollupOptions: {
       output: {
         manualChunks: {
-          // Audio processing chunk
-          audio: ['lamejs', 'opus-recorder'],
-          // Media player chunk
-          player: ['hls.js'],
           // UI framework chunk
           ui: ['@mantine/core', '@mantine/hooks'],
           // Utilities chunk
-          utils: ['lodash', 'zod'],
+          utils: ['lodash'],
         },
       },
     },

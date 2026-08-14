@@ -7,7 +7,7 @@ import { studioCssVariablesResolver, studioTheme } from './theme/theme';
 import '@mantine/core/styles.css';
 
 // React Scan setup for development performance monitoring
-if (typeof window !== 'undefined' && import.meta.env.REACT_SCAN_ENABLED !== 'true') {
+if (typeof window !== 'undefined' && import.meta.env.REACT_SCAN_ENABLED === 'true') {
   import('react-scan')
     .then((ReactScan) => {
       ReactScan.scan({
@@ -16,7 +16,7 @@ if (typeof window !== 'undefined' && import.meta.env.REACT_SCAN_ENABLED !== 'tru
       });
     })
     .catch(() => {
-      // React Scan not available in production
+      // React Scan is a dev dependency; skip it if it is not installed
     });
 }
 
