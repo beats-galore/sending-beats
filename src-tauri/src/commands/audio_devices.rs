@@ -50,6 +50,50 @@ async fn rollback_device_configuration(
     }
 }
 
+/// Tear down an output device's stream and forget its saved configuration.
+///
+/// Used when a destination is re-pointed at a different device: the old one has
+/// to leave the pipeline before the new one joins, or the mixer keeps waiting on
+/// an output nobody drains.
+async fn remove_output_stream_internal(
+    audio_state: &AudioState,
+    device_id: &str,
+) -> Result<(), String> {
+    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+    let command = crate::audio::mixer::stream_management::AudioCommand::RemoveOutputStream {
+        device_id: device_id.to_string(),
+        response_tx,
+    };
+
+    if let Err(e) = audio_state.audio_command_tx.send(command).await {
+        let error_msg = format!("Audio system not available - failed to send command: {}", e);
+        tracing::error!("{}", error_msg);
+        return Err(error_msg);
+    }
+
+    match response_rx.await {
+        Ok(Ok(())) => {
+            if let Err(e) =
+                crate::commands::configurations::remove_device_configuration(audio_state, device_id)
+                    .await
+            {
+                tracing::warn!(
+                    "Removed output stream '{}' but failed to clear its configuration: {}",
+                    device_id,
+                    e
+                );
+            }
+            Ok(())
+        }
+        Ok(Err(e)) => {
+            let error_msg = format!("Failed to remove output device {}: {}", device_id, e);
+            tracing::error!("{}", error_msg);
+            Err(error_msg)
+        }
+        Err(_) => Err("Audio system did not respond".to_string()),
+    }
+}
+
 /// Route system output to the virtual driver so the mix is not played twice
 #[cfg(target_os = "macos")]
 async fn divert_system_audio(audio_state: &AudioState) -> OutputDeviceSwitchResult {
@@ -457,12 +501,36 @@ pub async fn safe_switch_input_device(
 #[tauri::command]
 pub async fn safe_switch_output_device(
     audio_state: State<'_, AudioState>,
+    old_device_id: Option<String>,
     new_device_id: String,
 ) -> Result<OutputDeviceSwitchResult, String> {
-    log_command!("safe_switch_output_device", "device: {}", new_device_id);
+    log_command!(
+        "safe_switch_output_device",
+        "old: {:?}, new: {}",
+        old_device_id,
+        new_device_id
+    );
 
     // Note: Duplicate output device detection is handled at client level in mixer store
     tracing::info!("🔊 Switching to output device: {}", new_device_id);
+
+    // Re-pointing a destination at the device it already uses is a no-op rather
+    // than a duplicate registration error.
+    if old_device_id.as_deref() == Some(new_device_id.as_str()) {
+        tracing::info!(
+            "📋 Output device no-op: '{}' is already the destination",
+            new_device_id
+        );
+        return Ok(divert_system_audio(&audio_state).await);
+    }
+
+    // Free the old destination first so its slot, and its hardware device, are
+    // available to the new one.
+    if let Some(old_id) = old_device_id.as_deref() {
+        if !old_id.trim().is_empty() {
+            remove_output_stream_internal(&audio_state, old_id).await?;
+        }
+    }
 
     // Get device handle using device manager
     let device_manager = audio_state.device_manager.lock().await;

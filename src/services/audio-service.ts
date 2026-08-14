@@ -46,10 +46,21 @@ export const audioService = {
     });
   },
 
+  /**
+   * Point a destination at an output device.
+   *
+   * `oldDeviceId` is the device this destination currently uses, and is torn
+   * down before the new one joins — passing null adds a destination instead of
+   * re-pointing one.
+   */
   async setOutputStream(
-    deviceId: Identifier<ConfiguredAudioDevice>
+    oldDeviceId: Identifier<ConfiguredAudioDevice> | null,
+    newDeviceId: Identifier<ConfiguredAudioDevice>
   ): Promise<OutputDeviceSwitchResult> {
-    return invoke<OutputDeviceSwitchResult>('safe_switch_output_device', { newDeviceId: deviceId });
+    return invoke<OutputDeviceSwitchResult>('safe_switch_output_device', {
+      oldDeviceId,
+      newDeviceId,
+    });
   },
 
   // Effects management

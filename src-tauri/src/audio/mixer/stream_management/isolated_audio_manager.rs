@@ -31,6 +31,10 @@ pub enum AudioCommand {
         device_id: String,
         response_tx: oneshot::Sender<Result<bool>>,
     },
+    RemoveOutputStream {
+        device_id: String,
+        response_tx: oneshot::Sender<Result<()>>,
+    },
     /// Tear down every device belonging to the current session, so a new session
     /// can register its own devices from a clean slate
     ClearSessionDevices {
@@ -288,6 +292,13 @@ impl IsolatedAudioManager {
             } => {
                 let result = self.handle_remove_input_stream(device_id).await;
                 let _ = response_tx.send(Ok(result));
+            }
+            AudioCommand::RemoveOutputStream {
+                device_id,
+                response_tx,
+            } => {
+                let result = self.handle_remove_output_stream(device_id).await;
+                let _ = response_tx.send(result);
             }
             AudioCommand::ClearSessionDevices { response_tx } => {
                 let result = self.handle_clear_session_devices().await;
@@ -796,6 +807,38 @@ impl IsolatedAudioManager {
             device_id
         );
         true
+    }
+
+    /// Tear down an output device so its slot can be given to another one.
+    ///
+    /// Refuses internal taps: recording and Icecast register as outputs to
+    /// receive the mix, and removing one from here would silently stop a
+    /// broadcast that the user never asked to end.
+    async fn handle_remove_output_stream(&mut self, device_id: String) -> Result<()> {
+        info!(
+            "🗑️ {}: Removing output device '{}'",
+            "AUDIO_COORDINATOR".on_yellow().red(),
+            device_id
+        );
+
+        if Self::is_internal_output(&device_id) {
+            return Err(anyhow::anyhow!(
+                "'{}' is an internal output and cannot be removed",
+                device_id
+            ));
+        }
+
+        self.audio_pipeline.remove_output_device(&device_id).await?;
+
+        // **HARDWARE**: Remove hardware stream
+        self.stream_manager.remove_stream(&device_id);
+
+        info!(
+            "✅ {}: Removed output device '{}'",
+            "AUDIO_COORDINATOR".on_yellow().red(),
+            device_id
+        );
+        Ok(())
     }
 
     /// Device IDs that are internal taps rather than session devices

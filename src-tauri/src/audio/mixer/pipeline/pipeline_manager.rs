@@ -668,6 +668,12 @@ impl AudioPipeline {
             return Err(anyhow::anyhow!("Output device '{}' not found", device_id));
         }
 
+        // Detach from the mixing layer before stopping the worker. The mixer only
+        // produces when every output can take a full block, so a producer whose
+        // worker has stopped would hold the entire mix at a standstill.
+        self.mixing_layer
+            .remove_output_producer(device_id.to_string());
+
         // Stop the output worker
         if let Some(mut output_worker) = self.output_workers.remove(device_id) {
             // Stop worker gracefully
