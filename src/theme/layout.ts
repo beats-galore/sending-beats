@@ -41,6 +41,9 @@ export const layout = {
     width: 308,
     widthExpanded: 460,
     height: 152,
+    /** Focused with effects off, so the inspector is only the FX switch. */
+    heightInspector: 243,
+    /** Focused with the effects chain showing. */
     heightExpanded: 452,
     gap: 20,
     /** Distance from a node's top edge to its output port centre. */

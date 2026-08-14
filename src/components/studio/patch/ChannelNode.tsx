@@ -16,6 +16,7 @@ import { StatusDot } from '../primitives/StatusDot';
 import { ChannelInspector } from './ChannelInspector';
 import { ChannelName } from './ChannelName';
 import { channelHeight, channelWidth } from './patch-geometry';
+import type { ChannelExpansion } from './patch-geometry';
 
 const GAIN_MIN = -60;
 const GAIN_MAX = 12;
@@ -24,14 +25,15 @@ type ChannelNodeProps = {
   channel: AudioChannel;
   index: number;
   top: number;
-  expanded: boolean;
+  expansion: ChannelExpansion;
 };
 
 /** One source on the patch canvas: what it is, how loud, and how it is processed. */
-export const ChannelNode = ({ channel, index, top, expanded }: ChannelNodeProps) => {
+export const ChannelNode = ({ channel, index, top, expansion }: ChannelNodeProps) => {
   const selectChannel = useStudioStore((state) => state.selectChannel);
   const patch = usePatchChannel(channel);
   const source = useChannelSource(channel.id);
+  const expanded = expansion !== 'collapsed';
 
   // An unavailable source outranks mute and tap styling: the channel is patched
   // to something that cannot deliver audio, which the user has to see.
@@ -49,8 +51,8 @@ export const ChannelNode = ({ channel, index, top, expanded }: ChannelNodeProps)
       position={{
         left: layout.source.x,
         top,
-        width: channelWidth(expanded),
-        height: channelHeight(expanded),
+        width: channelWidth(expansion),
+        height: channelHeight(expansion),
       }}
       selected={expanded}
       borderColor={expanded ? color.acc : color.line}

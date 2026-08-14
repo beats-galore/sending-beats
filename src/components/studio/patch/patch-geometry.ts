@@ -7,26 +7,42 @@ import { layout } from '../../../theme/layout';
 
 const { source, bus, destination, canvas, patch } = layout;
 
-export const channelWidth = (selected: boolean): number =>
-  selected ? source.widthExpanded : source.width;
+/**
+ * How much of a source node is showing. The focused node drops its effects
+ * chain when the channel's effects are switched off, so it takes less room than
+ * a focused node whose chain is live.
+ */
+export const ChannelExpansion = ['collapsed', 'inspector', 'effects'] as const;
+export type ChannelExpansion = (typeof ChannelExpansion)[number];
 
-export const channelHeight = (selected: boolean): number =>
-  selected ? source.heightExpanded : source.height;
+export const channelWidth = (expansion: ChannelExpansion): number =>
+  expansion === 'collapsed' ? source.width : source.widthExpanded;
 
-/** Top edge of the node at `index`, given whether each node before it is expanded. */
-export const channelTop = (index: number, expanded: boolean[]): number =>
-  expanded
+export const channelHeight = (expansion: ChannelExpansion): number => {
+  switch (expansion) {
+    case 'collapsed':
+      return source.height;
+    case 'inspector':
+      return source.heightInspector;
+    case 'effects':
+      return source.heightExpanded;
+  }
+};
+
+/** Top edge of the node at `index`, given how far each node before it is opened. */
+export const channelTop = (index: number, expansion: ChannelExpansion[]): number =>
+  expansion
     .slice(0, index)
-    .reduce<number>((top, isExpanded) => top + channelHeight(isExpanded) + source.gap, source.top);
+    .reduce<number>((top, state) => top + channelHeight(state) + source.gap, source.top);
 
 /** Total height of the source column including the trailing gap. */
-export const sourceStackHeight = (expanded: boolean[]): number =>
-  expanded.reduce<number>((total, isExpanded) => total + channelHeight(isExpanded) + source.gap, 0);
+export const sourceStackHeight = (expansion: ChannelExpansion[]): number =>
+  expansion.reduce<number>((total, state) => total + channelHeight(state) + source.gap, 0);
 
 /** Where a channel's output port sits, in canvas coordinates. */
-export const channelPort = (index: number, expanded: boolean[]) => ({
-  x: source.x + channelWidth(expanded[index]),
-  y: channelTop(index, expanded) + source.portOffset,
+export const channelPort = (index: number, expansion: ChannelExpansion[]) => ({
+  x: source.x + channelWidth(expansion[index]),
+  y: channelTop(index, expansion) + source.portOffset,
 });
 
 /** Ports are spread evenly but never further apart than `portSpacing`. */
@@ -62,12 +78,12 @@ export const cablePath = (from: { x: number; y: number }, to: { x: number; y: nu
 
 /** Overall canvas height — tall enough for whichever column runs longest. */
 export const canvasHeight = (
-  expanded: boolean[],
+  expansion: ChannelExpansion[],
   outputCount: number,
   extraCount: number,
   pickerOpen: boolean
 ): number => {
-  const sourceColumn = source.top + sourceStackHeight(expanded) + canvas.bottomPadding;
+  const sourceColumn = source.top + sourceStackHeight(expansion) + canvas.bottomPadding;
   const destinationColumn =
     extraTop(outputCount) +
     extraCount * destination.extraStep +

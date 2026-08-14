@@ -52,36 +52,51 @@ export const ChannelInspector = ({
         >
           {channel.effects_enabled ? 'FX ON' : 'FX OFF'}
         </ActionButton>
-        <SectionLabel tracking="wide">PAN</SectionLabel>
-        <DragBar value={pan} min={-1} max={1} onChange={onPanChange} knob={[10, 14]} centerMark />
-        <Text size="2xs" c={color.textDim} w={32} ta="right">
-          {asPan(pan)}
-        </Text>
+        {channel.effects_enabled && (
+          <>
+            <SectionLabel tracking="wide">PAN</SectionLabel>
+            <DragBar
+              value={pan}
+              min={-1}
+              max={1}
+              onChange={onPanChange}
+              knob={[10, 14]}
+              centerMark
+            />
+            <Text size="2xs" c={color.textDim} w={32} ta="right">
+              {asPan(pan)}
+            </Text>
+          </>
+        )}
       </Group>
 
-      <Group gap="xl" align="flex-start" wrap="nowrap">
-        <ChannelEqualizer channel={channel} />
-        <ChannelCompressor channel={channel} />
-      </Group>
+      {channel.effects_enabled && (
+        <>
+          <Group gap="xl" align="flex-start" wrap="nowrap">
+            <ChannelEqualizer channel={channel} />
+            <ChannelCompressor channel={channel} />
+          </Group>
 
-      <Group gap="sm" wrap="nowrap" pt="md" style={{ borderTop: border() }}>
-        <SectionLabel tracking="wider">LIMITER</SectionLabel>
-        <Pill
-          tone={channel.limiter_enabled ? 'accent' : 'muted'}
-          onClick={() => void toggleLimiter()}
-        >
-          {channel.limiter_enabled ? 'ON' : 'OFF'}
-        </Pill>
-        <DragBar
-          value={channel.limiter_threshold}
-          min={-12}
-          max={0}
-          onChange={(value) => void setLimiterThreshold(Math.round(value * 10) / 10)}
-        />
-        <Text size="2xs" c={color.textDim} w={52} ta="right">
-          {channel.limiter_threshold.toFixed(1)} dB
-        </Text>
-      </Group>
+          <Group gap="sm" wrap="nowrap" pt="md" style={{ borderTop: border() }}>
+            <SectionLabel tracking="wider">LIMITER</SectionLabel>
+            <Pill
+              tone={channel.limiter_enabled ? 'accent' : 'muted'}
+              onClick={() => void toggleLimiter()}
+            >
+              {channel.limiter_enabled ? 'ON' : 'OFF'}
+            </Pill>
+            <DragBar
+              value={channel.limiter_threshold}
+              min={-12}
+              max={0}
+              onChange={(value) => void setLimiterThreshold(Math.round(value * 10) / 10)}
+            />
+            <Text size="2xs" c={color.textDim} w={52} ta="right">
+              {channel.limiter_threshold.toFixed(1)} dB
+            </Text>
+          </Group>
+        </>
+      )}
 
       <Text size="2xs" c={color.textFaintest}>
         {sourceName} · MASTER SUM port {port}

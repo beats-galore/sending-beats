@@ -30,6 +30,7 @@ import {
   outputTop,
   sourceStackHeight,
 } from './patch-geometry';
+import type { ChannelExpansion } from './patch-geometry';
 import { TapeDestination } from './TapeDestination';
 
 const { source, bus, destination, canvas } = layout;
@@ -77,15 +78,17 @@ export const PatchCanvas = () => {
   );
 
   const selectedId = selectedChannelId ?? (channels.length > 0 ? channels[0].id : null);
-  const expanded = channels.map((channel) => channel.id === selectedId);
+  const expansion = channels.map<ChannelExpansion>((channel) =>
+    channel.id !== selectedId ? 'collapsed' : channel.effects_enabled ? 'effects' : 'inspector'
+  );
 
   const destinationCount = 2 + outputs.length;
-  const height = canvasHeight(expanded, outputs.length, 0, false);
+  const height = canvasHeight(expansion, outputs.length, 0, false);
 
   const cables = useMemo<Cable[]>(() => {
     const sourceCables: Cable[] = channels.map((channel, index) => ({
       id: `ch-${channel.id}`,
-      path: cablePath(channelPort(index, expanded), busInPort(index, channels.length)),
+      path: cablePath(channelPort(index, expansion), busInPort(index, channels.length)),
       tone: 'accent',
       active: true,
     }));
@@ -121,7 +124,7 @@ export const PatchCanvas = () => {
     }));
 
     return [...sourceCables, castCable, tapeCable, ...outputCables];
-  }, [channels, expanded, destinationCount, isLive, tape.isRecording, outputs]);
+  }, [channels, expansion, destinationCount, isLive, tape.isRecording, outputs]);
 
   return (
     <Box
@@ -151,8 +154,8 @@ export const PatchCanvas = () => {
           key={channel.id}
           channel={channel}
           index={index}
-          top={channelTop(index, expanded)}
-          expanded={expanded[index]}
+          top={channelTop(index, expansion)}
+          expansion={expansion[index]}
         />
       ))}
 
@@ -164,7 +167,7 @@ export const PatchCanvas = () => {
         style={{
           position: 'absolute',
           left: source.x,
-          top: source.top + sourceStackHeight(expanded),
+          top: source.top + sourceStackHeight(expansion),
           width: source.addNodeWidth,
         }}
       />
