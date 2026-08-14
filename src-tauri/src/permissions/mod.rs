@@ -220,20 +220,9 @@ pub fn get_permission_manager() -> &'static TccPermissionManager {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_permission_check() {
-        let manager = TccPermissionManager::new();
-        let status = manager.check_audio_capture_permissions().await;
-
-        // Should return some valid status
-        assert!(matches!(
-            status,
-            TccPermissionStatus::Granted
-                | TccPermissionStatus::Denied
-                | TccPermissionStatus::NotDetermined
-                | TccPermissionStatus::Unknown
-        ));
-    }
+    // A test that the permission check returns one of the four variants of a
+    // four-variant enum cannot fail, so it is gone. Checking it for real means
+    // driving TCC, which a unit test has no way to arrange.
 
     #[test]
     fn test_bundle_identifier() {

@@ -502,9 +502,14 @@ mod tests {
     use tempfile::TempDir;
 
     #[tokio::test]
-    async fn test_recording_service_creation() {
+    async fn a_new_service_is_not_recording() {
         let service = RecordingService::new();
-        assert!(service.get_status().is_ok());
+        let status = service.get_status().await;
+
+        assert!(!status.is_recording);
+        assert!(!status.is_paused);
+        assert!(status.session.is_none());
+        assert!(status.active_recordings.is_empty());
     }
 
     #[test]
