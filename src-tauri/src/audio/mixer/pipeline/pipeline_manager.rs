@@ -277,10 +277,13 @@ impl AudioPipeline {
             chunk_size * 8,
         );
 
+        // The mixing layer drains this every cycle, so one delivery is where it
+        // sits when the input's rate matches the mix's.
         let mixing_queue_tracker = crate::audio::mixer::queue_manager::AtomicQueueTracker::new(
             format!("{}_input_to_mixing", device_id),
             buffer_capacity,
-        );
+        )
+        .with_target_fill(chunk_size);
 
         self.initialize_sample_rate(device_sample_rate);
         let target_sample_rate = self.max_sample_rate.unwrap(); // Safe after initialize
