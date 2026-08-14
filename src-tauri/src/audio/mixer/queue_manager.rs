@@ -105,6 +105,23 @@ impl AtomicQueueTracker {
         }
     }
 
+    /// Tell the drift controller where this queue is meant to sit
+    ///
+    /// Half of capacity is only right for a queue that is meant to run half
+    /// full. These run at whatever the pacing keeps in them, which is about one
+    /// buffer, against capacities many times that — so left at the default the
+    /// controller reads a large deficit and resamples to fill the queue, putting
+    /// back exactly the delay the pacing took out.
+    pub fn with_target_fill(mut self, target_samples: usize) -> Self {
+        self.target_fill = target_samples.max(1) as f32;
+        self
+    }
+
+    /// Where the drift controller is steering this queue, in samples
+    pub fn target_fill(&self) -> f32 {
+        self.target_fill
+    }
+
     /// Record samples written (called from producer thread) - ADD to queue occupancy, clamped to capacity
     pub fn record_samples_written(&self, count: usize) {
         let occupancy_before_add = self.current_occupancy.load(Ordering::Relaxed);
@@ -170,7 +187,7 @@ impl AtomicQueueTracker {
     pub fn adjust_ratio(&self, input_rate: u32, output_rate: u32) -> f32 {
         let current_occupancy = self.current_occupancy.load(Ordering::Relaxed);
 
-        let target = (self.capacity / 2) as f32;
+        let target = self.target_fill;
         let error = current_occupancy as f32 - target;
 
         // Load current integral error as f32
@@ -196,5 +213,57 @@ impl AtomicQueueTracker {
         // Store new ratio
         self.last_ratio.store(r_eff.to_bits(), Ordering::Relaxed);
         r_eff
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CAPACITY: usize = 8192;
+    const OPERATING_LEVEL: usize = 256;
+
+    fn tracker() -> AtomicQueueTracker {
+        AtomicQueueTracker::new("test".to_string(), CAPACITY).with_target_fill(OPERATING_LEVEL)
+    }
+
+    #[test]
+    fn a_queue_at_its_operating_level_is_left_alone() {
+        let tracker = tracker();
+        tracker.record_samples_written(OPERATING_LEVEL);
+
+        let ratio = tracker.adjust_ratio(48_000, 48_000);
+
+        // Nominal, because there is nothing to correct
+        assert!((ratio - 1.0).abs() < 0.0001, "ratio drifted to {}", ratio);
+    }
+
+    #[test]
+    fn a_queue_running_ahead_is_slowed_and_one_falling_behind_is_sped_up() {
+        let ahead = tracker();
+        ahead.record_samples_written(OPERATING_LEVEL * 4);
+        assert!(ahead.adjust_ratio(48_000, 48_000) > 1.0);
+
+        let behind = tracker();
+        behind.record_samples_written(OPERATING_LEVEL / 4);
+        assert!(behind.adjust_ratio(48_000, 48_000) < 1.0);
+    }
+
+    #[test]
+    fn the_operating_level_is_what_is_steered_to_not_half_the_ring() {
+        // Half of capacity is far above where the pipeline paces these queues, so
+        // steering to it would resample to fill the ring and put back the delay
+        // the pacing removed.
+        let tracker = tracker();
+        tracker.record_samples_written(OPERATING_LEVEL);
+
+        assert_eq!(tracker.target_fill(), OPERATING_LEVEL as f32);
+        assert!(tracker.adjust_ratio(48_000, 48_000) <= 1.0001);
+    }
+
+    #[test]
+    fn a_default_tracker_still_aims_at_half_capacity() {
+        let tracker = AtomicQueueTracker::new("test".to_string(), CAPACITY);
+        assert_eq!(tracker.target_fill(), (CAPACITY / 2) as f32);
     }
 }

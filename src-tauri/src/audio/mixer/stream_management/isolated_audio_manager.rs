@@ -1046,8 +1046,17 @@ impl IsolatedAudioManager {
         // Consumer goes to CoreAudio stream (also owned directly)
 
         // **QUEUE TRACKING**: Create AtomicQueueTracker for monitoring this queue
+        // What the output worker paces this ring to, so the drift controller and
+        // the pacing are steering towards the same level rather than against it.
         let queue_tracker =
-            AtomicQueueTracker::new(format!("output_{}", device_id), buffer_capacity);
+            AtomicQueueTracker::new(format!("output_{}", device_id), buffer_capacity)
+                .with_target_fill(
+                    crate::audio::mixer::pipeline::audio_worker::target_downstream_samples(
+                        chunk_size,
+                        native_sample_rate,
+                        output_channels,
+                    ),
+                );
 
         info!(
             "🎯 {}: Output device '{}' - hardware: {} frames → {} samples ({} channels)",
