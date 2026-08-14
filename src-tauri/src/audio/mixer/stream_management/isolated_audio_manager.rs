@@ -17,7 +17,7 @@ use super::stream_manager::{AudioMetrics, StreamManager};
 use crate::audio::devices::coreaudio_stream::CoreAudioInputStream;
 
 // Lock-free audio buffer imports
-use crate::audio::mixer::latency_probe::LatencyStage;
+use crate::audio::mixer::latency_probe::{LatencySnapshot, LatencyStage};
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use rtrb::{Consumer, Producer, RingBuffer};
 
@@ -77,6 +77,10 @@ pub enum AudioCommand {
     },
     GetAudioMetrics {
         response_tx: oneshot::Sender<AudioMetrics>,
+    },
+    /// Current per-stage latency of the running pipeline
+    GetLatencySnapshot {
+        response_tx: oneshot::Sender<LatencySnapshot>,
     },
     StartRecording {
         session_id: String,
@@ -372,6 +376,9 @@ impl IsolatedAudioManager {
             AudioCommand::GetAudioMetrics { response_tx } => {
                 let metrics = self.get_metrics();
                 let _ = response_tx.send(metrics);
+            }
+            AudioCommand::GetLatencySnapshot { response_tx } => {
+                let _ = response_tx.send(self.audio_pipeline.latency_snapshot());
             }
             AudioCommand::StartRecording {
                 session_id,
