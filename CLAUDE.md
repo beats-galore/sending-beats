@@ -341,6 +341,29 @@ turbo rust:check
 pnpm tauri build
 ```
 
+### WebDriver Automation
+
+The app can be driven directly (click, inspect, screenshot) through the
+`tauri-automation` MCP server, which talks to `tauri-wd` and the
+`tauri-plugin-webdriver-automation` plugin registered in `lib.rs` for debug
+builds only. Release builds contain no automation server.
+
+The debug binary loads its frontend from `devUrl` (port 1420), so Vite and
+`tauri-wd` must both be running before the app is launched. Starting a server on
+a port already in use prompts interactively and will hang an automated tool, so
+always check first:
+
+```bash
+# Vite dev server on the port tauri.conf.json points devUrl at
+curl -s http://127.0.0.1:1420 > /dev/null 2>&1 || pnpm dev &
+
+# WebDriver bridge
+curl -s http://127.0.0.1:4444/status > /dev/null 2>&1 || tauri-wd --port 4444 &
+```
+
+The binary the MCP server launches is `src-tauri/target/debug/SendinBeats`, which
+must have been built at least once (`pnpm tauri:dev` does this).
+
 ### Technical Implementation Notes
 
 - User has BlackHole 2CH, microphone, MacBook speakers, and BenQ monitor

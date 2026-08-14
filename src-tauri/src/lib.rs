@@ -367,6 +367,12 @@ pub fn run() {
         .manage(file_player_state)
         .manage(application_audio_state);
 
+    // Exposes the webview to `tauri-wd` over a local HTTP server so the app can
+    // be driven from WebDriver clients. Debug builds only - a release build has
+    // no automation server at all.
+    #[cfg(debug_assertions)]
+    let builder = builder.plugin(tauri_plugin_webdriver_automation::init());
+
     #[cfg(target_os = "macos")]
     let builder = builder.on_window_event(|window, event| {
         if let tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed = event {
