@@ -382,6 +382,10 @@ pub trait AudioWorker {
 
         let mut resampler = self.resampler_mut().take();
         let mut input_accumulator = Vec::with_capacity(96000);
+        // Set here rather than only at construction: a pipeline that stopped and
+        // started again reuses these workers, and a cleared flag would have the
+        // new thread return before doing anything.
+        self.running().store(true, Ordering::Relaxed);
         let running = self.running().clone();
         let work_period = self.work_period();
         let thread_name = format!("{}-{}", log_prefix.to_lowercase(), device_id);
