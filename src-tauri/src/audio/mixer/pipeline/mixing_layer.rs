@@ -8,14 +8,16 @@
 
 use anyhow::Result;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use std::sync::Mutex;
+use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 use super::audio_worker::target_downstream_samples;
 use super::block_accumulator::BlockAccumulator;
 use super::pacing::jitter_cushion_samples;
+use super::realtime_thread;
 use crate::audio::mixer::latency_probe::{LatencyProbe, LatencyStage, StageGauge};
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::mixer::stream_management::virtual_mixer::VirtualMixer;
@@ -88,7 +90,9 @@ pub struct MixingLayer {
     latency_probe: Arc<LatencyProbe>,
 
     // Worker thread
-    worker_handle: Option<tokio::task::JoinHandle<()>>,
+    worker_handle: Option<std::thread::JoinHandle<()>>,
+    /// Cleared to ask the mixing thread to finish its current cycle and return
+    running: Arc<AtomicBool>,
 
     // Performance tracking
     mix_cycles: u64,
@@ -115,6 +119,7 @@ impl MixingLayer {
             mix_block_samples: Arc::new(AtomicUsize::new(DEFAULT_MIX_BLOCK_SAMPLES)),
             latency_probe,
             worker_handle: None,
+            running: Arc::new(AtomicBool::new(true)),
             mix_cycles: 0,
             samples_mixed: 0,
         }
@@ -305,9 +310,16 @@ impl MixingLayer {
         ));
 
         let latency_probe = self.latency_probe.clone();
+        self.running.store(true, Ordering::Relaxed);
+        let running = self.running.clone();
 
-        // Spawn mixing worker thread
-        let worker_handle = tokio::spawn(async move {
+        // One mix block's worth of audio is the deadline this thread works to
+        let block_frames = self.mix_block_samples.load(Ordering::Relaxed) / 2;
+        let work_period =
+            std::time::Duration::from_secs_f64(block_frames as f64 / current_sample_rate as f64);
+        let idle_poll = (work_period / 4).max(std::time::Duration::from_micros(100));
+
+        let worker_handle = realtime_thread::spawn("mixing-layer", work_period, move || {
             info!(
                 "🚀 {}: Started mixing thread (inputs: {}, outputs: {})",
                 "MIXING_LAYER".on_green().white(),
@@ -338,7 +350,7 @@ impl MixingLayer {
             let mix_gauge = latency_probe.mix_gauge();
             let mut backlog_gauges: HashMap<String, StageGauge> = HashMap::new();
 
-            loop {
+            while running.load(Ordering::Relaxed) {
                 let cycle_start = std::time::Instant::now();
                 let mut produced_block = false;
 
@@ -421,7 +433,10 @@ impl MixingLayer {
                 // **STEP 1**: Collect samples from RTRB and accumulate per device
                 let collection_start = std::time::Instant::now();
                 for (device_id, consumer) in input_rtrb_consumers.iter() {
-                    let mut consumer_lock = consumer.lock().await;
+                    let mut consumer_lock = match consumer.lock() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
                     let available = consumer_lock.slots();
 
                     if available > 0 {
@@ -507,7 +522,10 @@ impl MixingLayer {
                 let target_queued = target_downstream_samples(block_samples, mix_rate, 2);
                 let mut outputs_ready = !output_rtrb_producers.is_empty();
                 for (device_id, producer) in output_rtrb_producers.iter() {
-                    let producer_lock = producer.lock().await;
+                    let producer_lock = match producer.lock() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
                     let free = producer_lock.slots();
 
                     // Without a tracker there is no capacity to compare against, so
@@ -605,7 +623,10 @@ impl MixingLayer {
                         let broadcast_start = std::time::Instant::now();
 
                         for (device_id, producer) in output_rtrb_producers.iter() {
-                            let mut producer_lock = producer.lock().await;
+                            let mut producer_lock = match producer.lock() {
+                                Ok(guard) => guard,
+                                Err(poisoned) => poisoned.into_inner(),
+                            };
                             let mut samples_written = 0;
                             let mut remaining = final_samples.as_slice();
 
@@ -696,7 +717,7 @@ impl MixingLayer {
                 // Yield whenever no block was produced, which includes waiting for
                 // output room. Without this the backpressure check spins hot.
                 if !produced_block {
-                    tokio::time::sleep(std::time::Duration::from_micros(25)).await;
+                    std::thread::sleep(idle_poll);
                 }
             }
         });
@@ -712,16 +733,16 @@ impl MixingLayer {
 
     /// Stop the mixing layer
     pub async fn stop(&mut self) -> Result<()> {
-        if let Some(handle) = self.worker_handle.take() {
-            handle.abort();
+        self.running.store(false, Ordering::Relaxed);
 
-            match tokio::time::timeout(std::time::Duration::from_millis(100), handle).await {
-                Ok(_) => info!(
+        if let Some(handle) = self.worker_handle.take() {
+            match handle.join() {
+                Ok(()) => info!(
                     "✅ {}: Shut down gracefully",
                     "MIXING_LAYER".on_green().white()
                 ),
                 Err(_) => warn!(
-                    "⚠️ {}: Force-terminated after timeout",
+                    "⚠️ {}: Panicked before shutting down",
                     "MIXING_LAYER".on_green().white()
                 ),
             }

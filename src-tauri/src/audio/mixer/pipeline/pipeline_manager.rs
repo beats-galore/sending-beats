@@ -290,7 +290,7 @@ impl AudioPipeline {
         // Connect RTRB consumer to mixing layer
         self.mixing_layer.add_input_consumer(
             device_id.clone(),
-            Arc::new(tokio::sync::Mutex::new(rtrb_consumer_for_mixing)),
+            Arc::new(std::sync::Mutex::new(rtrb_consumer_for_mixing)),
             mixing_queue_tracker.clone(),
         );
 
@@ -396,7 +396,7 @@ impl AudioPipeline {
         // Add RTRB producer to mixing layer for writing mixed audio
         self.mixing_layer.add_output_producer(
             device_id.clone(),
-            Arc::new(tokio::sync::Mutex::new(rtrb_producer_for_mixer)),
+            Arc::new(std::sync::Mutex::new(rtrb_producer_for_mixer)),
             mixing_to_output_tracker.clone(),
         );
 
