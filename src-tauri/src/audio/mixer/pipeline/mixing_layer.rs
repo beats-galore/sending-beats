@@ -13,8 +13,9 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, warn};
 
-use super::audio_worker::TARGET_DOWNSTREAM_CHUNKS;
+use super::audio_worker::target_downstream_samples;
 use super::block_accumulator::BlockAccumulator;
+use super::pacing::jitter_cushion_samples;
 use crate::audio::mixer::latency_probe::{LatencyProbe, LatencyStage, StageGauge};
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::mixer::stream_management::virtual_mixer::VirtualMixer;
@@ -319,6 +320,7 @@ impl MixingLayer {
             // output it is paced by.
             let mut block_accumulator = BlockAccumulator::new(
                 mix_block_samples.load(Ordering::Relaxed),
+                jitter_cushion_samples(current_sample_rate, 2),
                 MAX_BACKLOG_SAMPLES,
             );
 
@@ -342,6 +344,10 @@ impl MixingLayer {
                         block_accumulator.block_samples()
                     );
                     block_accumulator.set_block_samples(block_samples);
+                    block_accumulator.set_cushion_samples(jitter_cushion_samples(
+                        target_sample_rate.load(Ordering::Relaxed),
+                        2,
+                    ));
                 }
 
                 // Handle commands (add/remove input/output streams dynamically)
@@ -489,7 +495,7 @@ impl MixingLayer {
                 // a chunk drains, making the whole ring standing delay.
                 let sync_start = std::time::Instant::now();
 
-                let target_queued = block_samples * TARGET_DOWNSTREAM_CHUNKS;
+                let target_queued = target_downstream_samples(block_samples, mix_rate, 2);
                 let mut outputs_ready = !output_rtrb_producers.is_empty();
                 for (device_id, producer) in output_rtrb_producers.iter() {
                     let producer_lock = producer.lock().await;

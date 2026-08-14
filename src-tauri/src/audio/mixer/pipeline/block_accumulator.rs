@@ -43,10 +43,17 @@ impl DeviceBacklog {
     }
 
     /// Most this device should be holding once the mixer has taken its block
-    fn steady_state(&self, block_samples: usize) -> usize {
+    ///
+    /// One delivery, because a device cannot be trimmed below what it hands over
+    /// at a time without its audio being cut apart on arrival, plus a cushion for
+    /// the mixer and this device drifting against each other. The mixer pads a
+    /// device short of a full block with silence rather than waiting, so running
+    /// with no cushion turns ordinary jitter into a gap every block.
+    fn steady_state(&self, block_samples: usize, cushion_samples: usize) -> usize {
         self.last_delivery
             .max(self.previous_delivery)
             .max(block_samples)
+            + cushion_samples
     }
 }
 
@@ -56,6 +63,8 @@ pub struct BlockAccumulator {
     device_samples: HashMap<String, DeviceBacklog>,
     /// Number of samples emitted per device per block
     block_samples: usize,
+    /// Held on top of a delivery so ordinary drift does not become a silence gap
+    cushion_samples: usize,
     /// Hard ceiling per device, whatever its delivery size
     max_samples: usize,
 }
@@ -63,19 +72,26 @@ pub struct BlockAccumulator {
 impl BlockAccumulator {
     /// # Arguments
     /// * `block_samples` - samples emitted per device per mix block
+    /// * `cushion_samples` - held on top of a delivery to absorb drift
     /// * `max_samples` - absolute ceiling per device, however it delivers
     ///
     /// The ceiling is in samples rather than blocks on purpose: it is a last
     /// resort against a device that delivers pathologically, and scaling it with
     /// the block would shrink it as blocks get smaller. In normal running it is
-    /// never reached, because [`take_block`](Self::take_block) sheds down to what
-    /// the device actually delivers at a time.
-    pub fn new(block_samples: usize, max_samples: usize) -> Self {
+    /// never reached, because [`take_block`](Self::take_block) sheds down to a
+    /// delivery plus the cushion.
+    pub fn new(block_samples: usize, cushion_samples: usize, max_samples: usize) -> Self {
         Self {
             device_samples: HashMap::new(),
             block_samples,
+            cushion_samples,
             max_samples,
         }
+    }
+
+    /// Resize the drift cushion, which follows the pipeline's sample rate
+    pub fn set_cushion_samples(&mut self, cushion_samples: usize) {
+        self.cushion_samples = cushion_samples;
     }
 
     /// Resize the block the mixer consumes, so it can follow the output hardware
@@ -162,7 +178,7 @@ impl BlockAccumulator {
             let mut block: Vec<f32> = backlog.samples.drain(..take).collect();
             block.resize(self.block_samples, 0.0);
 
-            let steady_state = backlog.steady_state(self.block_samples);
+            let steady_state = backlog.steady_state(self.block_samples, self.cushion_samples);
             if backlog.samples.len() > steady_state {
                 let shed = backlog.samples.len() - steady_state;
                 backlog.samples.drain(..shed);
@@ -198,10 +214,11 @@ mod tests {
     use super::*;
 
     const BLOCK: usize = 256;
+    const CUSHION: usize = 960;
     const CEILING: usize = 8192;
 
     fn accumulator() -> BlockAccumulator {
-        BlockAccumulator::new(BLOCK, CEILING)
+        BlockAccumulator::new(BLOCK, CUSHION, CEILING)
     }
 
     #[test]
@@ -230,8 +247,20 @@ mod tests {
             accumulator.take_block();
         }
 
-        // Down to one delivery, not the twenty-nine blocks it would otherwise
-        // carry as delay on everything behind them for the rest of the session
+        // Down to a delivery plus the cushion, not the twenty-nine blocks it would
+        // otherwise carry as delay on everything behind them for the whole session
+        assert_eq!(accumulator.backlog_samples("mic"), BLOCK + CUSHION);
+    }
+
+    #[test]
+    fn the_cushion_is_kept_rather_than_shed() {
+        let mut accumulator = accumulator();
+
+        // Running a block ahead is what stops ordinary drift becoming a silence
+        // gap, so it must survive a take rather than being trimmed as surplus.
+        accumulator.push("mic", &vec![0.5; BLOCK * 2]);
+        accumulator.take_block();
+
         assert_eq!(accumulator.backlog_samples("mic"), BLOCK);
     }
 
@@ -259,7 +288,7 @@ mod tests {
         }
         accumulator.take_block();
 
-        assert_eq!(accumulator.backlog_samples("music"), delivery);
+        assert_eq!(accumulator.backlog_samples("music"), delivery + CUSHION);
     }
 
     #[test]

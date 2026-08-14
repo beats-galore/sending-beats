@@ -1030,7 +1030,15 @@ impl IsolatedAudioManager {
 
         // **SIMPLIFIED QUEUE**: Create RTRB ring buffer for this output device - 4x the output chunk size
         // Producer goes to OutputWorker (writes), Consumer goes to CoreAudio (reads)
-        let buffer_capacity = chunk_size * 4;
+        // Floored on time, not on chunks. Sized in chunks it shrinks with the
+        // hardware buffer, and at small buffers the ring ends up too small to hold
+        // the cushion the worker is trying to keep.
+        let buffer_capacity = (chunk_size * 4).max(
+            crate::audio::mixer::pipeline::pacing::jitter_cushion_samples(
+                native_sample_rate,
+                output_channels,
+            ) * 4,
+        );
 
         let (rtrb_producer, rtrb_consumer) = rtrb::RingBuffer::<f32>::new(buffer_capacity);
 

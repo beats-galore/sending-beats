@@ -14,6 +14,7 @@ pub mod block_accumulator;
 pub mod input_worker;
 pub mod mixing_layer;
 pub mod output_worker;
+pub mod pacing;
 pub mod pipeline_manager;
 pub mod queue_types;
 

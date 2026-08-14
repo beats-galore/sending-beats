@@ -14,24 +14,25 @@ use colored::*;
 use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
 
+use super::pacing::jitter_cushion_samples;
 use crate::audio::mixer::latency_probe::WorkerLatencyGauges;
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::mixer::resampling::RubatoSRC;
 
-/// How much audio to keep queued downstream, in chunks
+/// How much audio to keep queued downstream of this worker
 ///
 /// Producing whenever a ring has any room fills it to capacity and holds it
 /// there, making ring size latency. Holding to a target instead makes the depth
-/// a deliberate choice.
+/// deliberate.
 ///
-/// What the depth buys is time to survive the producer stalling, and the cushion
-/// is occupancy rather than capacity: a ring with room to spare still underruns
-/// if it is empty when the consumer asks. Sized so the rings between the mix and
-/// the hardware together cover the longest the mixing task can go unscheduled.
+/// Never below one chunk, or the consumer cannot be given a full callback's
+/// worth even when the producer is keeping up perfectly.
 ///
 /// Capacity is left alone. It absorbs a burst arriving faster than the consumer
-/// drains, a different failure from a stall.
-pub const TARGET_DOWNSTREAM_CHUNKS: usize = 2;
+/// drains, a different failure from being descheduled.
+pub fn target_downstream_samples(chunk_size: usize, sample_rate: u32, channels: u16) -> usize {
+    jitter_cushion_samples(sample_rate, channels).max(chunk_size)
+}
 /// Shared state for audio workers
 pub struct AudioWorkerState {
     pub device_id: String,
@@ -357,6 +358,8 @@ pub trait AudioWorker {
         let queue_tracker = self.queue_tracker().clone();
         let latency_gauges = self.latency_gauges().clone();
         let outbound_capacity = queue_tracker.capacity;
+        let target_downstream =
+            target_downstream_samples(chunk_size, initial_target_sample_rate, outbound_channels);
 
         let mut resampler = self.resampler_mut().take();
         let mut input_accumulator = Vec::with_capacity(96000);
@@ -415,7 +418,7 @@ pub trait AudioWorker {
                 // capacity every time the hardware takes a chunk, and every sample
                 // of that capacity is delay.
                 let queued_downstream = outbound_capacity.saturating_sub(output_room);
-                let holding_enough = queued_downstream >= chunk_size * TARGET_DOWNSTREAM_CHUNKS;
+                let holding_enough = queued_downstream >= target_downstream;
 
                 if applies_backpressure && (output_room < chunk_size || holding_enough) {
                     // Still publish what is waiting upstream. This branch is where
