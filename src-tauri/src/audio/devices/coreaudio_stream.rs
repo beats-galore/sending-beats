@@ -166,6 +166,63 @@ pub fn get_device_extra_latency_frames(device_id: AudioDeviceID, is_output: bool
     latency + safety_offset
 }
 
+/// Buffer size to ask every device for, in frames
+///
+/// A device's buffer is charged to the latency path twice over — once filling on
+/// capture, once draining on playback — and at the 512 frames macOS hands out by
+/// default that is 21ms of the budget before anything else. 128 frames is 2.7ms
+/// a side.
+///
+/// Devices are free to refuse: each has its own supported range, and virtual ones
+/// often sit at a fixed size. Nothing assumes the request was honoured — the size
+/// is read back and everything downstream is sized from what came back.
+pub const DESIRED_BUFFER_FRAMES: u32 = 128;
+
+/// Fall back to what macOS hands out by default when a device tells us nothing
+const FALLBACK_BUFFER_FRAMES: u32 = 512;
+
+/// Ask a device for [`DESIRED_BUFFER_FRAMES`] and report what it actually gave
+///
+/// Must be called before the stream is created: a device in use will not resize.
+pub fn negotiate_device_buffer_frame_size(
+    device_id: AudioDeviceID,
+    device_name: &str,
+    is_output: bool,
+) -> u32 {
+    if let Err(e) = set_device_buffer_frame_size(device_id, DESIRED_BUFFER_FRAMES, is_output) {
+        info!(
+            "🎯 {}: Device {} would not take {} frames ({}), keeping its own size",
+            "BUFFER_NEGOTIATION".cyan(),
+            device_name,
+            DESIRED_BUFFER_FRAMES,
+            e
+        );
+    }
+
+    let granted = get_device_buffer_frame_size(device_id, is_output).unwrap_or_else(|e| {
+        warn!(
+            "⚠️ {}: Failed to query buffer size for {}: {}, assuming {}",
+            "BUFFER_NEGOTIATION".cyan(),
+            device_name,
+            e,
+            FALLBACK_BUFFER_FRAMES
+        );
+        FALLBACK_BUFFER_FRAMES
+    });
+
+    if granted != DESIRED_BUFFER_FRAMES {
+        info!(
+            "🎯 {}: {} settled at {} frames, not the {} asked for",
+            "BUFFER_NEGOTIATION".cyan(),
+            device_name,
+            granted,
+            DESIRED_BUFFER_FRAMES
+        );
+    }
+
+    granted
+}
+
 /// Set the buffer frame size for a CoreAudio device (enables dynamic chunk sizing)
 pub fn set_device_buffer_frame_size(
     device_id: AudioDeviceID,

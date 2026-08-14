@@ -525,19 +525,14 @@ impl IsolatedAudioManager {
         let (coreaudio_producer, audio_input_consumer) =
             rtrb::RingBuffer::<f32>::new(buffer_capacity);
 
-        // **QUERY ACTUAL HARDWARE BUFFER SIZE**: Query hardware before creating streams
+        // **NEGOTIATE HARDWARE BUFFER SIZE**: ask for a small one before the stream
+        // exists, since a device already in use will not resize
         let actual_buffer_frames =
-            crate::audio::devices::coreaudio_stream::get_device_buffer_frame_size(
+            crate::audio::devices::coreaudio_stream::negotiate_device_buffer_frame_size(
                 coreaudio_device_id,
+                &device_id,
                 false, // input device
-            )
-            .unwrap_or_else(|e| {
-                warn!(
-                    "⚠️ Failed to query input buffer size for {}: {}, using default 512",
-                    device_id, e
-                );
-                512
-            });
+            );
 
         // Convert frames to samples (frames × channels)
         let chunk_size = (actual_buffer_frames * channels as u32) as usize;
@@ -1020,19 +1015,14 @@ impl IsolatedAudioManager {
         // Store device_id before moving coreaudio_device
         let coreaudio_device_id = coreaudio_device.device_id;
 
-        // **QUERY ACTUAL HARDWARE BUFFER SIZE**: Query hardware before creating streams
+        // **NEGOTIATE HARDWARE BUFFER SIZE**: ask for a small one before the stream
+        // exists, since a device already in use will not resize
         let actual_buffer_frames =
-            crate::audio::devices::coreaudio_stream::get_device_buffer_frame_size(
+            crate::audio::devices::coreaudio_stream::negotiate_device_buffer_frame_size(
                 coreaudio_device_id,
+                &device_id,
                 true, // output device
-            )
-            .unwrap_or_else(|e| {
-                warn!(
-                    "⚠️ Failed to query output buffer size for {}: {}, using default 512",
-                    device_id, e
-                );
-                512
-            });
+            );
 
         // **DYNAMIC CHANNEL DETECTION**: Get actual channel count from output device instead of assuming stereo
         let output_channels = coreaudio_device.channels; // Use actual channel count from device

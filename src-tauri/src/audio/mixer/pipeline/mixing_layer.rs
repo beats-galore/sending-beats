@@ -8,7 +8,7 @@
 
 use anyhow::Result;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, warn};
@@ -20,6 +20,16 @@ use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::mixer::stream_management::virtual_mixer::VirtualMixer;
 use crate::audio::VUChannelService;
 use colored::*;
+
+/// Block size before any output device has said what its hardware wants
+const DEFAULT_MIX_BLOCK_SAMPLES: usize = 1024;
+
+/// Backlog a device may build before its oldest audio is dropped, in stereo samples
+///
+/// ~85ms at 48kHz. Deliberately not a multiple of the block size: shrinking the
+/// block must not shrink the amount a coarse source is allowed to hold, and a
+/// ScreenCaptureKit tap arrives 960 frames at a time whatever the mixer does.
+const MAX_BACKLOG_SAMPLES: usize = 8192;
 
 /// Command for dynamically managing running MixingLayer
 pub enum MixingLayerCommand {
@@ -62,6 +72,9 @@ pub struct MixingLayer {
     target_sample_rate: Arc<AtomicU32>, // Use AtomicU32 for thread-safe dynamic updates
     master_gain: Arc<AtomicU32>,        // Use AtomicU32 to store f32 bits for thread-safe sharing
 
+    /// Stereo samples per mix block, tracking the tightest output's hardware buffer
+    mix_block_samples: Arc<AtomicUsize>,
+
     // Latency accounting for the block accumulator and the mix block itself
     latency_probe: Arc<LatencyProbe>,
 
@@ -90,6 +103,7 @@ impl MixingLayer {
             command_tx,
             target_sample_rate: Arc::new(AtomicU32::new(0)),
             master_gain: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
+            mix_block_samples: Arc::new(AtomicUsize::new(DEFAULT_MIX_BLOCK_SAMPLES)),
             latency_probe,
             worker_handle: None,
             mix_cycles: 0,
@@ -255,6 +269,7 @@ impl MixingLayer {
 
         let target_sample_rate = self.target_sample_rate.clone();
         let master_gain = self.master_gain.clone();
+        let mix_block_samples = self.mix_block_samples.clone();
 
         // Create command channel for this run
         let (command_tx, mut command_rx) = mpsc::unbounded_channel();
@@ -295,13 +310,17 @@ impl MixingLayer {
 
             // **FIXED CADENCE**: Every cycle consumes the same block from each device
             // so the mix advances at a constant rate regardless of how much any one
-            // device happened to deliver. 1024 stereo samples is 512 frames, ~10.7ms
-            // at 48kHz, matching the usual hardware buffer.
-            const MIX_BLOCK_SAMPLES: usize = 1024;
-            const MAX_BACKLOG_BLOCKS: usize = 8;
-
-            let mut block_accumulator =
-                BlockAccumulator::new(MIX_BLOCK_SAMPLES, MAX_BACKLOG_BLOCKS);
+            // device happened to deliver.
+            //
+            // The block tracks the tightest output's hardware buffer. It has to: the
+            // mixer pads a device short of a full block with silence rather than
+            // waiting, so a block larger than what the hardware delivers per callback
+            // punches holes in the audio, and one smaller makes the mixer outrun the
+            // output it is paced by.
+            let mut block_accumulator = BlockAccumulator::new(
+                mix_block_samples.load(Ordering::Relaxed),
+                MAX_BACKLOG_SAMPLES,
+            );
 
             // Resolved once per device: looking a gauge up in the registry takes a
             // lock and allocates, neither of which belongs in the mixing loop.
@@ -311,6 +330,19 @@ impl MixingLayer {
             loop {
                 let cycle_start = std::time::Instant::now();
                 let mut produced_block = false;
+
+                // Follow the outputs when they report what their hardware settled on
+                let block_samples = mix_block_samples.load(Ordering::Relaxed);
+                if block_samples != block_accumulator.block_samples() {
+                    info!(
+                        "🎛️ {}: Mix block now {} samples ({} frames), was {}",
+                        "MIXING_LAYER".on_green().white(),
+                        block_samples,
+                        block_samples / 2,
+                        block_accumulator.block_samples()
+                    );
+                    block_accumulator.set_block_samples(block_samples);
+                }
 
                 // Handle commands (add/remove input/output streams dynamically)
                 let command_start = std::time::Instant::now();
@@ -417,7 +449,7 @@ impl MixingLayer {
                 // Read here rather than captured at start so the reported figures
                 // follow the mix rate when a device changes it.
                 let mix_rate = target_sample_rate.load(Ordering::Relaxed);
-                mix_gauge.set_samples(MIX_BLOCK_SAMPLES, 2, mix_rate);
+                mix_gauge.set_samples(block_samples, 2, mix_rate);
 
                 // Published for every device, not just those that delivered this
                 // cycle: a device that went quiet still has whatever it left behind
@@ -459,7 +491,7 @@ impl MixingLayer {
                 // how far ahead the mix should run.
                 let sync_start = std::time::Instant::now();
 
-                let target_queued = MIX_BLOCK_SAMPLES * TARGET_DOWNSTREAM_CHUNKS;
+                let target_queued = block_samples * TARGET_DOWNSTREAM_CHUNKS;
                 let mut outputs_ready = !output_rtrb_producers.is_empty();
                 for (device_id, producer) in output_rtrb_producers.iter() {
                     let producer_lock = producer.lock().await;
@@ -471,7 +503,7 @@ impl MixingLayer {
                         .get(device_id)
                         .map_or(0, |tracker| tracker.capacity.saturating_sub(free));
 
-                    if free < MIX_BLOCK_SAMPLES || queued >= target_queued {
+                    if free < block_samples || queued >= target_queued {
                         outputs_ready = false;
                         break;
                     }
@@ -489,7 +521,7 @@ impl MixingLayer {
                 let mixing_duration = if let Some(synchronized_samples) = synchronized_samples {
                     let mixing_start = std::time::Instant::now();
 
-                    // Every block is already exactly MIX_BLOCK_SAMPLES long
+                    // Every block is already exactly block_samples long
                     let prep_start = std::time::Instant::now();
 
                     let input_samples_for_mixer: Vec<(String, &[f32])> = synchronized_samples
@@ -691,6 +723,32 @@ impl MixingLayer {
             "🎚️ {}: Set master gain to {:.2}",
             "MIXING_LAYER".on_green().white(),
             gain
+        );
+    }
+
+    /// Size the mix block to an output's hardware buffer
+    ///
+    /// The tightest output wins. A block bigger than what an output's hardware
+    /// takes per callback would make the mixer produce faster than that output
+    /// can drain; smaller just means it does slightly more work per unit audio.
+    /// Takes effect on the mixing thread's next cycle.
+    pub fn constrain_mix_block_to(&mut self, output_frames: usize) {
+        let requested = output_frames * 2; // the mix is stereo
+        if requested == 0 {
+            return;
+        }
+
+        let current = self.mix_block_samples.load(Ordering::Relaxed);
+        if requested >= current {
+            return;
+        }
+
+        self.mix_block_samples.store(requested, Ordering::Relaxed);
+        info!(
+            "🎛️ {}: Mix block constrained to {} samples ({} frames) by an output",
+            "MIXING_LAYER".on_green().white(),
+            requested,
+            output_frames
         );
     }
 

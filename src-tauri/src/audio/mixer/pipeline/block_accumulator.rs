@@ -27,13 +27,31 @@ pub struct BlockAccumulator {
 impl BlockAccumulator {
     /// # Arguments
     /// * `block_samples` - samples emitted per device per mix block
-    /// * `max_blocks` - backlog allowed per device before dropping oldest audio
-    pub fn new(block_samples: usize, max_blocks: usize) -> Self {
+    /// * `max_samples` - backlog allowed per device before dropping oldest audio
+    ///
+    /// The cap is in samples rather than blocks on purpose. It is a drop
+    /// threshold, not a latency target — what a device is actually holding is
+    /// what costs delay, and that gets measured. Scaling the cap with the block
+    /// would shrink it as blocks get smaller, and a ScreenCaptureKit tap hands
+    /// over 960 frames at once, already seven blocks at 128.
+    pub fn new(block_samples: usize, max_samples: usize) -> Self {
         Self {
             device_samples: HashMap::new(),
             block_samples,
-            max_samples: block_samples * max_blocks,
+            max_samples,
         }
+    }
+
+    /// Resize the block the mixer consumes, so it can follow the output hardware
+    ///
+    /// Whatever devices are already holding stays put, and comes out at the new
+    /// size from the next block onward.
+    pub fn set_block_samples(&mut self, block_samples: usize) {
+        self.block_samples = block_samples;
+    }
+
+    pub fn block_samples(&self) -> usize {
+        self.block_samples
     }
 
     /// Append freshly collected samples for a device
