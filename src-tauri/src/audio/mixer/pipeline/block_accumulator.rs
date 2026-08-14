@@ -9,51 +9,42 @@
 // silence for the remainder of the block instead of stalling the mix, and a device
 // that is ahead simply keeps its surplus for the next block.
 //
-// A device is only ever *one* block behind, though. The mixer is paced by the
-// output hardware, so it consumes at exactly realtime and never faster, and a
-// queue holding more than one delivery has no way to work the surplus off — every
-// sample of it is delay for the rest of the session. So anything beyond what the
-// device delivers at a time is shed rather than carried.
+// Being ahead is not the same as being late, though. The mixer is paced by the
+// output hardware, so it consumes at exactly realtime and never faster, and audio
+// a device is holding that never drains cannot be worked off — it stays in front
+// of everything behind it for the rest of the session. A queue that fills and
+// empties is doing its job; one with a floor it never reaches under is carrying
+// delay, and that floor is what gets shed.
 
 use colored::*;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use tracing::warn;
 
-/// What one device is holding, and how much it tends to arrive with
-#[derive(Debug, Default)]
+/// What one device is holding, and how far down it has drained lately
+#[derive(Debug)]
 struct DeviceBacklog {
     /// Samples waiting, already converted to the mix channel layout
     samples: VecDeque<f32>,
-    /// Largest of the last two deliveries
+    /// Least it has held at any point in the current window
     ///
-    /// A device cannot be trimmed below what it hands over at a time or its
-    /// audio would be cut apart on arrival — a ScreenCaptureKit tap delivers 960
-    /// frames at once and legitimately needs to hold all of them. Tracking only
-    /// the last two means a one-off surge, from the mixer being descheduled and
-    /// draining a full queue at once, stops counting almost immediately.
-    last_delivery: usize,
-    previous_delivery: usize,
+    /// This is what separates a burst from a surplus. Sources deliver on their
+    /// own schedules — a ScreenCaptureKit tap arrives in batches of several
+    /// callbacks at once and then goes quiet — and audio that arrives early is
+    /// played on time as long as it drains again. Only a level the queue never
+    /// falls below is delay, because nothing behind it can move up.
+    window_floor: usize,
+    /// Blocks taken since the floor was last acted on
+    blocks_this_window: usize,
 }
 
-impl DeviceBacklog {
-    fn record_delivery(&mut self, samples: usize) {
-        self.previous_delivery = self.last_delivery;
-        self.last_delivery = samples;
-    }
-
-    /// Most this device should be holding once the mixer has taken its block
-    ///
-    /// One delivery, because a device cannot be trimmed below what it hands over
-    /// at a time without its audio being cut apart on arrival, plus a cushion for
-    /// the mixer and this device drifting against each other. The mixer pads a
-    /// device short of a full block with silence rather than waiting, so running
-    /// with no cushion turns ordinary jitter into a gap every block.
-    fn steady_state(&self, block_samples: usize, cushion_samples: usize) -> usize {
-        self.last_delivery
-            .max(self.previous_delivery)
-            .max(block_samples)
-            + cushion_samples
+impl Default for DeviceBacklog {
+    fn default() -> Self {
+        Self {
+            samples: VecDeque::new(),
+            window_floor: usize::MAX,
+            blocks_this_window: 0,
+        }
     }
 }
 
@@ -63,28 +54,35 @@ pub struct BlockAccumulator {
     device_samples: HashMap<String, DeviceBacklog>,
     /// Number of samples emitted per device per block
     block_samples: usize,
-    /// Held on top of a delivery so ordinary drift does not become a silence gap
+    /// Kept in hand so ordinary drift does not become a silence gap
     cushion_samples: usize,
-    /// Hard ceiling per device, whatever its delivery size
+    /// Audio spanned by one window of observation before a floor is acted on
+    window_samples: usize,
+    /// Hard ceiling per device, whatever its delivery pattern
     max_samples: usize,
 }
 
 impl BlockAccumulator {
     /// # Arguments
     /// * `block_samples` - samples emitted per device per mix block
-    /// * `cushion_samples` - held on top of a delivery to absorb drift
+    /// * `cushion_samples` - kept in hand to absorb drift
+    /// * `window_samples` - audio observed before a standing floor is acted on
     /// * `max_samples` - absolute ceiling per device, however it delivers
     ///
     /// The ceiling is in samples rather than blocks on purpose: it is a last
     /// resort against a device that delivers pathologically, and scaling it with
-    /// the block would shrink it as blocks get smaller. In normal running it is
-    /// never reached, because [`take_block`](Self::take_block) sheds down to a
-    /// delivery plus the cushion.
-    pub fn new(block_samples: usize, cushion_samples: usize, max_samples: usize) -> Self {
+    /// the block would shrink it as blocks get smaller.
+    pub fn new(
+        block_samples: usize,
+        cushion_samples: usize,
+        window_samples: usize,
+        max_samples: usize,
+    ) -> Self {
         Self {
             device_samples: HashMap::new(),
             block_samples,
             cushion_samples,
+            window_samples,
             max_samples,
         }
     }
@@ -92,6 +90,15 @@ impl BlockAccumulator {
     /// Resize the drift cushion, which follows the pipeline's sample rate
     pub fn set_cushion_samples(&mut self, cushion_samples: usize) {
         self.cushion_samples = cushion_samples;
+    }
+
+    /// Blocks spanned by one window of observation
+    ///
+    /// Has to be comfortably longer than the gap between a source's deliveries,
+    /// or a burst arriving on the last block of a window looks like a floor that
+    /// was never drained.
+    fn window_blocks(&self) -> usize {
+        (self.window_samples / self.block_samples.max(1)).max(1)
     }
 
     /// Resize the block the mixer consumes, so it can follow the output hardware
@@ -114,7 +121,6 @@ impl BlockAccumulator {
             .or_default();
 
         backlog.samples.extend(samples.iter().copied());
-        backlog.record_delivery(samples.len());
 
         // Shedding on take keeps this from being reached. A device this far ahead
         // is delivering faster than the mix consumes, and the oldest audio is the
@@ -159,15 +165,16 @@ impl BlockAccumulator {
     /// A device holding a partial block is padded with silence so every returned
     /// block is the same length and the mix advances by exactly one block.
     ///
-    /// Anything a device still holds beyond one delivery afterwards is dropped.
+    /// Once a window has passed, whatever a device never drained below is shed.
     /// The mixer runs at exactly the output's rate and can never catch up by
-    /// consuming faster, so a surplus left in place is not a buffer — it is delay
-    /// on every sample behind it, for as long as the device stays connected. One
-    /// audible discontinuity now costs less than permanent latency.
+    /// consuming faster, so a floor left in place is not a buffer — it is delay on
+    /// every sample behind it for as long as the device stays connected. Bursts
+    /// are left alone: arriving early costs nothing as long as it drains again.
     ///
     /// Returns `None` when no device has any audio.
     pub fn take_block(&mut self) -> Option<Vec<(String, Vec<f32>)>> {
         let mut blocks: Vec<(String, Vec<f32>)> = Vec::new();
+        let window_blocks = self.window_blocks();
 
         for (device_id, backlog) in self.device_samples.iter_mut() {
             if backlog.samples.is_empty() {
@@ -178,24 +185,34 @@ impl BlockAccumulator {
             let mut block: Vec<f32> = backlog.samples.drain(..take).collect();
             block.resize(self.block_samples, 0.0);
 
-            let steady_state = backlog.steady_state(self.block_samples, self.cushion_samples);
-            if backlog.samples.len() > steady_state {
-                let shed = backlog.samples.len() - steady_state;
-                backlog.samples.drain(..shed);
+            backlog.window_floor = backlog.window_floor.min(backlog.samples.len());
+            backlog.blocks_this_window += 1;
 
-                static SHED_LOG: std::sync::atomic::AtomicU64 =
-                    std::sync::atomic::AtomicU64::new(0);
-                let log_count = SHED_LOG.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if log_count % 100 == 0 {
-                    warn!(
-                        "⚠️ {}: Device '{}' was {} samples behind, shed to {} (occurrence #{})",
-                        "BLOCK_ACCUMULATOR".on_yellow().green(),
-                        device_id,
-                        shed,
-                        steady_state,
-                        log_count
-                    );
+            if backlog.blocks_this_window >= window_blocks {
+                // Whatever the queue never got below over a whole window is audio
+                // no arrival pattern accounts for. It is not buffering anything,
+                // it is sitting in front of everything behind it.
+                if backlog.window_floor > self.cushion_samples {
+                    let shed = backlog.window_floor - self.cushion_samples;
+                    backlog.samples.drain(..shed.min(backlog.samples.len()));
+
+                    static SHED_LOG: std::sync::atomic::AtomicU64 =
+                        std::sync::atomic::AtomicU64::new(0);
+                    let log_count = SHED_LOG.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if log_count % 20 == 0 {
+                        warn!(
+                            "⚠️ {}: Device '{}' never drained below {} samples, shed {} (occurrence #{})",
+                            "BLOCK_ACCUMULATOR".on_yellow().green(),
+                            device_id,
+                            backlog.window_floor,
+                            shed,
+                            log_count
+                        );
+                    }
                 }
+
+                backlog.window_floor = usize::MAX;
+                backlog.blocks_this_window = 0;
             }
 
             blocks.push((device_id.clone(), block));
@@ -215,10 +232,11 @@ mod tests {
 
     const BLOCK: usize = 256;
     const CUSHION: usize = 960;
+    const WINDOW: usize = BLOCK * 8;
     const CEILING: usize = 8192;
 
     fn accumulator() -> BlockAccumulator {
-        BlockAccumulator::new(BLOCK, CUSHION, CEILING)
+        BlockAccumulator::new(BLOCK, CUSHION, WINDOW, CEILING)
     }
 
     #[test]
@@ -234,61 +252,71 @@ mod tests {
     }
 
     #[test]
-    fn a_surplus_is_shed_rather_than_carried_forever() {
+    fn a_floor_that_never_drains_is_shed() {
         let mut accumulator = accumulator();
 
-        // A descheduled mixer drains a whole queue at once when it resumes
+        // A descheduled mixer drains a whole queue at once when it resumes, and
+        // the mixer can never consume faster than realtime to work it back off
         accumulator.push("mic", &vec![0.5; BLOCK * 30]);
-        accumulator.take_block();
-        assert_eq!(accumulator.backlog_samples("mic"), BLOCK * 29);
 
-        for _ in 0..3 {
+        for _ in 0..WINDOW / BLOCK {
             accumulator.push("mic", &vec![0.5; BLOCK]);
             accumulator.take_block();
         }
 
-        // Down to a delivery plus the cushion, not the twenty-nine blocks it would
-        // otherwise carry as delay on everything behind them for the whole session
-        assert_eq!(accumulator.backlog_samples("mic"), BLOCK + CUSHION);
+        // Down to the cushion, not the twenty-nine blocks it would otherwise carry
+        // as delay on everything behind them for the whole session
+        assert_eq!(accumulator.backlog_samples("mic"), CUSHION);
     }
 
     #[test]
-    fn the_cushion_is_kept_rather_than_shed() {
+    fn a_burst_that_drains_is_left_alone() {
         let mut accumulator = accumulator();
 
-        // Running a block ahead is what stops ordinary drift becoming a silence
-        // gap, so it must survive a take rather than being trimmed as surplus.
-        accumulator.push("mic", &vec![0.5; BLOCK * 2]);
-        accumulator.take_block();
+        // A ScreenCaptureKit tap arrives in batches and then goes quiet. Arriving
+        // early costs nothing, so long as it drains before the next batch.
+        let delivery = 960 * 2;
 
-        assert_eq!(accumulator.backlog_samples("mic"), BLOCK);
+        for _ in 0..4 {
+            accumulator.push("music", &vec![0.5; delivery]);
+            for _ in 0..(delivery / BLOCK) + 1 {
+                accumulator.take_block();
+            }
+        }
+
+        // Never shed, because it kept reaching empty between batches
+        assert_eq!(accumulator.backlog_samples("music"), 0);
     }
 
     #[test]
-    fn a_coarse_source_keeps_the_whole_delivery() {
+    fn a_delivery_is_never_cut_apart_on_arrival() {
         let mut accumulator = accumulator();
 
-        // A ScreenCaptureKit tap hands over 960 frames at once, seven blocks
         let delivery = 960 * 2;
         accumulator.push("music", &vec![0.5; delivery]);
         accumulator.take_block();
 
-        // Shedding to the block size here would cut every delivery apart on arrival
         assert_eq!(accumulator.backlog_samples("music"), delivery - BLOCK);
     }
 
     #[test]
-    fn a_coarse_source_is_still_bounded_at_one_delivery() {
+    fn the_cushion_survives_a_window() {
         let mut accumulator = accumulator();
-        let delivery = 960 * 2;
 
-        // Three deliveries arrive before the mixer takes anything
-        for _ in 0..3 {
-            accumulator.push("music", &vec![0.5; delivery]);
+        // Running a little ahead is what stops ordinary drift becoming a silence
+        // gap, so it has to outlast the window rather than being read as surplus.
+        for _ in 0..WINDOW / BLOCK {
+            accumulator.push("mic", &vec![0.5; BLOCK]);
+            accumulator.take_block();
         }
-        accumulator.take_block();
+        accumulator.push("mic", &vec![0.5; CUSHION]);
 
-        assert_eq!(accumulator.backlog_samples("music"), delivery + CUSHION);
+        for _ in 0..WINDOW / BLOCK {
+            accumulator.push("mic", &vec![0.5; BLOCK]);
+            accumulator.take_block();
+        }
+
+        assert_eq!(accumulator.backlog_samples("mic"), CUSHION);
     }
 
     #[test]
