@@ -209,12 +209,23 @@ impl AudioWorker for OutputWorker {
         self.state.channels()
     }
 
-    fn set_worker_handle(&mut self, handle: tokio::task::JoinHandle<()>) {
+    fn set_worker_handle(&mut self, handle: std::thread::JoinHandle<()>) {
         self.state.set_worker_handle(handle);
     }
 
-    fn take_worker_handle(&mut self) -> Option<tokio::task::JoinHandle<()>> {
+    fn take_worker_handle(&mut self) -> Option<std::thread::JoinHandle<()>> {
         self.state.take_worker_handle()
+    }
+
+    fn running(&self) -> &Arc<std::sync::atomic::AtomicBool> {
+        self.state.running()
+    }
+
+    fn work_period(&self) -> std::time::Duration {
+        // One render callback's worth of audio. `target_sample_rate` is the
+        // hardware rate on this side, since an output worker's rates are swapped.
+        let frames = self.state.chunk_size() / self.state.channels().max(1) as usize;
+        std::time::Duration::from_secs_f64(frames as f64 / self.state.target_sample_rate() as f64)
     }
 
     fn applies_backpressure(&self) -> bool {
