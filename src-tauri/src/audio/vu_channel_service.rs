@@ -1,12 +1,25 @@
 use colored::*;
 use crossbeam_channel::{bounded, Receiver, Sender};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tauri::ipc::Channel;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
 use crate::audio::events::{MasterVULevelEvent, VUChannelData, VULevelEvent};
+
+/// The channel every VU service currently reports through.
+///
+/// Shared rather than cloned into each service because the frontend registers a
+/// new channel whenever the webview reloads. A service holding its own clone
+/// would keep writing to the channel the previous page left behind, and the
+/// meters would stay dead until every device was re-added. Swapping the value
+/// here re-points all running services at once.
+pub type SharedVUChannel = Arc<RwLock<Option<Channel<VUChannelData>>>>;
+
+pub fn new_shared_vu_channel() -> SharedVUChannel {
+    Arc::new(RwLock::new(None))
+}
 
 enum VUSample {
     Channel { id: u32, samples: Arc<[f32]> },
@@ -21,7 +34,7 @@ pub struct VUChannelService {
 
 impl VUChannelService {
     pub fn new(
-        channel: Channel<VUChannelData>,
+        channel: SharedVUChannel,
         sample_rate: u32,
         max_channels: usize,
         emit_rate_hz: u32,
@@ -81,7 +94,7 @@ impl VUChannelService {
 
     async fn processing_thread(
         sample_rx: Receiver<VUSample>,
-        channel: Channel<VUChannelData>,
+        channel: SharedVUChannel,
         sample_rate: u32,
         max_channels: usize,
         emit_rate_hz: u32,
@@ -191,8 +204,15 @@ impl VUChannelService {
                     pending_channel_events.push(VUChannelData::from_master(event));
                 }
 
-                for event in pending_channel_events.iter() {
-                    let _ = channel.send(event.clone());
+                // Read the channel per batch rather than holding one from
+                // construction, so a channel registered by a reloaded webview
+                // takes over without restarting this thread.
+                if let Ok(current) = channel.read() {
+                    if let Some(sink) = current.as_ref() {
+                        for event in pending_channel_events.iter() {
+                            let _ = sink.send(event.clone());
+                        }
+                    }
                 }
 
                 last_batch_send = std::time::Instant::now();
