@@ -35,6 +35,7 @@ export const usePatchOutputs = () => {
   const { mixerConfig, setMasterOutputDevice } = useMasterSectionData();
   const { outputDevices } = useAudioDevices();
   const restoreFailures = useMixerStore((state) => state.deviceRestoreFailures);
+  const changeOutputDevice = useMixerStore((state) => state.changeOutputDevice);
 
   const outputRoles = useStudioStore((state) => state.outputRoles);
   const outputGains = useStudioStore((state) => state.outputGains);
@@ -56,8 +57,12 @@ export const usePatchOutputs = () => {
         live: mixerConfig?.master_output_device_id === device.deviceIdentifier,
         role: outputRoles[device.deviceIdentifier] ?? 'MAIN',
         gainDb: outputGains[device.deviceIdentifier] ?? 0,
-        unavailableReason:
-          restoreFailure?.reason ?? (present ? null : 'Device is not currently available'),
+        // Presence wins over the restore record, which is only a snapshot of
+        // what failed at startup. A device plugged back in afterwards is
+        // available again, and reporting it offline hides the live destination.
+        unavailableReason: present
+          ? null
+          : (restoreFailure?.reason ?? 'Device is not currently available'),
       };
     });
   }, [
@@ -81,5 +86,51 @@ export const usePatchOutputs = () => {
     [setMasterOutputDevice]
   );
 
-  return { outputs, available, selectOutput, cycleOutputRole, setOutputGain };
+  /**
+   * Every device a destination could be pointed at.
+   *
+   * Devices patched into *other* destinations are left out, since the pipeline
+   * registers each output once, but the destination's own device stays so the
+   * select has something to show as selected.
+   */
+  const optionsFor = useCallback(
+    (deviceId: string) => {
+      const takenElsewhere = new Set(
+        outputs.filter((output) => output.id !== deviceId).map((output) => output.id)
+      );
+
+      const choices = outputDevices
+        .filter((device) => !takenElsewhere.has(device.id))
+        .map((device) => ({ value: device.id, label: device.name }));
+
+      // A destination pointed at a device that has gone away still needs an
+      // entry, or the select would show a different device as patched.
+      if (!choices.some((choice) => choice.value === deviceId)) {
+        const output = outputs.find((candidate) => candidate.id === deviceId);
+        choices.unshift({
+          value: deviceId,
+          label: `${output?.name ?? deviceId} (unavailable)`,
+        });
+      }
+
+      return choices;
+    },
+    [outputDevices, outputs]
+  );
+
+  const changeOutput = useCallback(
+    async (oldDeviceId: string, newDeviceId: string) =>
+      changeOutputDevice(asDeviceIdentifier(oldDeviceId), asDeviceIdentifier(newDeviceId)),
+    [changeOutputDevice]
+  );
+
+  return {
+    outputs,
+    available,
+    optionsFor,
+    selectOutput,
+    changeOutput,
+    cycleOutputRole,
+    setOutputGain,
+  };
 };

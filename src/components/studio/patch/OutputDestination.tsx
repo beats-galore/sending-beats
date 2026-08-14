@@ -1,4 +1,4 @@
-import { Group, Text } from '@mantine/core';
+import { Group, NativeSelect, Text } from '@mantine/core';
 
 import type { DestinationRole } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
@@ -36,7 +36,11 @@ const ROLE_COLOR: Record<DestinationRole, string> = {
 type OutputDestinationProps = {
   output: PatchOutput;
   top: number;
+  options: { value: string; label: string }[];
+  /** Why the last attempt to re-point this destination failed, if it did */
+  switchError: string | null;
   onSelect: (deviceId: string) => void;
+  onChangeDevice: (oldDeviceId: string, newDeviceId: string) => void;
   onCycleRole: (deviceId: string) => void;
   onGainChange: (deviceId: string, gainDb: number) => void;
 };
@@ -45,7 +49,10 @@ type OutputDestinationProps = {
 export const OutputDestination = ({
   output,
   top,
+  options,
+  switchError,
   onSelect,
+  onChangeDevice,
   onCycleRole,
   onGainChange,
 }: OutputDestinationProps) => {
@@ -80,16 +87,28 @@ export const OutputDestination = ({
               (output.live ? 'Receiving the master sum' : 'Send the master sum here')
             }
           />
-          <Text
-            ff="var(--mantine-font-family-headings)"
-            fw={600}
-            fz="md"
-            truncate
-            style={{ flex: 1, letterSpacing: layout.tracking.tight }}
-          >
-            {output.name}
-          </Text>
-          {unavailable ? (
+          <NativeSelect
+            value={output.id}
+            onChange={(event) => onChangeDevice(output.id, event.currentTarget.value)}
+            onClick={(event) => event.stopPropagation()}
+            data={options}
+            variant="unstyled"
+            style={{ flex: 1, minWidth: 0 }}
+            styles={{
+              input: {
+                fontFamily: 'var(--mantine-font-family-headings)',
+                fontWeight: 600,
+                fontSize: 'var(--mantine-font-size-md)',
+                letterSpacing: layout.tracking.tight,
+                color: unavailable ? color.hotText : color.text,
+              },
+            }}
+          />
+          {switchError ? (
+            <Pill tone="hot" title={switchError}>
+              FAILED
+            </Pill>
+          ) : unavailable ? (
             <Pill tone="hot" title={output.unavailableReason ?? undefined}>
               OFFLINE
             </Pill>

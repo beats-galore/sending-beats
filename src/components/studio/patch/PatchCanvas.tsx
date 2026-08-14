@@ -1,5 +1,5 @@
 import { Box } from '@mantine/core';
-import { useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { useChannelsData } from '../../../hooks';
 import { useMixerStore } from '../../../stores';
@@ -43,9 +43,38 @@ export const PatchCanvas = () => {
   const { channels } = useChannelsData();
   const addChannel = useMixerStore((state) => state.addChannel);
   const selectedChannelId = useStudioStore((state) => state.selectedChannelId);
-  const { outputs, available, selectOutput, cycleOutputRole, setOutputGain } = usePatchOutputs();
+  const {
+    outputs,
+    available,
+    optionsFor,
+    selectOutput,
+    changeOutput,
+    cycleOutputRole,
+    setOutputGain,
+  } = usePatchOutputs();
   const { isLive } = useStreamTransport();
   const tape = useTapeTransport();
+
+  // Kept per destination rather than in the store: a destination that refuses a
+  // device is a problem with that node, and routing it through the mixer's
+  // `error` would replace the whole patchbay with an error page.
+  const [outputErrors, setOutputErrors] = useState<Record<string, string>>({});
+
+  const handleChangeOutput = useCallback(
+    (oldDeviceId: string, newDeviceId: string) => {
+      void changeOutput(oldDeviceId, newDeviceId).then((failure) => {
+        setOutputErrors((previous) => {
+          const next = { ...previous };
+          delete next[oldDeviceId];
+          if (failure) {
+            next[oldDeviceId] = failure;
+          }
+          return next;
+        });
+      });
+    },
+    [changeOutput]
+  );
 
   const selectedId = selectedChannelId ?? (channels.length > 0 ? channels[0].id : null);
   const expanded = channels.map((channel) => channel.id === selectedId);
@@ -183,7 +212,10 @@ export const PatchCanvas = () => {
           key={output.id}
           output={output}
           top={outputTop(index)}
+          options={optionsFor(output.id)}
+          switchError={outputErrors[output.id] ?? null}
           onSelect={selectOutput}
+          onChangeDevice={handleChangeOutput}
           onCycleRole={cycleOutputRole}
           onGainChange={setOutputGain}
         />

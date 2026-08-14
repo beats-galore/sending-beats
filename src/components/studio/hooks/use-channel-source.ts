@@ -65,19 +65,22 @@ export const useChannelSource = (channelId: number) => {
     }
 
     const identifier = configuredDevice.deviceIdentifier;
-    const restoreFailure = restoreFailures.find(
-      (failure) => failure.deviceIdentifier === identifier
-    );
-    if (restoreFailure) {
-      return restoreFailure.reason;
-    }
-
     const isApp = identifier.startsWith('app-');
     const present = isApp
       ? applicationAudio.knownApps.some((app) => `app-${app.bundle_id}` === identifier)
       : inputDevices.some((device) => device.id === identifier);
 
-    return present ? null : 'Device is not currently available';
+    // Presence wins over the restore record, which is only a snapshot of what
+    // failed at startup — a device reconnected since then is available again.
+    if (present) {
+      return null;
+    }
+
+    const restoreFailure = restoreFailures.find(
+      (failure) => failure.deviceIdentifier === identifier
+    );
+
+    return restoreFailure?.reason ?? 'Device is not currently available';
   }, [configuredDevice, restoreFailures, inputDevices, applicationAudio.knownApps]);
 
   const setSource = useCallback(

@@ -34,6 +34,9 @@ pub enum MixingLayerCommand {
         producer: Arc<Mutex<rtrb::Producer<f32>>>,
         queue_tracker: AtomicQueueTracker,
     },
+    RemoveOutputProducer {
+        device_id: String,
+    },
 }
 
 /// Mixing layer that combines all processed input streams
@@ -198,6 +201,40 @@ impl MixingLayer {
         }
     }
 
+    /// Stop writing the mix to an output device.
+    ///
+    /// Must be called whenever an output worker goes away: the mixer only
+    /// produces once every registered producer can take a full block, so a
+    /// producer left behind by a stopped worker stalls the mix permanently.
+    pub fn remove_output_producer(&mut self, device_id: String) {
+        if self.worker_handle.is_some() {
+            let cmd = MixingLayerCommand::RemoveOutputProducer {
+                device_id: device_id.clone(),
+            };
+            if self.command_tx.send(cmd).is_err() {
+                warn!(
+                    "⚠️ {}: Failed to send remove output producer command for '{}'",
+                    "MIXING_LAYER".on_green().white(),
+                    device_id
+                );
+            } else {
+                info!(
+                    "🗑️ {}: Sent remove output producer command for device '{}'",
+                    "MIXING_LAYER".on_green().white(),
+                    device_id
+                );
+            }
+        } else {
+            self.output_rtrb_producers.remove(&device_id);
+            self.output_queue_trackers.remove(&device_id);
+            info!(
+                "🗑️ {}: Removed output producer for device '{}' (not yet started)",
+                "MIXING_LAYER".on_green().white(),
+                device_id
+            );
+        }
+    }
+
     /// Start the mixing processing thread
     pub fn start(
         &mut self,
@@ -293,6 +330,19 @@ impl MixingLayer {
                             output_queue_trackers.insert(device_id.clone(), queue_tracker);
                             info!(
                                 "🔊 MIXING_LAYER_WORKER: Added output producer for device '{}' (total: {})",
+                                device_id,
+                                output_rtrb_producers.len()
+                            );
+                        }
+                        MixingLayerCommand::RemoveOutputProducer { device_id } => {
+                            // Dropping this is what keeps the mixer alive. Production
+                            // waits until every producer has room for a full block, so
+                            // a producer whose worker has stopped never drains and
+                            // would hold the mix at a standstill forever.
+                            output_rtrb_producers.remove(&device_id);
+                            output_queue_trackers.remove(&device_id);
+                            info!(
+                                "🗑️ MIXING_LAYER_WORKER: Removed output producer for device '{}' (remaining: {})",
                                 device_id,
                                 output_rtrb_producers.len()
                             );

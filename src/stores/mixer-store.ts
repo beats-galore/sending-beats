@@ -20,6 +20,7 @@ import type {
 import type { ConfiguredAudioDevice } from '../types/db';
 import type { AudioMixerConfiguration } from '../types/db/audio-mixer-configurations.types';
 import type { Identifier } from '../types/util.types';
+import { describeError } from '../utils/describe-error';
 import { updateArrayItems } from '../utils/store-helpers';
 
 type MixerStore = {
@@ -60,6 +61,17 @@ type MixerStore = {
   updateChannel: (channelId: number, updates: ChannelUpdate) => Promise<void>;
   updateMasterGain: (gain: number) => Promise<void>;
   updateMasterOutputDevice: (deviceId: Identifier<ConfiguredAudioDevice>) => Promise<void>;
+  /**
+   * Re-point an existing destination at a different output device.
+   *
+   * Resolves to an error message when the switch fails, rather than setting
+   * `error` — a destination that cannot take the new device is a recoverable
+   * problem with one node, not a reason to replace the mixer with an error page.
+   */
+  changeOutputDevice: (
+    oldDeviceId: Identifier<ConfiguredAudioDevice>,
+    newDeviceId: Identifier<ConfiguredAudioDevice>
+  ) => Promise<string | null>;
 
   // Configuration Management Actions
   loadConfigurations: () => Promise<void>;
@@ -277,7 +289,7 @@ export const useMixerStore = create<MixerStore>()(
         }
 
         // Update backend first
-        const switchResult = await audioService.setOutputStream(deviceId);
+        const switchResult = await audioService.setOutputStream(null, deviceId);
 
         // Refetch active session to update configuredDevices list in UI
         const updatedSession = await invoke<CompleteConfigurationData | null>(
@@ -295,11 +307,66 @@ export const useMixerStore = create<MixerStore>()(
           activeSession: updatedSession,
           systemAudioWarning: switchResult.systemAudioDiverted ? null : switchResult.diversionError,
           systemAudioRestartRequired: switchResult.restartRequired,
+          // This device just connected, so the startup failure no longer describes it
+          deviceRestoreFailures: state.deviceRestoreFailures.filter(
+            (failure) => failure.deviceIdentifier !== deviceId
+          ),
         }));
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        set({ error: `Failed to set output device: ${errorMessage}` });
+        set({ error: `Failed to set output device: ${describeError(error)}` });
         throw error;
+      }
+    },
+
+    changeOutputDevice: async (
+      oldDeviceId: Identifier<ConfiguredAudioDevice>,
+      newDeviceId: Identifier<ConfiguredAudioDevice>
+    ) => {
+      if (oldDeviceId === newDeviceId) {
+        return null;
+      }
+
+      try {
+        const switchResult = await audioService.setOutputStream(oldDeviceId, newDeviceId);
+
+        const updatedSession = await invoke<CompleteConfigurationData | null>(
+          'get_active_session_configuration'
+        );
+
+        set((state) => ({
+          config:
+            state.config && state.config.master_output_device_id === oldDeviceId
+              ? { ...state.config, master_output_device_id: newDeviceId }
+              : state.config,
+          activeSession: updatedSession,
+          systemAudioWarning: switchResult.systemAudioDiverted ? null : switchResult.diversionError,
+          systemAudioRestartRequired: switchResult.restartRequired,
+          // Neither identifier describes a failed restore any more: the old device
+          // is gone, and the new one just connected.
+          deviceRestoreFailures: state.deviceRestoreFailures.filter(
+            (failure) =>
+              failure.deviceIdentifier !== oldDeviceId && failure.deviceIdentifier !== newDeviceId
+          ),
+        }));
+
+        return null;
+      } catch (error) {
+        // The old device is torn down before the new one is attached, so a
+        // failure here leaves the destination pointing at neither. Resync so the
+        // patchbay shows what the pipeline actually holds rather than a device
+        // that is no longer registered.
+        try {
+          const recoveredSession = await invoke<CompleteConfigurationData | null>(
+            'get_active_session_configuration'
+          );
+          set({ activeSession: recoveredSession });
+        } catch (resyncError) {
+          console.error('Failed to resync session after output switch failure:', resyncError);
+        }
+
+        // Deliberately not `error`: that blanks the whole mixer, and a
+        // destination refusing one device leaves the rest of the rig working.
+        return describeError(error);
       }
     },
 
@@ -647,7 +714,7 @@ export const useMixerStore = create<MixerStore>()(
               await audioService.switchInputStream(null, device.deviceIdentifier);
             } else {
               // Restore output device using setOutputStream
-              await audioService.setOutputStream(device.deviceIdentifier);
+              await audioService.setOutputStream(null, device.deviceIdentifier);
             }
 
             console.log(`✅ Successfully restored device: ${device.deviceIdentifier}`);
@@ -711,6 +778,10 @@ export const useMixerStore = create<MixerStore>()(
             ...state.activeSession,
             configuredDevices: updatedDevices,
           },
+          // This device just connected, so the startup failure no longer describes it
+          deviceRestoreFailures: state.deviceRestoreFailures.filter(
+            (failure) => failure.deviceIdentifier !== device.deviceIdentifier
+          ),
         };
       });
     },
