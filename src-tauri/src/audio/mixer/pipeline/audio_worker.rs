@@ -14,6 +14,7 @@ use colored::*;
 use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
 
+use crate::audio::mixer::latency_probe::WorkerLatencyGauges;
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::mixer::resampling::RubatoSRC;
 /// Shared state for audio workers
@@ -27,6 +28,7 @@ pub struct AudioWorkerState {
     pub queue_tracker: AtomicQueueTracker,
     pub rtrb_consumer: Arc<Mutex<rtrb::Consumer<f32>>>,
     pub rtrb_producer: Arc<Mutex<rtrb::Producer<f32>>>,
+    pub latency_gauges: WorkerLatencyGauges,
     pub worker_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -40,6 +42,7 @@ impl AudioWorkerState {
         rtrb_consumer: rtrb::Consumer<f32>,
         rtrb_producer: rtrb::Producer<f32>,
         queue_tracker: AtomicQueueTracker,
+        latency_gauges: WorkerLatencyGauges,
     ) -> Self {
         Self {
             device_id,
@@ -51,6 +54,7 @@ impl AudioWorkerState {
             queue_tracker,
             rtrb_consumer: Arc::new(Mutex::new(rtrb_consumer)),
             rtrb_producer: Arc::new(Mutex::new(rtrb_producer)),
+            latency_gauges,
             worker_handle: None,
         }
     }
@@ -90,6 +94,10 @@ impl AudioWorkerState {
 
     pub fn rtrb_producer(&self) -> &Arc<Mutex<rtrb::Producer<f32>>> {
         &self.rtrb_producer
+    }
+
+    pub fn latency_gauges(&self) -> &WorkerLatencyGauges {
+        &self.latency_gauges
     }
 
     pub fn worker_handle(&self) -> &Option<tokio::task::JoinHandle<()>> {
@@ -155,6 +163,15 @@ pub trait AudioWorker {
 
     /// Get RTRB producer (for writing samples)
     fn rtrb_producer(&self) -> &Arc<Mutex<rtrb::Producer<f32>>>;
+
+    /// Gauges this worker publishes its buffer occupancy to
+    fn latency_gauges(&self) -> &WorkerLatencyGauges;
+
+    /// Channel count of the audio arriving at this worker
+    fn inbound_channels(&self) -> u16;
+
+    /// Channel count of the audio this worker emits
+    fn outbound_channels(&self) -> u16;
 
     /// Set worker handle
     fn set_worker_handle(&mut self, handle: tokio::task::JoinHandle<()>);
@@ -316,11 +333,15 @@ pub trait AudioWorker {
         let chunk_size = self.chunk_size();
         let log_prefix = self.log_prefix().to_string();
         let applies_backpressure = self.applies_backpressure();
+        let inbound_channels = self.inbound_channels();
+        let outbound_channels = self.outbound_channels();
 
         // Clone shared resources for the worker thread
         let rtrb_consumer = self.rtrb_consumer().clone();
         let rtrb_producer = self.rtrb_producer().clone();
         let queue_tracker = self.queue_tracker().clone();
+        let latency_gauges = self.latency_gauges().clone();
+        let outbound_capacity = queue_tracker.capacity;
 
         let mut resampler = self.resampler_mut().take();
         let mut input_accumulator = Vec::with_capacity(96000);
@@ -354,12 +375,22 @@ pub trait AudioWorker {
                 // own queue never filled up.
                 // Locks are scoped so none is ever held across an await, which would
                 // make this future non-Send.
-                let output_room = {
-                    match rtrb_producer.try_lock() {
-                        Ok(producer) => producer.slots(),
-                        Err(_) => 0,
-                    }
-                };
+                // None when the producer was busy, which is not the same as having
+                // no room: publishing a reading from it would report a full queue
+                // and a latency spike that never happened.
+                let free_slots = rtrb_producer
+                    .try_lock()
+                    .ok()
+                    .map(|producer| producer.slots());
+                let output_room = free_slots.unwrap_or(0);
+
+                if let Some(free_slots) = free_slots {
+                    latency_gauges.outbound.set_samples(
+                        outbound_capacity.saturating_sub(free_slots),
+                        outbound_channels,
+                        initial_target_sample_rate,
+                    );
+                }
 
                 // Only the output path waits for room. Capture sources are drained
                 // unconditionally so their real-time callbacks never back up.
@@ -374,6 +405,20 @@ pub trait AudioWorker {
                 let consumer_locked = {
                     match rtrb_consumer.try_lock() {
                         Ok(mut consumer) => {
+                            // Published before draining: how much was waiting is the
+                            // delay the oldest sample in it experienced. Nothing is
+                            // published when the queue is empty, since that just means
+                            // this loop outpaced the hardware and the audio is still
+                            // in the capture buffer, which is accounted for separately.
+                            let pending = consumer.slots();
+                            if pending > 0 {
+                                latency_gauges.inbound.set_samples(
+                                    pending,
+                                    inbound_channels,
+                                    device_sample_rate,
+                                );
+                            }
+
                             let readable = if applies_backpressure {
                                 consumer.slots().min(output_room)
                             } else {
@@ -454,6 +499,12 @@ pub trait AudioWorker {
                         ) {
                             // Resample the accumulated samples
                             let resampled = active_resampler.convert(&accumulated_samples);
+
+                            // Group delay of the sinc filter, in frames of output
+                            latency_gauges.resampler.set_frames(
+                                active_resampler.output_delay() as usize,
+                                initial_target_sample_rate,
+                            );
 
                             // Apply dynamic rate adjustment
                             let _ = Self::adjust_dynamic_sample_rate(
@@ -548,6 +599,13 @@ pub trait AudioWorker {
                         );
                     }
                 }
+
+                // Whatever the chunking left behind waits here for the next batch
+                latency_gauges.accumulator.set_samples(
+                    input_accumulator.len(),
+                    inbound_channels,
+                    device_sample_rate,
+                );
 
                 // Record total samples written for this outer loop iteration (cadence tracking)
                 // This tracks the actual hardware delivery rate, not the chunked processing rate

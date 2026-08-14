@@ -13,7 +13,11 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
+use crate::audio::mixer::latency_probe::{self, LatencyProbe, LatencySnapshot};
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
+
+/// How often the pipeline logs its latency breakdown
+const LATENCY_REPORT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
 use super::{
     audio_worker::AudioWorker,
@@ -42,6 +46,10 @@ pub struct AudioPipeline {
     /// webview replaces the dead one for workers that are already running
     vu_channel: crate::audio::SharedVUChannel,
 
+    /// Where every stage publishes how much audio it is holding
+    latency_probe: Arc<LatencyProbe>,
+    latency_reporter: Option<tokio::task::JoinHandle<()>>,
+
     // State tracking
     is_running: bool,
     devices_registered: usize,
@@ -61,15 +69,19 @@ impl AudioPipeline {
             "AUDIO_PIPELINE".on_purple().blue()
         );
 
+        let latency_probe = LatencyProbe::new();
+
         Self {
             max_sample_rate: None,
             queues: PipelineQueues::new(),
             input_workers: HashMap::new(),
-            mixing_layer: MixingLayer::new(),
+            mixing_layer: MixingLayer::new(latency_probe.clone()),
             output_workers: HashMap::new(),
             #[cfg(target_os = "macos")]
             hardware_update_tx: None,
             vu_channel: crate::audio::new_shared_vu_channel(),
+            latency_probe,
+            latency_reporter: None,
             is_running: false,
             devices_registered: 0,
             any_channel_solo: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -88,14 +100,18 @@ impl AudioPipeline {
             "AUDIO_PIPELINE".on_purple().blue()
         );
 
+        let latency_probe = LatencyProbe::new();
+
         Self {
             max_sample_rate: None,
             queues: PipelineQueues::new(),
             input_workers: HashMap::new(),
-            mixing_layer: MixingLayer::new(),
+            mixing_layer: MixingLayer::new(latency_probe.clone()),
             output_workers: HashMap::new(),
             hardware_update_tx,
             vu_channel: crate::audio::new_shared_vu_channel(),
+            latency_probe,
+            latency_reporter: None,
             is_running: false,
             devices_registered: 0,
             any_channel_solo: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -292,6 +308,7 @@ impl AudioPipeline {
             initial_pan,
             initial_muted,
             initial_solo,
+            &self.latency_probe,
         );
 
         // Add worker to collection BEFORE recalculating (needed for sample rate detection)
@@ -395,6 +412,7 @@ impl AudioPipeline {
                     hardware_tx.clone(),
                     queue_tracker,
                     mixing_to_output_tracker,
+                    &self.latency_probe,
                 )
             } else {
                 tracing::info!(
@@ -412,6 +430,7 @@ impl AudioPipeline {
                     Some(hardware_producer),
                     queue_tracker,
                     mixing_to_output_tracker,
+                    &self.latency_probe,
                 )
             }
 
@@ -426,6 +445,7 @@ impl AudioPipeline {
                 Some(hardware_producer),
                 queue_tracker,
                 mixing_to_output_tracker,
+                &self.latency_probe,
             )
         } else {
             return Err(anyhow::anyhow!(
@@ -522,6 +542,11 @@ impl AudioPipeline {
             }
         }
 
+        self.latency_reporter = Some(latency_probe::spawn_reporter(
+            self.latency_probe.clone(),
+            LATENCY_REPORT_INTERVAL,
+        ));
+
         self.is_running = true;
 
         info!("✅ {}: Started complete pipeline ({} input workers, 1 mixing layer, {} output workers)",
@@ -575,6 +600,10 @@ impl AudioPipeline {
             }
         }
 
+        if let Some(reporter) = self.latency_reporter.take() {
+            reporter.abort();
+        }
+
         self.is_running = false;
 
         info!(
@@ -623,6 +652,16 @@ impl AudioPipeline {
         self.output_workers.keys().cloned().collect()
     }
 
+    /// Shared handle so stages outside the pipeline can publish their own delay
+    pub fn latency_probe(&self) -> Arc<LatencyProbe> {
+        self.latency_probe.clone()
+    }
+
+    /// Current per-stage latency across the whole pipeline
+    pub fn latency_snapshot(&self) -> LatencySnapshot {
+        self.latency_probe.snapshot()
+    }
+
     /// Remove an input device from the pipeline
     pub async fn remove_input_device(&mut self, device_id: &str) -> Result<()> {
         if !self.input_workers.contains_key(device_id) {
@@ -650,6 +689,8 @@ impl AudioPipeline {
         self.queues
             .remove_input_device(device_id.to_string())
             .map_err(|e| anyhow::anyhow!("Failed to remove input device from queues: {}", e))?;
+
+        self.latency_probe.remove_device(device_id);
 
         self.devices_registered = self.devices_registered.saturating_sub(1);
 
@@ -701,6 +742,7 @@ impl AudioPipeline {
             }
         }
 
+        self.latency_probe.remove_device(device_id);
         self.devices_registered = self.devices_registered.saturating_sub(1);
 
         // Recalculate target sample rate and update all workers

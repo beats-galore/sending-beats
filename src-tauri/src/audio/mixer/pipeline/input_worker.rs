@@ -14,6 +14,7 @@ use tracing::{error, info, warn};
 
 use super::audio_worker::{AudioWorker, AudioWorkerState};
 use crate::audio::effects::{CustomAudioEffectsChain, DefaultAudioEffectsChain};
+use crate::audio::mixer::latency_probe::{LatencyProbe, WorkerLatencyGauges};
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::mixer::resampling::RubatoSRC;
 use crate::audio::mixer::stream_management::virtual_mixer::VirtualMixer;
@@ -49,6 +50,7 @@ impl InputWorker {
         initial_pan: Option<f32>,
         initial_muted: Option<bool>,
         initial_solo: Option<bool>,
+        latency_probe: &LatencyProbe,
     ) -> Self {
         info!(
             "🎤 {}: Creating worker for device '{}' ({} Hz → {} Hz, {} channels, channel #{})",
@@ -108,6 +110,7 @@ impl InputWorker {
             rtrb_consumer,
             rtrb_producer,
             mixing_queue_tracker,
+            WorkerLatencyGauges::for_input(latency_probe, &device_id),
         );
 
         Self {
@@ -191,6 +194,24 @@ impl AudioWorker for InputWorker {
 
     fn rtrb_producer(&self) -> &Arc<Mutex<rtrb::Producer<f32>>> {
         self.state.rtrb_producer()
+    }
+
+    fn latency_gauges(&self) -> &WorkerLatencyGauges {
+        self.state.latency_gauges()
+    }
+
+    fn inbound_channels(&self) -> u16 {
+        self.state.channels()
+    }
+
+    fn outbound_channels(&self) -> u16 {
+        // Mono is widened to stereo before it reaches the mixer; anything else
+        // arrives with its channel count intact.
+        if self.state.channels() == 1 {
+            2
+        } else {
+            self.state.channels()
+        }
     }
 
     fn set_worker_handle(&mut self, handle: tokio::task::JoinHandle<()>) {

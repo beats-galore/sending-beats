@@ -4,7 +4,8 @@ use crate::types::{COMMON_SAMPLE_RATES_HZ, DEFAULT_SAMPLE_RATE};
 use anyhow::Result;
 use colored::*;
 use coreaudio_sys::{
-    kAudioDevicePropertyBufferFrameSize, kAudioDevicePropertyNominalSampleRate,
+    kAudioDevicePropertyBufferFrameSize, kAudioDevicePropertyLatency,
+    kAudioDevicePropertyNominalSampleRate, kAudioDevicePropertySafetyOffset,
     kAudioDevicePropertyStreamFormat, kAudioFormatFlagIsFloat, kAudioFormatFlagIsPacked,
     kAudioFormatLinearPCM, kAudioObjectPropertyElementMaster, kAudioObjectPropertyScopeInput,
     kAudioObjectPropertyScopeOutput, kAudioOutputUnitProperty_CurrentDevice,
@@ -104,6 +105,65 @@ pub fn get_device_buffer_frame_size(device_id: AudioDeviceID, is_output: bool) -
             status
         ))
     }
+}
+
+/// Read a frame-count property off a CoreAudio device, defaulting to zero
+///
+/// The latency properties are advisory: plenty of devices do not publish them,
+/// and a device that does not is reporting no additional delay rather than an
+/// error worth propagating.
+fn get_device_frame_property(device_id: AudioDeviceID, selector: u32, is_output: bool) -> u32 {
+    let scope = if is_output {
+        kAudioObjectPropertyScopeOutput
+    } else {
+        kAudioObjectPropertyScopeInput
+    };
+
+    let mut frames: u32 = 0;
+    let mut size = std::mem::size_of::<u32>() as u32;
+
+    let status = unsafe {
+        AudioObjectGetPropertyData(
+            device_id,
+            &AudioObjectPropertyAddress {
+                mSelector: selector,
+                mScope: scope,
+                mElement: kAudioObjectPropertyElementMaster,
+            },
+            0,
+            std::ptr::null(),
+            &mut size,
+            &mut frames as *mut _ as *mut c_void,
+        )
+    };
+
+    if status == 0 {
+        frames
+    } else {
+        0
+    }
+}
+
+/// Delay a device adds beyond the buffer the pipeline fills, in frames
+///
+/// This is the device's own presentation latency plus the safety offset CoreAudio
+/// requires between the callback and the hardware. Stream-level latency is not
+/// included, so this is a lower bound on what the hardware costs.
+pub fn get_device_extra_latency_frames(device_id: AudioDeviceID, is_output: bool) -> u32 {
+    let latency = get_device_frame_property(device_id, kAudioDevicePropertyLatency, is_output);
+    let safety_offset =
+        get_device_frame_property(device_id, kAudioDevicePropertySafetyOffset, is_output);
+
+    info!(
+        "🔍 {}: Device {} reports {} frames latency + {} frames safety offset ({} scope)",
+        "HARDWARE_LATENCY_QUERY".cyan(),
+        device_id,
+        latency,
+        safety_offset,
+        if is_output { "output" } else { "input" }
+    );
+
+    latency + safety_offset
 }
 
 /// Set the buffer frame size for a CoreAudio device (enables dynamic chunk sizing)

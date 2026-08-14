@@ -13,6 +13,7 @@ use tracing::{error, info, trace, warn};
 
 use super::audio_worker::{AudioWorker, AudioWorkerState};
 use super::queue_types::MixedAudioSamples;
+use crate::audio::mixer::latency_probe::{LatencyProbe, WorkerLatencyGauges};
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::mixer::resampling::RubatoSRC;
 use colored::*;
@@ -41,6 +42,7 @@ impl OutputWorker {
         hardware_rtrb_producer: Option<rtrb::Producer<f32>>,
         hardware_queue_tracker: AtomicQueueTracker,
         mixing_queue_tracker: AtomicQueueTracker,
+        latency_probe: &LatencyProbe,
     ) -> Self {
         let has_hardware_output = hardware_rtrb_producer.is_some();
         info!(
@@ -71,6 +73,7 @@ impl OutputWorker {
             rtrb_consumer,
             rtrb_producer_raw,
             hardware_queue_tracker,
+            WorkerLatencyGauges::for_output(latency_probe, &device_id),
         );
 
         Self {
@@ -94,6 +97,7 @@ impl OutputWorker {
         hardware_update_tx: mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>,
         hardware_queue_tracker: AtomicQueueTracker,
         mixing_queue_tracker: AtomicQueueTracker,
+        latency_probe: &LatencyProbe,
     ) -> Self {
         let has_hardware_output = hardware_rtrb_producer.is_some();
         info!(
@@ -120,6 +124,7 @@ impl OutputWorker {
             rtrb_consumer,
             rtrb_producer_raw,
             hardware_queue_tracker,
+            WorkerLatencyGauges::for_output(latency_probe, &device_id),
         );
 
         Self {
@@ -189,6 +194,19 @@ impl AudioWorker for OutputWorker {
 
     fn rtrb_producer(&self) -> &Arc<Mutex<rtrb::Producer<f32>>> {
         self.state.rtrb_producer()
+    }
+
+    fn latency_gauges(&self) -> &WorkerLatencyGauges {
+        self.state.latency_gauges()
+    }
+
+    fn inbound_channels(&self) -> u16 {
+        // The mix is always stereo
+        2
+    }
+
+    fn outbound_channels(&self) -> u16 {
+        self.state.channels()
     }
 
     fn set_worker_handle(&mut self, handle: tokio::task::JoinHandle<()>) {
