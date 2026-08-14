@@ -355,7 +355,8 @@ always check first:
 
 ```bash
 # Vite dev server on the port tauri.conf.json points devUrl at
-curl -s http://127.0.0.1:1420 > /dev/null 2>&1 || pnpm dev &
+# NOTE: Vite binds IPv6 only, so check localhost rather than 127.0.0.1
+curl -s http://localhost:1420 > /dev/null 2>&1 || pnpm dev &
 
 # WebDriver bridge
 curl -s http://127.0.0.1:4444/status > /dev/null 2>&1 || tauri-wd --port 4444 &
@@ -363,6 +364,16 @@ curl -s http://127.0.0.1:4444/status > /dev/null 2>&1 || tauri-wd --port 4444 &
 
 The binary the MCP server launches is `src-tauri/target/debug/SendinBeats`, which
 must have been built at least once (`pnpm tauri:dev` does this).
+
+**`capture_screenshot` does not render native form controls faithfully.** A
+`<select>` is painted from the `selected` attribute on its options, but React
+controlled selects only ever set the `value` property, so every patched input
+appears as the first option ("No input") in a screenshot while the DOM correctly
+reports the real selection. This is a capture artifact, not an application bug —
+it reproduces on a hand-built `<select>` with no React involved. Verify select
+state by reading `selectedIndex` / `selectedText` through `execute_script`, and
+ask the user what they actually see before concluding anything about a control's
+appearance.
 
 ### Technical Implementation Notes
 
