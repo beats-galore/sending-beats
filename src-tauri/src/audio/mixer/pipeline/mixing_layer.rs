@@ -32,6 +32,14 @@ const DEFAULT_MIX_BLOCK_SAMPLES: usize = 1024;
 /// ScreenCaptureKit tap arrives 960 frames at a time whatever the mixer does.
 const MAX_BACKLOG_SAMPLES: usize = 8192;
 
+/// Audio a device is watched over before a level it never drained below is shed
+///
+/// ~2 seconds at 48kHz, which has to comfortably exceed how far apart a source's
+/// deliveries can be. ScreenCaptureKit batches several callbacks together and
+/// then goes quiet, and a window shorter than one of those gaps would read the
+/// quiet part as a standing backlog and start cutting into bursts.
+const BACKLOG_WINDOW_SAMPLES: usize = 192_000;
+
 /// Command for dynamically managing running MixingLayer
 pub enum MixingLayerCommand {
     AddInputStream {
@@ -321,6 +329,7 @@ impl MixingLayer {
             let mut block_accumulator = BlockAccumulator::new(
                 mix_block_samples.load(Ordering::Relaxed),
                 jitter_cushion_samples(current_sample_rate, 2),
+                BACKLOG_WINDOW_SAMPLES,
                 MAX_BACKLOG_SAMPLES,
             );
 
