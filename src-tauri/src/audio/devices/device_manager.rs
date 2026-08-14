@@ -109,24 +109,24 @@ impl AudioDeviceManager {
         );
 
         // Check if this is an application audio device
-        if device_id.starts_with("app-") {
+        #[cfg(target_os = "macos")]
+        if let Some(source_identifier) = device_id.strip_prefix("app-") {
             info!("📺 Detected application audio device: {}", device_id);
 
-            // Extract PID from device_id (format: "app-{pid}")
-            let pid_str = device_id.strip_prefix("app-").ok_or_else(|| {
-                anyhow::anyhow!("Invalid application device ID format: {}", device_id)
-            })?;
-            let pid: u32 = pid_str.parse().map_err(|e| {
-                anyhow::anyhow!("Failed to parse PID from device_id {}: {}", device_id, e)
-            })?;
+            let app_info =
+                crate::audio::screencapture::resolve_application_source(source_identifier)?;
 
-            // For now, use placeholder values - these will be set when the stream is created
+            info!(
+                "📺 Resolved application source '{}' to {} (PID {})",
+                source_identifier, app_info.application_name, app_info.pid
+            );
+
             return Ok(AudioDeviceHandle::ApplicationAudio(
                 crate::audio::types::ApplicationAudioDevice {
-                    pid,
-                    name: device_id.to_string(), // Temporary, will be updated
-                    sample_rate: 48000,          // Default, will be detected by ScreenCaptureKit
-                    channels: 2,                 // Default stereo
+                    pid: app_info.pid as u32,
+                    name: app_info.application_name,
+                    sample_rate: 48000, // Detected by ScreenCaptureKit when the stream starts
+                    channels: 2,        // Default stereo
                 },
             ));
         }

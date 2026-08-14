@@ -27,26 +27,33 @@ export const useChannelSource = (channelId: number) => {
   const options = useMemo(() => {
     const hardware = inputDevices.map((device) => ({ value: device.id, label: device.name }));
 
-    // A device that has gone away still needs an entry, or the select would
-    // silently show the wrong source as patched.
-    if (configuredDevice && !configuredDevice.deviceIdentifier.startsWith('app-')) {
-      const present = inputDevices.some(
-        (device) => device.id === configuredDevice.deviceIdentifier
+    // Keyed by bundle identifier, not PID: a PID is only valid for one launch,
+    // so a source saved against it can never be restored on the next startup.
+    const applications = applicationAudio.knownApps
+      .filter((app) => app.bundle_id)
+      .map((app) => ({
+        value: `app-${app.bundle_id}`,
+        label: `App: ${app.name}`,
+      }));
+
+    const available = [...hardware, ...applications];
+
+    // A source that has gone away — unplugged device, or an application that is
+    // not running — still needs an entry, or the select would silently show the
+    // wrong source as patched.
+    if (configuredDevice) {
+      const present = available.some(
+        (option) => option.value === configuredDevice.deviceIdentifier
       );
       if (!present) {
-        hardware.unshift({
+        available.unshift({
           value: configuredDevice.deviceIdentifier,
           label: `${configuredDevice.deviceName ?? configuredDevice.deviceIdentifier} (unavailable)`,
         });
       }
     }
 
-    const applications = applicationAudio.knownApps.map((app) => ({
-      value: `app-${app.pid}`,
-      label: `App: ${app.name}`,
-    }));
-
-    return [...hardware, ...applications];
+    return available;
   }, [inputDevices, applicationAudio.knownApps, configuredDevice]);
 
   const setSource = useCallback(
