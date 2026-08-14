@@ -214,12 +214,22 @@ impl AudioWorker for InputWorker {
         }
     }
 
-    fn set_worker_handle(&mut self, handle: tokio::task::JoinHandle<()>) {
+    fn set_worker_handle(&mut self, handle: std::thread::JoinHandle<()>) {
         self.state.set_worker_handle(handle);
     }
 
-    fn take_worker_handle(&mut self) -> Option<tokio::task::JoinHandle<()>> {
+    fn take_worker_handle(&mut self) -> Option<std::thread::JoinHandle<()>> {
         self.state.take_worker_handle()
+    }
+
+    fn running(&self) -> &Arc<std::sync::atomic::AtomicBool> {
+        self.state.running()
+    }
+
+    fn work_period(&self) -> std::time::Duration {
+        // One capture callback's worth of audio, at the device's own rate
+        let frames = self.state.chunk_size() / self.state.channels().max(1) as usize;
+        std::time::Duration::from_secs_f64(frames as f64 / self.state.device_sample_rate() as f64)
     }
 
     fn log_prefix(&self) -> &str {

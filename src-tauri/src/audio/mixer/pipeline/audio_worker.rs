@@ -15,9 +15,12 @@ use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
 
 use super::pacing::jitter_cushion_samples;
+use super::realtime_thread;
 use crate::audio::mixer::latency_probe::WorkerLatencyGauges;
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::mixer::resampling::RubatoSRC;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 /// How much audio to keep queued downstream of this worker
 ///
@@ -45,7 +48,9 @@ pub struct AudioWorkerState {
     pub rtrb_consumer: Arc<Mutex<rtrb::Consumer<f32>>>,
     pub rtrb_producer: Arc<Mutex<rtrb::Producer<f32>>>,
     pub latency_gauges: WorkerLatencyGauges,
-    pub worker_handle: Option<tokio::task::JoinHandle<()>>,
+    pub worker_handle: Option<std::thread::JoinHandle<()>>,
+    /// Cleared to ask the worker thread to finish its current pass and return
+    pub running: Arc<AtomicBool>,
 }
 
 impl AudioWorkerState {
@@ -72,6 +77,7 @@ impl AudioWorkerState {
             rtrb_producer: Arc::new(Mutex::new(rtrb_producer)),
             latency_gauges,
             worker_handle: None,
+            running: Arc::new(AtomicBool::new(true)),
         }
     }
 
@@ -116,7 +122,11 @@ impl AudioWorkerState {
         &self.latency_gauges
     }
 
-    pub fn worker_handle(&self) -> &Option<tokio::task::JoinHandle<()>> {
+    pub fn running(&self) -> &Arc<AtomicBool> {
+        &self.running
+    }
+
+    pub fn worker_handle(&self) -> &Option<std::thread::JoinHandle<()>> {
         &self.worker_handle
     }
 
@@ -133,11 +143,11 @@ impl AudioWorkerState {
         self.resampler = resampler;
     }
 
-    pub fn set_worker_handle(&mut self, handle: tokio::task::JoinHandle<()>) {
+    pub fn set_worker_handle(&mut self, handle: std::thread::JoinHandle<()>) {
         self.worker_handle = Some(handle);
     }
 
-    pub fn take_worker_handle(&mut self) -> Option<tokio::task::JoinHandle<()>> {
+    pub fn take_worker_handle(&mut self) -> Option<std::thread::JoinHandle<()>> {
         self.worker_handle.take()
     }
 }
@@ -190,10 +200,19 @@ pub trait AudioWorker {
     fn outbound_channels(&self) -> u16;
 
     /// Set worker handle
-    fn set_worker_handle(&mut self, handle: tokio::task::JoinHandle<()>);
+    fn set_worker_handle(&mut self, handle: std::thread::JoinHandle<()>);
 
     /// Take worker handle
-    fn take_worker_handle(&mut self) -> Option<tokio::task::JoinHandle<()>>;
+    fn take_worker_handle(&mut self) -> Option<std::thread::JoinHandle<()>>;
+
+    /// Flag the worker thread watches to know when to stop
+    fn running(&self) -> &Arc<AtomicBool>;
+
+    /// How often a chunk of this worker's work has to happen
+    ///
+    /// One hardware buffer's worth of time, which is the deadline the thread is
+    /// scheduled against.
+    fn work_period(&self) -> Duration;
 
     /// Get log prefix for this worker type (e.g., "INPUT_WORKER", "OUTPUT_WORKER")
     fn log_prefix(&self) -> &str;
@@ -363,6 +382,9 @@ pub trait AudioWorker {
 
         let mut resampler = self.resampler_mut().take();
         let mut input_accumulator = Vec::with_capacity(96000);
+        let running = self.running().clone();
+        let work_period = self.work_period();
+        let thread_name = format!("{}-{}", log_prefix.to_lowercase(), device_id);
 
         info!(
             "🚀 {}: Starting processing thread for device '{}'",
@@ -370,8 +392,7 @@ pub trait AudioWorker {
             device_id
         );
 
-        // Spawn dedicated worker thread
-        let worker_handle = tokio::spawn(async move {
+        let worker_handle = realtime_thread::spawn(&thread_name, work_period, move || {
             let mut samples_processed = 0u64;
             let mut samples_buffer = Vec::with_capacity(96000);
 
@@ -381,12 +402,12 @@ pub trait AudioWorker {
                 device_id
             );
 
-            // Poll interval used whenever there is nothing to do. The loop is a
-            // spawned task with no other await point, so it must yield explicitly
-            // or it pins a runtime thread.
-            const IDLE_POLL: std::time::Duration = std::time::Duration::from_micros(250);
+            // Checked against the deadline this thread was scheduled to, so it
+            // wakes several times per period without pretending to run far more
+            // often than the policy it was granted describes.
+            let idle_poll = (work_period / 4).max(Duration::from_micros(100));
 
-            loop {
+            while running.load(Ordering::Relaxed) {
                 // **BACKPRESSURE**: never pull more input than the downstream queue
                 // can accept. Draining upstream and discarding the surplus here is
                 // what let the mixing layer free-run at twice real time, since its
@@ -433,7 +454,7 @@ pub trait AudioWorker {
                         );
                     }
 
-                    tokio::time::sleep(IDLE_POLL).await;
+                    std::thread::sleep(idle_poll);
                     continue;
                 }
 
@@ -480,12 +501,12 @@ pub trait AudioWorker {
                         "⚠️ {}[{}]: Failed to lock RTRB consumer",
                         log_prefix, device_id
                     );
-                    tokio::time::sleep(IDLE_POLL).await;
+                    std::thread::sleep(idle_poll);
                     continue;
                 }
 
                 if samples_buffer.is_empty() {
-                    tokio::time::sleep(IDLE_POLL).await;
+                    std::thread::sleep(idle_poll);
                     continue;
                 }
 
@@ -769,20 +790,23 @@ pub trait AudioWorker {
     }
 
     /// Stop the worker
+    /// Ask the worker thread to finish and wait for it
+    ///
+    /// An OS thread cannot be cancelled from outside the way a task could, so it
+    /// is asked to stop and joined. It only ever sleeps for a fraction of its
+    /// period, so it notices promptly.
     async fn stop(&mut self) -> Result<()> {
-        if let Some(handle) = self.take_worker_handle() {
-            handle.abort();
+        self.running().store(false, Ordering::Relaxed);
 
-            match tokio::time::timeout(std::time::Duration::from_millis(100), handle).await {
-                Ok(_) => info!(
-                    "✅ {}: '{}' shut down gracefully",
-                    self.log_prefix(),
-                    self.device_id()
-                ),
+        if let Some(handle) = self.take_worker_handle() {
+            let log_prefix = self.log_prefix().to_string();
+            let device_id = self.device_id().to_string();
+
+            match handle.join() {
+                Ok(()) => info!("✅ {}: '{}' shut down gracefully", log_prefix, device_id),
                 Err(_) => warn!(
-                    "⚠️ {}: '{}' force-terminated after timeout",
-                    self.log_prefix(),
-                    self.device_id()
+                    "⚠️ {}: '{}' panicked before shutting down",
+                    log_prefix, device_id
                 ),
             }
         }
