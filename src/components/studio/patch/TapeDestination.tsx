@@ -8,12 +8,19 @@ import { useTapeTransport } from '../hooks/use-tape-transport';
 import { NodeCard } from '../primitives/NodeCard';
 import { PortDot } from '../primitives/PortDot';
 import { StatusDot } from '../primitives/StatusDot';
+import { tapeHeight } from './patch-geometry';
+import { TapeInspector } from './TapeInspector';
 
 const { destination } = layout;
 
-/** The recorder, as seen from the patchbay. Opens the TAPE view. */
-export const TapeDestination = () => {
-  const setView = useStudioStore((state) => state.setView);
+type TapeDestinationProps = {
+  top: number;
+  focused: boolean;
+};
+
+/** The recorder, as seen from the patchbay. Opens in place to show its output settings. */
+export const TapeDestination = ({ top, focused }: TapeDestinationProps) => {
+  const select = useStudioStore((state) => state.select);
   const tape = useTapeTransport();
 
   const fileName = tape.filePath?.split('/').pop();
@@ -22,11 +29,13 @@ export const TapeDestination = () => {
     <NodeCard
       position={{
         left: destination.x,
-        top: destination.tapeTop,
+        top,
         width: destination.width,
-        height: destination.tapeHeight,
+        height: tapeHeight(focused ? 'tape' : null),
       }}
-      onClick={() => setView('tape')}
+      selected={focused}
+      borderColor={focused ? color.acc : color.line}
+      onClick={() => select({ kind: 'tape' })}
       ports={<PortDot tone={tape.isRecording ? 'hot' : 'dead'} side="left" top={63} />}
       header={
         <>
@@ -44,9 +53,9 @@ export const TapeDestination = () => {
           </Text>
         </>
       }
-      bodyStyle={{ padding: 12 }}
+      bodyStyle={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 12 }}
     >
-      <Group gap="xl" align="center" wrap="nowrap" h="100%">
+      <Group gap="xl" align="center" wrap="nowrap" h={focused ? undefined : '100%'}>
         <Box
           onClick={(event) => {
             event.stopPropagation();
@@ -73,6 +82,8 @@ export const TapeDestination = () => {
           </Text>
         </Stack>
       </Group>
+
+      {focused && <TapeInspector tape={tape} />}
     </NodeCard>
   );
 };

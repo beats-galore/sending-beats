@@ -61,12 +61,29 @@ export const busOutPort = (index: number, count: number) => ({
   y: bus.top + bus.outPortOffset + index * portStep(count),
 });
 
-export const outputTop = (index: number): number =>
-  destination.outputTop + index * destination.outputStep;
+/**
+ * Which destination card is opened, if any.
+ *
+ * The right column flows the way the source column does: a card that opens
+ * pushes everything below it down rather than overlapping it.
+ */
+export type DestinationFocus = 'cast' | 'tape' | null;
+
+export const castHeight = (focus: DestinationFocus): number =>
+  focus === 'cast' ? destination.castHeightExpanded : destination.castHeight;
+
+export const tapeHeight = (focus: DestinationFocus): number =>
+  focus === 'tape' ? destination.tapeHeightExpanded : destination.tapeHeight;
+
+export const tapeTop = (focus: DestinationFocus): number =>
+  destination.top + castHeight(focus) + destination.gap;
+
+export const outputTop = (index: number, focus: DestinationFocus): number =>
+  tapeTop(focus) + tapeHeight(focus) + destination.gap + index * destination.outputStep;
 
 /** Top edge of the first extra destination, below the hardware outputs. */
-export const extraTop = (outputCount: number): number =>
-  outputTop(outputCount) + destination.extraOffset;
+export const extraTop = (outputCount: number, focus: DestinationFocus): number =>
+  outputTop(outputCount, focus) + destination.extraOffset;
 
 /**
  * A cable between two ports: horizontal at both ends, curving in the middle, so
@@ -79,13 +96,14 @@ export const cablePath = (from: { x: number; y: number }, to: { x: number; y: nu
 /** Overall canvas height — tall enough for whichever column runs longest. */
 export const canvasHeight = (
   expansion: ChannelExpansion[],
+  focus: DestinationFocus,
   outputCount: number,
   extraCount: number,
   pickerOpen: boolean
 ): number => {
   const sourceColumn = source.top + sourceStackHeight(expansion) + canvas.bottomPadding;
   const destinationColumn =
-    extraTop(outputCount) +
+    extraTop(outputCount, focus) +
     extraCount * destination.extraStep +
     (pickerOpen ? destination.pickerHeight : destination.addHeight) +
     28;

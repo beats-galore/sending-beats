@@ -72,11 +72,16 @@ export const layout = {
   destination: {
     x: 1060,
     width: 344,
-    castTop: 60,
+    /** Top of the column. Every card below flows from the one above it. */
+    top: 60,
+    /** Vertical gap between the cast, tape and output groups. */
+    gap: 24,
     castHeight: 180,
-    tapeTop: 264,
+    /** Focused, with the transmitter's settings showing. */
+    castHeightExpanded: 453,
     tapeHeight: 140,
-    outputTop: 428,
+    /** Focused, with the take's output settings showing. */
+    tapeHeightExpanded: 385,
     outputStep: 96,
     outputHeight: 84,
     /** Gap between the last hardware output and the first extra destination. */

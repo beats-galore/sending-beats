@@ -3,9 +3,9 @@ import { useCallback, useMemo, useState } from 'react';
 
 import { useChannelsData } from '../../../hooks';
 import { useMixerStore } from '../../../stores';
-import { useStudioStore } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
+import { useFocusedNode } from '../hooks/use-focused-node';
 import { usePatchOutputs } from '../hooks/use-patch-outputs';
 import { useStreamTransport } from '../hooks/use-stream-transport';
 import { useTapeTransport } from '../hooks/use-tape-transport';
@@ -29,8 +29,9 @@ import {
   extraTop,
   outputTop,
   sourceStackHeight,
+  tapeTop,
 } from './patch-geometry';
-import type { ChannelExpansion } from './patch-geometry';
+import type { ChannelExpansion, DestinationFocus } from './patch-geometry';
 import { TapeDestination } from './TapeDestination';
 
 const { source, bus, destination, canvas } = layout;
@@ -43,7 +44,6 @@ const OUTPUT_PORT_OFFSET = 24;
 export const PatchCanvas = () => {
   const { channels } = useChannelsData();
   const addChannel = useMixerStore((state) => state.addChannel);
-  const selectedChannelId = useStudioStore((state) => state.selectedChannelId);
   const {
     outputs,
     available,
@@ -77,13 +77,17 @@ export const PatchCanvas = () => {
     [changeOutput]
   );
 
-  const selectedId = selectedChannelId ?? (channels.length > 0 ? channels[0].id : null);
+  const focused = useFocusedNode();
+  const selectedId = focused?.kind === 'channel' ? focused.channelId : null;
+  const destinationFocus: DestinationFocus =
+    focused?.kind === 'cast' || focused?.kind === 'tape' ? focused.kind : null;
+
   const expansion = channels.map<ChannelExpansion>((channel) =>
     channel.id !== selectedId ? 'collapsed' : channel.effects_enabled ? 'effects' : 'inspector'
   );
 
   const destinationCount = 2 + outputs.length;
-  const height = canvasHeight(expansion, outputs.length, 0, false);
+  const height = canvasHeight(expansion, destinationFocus, outputs.length, 0, false);
 
   const cables = useMemo<Cable[]>(() => {
     const sourceCables: Cable[] = channels.map((channel, index) => ({
@@ -97,7 +101,7 @@ export const PatchCanvas = () => {
       id: 'cast',
       path: cablePath(busOutPort(0, destinationCount), {
         x: destination.x,
-        y: destination.castTop + CAST_PORT_OFFSET,
+        y: destination.top + CAST_PORT_OFFSET,
       }),
       tone: 'hot',
       active: isLive,
@@ -107,7 +111,7 @@ export const PatchCanvas = () => {
       id: 'tape',
       path: cablePath(busOutPort(1, destinationCount), {
         x: destination.x,
-        y: destination.tapeTop + TAPE_PORT_OFFSET,
+        y: tapeTop(destinationFocus) + TAPE_PORT_OFFSET,
       }),
       tone: 'hot',
       active: tape.isRecording,
@@ -117,14 +121,22 @@ export const PatchCanvas = () => {
       id: `out-${output.id}`,
       path: cablePath(busOutPort(2 + index, destinationCount), {
         x: destination.x,
-        y: outputTop(index) + OUTPUT_PORT_OFFSET,
+        y: outputTop(index, destinationFocus) + OUTPUT_PORT_OFFSET,
       }),
       tone: output.role === 'CUE' ? 'warn' : 'accent',
       active: output.live,
     }));
 
     return [...sourceCables, castCable, tapeCable, ...outputCables];
-  }, [channels, expansion, destinationCount, isLive, tape.isRecording, outputs]);
+  }, [
+    channels,
+    expansion,
+    destinationFocus,
+    destinationCount,
+    isLive,
+    tape.isRecording,
+    outputs,
+  ]);
 
   return (
     <Box
@@ -207,14 +219,14 @@ export const PatchCanvas = () => {
         }
       />
 
-      <CastDestination />
-      <TapeDestination />
+      <CastDestination focused={destinationFocus === 'cast'} />
+      <TapeDestination top={tapeTop(destinationFocus)} focused={destinationFocus === 'tape'} />
 
       {outputs.map((output, index) => (
         <OutputDestination
           key={output.id}
           output={output}
-          top={outputTop(index)}
+          top={outputTop(index, destinationFocus)}
           options={optionsFor(output.id)}
           switchError={outputErrors[output.id] ?? null}
           onSelect={selectOutput}
@@ -224,7 +236,11 @@ export const PatchCanvas = () => {
         />
       ))}
 
-      <AddDestination top={extraTop(outputs.length)} available={available} onPick={selectOutput} />
+      <AddDestination
+        top={extraTop(outputs.length, destinationFocus)}
+        available={available}
+        onPick={selectOutput}
+      />
     </Box>
   );
 };

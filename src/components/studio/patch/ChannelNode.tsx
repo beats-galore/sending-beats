@@ -30,7 +30,7 @@ type ChannelNodeProps = {
 
 /** One source on the patch canvas: what it is, how loud, and how it is processed. */
 export const ChannelNode = ({ channel, index, top, expansion }: ChannelNodeProps) => {
-  const selectChannel = useStudioStore((state) => state.selectChannel);
+  const select = useStudioStore((state) => state.select);
   const patch = usePatchChannel(channel);
   const source = useChannelSource(channel.id);
   const expanded = expansion !== 'collapsed';
@@ -56,7 +56,7 @@ export const ChannelNode = ({ channel, index, top, expansion }: ChannelNodeProps
       }}
       selected={expanded}
       borderColor={expanded ? color.acc : color.line}
-      onClick={() => selectChannel(channel.id)}
+      onClick={() => select({ kind: 'channel', channelId: channel.id })}
       ports={<PortDot tone={tone} side="right" top={layout.source.portOffset} />}
       header={
         <>

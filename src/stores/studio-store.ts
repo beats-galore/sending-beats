@@ -12,6 +12,17 @@ export type StudioView = (typeof StudioView)[number];
 export const DestinationRole = ['MAIN', 'CUE', 'SEND'] as const;
 export type DestinationRole = (typeof DestinationRole)[number];
 
+/**
+ * The node the patchbay has focused, which opens in place to reveal its
+ * details. Only one node is focused at a time, so this names which kind it is
+ * rather than keeping a selection per column.
+ */
+export type StudioSelection =
+  | { kind: 'channel'; channelId: number }
+  | { kind: 'cast' }
+  | { kind: 'tape' }
+  | { kind: 'output'; deviceId: string };
+
 export type StreamSettings = {
   host: string;
   port: number;
@@ -40,8 +51,8 @@ type StudioStore = {
   view: StudioView;
   setView: (view: StudioView) => void;
 
-  selectedChannelId: number | null;
-  selectChannel: (channelId: number) => void;
+  selection: StudioSelection | null;
+  select: (selection: StudioSelection) => void;
 
   drawerOpen: boolean;
   toggleDrawer: () => void;
@@ -101,8 +112,8 @@ export const useStudioStore = create<StudioStore>()(
         view: 'patch',
         setView: (view) => set({ view }),
 
-        selectedChannelId: null,
-        selectChannel: (selectedChannelId) => set({ selectedChannelId }),
+        selection: null,
+        select: (selection) => set({ selection }),
 
         drawerOpen: true,
         toggleDrawer: () => set((state) => ({ drawerOpen: !state.drawerOpen })),

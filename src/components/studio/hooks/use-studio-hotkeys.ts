@@ -5,6 +5,7 @@ import { useMixerStore } from '../../../stores';
 import { useStudioStore } from '../../../stores/studio-store';
 import { DEFAULT_CHANNEL } from '../../../types';
 import type { AudioChannel } from '../../../types';
+import { useFocusedChannelId } from './use-focused-node';
 import { usePatchChannel } from './use-patch-channel';
 import { useStreamTransport } from './use-stream-transport';
 import { useTapeTransport } from './use-tape-transport';
@@ -19,11 +20,12 @@ const FOCUS_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 export const useStudioHotkeys = () => {
   const { channels } = useChannelsData();
   const addChannel = useMixerStore((state) => state.addChannel);
-  const selectedChannelId = useStudioStore((state) => state.selectedChannelId);
-  const selectChannel = useStudioStore((state) => state.selectChannel);
+  const select = useStudioStore((state) => state.select);
 
-  const selectedId = selectedChannelId ?? (channels.length > 0 ? channels[0].id : null);
-  const selected = channels.find((channel) => channel.id === selectedId) ?? NO_CHANNEL;
+  // Mute and solo act on the focused channel, so they no-op while a destination
+  // holds the focus rather than reaching for a channel that is not on screen.
+  const focusedChannelId = useFocusedChannelId();
+  const selected = channels.find((channel) => channel.id === focusedChannelId) ?? NO_CHANNEL;
 
   const patch = usePatchChannel(selected);
   const stream = useStreamTransport();
@@ -39,7 +41,7 @@ export const useStudioHotkeys = () => {
       `alt+${key}`,
       () => {
         if (index < channels.length) {
-          selectChannel(channels[index].id);
+          select({ kind: 'channel', channelId: channels[index].id });
         }
       },
     ]),

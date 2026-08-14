@@ -10,14 +10,20 @@ import { NodeCard } from '../primitives/NodeCard';
 import { PortDot } from '../primitives/PortDot';
 import { StatRow } from '../primitives/StatRow';
 import { StatusDot } from '../primitives/StatusDot';
+import { CastInspector } from './CastInspector';
+import { castHeight } from './patch-geometry';
 
 const { destination } = layout;
 
-/** The stream, as seen from the patchbay. Opens the CAST view. */
-export const CastDestination = () => {
-  const setView = useStudioStore((state) => state.setView);
+type CastDestinationProps = {
+  focused: boolean;
+};
+
+/** The stream, as seen from the patchbay. Opens in place to show the transmitter. */
+export const CastDestination = ({ focused }: CastDestinationProps) => {
+  const select = useStudioStore((state) => state.select);
   const stream = useStudioStore((state) => state.stream);
-  const { isLive, status, uptimeSeconds } = useStreamTransport();
+  const { isLive, isBusy, toggle, status, uptimeSeconds } = useStreamTransport();
   const listeners = useListenerStats(isLive);
 
   const bitrate = status?.bitrate_info.current_bitrate ?? stream.bitrate;
@@ -27,13 +33,14 @@ export const CastDestination = () => {
     <NodeCard
       position={{
         left: destination.x,
-        top: destination.castTop,
+        top: destination.top,
         width: destination.width,
-        height: destination.castHeight,
+        height: castHeight(focused ? 'cast' : null),
       }}
-      borderColor={isLive ? color.hotBorder : color.line}
+      selected={focused}
+      borderColor={isLive ? color.hotBorder : focused ? color.acc : color.line}
       headerSurface={isLive ? 'hotBg' : 'bgRaised'}
-      onClick={() => setView('cast')}
+      onClick={() => select({ kind: 'cast' })}
       ports={<PortDot tone={isLive ? 'hot' : 'dead'} side="left" top={83} />}
       header={
         <>
@@ -78,6 +85,8 @@ export const CastDestination = () => {
           <StatRow label="UPTIME">{isLive ? asElapsed(uptimeSeconds) : '—'}</StatRow>
           <StatRow label="SENT">{sent ? asBytes(sent) : '—'}</StatRow>
         </SimpleGrid>
+
+        {focused && <CastInspector isLive={isLive} isBusy={isBusy} onToggle={() => void toggle()} />}
       </Stack>
     </NodeCard>
   );
