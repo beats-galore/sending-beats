@@ -663,6 +663,15 @@ impl AudioPipeline {
     }
 
     /// Remove an output device from the pipeline
+    /// Whether this output already has a worker in the pipeline.
+    ///
+    /// The coordinator tracks outputs by RTRB producer, which does not always
+    /// agree with the pipeline's own registration — re-attaching a device the
+    /// pipeline still holds otherwise fails as a duplicate.
+    pub fn has_output_device(&self, device_id: &str) -> bool {
+        self.output_workers.contains_key(device_id)
+    }
+
     pub async fn remove_output_device(&mut self, device_id: &str) -> Result<()> {
         if !self.output_workers.contains_key(device_id) {
             return Err(anyhow::anyhow!("Output device '{}' not found", device_id));
