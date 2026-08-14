@@ -32,7 +32,16 @@ export const ChannelNode = ({ channel, index, top, expanded }: ChannelNodeProps)
   const patch = usePatchChannel(channel);
   const source = useChannelSource(channel.id);
 
-  const tone = patch.muted ? 'dead' : source.isApplicationTap ? 'warn' : 'accent';
+  // An unavailable source outranks mute and tap styling: the channel is patched
+  // to something that cannot deliver audio, which the user has to see.
+  const unavailable = source.unavailableReason !== null;
+  const tone = unavailable
+    ? 'hot'
+    : patch.muted
+      ? 'dead'
+      : source.isApplicationTap
+        ? 'warn'
+        : 'accent';
 
   return (
     <NodeCard
@@ -48,7 +57,18 @@ export const ChannelNode = ({ channel, index, top, expanded }: ChannelNodeProps)
       ports={<PortDot tone={tone} side="right" top={layout.source.portOffset} />}
       header={
         <>
-          <Pill tone={patch.muted ? 'muted' : source.isApplicationTap ? 'warn' : 'accent'} filled>
+          <Pill
+            tone={
+              unavailable
+                ? 'hot'
+                : patch.muted
+                  ? 'muted'
+                  : source.isApplicationTap
+                    ? 'warn'
+                    : 'accent'
+            }
+            filled
+          >
             {String(index + 1).padStart(2, '0')}
           </Pill>
           <Text
@@ -68,7 +88,10 @@ export const ChannelNode = ({ channel, index, top, expanded }: ChannelNodeProps)
       bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 8, overflow: 'hidden' }}
     >
       <Group gap="xs" wrap="nowrap">
-        <StatusDot tone={tone === 'dead' ? 'inert' : tone} />
+        <StatusDot
+          tone={tone === 'dead' ? 'inert' : tone}
+          title={source.unavailableReason ?? undefined}
+        />
         <NativeSelect
           value={source.configuredDevice?.deviceIdentifier ?? ''}
           onChange={(event) => void source.setSource(event.currentTarget.value)}
@@ -76,11 +99,22 @@ export const ChannelNode = ({ channel, index, top, expanded }: ChannelNodeProps)
           data={[{ value: '', label: 'No input' }, ...source.options]}
           variant="unstyled"
           style={{ flex: 1, minWidth: 0 }}
-          styles={{ input: { color: color.textDim, fontSize: 'var(--mantine-font-size-xs)' } }}
+          styles={{
+            input: {
+              color: unavailable ? color.hotText : color.textDim,
+              fontSize: 'var(--mantine-font-size-xs)',
+            },
+          }}
         />
-        <Text size="3xs" c={color.textFaintest} style={{ flex: 'none' }}>
-          {patch.isMono ? 'MONO' : 'STEREO'}
-        </Text>
+        {unavailable ? (
+          <Pill tone="hot" size="3xs" title={source.unavailableReason ?? undefined}>
+            OFFLINE
+          </Pill>
+        ) : (
+          <Text size="3xs" c={color.textFaintest} style={{ flex: 'none' }}>
+            {patch.isMono ? 'MONO' : 'STEREO'}
+          </Text>
+        )}
       </Group>
 
       <Stack gap="3xs">

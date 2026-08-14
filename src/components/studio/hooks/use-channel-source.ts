@@ -2,7 +2,7 @@ import { useCallback, useMemo } from 'react';
 
 import { useApplicationAudio, useAudioDevices } from '../../../hooks';
 import { audioService } from '../../../services';
-import { useConfigurationStore } from '../../../stores/mixer-store';
+import { useConfigurationStore, useMixerStore } from '../../../stores/mixer-store';
 import { asDeviceIdentifier } from '../../../types/device-identifier';
 
 /**
@@ -15,6 +15,7 @@ export const useChannelSource = (channelId: number) => {
   const { inputDevices, refreshDevices } = useAudioDevices();
   const applicationAudio = useApplicationAudio();
   const { activeSession, updateConfiguredDevice, removeConfiguredDevice } = useConfigurationStore();
+  const restoreFailures = useMixerStore((state) => state.deviceRestoreFailures);
 
   const configuredDevice = useMemo(
     () =>
@@ -55,6 +56,29 @@ export const useChannelSource = (channelId: number) => {
 
     return available;
   }, [inputDevices, applicationAudio.knownApps, configuredDevice]);
+
+  // The channel still holds this source, but nothing is feeding it: either the
+  // device vanished from enumeration, or restoring it on startup failed.
+  const unavailable = useMemo(() => {
+    if (!configuredDevice) {
+      return null;
+    }
+
+    const identifier = configuredDevice.deviceIdentifier;
+    const restoreFailure = restoreFailures.find(
+      (failure) => failure.deviceIdentifier === identifier
+    );
+    if (restoreFailure) {
+      return restoreFailure.reason;
+    }
+
+    const isApp = identifier.startsWith('app-');
+    const present = isApp
+      ? applicationAudio.knownApps.some((app) => `app-${app.bundle_id}` === identifier)
+      : inputDevices.some((device) => device.id === identifier);
+
+    return present ? null : 'Device is not currently available';
+  }, [configuredDevice, restoreFailures, inputDevices, applicationAudio.knownApps]);
 
   const setSource = useCallback(
     async (deviceId: string) => {
@@ -98,5 +122,7 @@ export const useChannelSource = (channelId: number) => {
     setSource,
     refresh,
     isApplicationTap: Boolean(configuredDevice?.deviceIdentifier.startsWith('app-')),
+    /** Why the patched source is not carrying audio, or null when it is fine. */
+    unavailableReason: unavailable,
   };
 };
