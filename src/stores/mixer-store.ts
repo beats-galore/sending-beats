@@ -15,6 +15,7 @@ import type {
   ChannelLevels,
   ChannelUpdate,
   CompleteConfigurationData,
+  DeviceRestoreFailure,
 } from '../types';
 import type { ConfiguredAudioDevice } from '../types/db';
 import type { AudioMixerConfiguration } from '../types/db/audio-mixer-configurations.types';
@@ -42,6 +43,10 @@ type MixerStore = {
   isLoadingConfigurations: boolean;
   initialConfigurationLoadingComplete: boolean;
   configurationError: string | null;
+  // Devices the session lists but which could not be reconnected. Distinct from
+  // `configurationError`: the session itself loaded fine, individual devices did
+  // not, and the mixer stays usable without them.
+  deviceRestoreFailures: DeviceRestoreFailure[];
   restoringDevicesForSession: string | null; // session ID currently being restored
   // Session IDs whose devices are currently registered in the audio pipeline. Held
   // here rather than on activeSession, which every backend refetch replaces
@@ -63,6 +68,7 @@ type MixerStore = {
   saveSessionAsNewReusable: (name: string, description?: string) => Promise<void>;
   clearConfigurationError: () => void;
   setConfigurationError: (error: string) => void;
+  clearDeviceRestoreFailures: () => void;
   restoreDevicesFromSession: (sessionConfig: CompleteConfigurationData | null) => Promise<void>;
   updateConfiguredDevice: (device: ConfiguredAudioDevice) => void;
   removeConfiguredDevice: (deviceIdentifier: string) => void;
@@ -102,6 +108,7 @@ export const useMixerStore = create<MixerStore>()(
     isLoadingConfigurations: false,
     initialConfigurationLoadingComplete: false,
     configurationError: null,
+    deviceRestoreFailures: [],
     restoringDevicesForSession: null,
     restoredSessionIds: [],
 
@@ -590,6 +597,7 @@ export const useMixerStore = create<MixerStore>()(
     // Configuration error handling
     clearConfigurationError: () => set({ configurationError: null }),
     setConfigurationError: (error: string) => set({ configurationError: error }),
+    clearDeviceRestoreFailures: () => set({ deviceRestoreFailures: [] }),
 
     // Restore devices from session configuration (call existing device management methods)
     restoreDevicesFromSession: async (sessionConfig: CompleteConfigurationData | null) => {
@@ -614,7 +622,7 @@ export const useMixerStore = create<MixerStore>()(
       }
 
       // Set loading state to prevent concurrent restoration
-      set({ restoringDevicesForSession: sessionId });
+      set({ restoringDevicesForSession: sessionId, deviceRestoreFailures: [] });
 
       console.log(
         `🔄 Restoring ${sessionConfig.configuredDevices.length} devices from session: ${sessionConfig.configuration.name}`,
@@ -622,6 +630,11 @@ export const useMixerStore = create<MixerStore>()(
       );
 
       try {
+        // A device that fails to reconnect must not abort the rest of the
+        // restore, but it cannot be swallowed either: the session still lists it,
+        // so the mixer would show a source that carries no audio.
+        const failures: DeviceRestoreFailure[] = [];
+
         // Restore devices one by one to avoid overwhelming the audio system
         for (const device of sessionConfig.configuredDevices) {
           console.log(
@@ -640,7 +653,12 @@ export const useMixerStore = create<MixerStore>()(
             console.log(`✅ Successfully restored device: ${device.deviceIdentifier}`);
           } catch (deviceError) {
             console.error(`❌ Failed to restore device ${device.deviceIdentifier}:`, deviceError);
-            // Continue with other devices even if one fails
+            failures.push({
+              deviceIdentifier: device.deviceIdentifier,
+              deviceName: device.deviceName ?? null,
+              isInput: device.isInput,
+              reason: deviceError instanceof Error ? deviceError.message : String(deviceError),
+            });
           }
 
           // Small delay between device additions to prevent overwhelming the system
@@ -655,6 +673,7 @@ export const useMixerStore = create<MixerStore>()(
             ? state.restoredSessionIds
             : [...state.restoredSessionIds, sessionId],
           restoringDevicesForSession: null,
+          deviceRestoreFailures: failures,
         }));
       } catch (error) {
         console.error('❌ Failed to restore devices from session:', error);

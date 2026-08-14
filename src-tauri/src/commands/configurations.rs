@@ -242,8 +242,18 @@ pub async fn get_configured_audio_devices_by_config(
 
 // Helper functions for syncing mixer state with database
 
+/// Outcome of resolving a device configuration.
+///
+/// `created` distinguishes a fresh insert from a pre-existing row so callers can
+/// roll back only what they actually wrote. Deleting a row this call merely
+/// looked up would discard a device the user configured in an earlier session.
+pub struct DeviceConfigurationOutcome {
+    pub model: configured_audio_device::Model,
+    pub created: bool,
+}
+
 /// Create a configured_audio_device and corresponding audio_effects_default entry
-/// Returns the created device model for UI state updates
+/// Returns the device model plus whether this call inserted it
 pub async fn create_device_configuration(
     state: &AudioState,
     device_id: &str,
@@ -253,7 +263,7 @@ pub async fn create_device_configuration(
     is_input: bool,
     is_virtual: bool,
     channel_number: Option<i32>,
-) -> Result<Option<configured_audio_device::Model>, String> {
+) -> Result<Option<DeviceConfigurationOutcome>, String> {
     // Get the active session configuration
     let session_config = match AudioMixerConfigurationService::get_active_session(
         state.database.sea_orm(),
@@ -324,7 +334,10 @@ pub async fn create_device_configuration(
             device_id,
             existing.id
         );
-        return Ok(Some(existing)); // Device already exists, return existing model
+        return Ok(Some(DeviceConfigurationOutcome {
+            model: existing,
+            created: false,
+        }));
     }
 
     tracing::info!(
@@ -423,7 +436,10 @@ pub async fn create_device_configuration(
                         "✅ Created audio_effects_default for device: {}",
                         effects_model.device_id
                     );
-                    Ok(Some(device_model))
+                    Ok(Some(DeviceConfigurationOutcome {
+                        model: device_model,
+                        created: true,
+                    }))
                 }
                 Err(e) => {
                     tracing::error!("❌ Failed to create audio_effects_default: {}", e);

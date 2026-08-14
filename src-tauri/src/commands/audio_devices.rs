@@ -20,6 +20,36 @@ pub struct OutputDeviceSwitchResult {
     pub diversion_error: Option<String>,
 }
 
+/// Undo the database entry written ahead of a device connection that then failed.
+///
+/// `inserted_this_call` guards against deleting a configuration that predates
+/// this command: a device that is merely unplugged must survive to be restored
+/// once it comes back.
+async fn rollback_device_configuration(
+    audio_state: &AudioState,
+    device_id: &str,
+    inserted_this_call: bool,
+) {
+    if !inserted_this_call {
+        tracing::info!(
+            "{}: Keeping existing configuration for '{}' after connection failure",
+            "CONFIG_RETAINED".on_blue().magenta(),
+            device_id
+        );
+        return;
+    }
+
+    if let Err(cleanup_err) =
+        crate::commands::configurations::remove_device_configuration(audio_state, device_id).await
+    {
+        tracing::warn!(
+            "Failed to clean up device configuration for '{}': {}",
+            device_id,
+            cleanup_err
+        );
+    }
+}
+
 /// Route system output to the virtual driver so the mix is not played twice
 #[cfg(target_os = "macos")]
 async fn divert_system_audio(audio_state: &AudioState) -> OutputDeviceSwitchResult {
@@ -329,7 +359,7 @@ pub async fn safe_switch_input_device(
 
     // **FIX**: Create database entry BEFORE sending command
     // The audio pipeline needs to query the database for channel number during device setup
-    let created_device_model =
+    let device_configuration =
         if let Some((device_name, sample_rate, channels)) = device_info.clone() {
             match crate::commands::configurations::create_device_configuration(
                 &audio_state,
@@ -345,7 +375,7 @@ pub async fn safe_switch_input_device(
             )
             .await
             {
-                Ok(model) => model,
+                Ok(outcome) => outcome,
                 Err(e) => {
                     return Err(format!(
                         "Failed to create device configuration in database: {}",
@@ -356,6 +386,14 @@ pub async fn safe_switch_input_device(
         } else {
             None
         };
+
+    // Only roll back a row this call inserted. A pre-existing row belongs to a
+    // configuration the user saved earlier, and a transient failure to connect
+    // the device is no reason to discard it.
+    let inserted_this_call = device_configuration
+        .as_ref()
+        .is_some_and(|outcome| outcome.created);
+    let created_device_model = device_configuration.map(|outcome| outcome.model);
 
     // Create command based on device type
     let buffer_capacity = 96000;
@@ -403,34 +441,16 @@ pub async fn safe_switch_input_device(
             Ok(created_device_model)
         }
         Ok(Err(e)) => {
-            // If audio pipeline fails, clean up the database entry we created
             tracing::error!("Failed to add input device to audio pipeline: {}", e);
-            if let Err(cleanup_err) = crate::commands::configurations::remove_device_configuration(
-                &audio_state,
-                &new_device_id,
-            )
-            .await
-            {
-                tracing::warn!(
-                    "Failed to clean up device configuration after error: {}",
-                    cleanup_err
-                );
-            }
+            rollback_device_configuration(&audio_state, &new_device_id, inserted_this_call).await;
             Err(format!("Failed to add input device: {}", e))
         }
         Err(_) => {
-            // If audio system doesn't respond, clean up the database entry
-            if let Err(cleanup_err) = crate::commands::configurations::remove_device_configuration(
-                &audio_state,
-                &new_device_id,
-            )
-            .await
-            {
-                tracing::warn!(
-                    "Failed to clean up device configuration after timeout: {}",
-                    cleanup_err
-                );
-            }
+            tracing::error!(
+                "Audio system did not respond while adding input device '{}'",
+                new_device_id
+            );
+            rollback_device_configuration(&audio_state, &new_device_id, inserted_this_call).await;
             Err("Audio system did not respond".to_string())
         }
     }
@@ -451,7 +471,17 @@ pub async fn safe_switch_output_device(
     let device_handle = device_manager
         .find_audio_device(&new_device_id, false) // false = output device
         .await
-        .map_err(|e| format!("Failed to find output device {}: {}", new_device_id, e))?;
+        .map_err(|e| {
+            // A configured output that is simply unplugged lands here. Without a
+            // log the mixer runs with zero outputs and no trace of why.
+            let error_msg = format!("Failed to find output device {}: {}", new_device_id, e);
+            tracing::error!(
+                "{}: {} - the mix has no output until a reachable device is selected",
+                "OUTPUT_UNAVAILABLE".on_red().bright_white(),
+                error_msg
+            );
+            error_msg
+        })?;
 
     // Extract device information for database sync and hog mode before consuming device_handle
     #[cfg(target_os = "macos")]
@@ -533,8 +563,23 @@ pub async fn safe_switch_output_device(
 
             Ok(divert_system_audio(&audio_state).await)
         }
-        Ok(Err(e)) => Err(format!("Failed to set output device: {}", e)),
-        Err(_) => Err("Audio system did not respond".to_string()),
+        Ok(Err(e)) => {
+            tracing::error!(
+                "{}: Audio pipeline rejected output device '{}': {}",
+                "OUTPUT_UNAVAILABLE".on_red().bright_white(),
+                new_device_id,
+                e
+            );
+            Err(format!("Failed to set output device: {}", e))
+        }
+        Err(_) => {
+            tracing::error!(
+                "{}: Audio system did not respond while setting output device '{}'",
+                "OUTPUT_UNAVAILABLE".on_red().bright_white(),
+                new_device_id
+            );
+            Err("Audio system did not respond".to_string())
+        }
     }
 }
 

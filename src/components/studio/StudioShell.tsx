@@ -11,6 +11,7 @@ import { DevicesView } from './devices/DevicesView';
 import { useStudioHotkeys } from './hooks/use-studio-hotkeys';
 import { PatchView } from './patch/PatchView';
 import { SetupView } from './setup/SetupView';
+import { DeviceRestoreWarning } from './shell/DeviceRestoreWarning';
 import { StudioError } from './shell/StudioError';
 import { SystemAudioRestartModal } from './shell/SystemAudioRestartModal';
 import { SystemAudioWarning } from './shell/SystemAudioWarning';
@@ -62,6 +63,7 @@ export const StudioShell = () => {
   return (
     <Stack h="100vh" gap={0} style={{ background: color.bg, overflow: 'hidden' }}>
       <TopBar />
+      <DeviceRestoreWarning />
       <SystemAudioWarning />
       <Box style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'stretch' }}>
         {renderView()}
