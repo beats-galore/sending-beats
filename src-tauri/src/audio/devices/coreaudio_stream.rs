@@ -175,7 +175,7 @@ pub fn get_device_extra_latency_frames(device_id: AudioDeviceID, is_output: bool
 /// Devices are free to refuse: each has its own supported range, and virtual ones
 /// often sit at a fixed size. Nothing assumes the request was honoured — the size
 /// is read back and everything downstream is sized from what came back.
-pub const DESIRED_BUFFER_FRAMES: u32 = 128;
+pub const DESIRED_BUFFER_FRAMES: u32 = 64;
 
 /// Fall back to what macOS hands out by default when a device tells us nothing
 const FALLBACK_BUFFER_FRAMES: u32 = 512;
