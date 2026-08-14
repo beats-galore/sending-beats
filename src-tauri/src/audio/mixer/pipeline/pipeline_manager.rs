@@ -31,6 +31,7 @@ use super::{
     input_worker::{InputWorker, InputWorkerStats},
     mixing_layer::{MixingLayer, MixingLayerStats},
     output_worker::{OutputWorker, OutputWorkerStats},
+    pacing,
     queue_types::{MixedAudioSamples, PipelineQueues, RawAudioSamples},
 };
 
@@ -379,13 +380,18 @@ impl AudioPipeline {
             ));
         }
 
+        // Floored on time, not on chunks: sized in chunks it shrinks with the
+        // hardware buffer, leaving too little room for the cushion the mixer keeps.
+        let buffer_capacity =
+            (chunk_size * 8).max(pacing::jitter_cushion_samples(device_sample_rate, channels) * 4);
+
         // Create RTRB queue for mixing layer → output worker communication
         let (rtrb_producer_for_mixer, rtrb_consumer_for_worker) =
-            rtrb::RingBuffer::<f32>::new(chunk_size * 8); // 8x chunk size for buffering
+            rtrb::RingBuffer::<f32>::new(buffer_capacity);
 
         // Create queue tracker for this output (mixing layer writes, output worker reads)
         let mixing_to_output_tracker =
-            AtomicQueueTracker::new(format!("{}_mixing_to_output", device_id), chunk_size * 8);
+            AtomicQueueTracker::new(format!("{}_mixing_to_output", device_id), buffer_capacity);
 
         // Add RTRB producer to mixing layer for writing mixed audio
         self.mixing_layer.add_output_producer(
