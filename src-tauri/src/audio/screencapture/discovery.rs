@@ -65,6 +65,32 @@ pub fn get_available_applications() -> Result<Vec<ApplicationInfo>> {
     }
 }
 
+/// Resolve the identifier stored against an application source to a running process.
+///
+/// Sources are keyed by bundle identifier because a PID only means anything for
+/// the lifetime of a single launch: a source saved as `app-6565` can never be
+/// reconnected once that process exits. Numeric identifiers are still accepted so
+/// a source configured before this change resolves for the rest of the session.
+pub fn resolve_application_source(identifier: &str) -> Result<ApplicationInfo> {
+    let applications = get_available_applications()?;
+
+    if let Ok(pid) = identifier.parse::<i32>() {
+        warn!(
+            "⚠️ Resolving legacy PID-keyed application source '{}' - it will not survive a restart",
+            identifier
+        );
+        return applications
+            .into_iter()
+            .find(|app| app.pid == pid)
+            .ok_or_else(|| anyhow::anyhow!("Application with PID {} is not running", pid));
+    }
+
+    applications
+        .into_iter()
+        .find(|app| app.bundle_identifier.eq_ignore_ascii_case(identifier))
+        .ok_or_else(|| anyhow::anyhow!("Application '{}' is not running", identifier))
+}
+
 pub fn check_screen_recording_permission() -> bool {
     unsafe { ffi::sc_audio_check_permission() != 0 }
 }

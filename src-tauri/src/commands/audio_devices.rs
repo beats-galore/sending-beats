@@ -289,41 +289,39 @@ pub async fn safe_switch_input_device(
     let (device_handle, device_info) = if is_app_audio {
         #[cfg(target_os = "macos")]
         {
-            // Parse PID from device_id (format: "app-{pid}")
-            let pid: u32 = new_device_id
+            // Sources are keyed by bundle identifier (format: "app-{bundle_id}")
+            // and resolved to whatever PID that application holds right now.
+            let source_identifier = new_device_id
                 .strip_prefix("app-")
-                .ok_or_else(|| format!("Invalid application audio device ID: {}", new_device_id))?
-                .parse()
-                .map_err(|e| {
-                    format!(
-                        "Failed to parse PID from device ID {}: {}",
-                        new_device_id, e
-                    )
-                })?;
+                .ok_or_else(|| format!("Invalid application audio device ID: {}", new_device_id))?;
 
-            // Get application info from ApplicationAudioManager
-            let app_manager = audio_state.app_audio_manager.lock().await;
-            let available_apps = app_manager
-                .get_available_applications()
-                .await
-                .map_err(|e| format!("Failed to get available applications: {}", e))?;
+            let app_info =
+                crate::audio::screencapture::resolve_application_source(source_identifier)
+                    .map_err(|e| {
+                        tracing::error!(
+                            "{}: Cannot capture '{}': {}",
+                            "APP_SOURCE_UNAVAILABLE".on_red().bright_white(),
+                            source_identifier,
+                            e
+                        );
+                        format!(
+                            "Application '{}' is not available: {}",
+                            source_identifier, e
+                        )
+                    })?;
 
-            let app_info = available_apps
-                .iter()
-                .find(|app| app.pid == pid)
-                .ok_or_else(|| format!("Application with PID {} not found", pid))?;
-
+            let pid = app_info.pid as u32;
             let device_handle = crate::audio::types::AudioDeviceHandle::ApplicationAudio(
                 crate::audio::types::ApplicationAudioDevice {
                     pid,
-                    name: app_info.name.clone(),
+                    name: app_info.application_name.clone(),
                     sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
                     channels: 2,
                 },
             );
 
             let info = (
-                app_info.name.clone(),
+                app_info.application_name.clone(),
                 crate::types::DEFAULT_SAMPLE_RATE,
                 2u16,
             );
