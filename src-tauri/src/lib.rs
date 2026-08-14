@@ -431,6 +431,7 @@ pub fn run() {
             get_dj_mixer_config,
             rename_mixer_channel,
             update_master_gain,
+            get_pipeline_latency,
             set_debug_log_config,
             get_debug_log_config,
             // Icecast commands

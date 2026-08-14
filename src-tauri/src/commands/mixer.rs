@@ -1,3 +1,4 @@
+use crate::audio::mixer::latency_probe::LatencySnapshot;
 use crate::db::seaorm_services::AudioMixerConfigurationService;
 use crate::{AudioConfigFactory, AudioState, MixerConfig};
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, ModelTrait, QueryFilter, Set};
@@ -117,4 +118,21 @@ pub async fn update_master_gain(gain: f32, state: State<'_, AudioState>) -> Resu
         .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+/// What the running pipeline is actually costing, stage by stage
+#[tauri::command]
+pub async fn get_pipeline_latency(state: State<'_, AudioState>) -> Result<LatencySnapshot, String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    state
+        .audio_command_tx
+        .send(
+            crate::audio::mixer::stream_management::AudioCommand::GetLatencySnapshot {
+                response_tx: tx,
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    rx.await.map_err(|e| e.to_string())
 }

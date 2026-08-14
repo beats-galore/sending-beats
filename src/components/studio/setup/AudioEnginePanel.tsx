@@ -1,6 +1,7 @@
 import { Group, SimpleGrid, Text } from '@mantine/core';
 
-import { useAudioMetrics } from '../../../hooks';
+import { useAudioMetrics } from '../../../hooks/use-audio-metrics';
+import { usePipelineLatency } from '../../../hooks/use-pipeline-latency';
 import { useMixerStore } from '../../../stores';
 import { border, color } from '../../../theme/tokens';
 import { Panel } from '../primitives/Panel';
@@ -9,15 +10,19 @@ import { StatTile } from '../primitives/StatTile';
 /**
  * What the engine is running at.
  *
- * Sample rate and buffer size are reported rather than editable — the engine
- * negotiates them with the hardware and exposes no command to change them.
+ * Sample rate is reported rather than editable — the engine negotiates it with
+ * the hardware and exposes no command to change it. Latency is measured from
+ * what every stage of the pipeline is currently holding, not derived from a
+ * configured buffer size, so it reflects what a monitored microphone hears.
  */
 export const AudioEnginePanel = () => {
   const config = useMixerStore((state) => state.config);
   const state = useMixerStore((store) => store.state);
   const metrics = useAudioMetrics();
+  const latency = usePipelineLatency();
 
-  const latencyMs = config ? ((config.buffer_size / config.sample_rate) * 1000).toFixed(1) : '—';
+  const latencyMs =
+    latency && latency.monitor_micros > 0 ? (latency.monitor_micros / 1000).toFixed(1) : '—';
 
   return (
     <Panel title="AUDIO ENGINE" p="3xl" gap="2xl">
@@ -28,16 +33,10 @@ export const AudioEnginePanel = () => {
           unit="kHz"
           size="3xl"
         />
-        <StatTile label="BUFFER SIZE" value={config?.buffer_size ?? '—'} unit="frames" size="3xl" />
+        <StatTile label="LATENCY" value={latencyMs} unit="ms" size="3xl" />
       </SimpleGrid>
 
       <Group gap="5xl" pt="xl" wrap="nowrap" style={{ borderTop: border() }}>
-        <Text size="xs" c={color.textDim}>
-          LATENCY{' '}
-          <Text span c={color.text}>
-            {latencyMs} ms
-          </Text>
-        </Text>
         <Text size="xs" c={color.textDim}>
           CPU{' '}
           <Text span c={color.text}>
