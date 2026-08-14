@@ -27,16 +27,6 @@ export default defineConfig(() => ({
     ...(isDev
       ? [
           {
-            name: 'react-scan',
-            config(config) {
-              // React Scan setup for development performance monitoring
-              if (!config.define) {
-                config.define = {};
-              }
-              config.define['process.env.TURBO_RUN'] = JSON.stringify(isTurboRun.toString());
-            },
-          },
-          {
             name: 'turbo-integration',
             configResolved(config) {
               if (isTurboRun) {
@@ -113,7 +103,6 @@ export default defineConfig(() => ({
   define: {
     'process.env.TURBO_RUN': JSON.stringify(isTurboRun.toString()),
     'process.env.BUILD_TIME': JSON.stringify(new Date().toISOString()),
-    'import.meta.env.REACT_SCAN_ENABLED': JSON.stringify(isDev ? 'true' : 'false'),
     __APP_VERSION__: JSON.stringify(pkg.version),
   },
 }));
