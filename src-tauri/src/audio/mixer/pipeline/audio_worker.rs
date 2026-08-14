@@ -20,21 +20,17 @@ use crate::audio::mixer::resampling::RubatoSRC;
 
 /// How much audio to keep queued downstream, in chunks
 ///
-/// Producing whenever there is *any* room fills a ring to its capacity and holds
-/// it there, so ring size becomes latency: measured at 42.7ms in a 4-chunk
-/// hardware ring and 57ms in an 8-chunk mixing ring, for 100ms of standing delay
-/// on the playback path alone.
+/// Producing whenever a ring has any room fills it to capacity and holds it
+/// there, making ring size latency. Holding to a target instead makes the depth
+/// a deliberate choice.
 ///
-/// What that depth actually buys is time to survive the producer stalling, and
-/// the cushion is the occupancy rather than the capacity — a ring with room to
-/// spare still underruns if it is empty when the consumer asks. The mixing task
-/// has been seen to lose the runtime for 25.7ms mid-`await`, so the two rings
-/// together need to cover that. Two chunks each is ~43ms, comfortably over it,
-/// and less than half of what was being held before.
+/// What the depth buys is time to survive the producer stalling, and the cushion
+/// is occupancy rather than capacity: a ring with room to spare still underruns
+/// if it is empty when the consumer asks. Sized so the rings between the mix and
+/// the hardware together cover the longest the mixing task can go unscheduled.
 ///
-/// Capacity is deliberately left alone. It is what absorbs a burst arriving
-/// faster than the consumer drains, which is a different failure from a stall,
-/// and shrinking it would trade against that for nothing.
+/// Capacity is left alone. It absorbs a burst arriving faster than the consumer
+/// drains, a different failure from a stall.
 pub const TARGET_DOWNSTREAM_CHUNKS: usize = 2;
 /// Shared state for audio workers
 pub struct AudioWorkerState {

@@ -168,10 +168,9 @@ pub fn get_device_extra_latency_frames(device_id: AudioDeviceID, is_output: bool
 
 /// Buffer size to ask every device for, in frames
 ///
-/// A device's buffer is charged to the latency path twice over — once filling on
-/// capture, once draining on playback — and at the 512 frames macOS hands out by
-/// default that is 21ms of the budget before anything else. 128 frames is 2.7ms
-/// a side.
+/// A device's buffer is charged to the latency path twice over, once filling on
+/// capture and once draining on playback, so it dominates the budget at the size
+/// macOS hands out by default.
 ///
 /// Devices are free to refuse: each has its own supported range, and virtual ones
 /// often sit at a fixed size. Nothing assumes the request was honoured — the size
@@ -913,8 +912,7 @@ extern "C" fn rtrb_render_callback(
                         let queue_size = input_samples.len();
 
                         unsafe {
-                            // Track significant underruns (need 1024+ samples, got <512)
-                            if samples_to_fill >= 1024 && queue_size < 512 {
+                            if queue_size < samples_to_fill {
                                 TOTAL_QUEUE_UNDERRUNS += 1;
                             }
 
