@@ -60,27 +60,36 @@ export const usePatchColor = (targetKey: PatchTargetKey, position: number): Patc
   const select = useCallback((key: Swatch) => void setColor(targetKey, key), [setColor, targetKey]);
   const reset = useCallback(() => void clearColor(targetKey), [clearColor, targetKey]);
 
+  return { ...patchColorOf(colors, targetKey, position), select, reset };
+};
+
+/**
+ * The same colour, without the picker attached to it.
+ *
+ * Split out because a colour is no longer only drawn by the thing it belongs
+ * to: the cables and the mix node paint themselves in the colour of whatever
+ * they carry, and neither is a component that could hold a hook for every
+ * source on the canvas.
+ */
+export const patchColorOf = (
+  colors: Partial<Record<PatchTargetKey, Swatch>>,
+  targetKey: PatchTargetKey,
+  position: number
+): Pick<PatchColor, 'key' | 'value' | 'assigned' | 'reserved'> => {
   const reserved = reservedPatchColor(targetKey);
   if (reserved !== null) {
-    return { key: null, value: reserved, assigned: true, reserved: true, select, reset };
+    return { key: null, value: reserved, assigned: true, reserved: true };
   }
 
   const assignedKey = colors[targetKey];
   if (assignedKey) {
-    return {
-      key: assignedKey,
-      value: swatchColor(assignedKey),
-      assigned: true,
-      reserved: false,
-      select,
-      reset,
-    };
+    return { key: assignedKey, value: swatchColor(assignedKey), assigned: true, reserved: false };
   }
 
   const taken = new Set(Object.values(colors).filter((key) => key !== undefined));
   const key = derive(position + seedOffset(targetKey), taken);
 
-  return { key, value: swatchColor(key), assigned: false, reserved: false, select, reset };
+  return { key, value: swatchColor(key), assigned: false, reserved: false };
 };
 
 /** Sources count from the top of the palette, destinations from part-way in. */

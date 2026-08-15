@@ -78,10 +78,17 @@ export const dashedBorder = (token: ColorToken = 'dash'): string => `1px dashed 
 export const glow = (token: ColorToken, radius = 8): string => `0 0 ${radius}px ${color[token]}`;
 
 /**
- * The signal gradient shared by every level meter: accent through the headroom,
- * amber approaching clip, hot at the top.
+ * The signal gradient shared by every level meter: the signal's own colour
+ * through the headroom, amber approaching clip, hot at the top.
+ *
+ * `base` is what the meter reads as while there is room to spare, so a source
+ * meters in the colour it was given and a glance across the canvas says which
+ * signal is which without reading a single label. Only the headroom is coloured
+ * that way — the warning at the top means the same thing on every meter, and a
+ * source that happened to be given amber must not look like one that is
+ * clipping.
  *
  * @param deg 90 for meters that fill left to right, 0 for bottom to top.
  */
-export const meterGradient = (deg: 0 | 90): string =>
-  `linear-gradient(${deg}deg, ${color.acc} 0%, ${color.acc} 64%, ${color.warn} 82%, ${color.hot} 100%)`;
+export const meterGradient = (deg: 0 | 90, base: string = color.acc): string =>
+  `linear-gradient(${deg}deg, ${base} 0%, ${base} 64%, ${color.warn} 82%, ${color.hot} 100%)`;

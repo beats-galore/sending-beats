@@ -24,10 +24,19 @@ type ChannelBodyProps = {
   expansion: ChannelExpansion;
   patch: ReturnType<typeof usePatchChannel>;
   source: ReturnType<typeof useChannelSource>;
+  /** The strip's own colour, which its meters read in. */
+  meterBase: string;
 };
 
 /** A source at its ordinary size: what it is patched to, how loud, and where it goes. */
-export const ChannelBody = ({ channel, index, expansion, patch, source }: ChannelBodyProps) => {
+export const ChannelBody = ({
+  channel,
+  index,
+  expansion,
+  patch,
+  source,
+  meterBase,
+}: ChannelBodyProps) => {
   const unavailable = source.unavailableReason !== null;
   const tone = unavailable ? 'hot' : source.isApplicationTap ? 'warn' : 'accent';
   const opened = expansion === 'inspector' || expansion === 'effects';
@@ -65,8 +74,16 @@ export const ChannelBody = ({ channel, index, expansion, patch, source }: Channe
       </Group>
 
       <Stack gap="3xs">
-        <LevelMeter level={meterPosition(patch.levels.left.peak)} dimmed={patch.muted} />
-        <LevelMeter level={meterPosition(patch.levels.right.peak)} dimmed={patch.muted} />
+        <LevelMeter
+          level={meterPosition(patch.levels.left.peak)}
+          dimmed={patch.muted}
+          base={meterBase}
+        />
+        <LevelMeter
+          level={meterPosition(patch.levels.right.peak)}
+          dimmed={patch.muted}
+          base={meterBase}
+        />
       </Stack>
 
       <Group gap="sm" wrap="nowrap">

@@ -15,6 +15,8 @@ type LevelMeterProps = {
   surface?: ColorToken;
   /** Dims the bar without hiding it, for muted sources. */
   dimmed?: boolean;
+  /** What the bar reads as below the warning range. Defaults to the accent. */
+  base?: string;
 };
 
 /** A horizontal signal meter. */
@@ -23,6 +25,7 @@ export const LevelMeter = ({
   height = 7,
   surface = 'panel',
   dimmed = false,
+  base,
 }: LevelMeterProps) => (
   <Box
     style={{
@@ -40,7 +43,7 @@ export const LevelMeter = ({
         top: 0,
         bottom: 0,
         width: `${Math.min(100, Math.max(0, level * 100))}%`,
-        background: meterGradient(90),
+        background: meterGradient(90, base),
         opacity: dimmed ? 0.25 : 1,
         transition: 'width 90ms linear',
       }}

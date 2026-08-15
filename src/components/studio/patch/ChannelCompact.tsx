@@ -8,6 +8,8 @@ import { MuteSoloPills } from './MuteSoloPills';
 
 type ChannelCompactProps = {
   patch: ReturnType<typeof usePatchChannel>;
+  /** The strip's own colour, which its meters read in. */
+  meterBase: string;
 };
 
 /**
@@ -19,18 +21,20 @@ type ChannelCompactProps = {
  * than a stack of cards — and mute and solo beside them. Everything else about
  * a source can be read once it is opened; these cannot wait that long.
  */
-export const ChannelCompact = ({ patch }: ChannelCompactProps) => (
+export const ChannelCompact = ({ patch, meterBase }: ChannelCompactProps) => (
   <Group gap="xs" wrap="nowrap" style={{ flex: 1, minHeight: 0 }} align="center">
     <Stack gap="3xs" style={{ flex: 1, minWidth: 0 }}>
       <LevelMeter
         level={meterPosition(patch.levels.left.peak)}
         height={layout.compactMeterHeight}
         dimmed={patch.muted}
+        base={meterBase}
       />
       <LevelMeter
         level={meterPosition(patch.levels.right.peak)}
         height={layout.compactMeterHeight}
         dimmed={patch.muted}
+        base={meterBase}
       />
     </Stack>
     <MuteSoloPills

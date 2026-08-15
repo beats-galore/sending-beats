@@ -6,6 +6,13 @@
 // Every end point is read off the resolved rects rather than recomputed, so a
 // node the user dragged and the wire leaving it cannot disagree about where its
 // port is.
+import {
+  channelTargetKey,
+  outputTargetKey,
+  STREAM_TARGET_KEY,
+  TAPE_TARGET_KEY,
+} from '../../../services/patch-color-service';
+import type { PatchTargetKey } from '../../../services/patch-color-service';
 import { layout } from '../../../theme/layout';
 import type { Bus } from '../../../types/bus.types';
 import type { ChannelDevice } from '../hooks/use-channel-devices';
@@ -24,14 +31,15 @@ type CableInput = {
   channelDevices: ChannelDevice[];
   outputs: PatchOutput[];
   rects: PatchRects;
+  /** The colour of the thing a key names, for painting a run by what it carries. */
+  colorFor: (targetKey: PatchTargetKey, position: number) => string;
 };
 
 /** Where a bus's output lands, and what colour the run reads as. */
 const landing = (
   deviceId: string,
-  outputs: PatchOutput[],
-  rects: PatchRects
-): { port: Port; tone: Cable['tone'] } | null => {
+  { outputs, rects, colorFor }: CableInput
+): { port: Port; color: string } | null => {
   const target = resolveDestination(
     deviceId,
     outputs.map((output) => output.id)
@@ -41,25 +49,33 @@ const landing = (
     case 'output':
       return {
         port: leftPort(rects.outputs[target.index], destination.outputPortOffset),
-        tone: outputs[target.index].role === 'CUE' ? 'warn' : 'accent',
+        color: colorFor(outputTargetKey(outputs[target.index].id), target.index),
       };
     case 'cast':
-      return { port: leftPort(rects.cast, destination.castPortOffset), tone: 'hot' };
+      return {
+        port: leftPort(rects.cast, destination.castPortOffset),
+        color: colorFor(STREAM_TARGET_KEY, 0),
+      };
     case 'tape':
-      return { port: leftPort(rects.tape, destination.tapePortOffset), tone: 'hot' };
+      return {
+        port: leftPort(rects.tape, destination.tapePortOffset),
+        color: colorFor(TAPE_TARGET_KEY, 0),
+      };
     default:
       return null;
   }
 };
 
-const sourceCables = ({ buses, channelDevices, rects }: CableInput): Cable[] =>
-  buses.flatMap((busEntry, busIndex) =>
+const sourceCables = (input: CableInput): Cable[] => {
+  const { buses, channelDevices, rects, colorFor } = input;
+
+  return buses.flatMap((busEntry, busIndex) =>
     busEntry.inputs.flatMap((deviceId, portIndex) => {
       const channel = channelDevices.find(
         (candidate) => candidate.deviceIdentifier === deviceId
       );
       const from: NodeRect | undefined = channel && rects.channels[channel.index];
-      if (!from) {
+      if (!channel || !from) {
         return [];
       }
 
@@ -70,17 +86,20 @@ const sourceCables = ({ buses, channelDevices, rects }: CableInput): Cable[] =>
             rightPort(from, channelPortOffset),
             leftPort(rects.buses[busIndex], busPortOffset(portIndex, busEntry.inputs.length))
           ),
-          tone: 'accent' as const,
+          color: colorFor(channelTargetKey(channel.channelId), channel.index),
           active: true,
         },
       ];
     })
   );
+};
 
-const outputCables = ({ buses, outputs, rects }: CableInput): Cable[] =>
-  buses.flatMap((busEntry, busIndex) =>
+const outputCables = (input: CableInput): Cable[] => {
+  const { buses, rects } = input;
+
+  return buses.flatMap((busEntry, busIndex) =>
     busEntry.outputs.flatMap((deviceId, portIndex) => {
-      const target = landing(deviceId, outputs, rects);
+      const target = landing(deviceId, input);
       if (!target) {
         return [];
       }
@@ -95,12 +114,13 @@ const outputCables = ({ buses, outputs, rects }: CableInput): Cable[] =>
             ),
             target.port
           ),
-          tone: target.tone,
+          color: target.color,
           active: busEntry.inputs.length > 0,
         },
       ];
     })
   );
+};
 
 export const patchCables = (input: CableInput): Cable[] => [
   ...sourceCables(input),

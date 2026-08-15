@@ -10,6 +10,7 @@ import { useChannelSource } from '../hooks/use-channel-source';
 import { useNodeDrag, useNodeFront } from '../hooks/use-node-drag';
 import { useNodeResize, useNodeRung, useUnshrink } from '../hooks/use-node-resize';
 import { usePatchChannel } from '../hooks/use-patch-channel';
+import { usePatchColor } from '../hooks/use-patch-color';
 import { DeleteButton } from '../primitives/DeleteButton';
 import { ExpandToggle } from '../primitives/ExpandToggle';
 import { PortDot } from '../primitives/PortDot';
@@ -49,6 +50,9 @@ export const ChannelNode = ({ channel, index, rect, variant, selected }: Channel
   const track = useChannelNowPlaying(source.configuredDevice?.deviceIdentifier);
 
   const targetKey = channelTargetKey(channel.id);
+  // The strip's own colour, which its meters read in — a glance across the
+  // canvas says which signal is which without reading a label.
+  const swatch = usePatchColor(targetKey, index);
   const grab = useNodeDrag(targetKey, rect);
   const resize = useNodeResize(targetKey, rect, channelSize(variant, 'compact'));
   const setRung = useNodeRung(targetKey);
@@ -116,7 +120,7 @@ export const ChannelNode = ({ channel, index, rect, variant, selected }: Channel
 
   const body =
     expansion === 'compact' ? (
-      <ChannelCompact patch={patch} />
+      <ChannelCompact patch={patch} meterBase={swatch.value} />
     ) : (
       <ChannelBody
         channel={channel}
@@ -124,6 +128,7 @@ export const ChannelNode = ({ channel, index, rect, variant, selected }: Channel
         expansion={expansion}
         patch={patch}
         source={source}
+        meterBase={swatch.value}
       />
     );
 

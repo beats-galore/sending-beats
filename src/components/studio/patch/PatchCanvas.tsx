@@ -2,6 +2,7 @@ import { Box, Text } from '@mantine/core';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useChannelsData } from '../../../hooks';
+import type { PatchTargetKey } from '../../../services/patch-color-service';
 import { useMixerStore } from '../../../stores';
 import { orderedBuses, useBusStore } from '../../../stores/bus-store';
 import { usePatchColorStore } from '../../../stores/patch-color-store';
@@ -12,6 +13,7 @@ import { color } from '../../../theme/tokens';
 import { useChannelCardVariants } from '../hooks/use-channel-card-variants';
 import { useChannelDevices } from '../hooks/use-channel-devices';
 import { useFocusedNode } from '../hooks/use-focused-node';
+import { patchColorOf } from '../hooks/use-patch-color';
 import { usePatchOutputs } from '../hooks/use-patch-outputs';
 import { DashedTarget } from '../primitives/DashedTarget';
 import { SectionLabel } from '../primitives/SectionLabel';
@@ -115,9 +117,18 @@ export const PatchCanvas = () => {
     [channels, variants, buses, outputs, placements]
   );
 
+  // Cables are painted in the colour of whatever they carry, the same rule the
+  // routing tiles follow, so a patch can be traced by following one colour.
+  const patchColors = usePatchColorStore((state) => state.colors);
+  const colorFor = useCallback(
+    (targetKey: PatchTargetKey, position: number) =>
+      patchColorOf(patchColors, targetKey, position).value,
+    [patchColors]
+  );
+
   const cables = useMemo(
-    () => patchCables({ buses, channelDevices, outputs, rects }),
-    [buses, channelDevices, outputs, rects]
+    () => patchCables({ buses, channelDevices, outputs, rects, colorFor }),
+    [buses, channelDevices, outputs, rects, colorFor]
   );
 
   return (
