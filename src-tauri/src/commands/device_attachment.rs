@@ -133,6 +133,9 @@ pub async fn attach_output_device(state: &AudioState, device_id: &str) -> Result
             coreaudio_device,
             response_tx,
         },
+        AudioDeviceHandle::FilePlayer(_) => {
+            return Err("File players are input-only and cannot be used as outputs".to_string());
+        }
         #[cfg(target_os = "macos")]
         AudioDeviceHandle::ApplicationAudio(_) => {
             return Err(
@@ -213,6 +216,28 @@ async fn resolve_input_device_handle(
         }
     }
 
+    // Checked before the device manager is asked: a player is not hardware and
+    // enumerating for it would only ever come back empty.
+    if let Some(player_device) = state.file_player_manager.get_player(device_id) {
+        let player = player_device.get_player();
+        let (sample_rate, channels) = player.output_format();
+
+        let handle = AudioDeviceHandle::FilePlayer(crate::audio::types::FilePlayerInputDevice {
+            player,
+            name: player_device.get_device_name().to_string(),
+            sample_rate,
+            channels,
+        });
+
+        let description = DeviceDescription {
+            name: player_device.get_device_name().to_string(),
+            sample_rate,
+            channels,
+        };
+
+        return Ok((handle, Some(description)));
+    }
+
     let device_manager = state.device_manager.lock().await;
     let device_handle = device_manager
         .find_audio_device(device_id, true) // true = input device
@@ -228,6 +253,13 @@ async fn resolve_input_device_handle(
         }),
         #[cfg(target_os = "macos")]
         AudioDeviceHandle::ApplicationAudio(_) => None,
+        // A player has no hardware to describe, but it does need a row: that is
+        // what gives it a channel strip and somewhere to keep its gain.
+        AudioDeviceHandle::FilePlayer(file_player) => Some(DeviceDescription {
+            name: file_player.name.clone(),
+            sample_rate: file_player.sample_rate,
+            channels: file_player.channels,
+        }),
         #[cfg(not(target_os = "macos"))]
         _ => None,
     };
@@ -285,6 +317,16 @@ fn build_add_input_command(
                 response_tx,
             }
         }
+        // No producer: the queue between the decoder and the pipeline is made on
+        // the audio thread, since only it knows the chunk the worker will read.
+        AudioDeviceHandle::FilePlayer(file_player) => AudioCommand::AddFilePlayerInputStream {
+            device_id: device_id.to_string(),
+            player: file_player.player.clone(),
+            device_name: file_player.name.clone(),
+            sample_rate: file_player.sample_rate,
+            channels: file_player.channels,
+            response_tx,
+        },
         #[cfg(not(target_os = "macos"))]
         _ => return Err("Unsupported device type for this platform".to_string()),
     };

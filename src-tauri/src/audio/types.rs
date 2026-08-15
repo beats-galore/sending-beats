@@ -26,6 +26,8 @@ pub enum AudioDeviceHandle {
     CoreAudio(CoreAudioDevice),
     #[cfg(target_os = "macos")]
     ApplicationAudio(ApplicationAudioDevice),
+    /// A queue of files played into the mixer as though it were a device
+    FilePlayer(FilePlayerInputDevice),
 }
 
 impl std::fmt::Debug for AudioDeviceHandle {
@@ -41,7 +43,35 @@ impl std::fmt::Debug for AudioDeviceHandle {
                 .debug_struct("AudioDeviceHandle::ApplicationAudio")
                 .field("device", device)
                 .finish(),
+            AudioDeviceHandle::FilePlayer(device) => f
+                .debug_struct("AudioDeviceHandle::FilePlayer")
+                .field("device", device)
+                .finish(),
         }
+    }
+}
+
+/// A file player attached as an input source
+///
+/// Carries the player itself rather than an id to look up later: the decoding
+/// thread is started from this, and a player that went away between the source
+/// being chosen and the stream being built would otherwise be a lookup that
+/// fails on the audio thread.
+pub struct FilePlayerInputDevice {
+    pub player: std::sync::Arc<crate::audio::file_player::AudioFilePlayer>,
+    pub name: String,
+    /// What the player emits, whatever the files in its queue are recorded at
+    pub sample_rate: u32,
+    pub channels: u16,
+}
+
+impl std::fmt::Debug for FilePlayerInputDevice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FilePlayerInputDevice")
+            .field("name", &self.name)
+            .field("sample_rate", &self.sample_rate)
+            .field("channels", &self.channels)
+            .finish()
     }
 }
 

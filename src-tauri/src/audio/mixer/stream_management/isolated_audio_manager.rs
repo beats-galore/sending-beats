@@ -70,6 +70,18 @@ pub enum AudioCommand {
         producer: Producer<f32>,
         response_tx: oneshot::Sender<Result<()>>,
     },
+    /// Attach a file player's queue as an input
+    ///
+    /// Unlike the two above there is no hardware to open: the player is handed
+    /// over whole and a decoding thread reads it at the rate the mixer drains.
+    AddFilePlayerInputStream {
+        device_id: String,
+        player: std::sync::Arc<crate::audio::file_player::AudioFilePlayer>,
+        device_name: String,
+        sample_rate: u32,
+        channels: u16,
+        response_tx: oneshot::Sender<Result<()>>,
+    },
     UpdateEffects {
         device_id: String,
         effects: CustomAudioEffectsChain,
@@ -157,6 +169,11 @@ pub struct IsolatedAudioManager {
 
     metrics: AudioMetrics,
 
+    // **FILE PLAYERS**: Decoding threads feeding queued files into the pipeline.
+    // Held here because dropping one stops its thread, so a source outlives the
+    // command that made it and no longer than the device it belongs to.
+    file_player_sources: HashMap<String, crate::audio::file_player::FilePlayerSource>,
+
     database: Option<Arc<crate::db::AudioDatabase>>,
 }
 
@@ -191,6 +208,9 @@ impl IsolatedAudioManager {
 
             // **BRIDGE**: SPMC queues for outputs (hardware + recording)
             output_rtrb_producers: HashMap::new(),
+
+            // **FILE PLAYERS**: Decoding threads, started as players are attached
+            file_player_sources: HashMap::new(),
 
             // **INTERFACE**: Command handling
             command_rx,
@@ -371,6 +391,25 @@ impl IsolatedAudioManager {
                         device_name,
                         channels,
                         producer,
+                    )
+                    .await;
+                let _ = response_tx.send(result);
+            }
+            AudioCommand::AddFilePlayerInputStream {
+                device_id,
+                player,
+                device_name,
+                sample_rate,
+                channels,
+                response_tx,
+            } => {
+                let result = self
+                    .handle_add_file_player_input_stream(
+                        device_id,
+                        player,
+                        device_name,
+                        sample_rate,
+                        channels,
                     )
                     .await;
                 let _ = response_tx.send(result);
@@ -848,6 +887,134 @@ impl IsolatedAudioManager {
         Ok(())
     }
 
+    /// Attach a file player's queue as an input device
+    ///
+    /// There is no hardware to open and no rate to detect: the player declares
+    /// what it emits and brings every file in its queue to that, so this only
+    /// has to build the queue between the decoder and the pipeline and start the
+    /// thread that fills it.
+    async fn handle_add_file_player_input_stream(
+        &mut self,
+        device_id: String,
+        player: Arc<crate::audio::file_player::AudioFilePlayer>,
+        device_name: String,
+        sample_rate: u32,
+        channels: u16,
+    ) -> Result<()> {
+        if self.file_player_sources.contains_key(&device_id) {
+            info!(
+                "📋 {}: File player '{}' already attached, skipping duplicate creation",
+                "DUPLICATE_FILE_PLAYER_SKIP".on_magenta().white(),
+                device_id
+            );
+            return Ok(());
+        }
+
+        info!(
+            "🎼 {}: Attaching file player '{}' ({} Hz, {} ch)",
+            "AUDIO_COORDINATOR".on_yellow().red(),
+            device_name,
+            sample_rate,
+            channels
+        );
+
+        let chunk_size = crate::audio::file_player::SOURCE_CHUNK_FRAMES * channels as usize;
+
+        // Room for several chunks so a late wake-up on either side is absorbed
+        // rather than heard.
+        let buffer_capacity = chunk_size * 16;
+        let (producer, consumer) = rtrb::RingBuffer::<f32>::new(buffer_capacity);
+
+        let (channel_number, initial_gain, initial_pan, initial_muted, initial_solo) =
+            self.channel_placement_for(&device_id).await?;
+
+        // Started before registering, so the queue already has audio in it by
+        // the time the input worker's first read comes round.
+        let source =
+            crate::audio::file_player::FilePlayerSource::start(device_id.clone(), player, producer);
+        self.file_player_sources.insert(device_id.clone(), source);
+
+        if let Err(e) = self
+            .audio_pipeline
+            .add_input_device_with_consumer_and_producer(
+                device_id.clone(),
+                sample_rate,
+                channels,
+                chunk_size,
+                consumer,
+                channel_number,
+                initial_gain,
+                initial_pan,
+                initial_muted,
+                initial_solo,
+            )
+        {
+            // The thread is stopped rather than left decoding into a queue
+            // nothing will ever read.
+            self.file_player_sources.remove(&device_id);
+            return Err(e);
+        }
+
+        info!(
+            "✅ {}: File player '{}' connected to AudioPipeline",
+            "AUDIO_COORDINATOR".on_yellow().red(),
+            device_id
+        );
+
+        Ok(())
+    }
+
+    /// Where a device sits in the session, and how it was last left
+    ///
+    /// The pipeline needs the channel number while building the device, so this
+    /// has to be read before the stream is registered rather than after.
+    async fn channel_placement_for(
+        &self,
+        device_id: &str,
+    ) -> Result<(u32, Option<f32>, Option<f32>, Option<bool>, Option<bool>)> {
+        let Some(ref db) = self.database else {
+            return Err(anyhow::anyhow!(
+                "No database available to look up the channel for '{}'",
+                device_id
+            ));
+        };
+
+        let channel_number =
+            crate::db::ConfiguredAudioDeviceService::get_channel_number_for_active_device(
+                db.sea_orm(),
+                device_id,
+            )
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No channel configuration found for '{}' in the active session",
+                    device_id
+                )
+            })?;
+
+        // Absent effects are not a failure: a device patched for the first time
+        // has none, and the pipeline takes its own defaults for each.
+        let effects =
+            crate::db::AudioEffectsDefaultService::find_by_device_identifier_in_active_config(
+                db.sea_orm(),
+                device_id,
+            )
+            .await
+            .ok()
+            .flatten();
+
+        Ok(match effects {
+            Some(effects) => (
+                channel_number,
+                Some(effects.gain),
+                Some(effects.pan),
+                Some(effects.muted),
+                Some(effects.solo),
+            ),
+            None => (channel_number, None, None, None, None),
+        })
+    }
+
     async fn handle_remove_input_stream(&mut self, device_id: String) -> bool {
         info!(
             "🗑️ {}: Removing input device '{}' (called from safe_switch_input_device)",
@@ -859,6 +1026,16 @@ impl IsolatedAudioManager {
         // **PIPELINE**: Remove device from AudioPipeline
         if let Err(e) = self.audio_pipeline.remove_input_device(&device_id).await {
             warn!("⚠️ Failed to remove input device from pipeline: {}", e);
+        }
+
+        // **FILE PLAYER**: Dropping the source stops its decoding thread. Left
+        // behind it would keep decoding into a queue nothing reads.
+        if self.file_player_sources.remove(&device_id).is_some() {
+            info!(
+                "🎼 {}: Stopped decoding for '{}'",
+                "AUDIO_COORDINATOR".on_yellow().red(),
+                device_id
+            );
         }
 
         // **HARDWARE**: Remove hardware stream

@@ -373,6 +373,9 @@ pub async fn safe_switch_output_device(
                     .to_string(),
             );
         }
+        crate::audio::types::AudioDeviceHandle::FilePlayer(_) => {
+            return Err("File players are input-only and cannot be used as outputs".to_string());
+        }
     };
 
     #[cfg(not(target_os = "macos"))]
@@ -396,6 +399,9 @@ pub async fn safe_switch_output_device(
                 "Application audio devices are input-only and cannot be used as outputs"
                     .to_string(),
             );
+        }
+        crate::audio::types::AudioDeviceHandle::FilePlayer(_) => {
+            return Err("File players are input-only and cannot be used as outputs".to_string());
         }
         #[cfg(not(target_os = "macos"))]
         _ => return Err("Unsupported device type for this platform".to_string()),

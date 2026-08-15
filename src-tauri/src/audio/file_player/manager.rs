@@ -100,7 +100,10 @@ impl FilePlayerManager {
             .iter()
             .map(|(id, device)| {
                 AudioDeviceInfo {
-                    id: device.get_device_id().to_string(),
+                    // The key, not the device's own uuid: this is the identifier
+                    // `create_player` handed back and `get_player` answers to, so
+                    // a source picked from this list can be attached.
+                    id: id.clone(),
                     name: device.get_device_name().to_string(),
                     uid: None,
                     is_input: true,

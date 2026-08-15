@@ -331,7 +331,10 @@ impl AudioFilePlayer {
         let volume = *self.volume.lock().unwrap();
 
         Ok(Some(
-            pending.drain(..take).map(|sample| sample * volume).collect(),
+            pending
+                .drain(..take)
+                .map(|sample| sample * volume)
+                .collect(),
         ))
     }
 
@@ -363,7 +366,11 @@ impl AudioFilePlayer {
         let mut buffer = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
         buffer.copy_interleaved_ref(decoded);
 
-        let mapped = map_channels(buffer.samples(), spec.channels.count(), self.channels as usize);
+        let mapped = map_channels(
+            buffer.samples(),
+            spec.channels.count(),
+            self.channels as usize,
+        );
 
         if self.resampler.lock().unwrap().is_some() {
             self.push_for_resampling(&mapped)?;
@@ -594,24 +601,19 @@ fn map_channels(samples: &[f32], from: usize, to: usize) -> Vec<f32> {
 /// Represents a virtual audio device that streams from the file player
 pub struct FilePlayerDevice {
     player: Arc<AudioFilePlayer>,
-    device_id: String,
     device_name: String,
 }
 
 impl FilePlayerDevice {
     pub fn new(device_name: String, sample_rate: u32, channels: u16) -> Self {
-        let device_id = format!("file_player_{}", uuid::Uuid::new_v4());
-        let player = Arc::new(AudioFilePlayer::new(sample_rate, channels));
-
+        // Deliberately no id of its own. The manager's key is the identifier a
+        // player is known by everywhere — what `create_player` returns, what the
+        // device list advertises, and what a channel is patched to — and a
+        // second one here only ever disagreed with it.
         Self {
-            player,
-            device_id,
+            player: Arc::new(AudioFilePlayer::new(sample_rate, channels)),
             device_name,
         }
-    }
-
-    pub fn get_device_id(&self) -> &str {
-        &self.device_id
     }
 
     pub fn get_device_name(&self) -> &str {

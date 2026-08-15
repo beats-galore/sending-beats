@@ -62,6 +62,9 @@ struct AudioState {
     audio_command_tx:
         tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>,
     app_audio_manager: Arc<AsyncMutex<ApplicationAudioManager>>,
+    /// Shared with `FilePlayerState`, so a player created through the commands
+    /// is the same one the attach path finds when it is patched into a channel.
+    file_player_manager: Arc<audio::FilePlayerManager>,
     #[cfg(target_os = "macos")]
     system_audio_router: Arc<AsyncMutex<audio::devices::SystemAudioRouter>>,
 }
@@ -179,6 +182,11 @@ pub fn run() {
     // Initialize the Tokio runtime for database initialization
     let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
 
+    // Built before AudioState so both it and the file player commands work
+    // through the same manager: a player made by one is found by the other.
+    let file_player_service = FilePlayerService::new();
+    let file_player_manager = file_player_service.get_manager();
+
     let audio_state = rt.block_on(async {
         // Initialize audio system
         let audio_device_manager = match AudioDeviceManager::new() {
@@ -289,6 +297,7 @@ pub fn run() {
             database,
             audio_command_tx,
             app_audio_manager: app_audio_manager_shared.clone(),
+            file_player_manager: file_player_manager.clone(),
             #[cfg(target_os = "macos")]
             system_audio_router,
         }
@@ -299,9 +308,10 @@ pub fn run() {
         service: Arc::new(RecordingService::new()),
     };
 
-    // Initialize file player service
+    // Shares its manager with AudioState, which is what lets a player created
+    // here be found by the attach path when it is patched into a channel.
     let file_player_state = FilePlayerState {
-        service: FilePlayerService::new(),
+        service: file_player_service,
     };
 
     // Initialize application audio state using the same app audio manager from AudioState
