@@ -4,11 +4,6 @@ import { invoke } from '@tauri-apps/api/core';
 import type { Bus } from '../types/bus.types';
 
 export const busService = {
-  /** Every bus, with the inputs feeding it and the outputs taking it */
-  async list(): Promise<Bus[]> {
-    return invoke<Bus[]>('list_audio_buses');
-  },
-
   /**
    * Lay the session's stored routing over the devices already registered.
    *

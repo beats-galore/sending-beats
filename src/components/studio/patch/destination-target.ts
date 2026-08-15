@@ -1,5 +1,3 @@
-import { STREAM_TARGET_KEY, TAPE_TARGET_KEY } from '../../../services/patch-color-service';
-import type { PatchTargetKey } from '../../../services/patch-color-service';
 
 /**
  * The recorder registers as an ordinary mixer output while it is running, under
@@ -42,19 +40,4 @@ export const resolveDestination = (
   }
 
   return null;
-};
-
-/** What a target's colour is stored against, for the tiles naming it. */
-export const targetColorKey = (
-  target: DestinationTarget,
-  outputTargetKeyOf: (index: number) => PatchTargetKey
-): PatchTargetKey => {
-  switch (target.kind) {
-    case 'output':
-      return outputTargetKeyOf(target.index);
-    case 'cast':
-      return STREAM_TARGET_KEY;
-    case 'tape':
-      return TAPE_TARGET_KEY;
-  }
 };

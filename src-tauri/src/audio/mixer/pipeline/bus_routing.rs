@@ -29,7 +29,6 @@ const MAIN_BUS_NAME: &str = "Main";
 #[derive(Debug, PartialEq, Eq)]
 pub enum BusError {
     UnknownBus(String),
-    DuplicateBus(String),
     /// The main bus is where devices fall back to, so it cannot be removed
     MainBusRequired,
     /// Buses follow the routing rather than being made and destroyed directly
@@ -40,7 +39,6 @@ impl std::fmt::Display for BusError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::UnknownBus(id) => write!(f, "no bus with id '{}'", id),
-            Self::DuplicateBus(id) => write!(f, "a bus with id '{}' already exists", id),
             Self::MainBusRequired => write!(f, "the main bus cannot be removed"),
             Self::Derived => write!(
                 f,
@@ -78,7 +76,6 @@ enum OutputSources {
 /// What survives a bus being rebuilt: the parts the routing does not decide
 #[derive(Debug, Clone)]
 struct BusMeta {
-    name: String,
     gain: f32,
     /// The outputs this id described last time, used to recognise it again
     outputs: BTreeSet<String>,
@@ -95,8 +92,6 @@ pub struct BusRegistry {
     meta: BTreeMap<String, BusMeta>,
     /// Rebuilt on every change so the mixing thread can walk it without allocating
     derived: BTreeMap<String, Bus>,
-    /// Counter behind the auto names, so two mixes never take the same one
-    next_mix_number: usize,
 }
 
 impl BusRegistry {
@@ -106,7 +101,6 @@ impl BusRegistry {
             outputs: BTreeMap::new(),
             meta: BTreeMap::new(),
             derived: BTreeMap::new(),
-            next_mix_number: 2,
         };
         registry.rebuild();
         registry
@@ -225,15 +219,6 @@ impl BusRegistry {
         Ok(())
     }
 
-    /// The buses an input currently sends to
-    pub fn sends_of(&self, device_id: &str) -> Vec<&str> {
-        self.derived
-            .values()
-            .filter(|bus| bus.inputs.contains(device_id))
-            .map(|bus| bus.id.as_str())
-            .collect()
-    }
-
     /// Start tracking an output
     ///
     /// Idempotent on purpose. A device that re-registers — hotplug, or its
@@ -292,7 +277,6 @@ impl BusRegistry {
             self.meta.insert(
                 bus.id.clone(),
                 BusMeta {
-                    name: bus.name.clone(),
                     gain: bus.gain,
                     outputs: bus.outputs.clone(),
                 },
@@ -374,7 +358,6 @@ impl BusRegistry {
             claimed.insert(id.clone());
 
             let meta = self.meta.entry(id.clone()).or_insert_with(|| BusMeta {
-                name: String::new(),
                 gain: 1.0,
                 outputs: BTreeSet::new(),
             });
@@ -384,7 +367,8 @@ impl BusRegistry {
                 id.clone(),
                 Bus {
                     id,
-                    name: meta.name.clone(),
+                    // Filled in below, once the whole set is known
+                    name: String::new(),
                     gain: meta.gain,
                     inputs: sources,
                     outputs,
@@ -406,10 +390,6 @@ impl BusRegistry {
             } else {
                 bus.name = format!("Mix {}", mix_number);
                 mix_number += 1;
-            }
-
-            if let Some(meta) = self.meta.get_mut(&bus.id) {
-                meta.name = bus.name.clone();
             }
         }
 

@@ -18,8 +18,6 @@ type VUMeterStore = {
   /** Levels per bus, measured after that bus's own gain. Keyed by bus id. */
   busLevels: Record<string, StereoLevels>;
   masterLevels: StereoLevels;
-  updateChannelLevels: (levels: Record<number, [number, number, number, number]>) => void;
-  updateMasterLevels: (levels: StereoLevels) => void;
   batchUpdate: (updates: {
     channelLevels?: Record<number, [number, number, number, number]>;
     busLevels?: Record<string, StereoLevels>;
@@ -31,10 +29,6 @@ export const useVUMeterStore = create<VUMeterStore>((set) => ({
   channelLevels: {},
   busLevels: {},
   masterLevels: SILENT,
-
-  updateChannelLevels: (levels) => set({ channelLevels: levels }),
-
-  updateMasterLevels: (levels) => set({ masterLevels: levels }),
 
   batchUpdate: (updates) => {
     set((state) => {
