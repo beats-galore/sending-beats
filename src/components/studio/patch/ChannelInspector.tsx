@@ -1,8 +1,6 @@
 import { Group, Stack, Text } from '@mantine/core';
-import { useCallback } from 'react';
 
 import { useChannelEffects } from '../../../hooks';
-import { useMixerStore } from '../../../stores';
 import { border, color } from '../../../theme/tokens';
 import type { AudioChannel } from '../../../types';
 import { asPan } from '../format';
@@ -22,12 +20,14 @@ type ChannelInspectorProps = {
   /**
    * Whether the node is tall enough for the chain below the switch.
    *
-   * A node shows as much as it has room for. Switching the effects on inside a
-   * node that has only been opened as far as the inspector leaves the chain
-   * waiting until the node is made taller, rather than growing the node out
-   * from under the click that switched it on.
+   * A node shows as much as it has room for, and the chain needs a good deal
+   * more room than the switch that turns it on. Switching it on is what asks
+   * for that room — see `onToggleEffects` — so this is normally true by the
+   * time the chain exists to be drawn.
    */
   showChain: boolean;
+  /** Switches the chain on or off, and makes room for it when switching it on. */
+  onToggleEffects: () => void;
 };
 
 /** The processing chain for a channel, revealed inside its node. */
@@ -38,14 +38,10 @@ export const ChannelInspector = ({
   sourceName,
   port,
   showChain,
+  onToggleEffects,
 }: ChannelInspectorProps) => {
-  const updateChannel = useMixerStore((state) => state.updateChannel);
   const { setLimiterThreshold, toggleLimiter } = useChannelEffects(channel.id);
   const chain = channel.effects_enabled && showChain;
-
-  const toggleEffects = useCallback(() => {
-    void updateChannel(channel.id, { effects_enabled: !channel.effects_enabled });
-  }, [updateChannel, channel.id, channel.effects_enabled]);
 
   return (
     <Stack
@@ -59,7 +55,7 @@ export const ChannelInspector = ({
         <ActionButton
           tone={channel.effects_enabled ? 'accent' : 'ghost'}
           padding="6px 12px"
-          onClick={toggleEffects}
+          onClick={onToggleEffects}
         >
           {channel.effects_enabled ? 'FX ON' : 'FX OFF'}
         </ActionButton>

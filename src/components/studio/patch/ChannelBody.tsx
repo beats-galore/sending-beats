@@ -26,6 +26,8 @@ type ChannelBodyProps = {
   source: ReturnType<typeof useChannelSource>;
   /** The strip's own colour, which its meters read in. */
   meterBase: string;
+  /** Switches the chain on or off, and makes room for it when switching it on. */
+  onToggleEffects: () => void;
 };
 
 /** A source at its ordinary size: what it is patched to, how loud, and where it goes. */
@@ -36,6 +38,7 @@ export const ChannelBody = ({
   patch,
   source,
   meterBase,
+  onToggleEffects,
 }: ChannelBodyProps) => {
   const unavailable = source.unavailableReason !== null;
   const tone = unavailable ? 'hot' : source.isApplicationTap ? 'warn' : 'accent';
@@ -125,6 +128,7 @@ export const ChannelBody = ({
           sourceName={patch.sourceName}
           port={index + 1}
           showChain={expansion === 'effects'}
+          onToggleEffects={onToggleEffects}
         />
       )}
     </>

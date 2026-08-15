@@ -8,7 +8,7 @@ import type { AudioChannel } from '../../../types';
 import { useChannelNowPlaying } from '../hooks/use-channel-now-playing';
 import { useChannelSource } from '../hooks/use-channel-source';
 import { useNodeDrag, useNodeFront } from '../hooks/use-node-drag';
-import { useNodeResize, useNodeRung, useUnshrink } from '../hooks/use-node-resize';
+import { useNodeGrow, useNodeResize, useNodeRung, useUnshrink } from '../hooks/use-node-resize';
 import { usePatchChannel } from '../hooks/use-patch-channel';
 import { usePatchColor } from '../hooks/use-patch-color';
 import { DeleteButton } from '../primitives/DeleteButton';
@@ -45,6 +45,7 @@ type ChannelNodeProps = {
 export const ChannelNode = ({ channel, index, rect, variant, selected }: ChannelNodeProps) => {
   const select = useStudioStore((state) => state.select);
   const removeChannel = useMixerStore((state) => state.removeChannel);
+  const updateChannel = useMixerStore((state) => state.updateChannel);
   const patch = usePatchChannel(channel);
   const source = useChannelSource(channel.id);
   const track = useChannelNowPlaying(source.configuredDevice?.deviceIdentifier);
@@ -56,7 +57,19 @@ export const ChannelNode = ({ channel, index, rect, variant, selected }: Channel
   const grab = useNodeDrag(targetKey, rect);
   const resize = useNodeResize(targetKey, rect, channelSize(variant, 'compact'));
   const setRung = useNodeRung(targetKey);
+  const grow = useNodeGrow(targetKey);
   const { front, bringToFront } = useNodeFront(targetKey);
+
+  // Switching the effects on is a request to see the chain, so it comes with
+  // the room to show it. Switching them off leaves the size alone — the space
+  // is then spare rather than wrong, and taking it back would discard whatever
+  // size the card had been given.
+  const toggleEffects = () => {
+    void updateChannel(channel.id, { effects_enabled: !channel.effects_enabled });
+    if (!channel.effects_enabled) {
+      grow(channelSize(variant, 'effects'));
+    }
+  };
 
   // How much of the node is showing follows from how big it is, so the toggle
   // only has to size it to whatever it is going to show next.
@@ -129,6 +142,7 @@ export const ChannelNode = ({ channel, index, rect, variant, selected }: Channel
         patch={patch}
         source={source}
         meterBase={swatch.value}
+        onToggleEffects={toggleEffects}
       />
     );
 
