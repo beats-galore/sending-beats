@@ -14,10 +14,12 @@ type NodeCardProps = {
   position: { left: number; top: number; width: number; height?: number };
   borderColor?: string;
   headerSurface?: ColorToken;
-  /** Lifts the node above its neighbours and rings it, for the selected channel. */
+  /** Rings the node, for the selected channel. */
   selected?: boolean;
-  /** Lifts the node clear while the pointer has hold of it. */
+  /** Draws the node above every other, for the one last pressed. */
   raised?: boolean;
+  /** Called on any press, to bring the node forward out of a stack. */
+  onPress?: PointerEventHandler<HTMLDivElement>;
   onClick?: MouseEventHandler<HTMLDivElement>;
   /** Picks the node up. The title bar is the grip. */
   onGrab?: PointerEventHandler<HTMLDivElement>;
@@ -43,6 +45,7 @@ export const NodeCard = ({
   headerSurface = 'bgRaised',
   selected = false,
   raised = false,
+  onPress,
   onClick,
   onGrab,
   onResize,
@@ -60,6 +63,7 @@ export const NodeCard = ({
         onClick(event);
       })
     }
+    onPointerDown={onPress}
     style={{
       position: 'absolute',
       left: position.left,
@@ -89,6 +93,9 @@ export const NodeCard = ({
         background: color[headerSurface],
         borderRadius: 'var(--mantine-radius-lg) var(--mantine-radius-lg) 0 0',
         cursor: onGrab ? 'grab' : undefined,
+        // The title is the grip. Selecting it instead of dragging by it is
+        // never what was meant.
+        userSelect: onGrab ? 'none' : undefined,
       }}
     >
       {header}
@@ -98,7 +105,16 @@ export const NodeCard = ({
       <Box style={{ flex: 1, minHeight: 0, padding: '10px 11px', ...bodyStyle }}>{children}</Box>
     )}
 
-    {onResize && <ResizeGrip onResize={onResize} />}
+    {/* The grip holds its press back from the node, so bringing the node
+        forward has to be asked for here rather than left to bubble. */}
+    {onResize && (
+      <ResizeGrip
+        onResize={(event) => {
+          onPress?.(event);
+          onResize(event);
+        }}
+      />
+    )}
     {ports}
   </Box>
 );

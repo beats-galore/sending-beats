@@ -5,7 +5,7 @@ import { useStudioStore } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
 import { asBytes, asClock } from '../format';
-import { useNodeDrag, useNodeMoving } from '../hooks/use-node-drag';
+import { useNodeDrag, useNodeFront } from '../hooks/use-node-drag';
 import { useNodeResize, useNodeSize } from '../hooks/use-node-resize';
 import { useTapeTransport } from '../hooks/use-tape-transport';
 import { ExpandToggle } from '../primitives/ExpandToggle';
@@ -34,7 +34,7 @@ export const TapeDestination = ({ rect, selected }: TapeDestinationProps) => {
   const grab = useNodeDrag(TAPE_TARGET_KEY, rect);
   const resize = useNodeResize(TAPE_TARGET_KEY, rect, tapeSize(false));
   const setSize = useNodeSize(TAPE_TARGET_KEY);
-  const moving = useNodeMoving(TAPE_TARGET_KEY);
+  const { front, bringToFront } = useNodeFront(TAPE_TARGET_KEY);
   const expanded = tapeExpandedFor(rect);
 
   const fileName = tape.filePath?.split('/').pop();
@@ -43,8 +43,9 @@ export const TapeDestination = ({ rect, selected }: TapeDestinationProps) => {
     <NodeCard
       position={rect}
       selected={selected}
-      raised={moving}
+      raised={front}
       borderColor={selected ? color.acc : color.line}
+      onPress={bringToFront}
       onClick={() => select({ kind: 'tape' })}
       onGrab={grab}
       onResize={resize}

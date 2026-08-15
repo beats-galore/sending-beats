@@ -8,7 +8,7 @@ import type { AudioChannel } from '../../../types';
 import { asGain, meterPosition } from '../format';
 import { useChannelNowPlaying } from '../hooks/use-channel-now-playing';
 import { useChannelSource } from '../hooks/use-channel-source';
-import { useNodeDrag, useNodeMoving } from '../hooks/use-node-drag';
+import { useNodeDrag, useNodeFront } from '../hooks/use-node-drag';
 import { useNodeResize, useNodeSize } from '../hooks/use-node-resize';
 import { usePatchChannel } from '../hooks/use-patch-channel';
 import { DeleteButton } from '../primitives/DeleteButton';
@@ -54,7 +54,7 @@ export const ChannelNode = ({ channel, index, rect, variant, selected }: Channel
   const grab = useNodeDrag(targetKey, rect);
   const resize = useNodeResize(targetKey, rect, shut);
   const setSize = useNodeSize(targetKey);
-  const moving = useNodeMoving(targetKey);
+  const { front, bringToFront } = useNodeFront(targetKey);
 
   // How much of the node is showing follows from how big it is, so the toggle
   // only has to size it to whatever it is going to show.
@@ -79,8 +79,9 @@ export const ChannelNode = ({ channel, index, rect, variant, selected }: Channel
   const card = {
     rect,
     selected,
-    raised: moving,
+    raised: front,
     borderColor: selected ? color.acc : color.line,
+    onPress: bringToFront,
     onClick: () => select({ kind: 'channel', channelId: channel.id }),
     onGrab: grab,
     onResize: resize,

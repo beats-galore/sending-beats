@@ -6,7 +6,7 @@ import { layout } from '../../../theme/layout';
 import { border, color } from '../../../theme/tokens';
 import { asBytes, asElapsed } from '../format';
 import { useListenerStats } from '../hooks/use-listener-stats';
-import { useNodeDrag, useNodeMoving } from '../hooks/use-node-drag';
+import { useNodeDrag, useNodeFront } from '../hooks/use-node-drag';
 import { useNodeResize, useNodeSize } from '../hooks/use-node-resize';
 import { useStreamTransport } from '../hooks/use-stream-transport';
 import { ExpandToggle } from '../primitives/ExpandToggle';
@@ -38,7 +38,7 @@ export const CastDestination = ({ rect, selected }: CastDestinationProps) => {
   const grab = useNodeDrag(STREAM_TARGET_KEY, rect);
   const resize = useNodeResize(STREAM_TARGET_KEY, rect, castSize(false));
   const setSize = useNodeSize(STREAM_TARGET_KEY);
-  const moving = useNodeMoving(STREAM_TARGET_KEY);
+  const { front, bringToFront } = useNodeFront(STREAM_TARGET_KEY);
   const expanded = castExpandedFor(rect);
 
   const bitrate = status?.bitrate_info.current_bitrate ?? stream.bitrate;
@@ -48,9 +48,10 @@ export const CastDestination = ({ rect, selected }: CastDestinationProps) => {
     <NodeCard
       position={rect}
       selected={selected}
-      raised={moving}
+      raised={front}
       borderColor={isLive ? color.hotBorder : selected ? color.acc : color.line}
       headerSurface={isLive ? 'hotBg' : 'bgRaised'}
+      onPress={bringToFront}
       onClick={() => select({ kind: 'cast' })}
       onGrab={grab}
       onResize={resize}

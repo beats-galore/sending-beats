@@ -10,13 +10,19 @@ type PatchLayoutStore = {
   loaded: boolean;
 
   /**
-   * The node the pointer currently has hold of.
+   * The node last pressed, which is drawn above the rest.
    *
-   * Nodes are drawn in the order the canvas lists them, so one dragged across
-   * another would pass behind it. This is what lifts it clear for the duration.
+   * Nodes are drawn in the order the canvas lists them, so stacking one over
+   * another leaves the one behind unreachable — clicking it would select it and
+   * the one in front would stay in front. Pressing anywhere on a node brings it
+   * forward, which is what makes a deliberate stack something you can leaf
+   * through, and it lifts a node clear before a drag rather than after.
+   *
+   * Not stored: the arrangement is remembered, the order it is leafed through
+   * is not.
    */
-  moving: PatchTargetKey | null;
-  setMoving: (targetKey: PatchTargetKey | null) => void;
+  front: PatchTargetKey | null;
+  bringToFront: (targetKey: PatchTargetKey) => void;
 
   load: () => Promise<void>;
   /** Move or resize a node on screen, without writing anything down. */
@@ -40,8 +46,8 @@ export const usePatchLayoutStore = create<PatchLayoutStore>((set, get) => ({
   placements: {},
   loaded: false,
 
-  moving: null,
-  setMoving: (moving) => set({ moving }),
+  front: null,
+  bringToFront: (front) => set({ front }),
 
   load: async () => {
     try {

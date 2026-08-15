@@ -30,7 +30,6 @@ const CONTROL_SELECTOR = 'input, select, textarea, button, [data-no-drag]';
 export const useNodeDrag = (targetKey: PatchTargetKey, rect: NodeRect) => {
   const place = usePatchLayoutStore((state) => state.place);
   const save = usePatchLayoutStore((state) => state.save);
-  const setMoving = usePatchLayoutStore((state) => state.setMoving);
 
   return useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
@@ -38,7 +37,11 @@ export const useNodeDrag = (targetKey: PatchTargetKey, rect: NodeRect) => {
         return;
       }
 
-      setMoving(targetKey);
+      // A press that goes on to drag would otherwise start a text selection,
+      // and sweeping the pointer across the canvas highlights every label it
+      // passes over.
+      event.preventDefault();
+
       const grip = event.currentTarget.getBoundingClientRect();
       const scale = grip.width > 0 ? grip.width / rect.width : 1;
       const origin = { x: event.clientX, y: event.clientY };
@@ -65,7 +68,6 @@ export const useNodeDrag = (targetKey: PatchTargetKey, rect: NodeRect) => {
       const handleUp = () => {
         window.removeEventListener('pointermove', handleMove);
         window.removeEventListener('pointerup', handleUp);
-        setMoving(null);
 
         if (!moved) {
           return;
@@ -87,10 +89,24 @@ export const useNodeDrag = (targetKey: PatchTargetKey, rect: NodeRect) => {
       window.addEventListener('pointermove', handleMove);
       window.addEventListener('pointerup', handleUp);
     },
-    [targetKey, rect, place, save, setMoving]
+    [targetKey, rect, place, save]
   );
 };
 
-/** Whether the pointer currently has hold of this node, so it is drawn clear. */
-export const useNodeMoving = (targetKey: PatchTargetKey): boolean =>
-  usePatchLayoutStore((state) => state.moving === targetKey);
+/**
+ * Whether this node is the one drawn above the rest, and how it gets there.
+ *
+ * Every node brings itself forward when it is pressed, anywhere on it. That is
+ * what makes a stack of overlapping nodes something you can leaf through: the
+ * one behind comes to the front when you reach for it, rather than the one in
+ * front staying put because it happens to be drawn later.
+ */
+export const useNodeFront = (targetKey: PatchTargetKey) => {
+  const front = usePatchLayoutStore((state) => state.front === targetKey);
+  const bringToFront = usePatchLayoutStore((state) => state.bringToFront);
+
+  return {
+    front,
+    bringToFront: useCallback(() => bringToFront(targetKey), [bringToFront, targetKey]),
+  };
+};

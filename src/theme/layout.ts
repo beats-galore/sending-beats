@@ -108,8 +108,11 @@ export const layout = {
     castPortOffset: 83,
     tapePortOffset: 63,
     outputPortOffset: 24,
-    /** Tall enough for the gain row and the row of source tiles beneath it. */
-    outputHeight: 112,
+    /**
+     * Tall enough for the device row, the gain row and the row of source tiles
+     * beneath them — the same three rows a shut source card carries.
+     */
+    outputHeight: 140,
     /** Between hardware outputs, which sit closer together than the groups above. */
     outputGap: 12,
     /** Gap between the last hardware output and the first extra destination. */

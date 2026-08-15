@@ -42,7 +42,6 @@ export const useNodeSize = (targetKey: PatchTargetKey) => {
 export const useNodeResize = (targetKey: PatchTargetKey, rect: NodeRect, minimum: Size) => {
   const place = usePatchLayoutStore((state) => state.place);
   const save = usePatchLayoutStore((state) => state.save);
-  const setMoving = usePatchLayoutStore((state) => state.setMoving);
 
   return useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
@@ -50,11 +49,12 @@ export const useNodeResize = (targetKey: PatchTargetKey, rect: NodeRect, minimum
         return;
       }
 
-      // The node itself selects on click and its title bar drags it. Neither
-      // should happen because the corner was pressed.
+      // The node's title bar drags it, and a resize is not a drag.
       event.stopPropagation();
+      // Without this the resize sweeps a text selection across the node it is
+      // resizing, and every label inside comes up highlighted.
+      event.preventDefault();
 
-      setMoving(targetKey);
       const grip = event.currentTarget.getBoundingClientRect();
       const scale = grip.width > 0 ? grip.width / RESIZE_GRIP_SIZE : 1;
       const origin = { x: event.clientX, y: event.clientY };
@@ -84,7 +84,6 @@ export const useNodeResize = (targetKey: PatchTargetKey, rect: NodeRect, minimum
       const handleUp = () => {
         window.removeEventListener('pointermove', handleMove);
         window.removeEventListener('pointerup', handleUp);
-        setMoving(null);
 
         if (moved) {
           void save(targetKey);
@@ -94,6 +93,6 @@ export const useNodeResize = (targetKey: PatchTargetKey, rect: NodeRect, minimum
       window.addEventListener('pointermove', handleMove);
       window.addEventListener('pointerup', handleUp);
     },
-    [targetKey, rect, minimum, place, save, setMoving]
+    [targetKey, rect, minimum, place, save]
   );
 };

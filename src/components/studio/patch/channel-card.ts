@@ -17,8 +17,10 @@ export type ChannelCardProps = {
   ports?: ReactNode;
   borderColor?: string;
   selected?: boolean;
-  /** Lifts the node clear while the pointer has hold of it. */
+  /** Draws the node above every other, for the one last pressed. */
   raised?: boolean;
+  /** Called on any press, to bring the node forward out of a stack. */
+  onPress?: PointerEventHandler<HTMLDivElement>;
   onClick?: MouseEventHandler<HTMLDivElement>;
   /** Picks the node up. The title bar is the grip. */
   onGrab?: PointerEventHandler<HTMLDivElement>;

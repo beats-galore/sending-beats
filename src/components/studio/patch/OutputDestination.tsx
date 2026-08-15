@@ -5,7 +5,7 @@ import type { DestinationRole } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
 import { asGain } from '../format';
-import { useNodeDrag, useNodeMoving } from '../hooks/use-node-drag';
+import { useNodeDrag, useNodeFront } from '../hooks/use-node-drag';
 import { useNodeResize } from '../hooks/use-node-resize';
 import type { PatchOutput } from '../hooks/use-patch-outputs';
 import { DeleteButton } from '../primitives/DeleteButton';
@@ -56,7 +56,13 @@ type OutputDestinationProps = {
   onRemove: (deviceId: string) => void;
 };
 
-/** One hardware output the master sum can feed. */
+/**
+ * One hardware output the master sum can feed.
+ *
+ * Laid out like a source: the name in the title bar, what it is patched to
+ * inside. The device picker used to fill the title bar, which left no bare
+ * strip anywhere along it to pick the node up by.
+ */
 export const OutputDestination = ({
   output,
   rect,
@@ -80,12 +86,13 @@ export const OutputDestination = ({
     width: destination.width,
     height: destination.outputHeight,
   });
-  const moving = useNodeMoving(targetKey);
+  const { front, bringToFront } = useNodeFront(targetKey);
 
   return (
     <NodeCard
       position={rect}
-      raised={moving}
+      raised={front}
+      onPress={bringToFront}
       onGrab={grab}
       onResize={resize}
       borderColor={unavailable ? color.hotBorder : output.live ? color.line : color.dash}
@@ -103,36 +110,21 @@ export const OutputDestination = ({
               a time, so every destination but one is `live: false` — greying on
               that would hide the colour almost everywhere it is needed. */}
           <PatchBadge
-            targetKey={outputTargetKey(output.id)}
+            targetKey={targetKey}
             position={position}
             dimmed={unavailable}
             label="DESTINATION COLOUR"
           />
-          <StatusDot
-            tone={unavailable ? 'hot' : output.live ? 'accent' : 'inert'}
-            onClick={() => onSelect(output.id)}
-            title={
-              output.unavailableReason ??
-              (output.live ? 'Receiving the master sum' : 'Send the master sum here')
-            }
-          />
-          <NativeSelect
-            value={output.id}
-            onChange={(event) => onChangeDevice(output.id, event.currentTarget.value)}
-            onClick={(event) => event.stopPropagation()}
-            data={options}
-            variant="unstyled"
-            style={{ flex: 1, minWidth: 0 }}
-            styles={{
-              input: {
-                fontFamily: 'var(--mantine-font-family-headings)',
-                fontWeight: 600,
-                fontSize: 'var(--mantine-font-size-md)',
-                letterSpacing: layout.tracking.tight,
-                color: unavailable ? color.hotText : color.text,
-              },
-            }}
-          />
+          <Text
+            ff="var(--mantine-font-family-headings)"
+            fw={600}
+            fz="md"
+            truncate
+            c={unavailable ? color.hotText : color.text}
+            style={{ flex: 1, minWidth: 0, letterSpacing: layout.tracking.tight }}
+          >
+            {output.name}
+          </Text>
           {switchError ? (
             <Pill tone="hot" title={switchError}>
               FAILED
@@ -153,13 +145,38 @@ export const OutputDestination = ({
         </>
       }
       bodyStyle={{
-        padding: '0 11px',
+        padding: '10px 11px',
         display: 'flex',
         flexDirection: 'column',
-        justifyContent: 'center',
         gap: 8,
+        overflow: 'hidden',
       }}
     >
+      <Group gap="xs" wrap="nowrap">
+        <StatusDot
+          tone={unavailable ? 'hot' : output.live ? 'accent' : 'inert'}
+          onClick={() => onSelect(output.id)}
+          title={
+            output.unavailableReason ??
+            (output.live ? 'Receiving the master sum' : 'Send the master sum here')
+          }
+        />
+        <NativeSelect
+          value={output.id}
+          onChange={(event) => onChangeDevice(output.id, event.currentTarget.value)}
+          onClick={(event) => event.stopPropagation()}
+          data={options}
+          variant="unstyled"
+          style={{ flex: 1, minWidth: 0 }}
+          styles={{
+            input: {
+              color: unavailable ? color.hotText : color.textDim,
+              fontSize: 'var(--mantine-font-size-xs)',
+            },
+          }}
+        />
+      </Group>
+
       <Group gap="md" wrap="nowrap" w="100%">
         <SectionLabel tracking="tight">GAIN</SectionLabel>
         <DragBar

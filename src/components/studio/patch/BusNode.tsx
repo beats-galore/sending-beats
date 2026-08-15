@@ -7,7 +7,7 @@ import { layout } from '../../../theme/layout';
 import { border, color, glow } from '../../../theme/tokens';
 import type { Bus } from '../../../types/bus.types';
 import { asGain, meterPosition } from '../format';
-import { useNodeDrag, useNodeMoving } from '../hooks/use-node-drag';
+import { useNodeDrag, useNodeFront } from '../hooks/use-node-drag';
 import { useNodeResize, useNodeSize } from '../hooks/use-node-resize';
 import { DragBar } from '../primitives/DragBar';
 import { ExpandToggle } from '../primitives/ExpandToggle';
@@ -49,7 +49,7 @@ export const BusNode = ({ bus, rect, selected, onGainChange }: BusNodeProps) => 
   const grab = useNodeDrag(targetKey, rect);
   const resize = useNodeResize(targetKey, rect, busSize(false));
   const setSize = useNodeSize(targetKey);
-  const moving = useNodeMoving(targetKey);
+  const { front, bringToFront } = useNodeFront(targetKey);
 
   const expanded = busExpandedFor(rect);
 
@@ -66,6 +66,7 @@ export const BusNode = ({ bus, rect, selected, onGainChange }: BusNodeProps) => 
         event.stopPropagation();
         select({ kind: 'bus', busId: bus.id });
       }}
+      onPointerDown={bringToFront}
       style={{
         position: 'absolute',
         left: rect.left,
@@ -79,7 +80,7 @@ export const BusNode = ({ bus, rect, selected, onGainChange }: BusNodeProps) => 
         cursor: 'pointer',
         display: 'flex',
         flexDirection: 'column',
-        zIndex: moving ? 20 : undefined,
+        zIndex: front ? 20 : undefined,
       }}
     >
       <Group
@@ -94,6 +95,9 @@ export const BusNode = ({ bus, rect, selected, onGainChange }: BusNodeProps) => 
           background: color.panelHi,
           borderRadius: 'var(--mantine-radius-xl) var(--mantine-radius-xl) 0 0',
           cursor: 'grab',
+          // The title is the grip. Selecting it instead of dragging by it is
+          // never what was meant.
+          userSelect: 'none',
         }}
       >
         <Box
@@ -212,7 +216,14 @@ export const BusNode = ({ bus, rect, selected, onGainChange }: BusNodeProps) => 
         )}
       </Stack>
 
-      <ResizeGrip onResize={resize} />
+      {/* The grip holds its press back from the node, so bringing the node
+          forward has to be asked for here rather than left to bubble. */}
+      <ResizeGrip
+        onResize={(event) => {
+          bringToFront();
+          resize(event);
+        }}
+      />
 
       {/* Ports straddle the node's own edges, and are listed in the order the
           member tiles are, so a cable lands beside the tile naming it. */}
