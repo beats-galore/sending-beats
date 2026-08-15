@@ -9,18 +9,22 @@ import { useStudioStore } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { border, color } from '../../../theme/tokens';
 import { asBytes, asElapsed } from '../format';
+import { useCastDestination } from '../hooks/use-cast-destination';
 import { useListenerStats } from '../hooks/use-listener-stats';
 import { useNodeDrag, useNodeFront } from '../hooks/use-node-drag';
 import { useNodeResize, useNodeRung, useUnshrink } from '../hooks/use-node-resize';
 import { useStreamTransport } from '../hooks/use-stream-transport';
+import { DeleteButton } from '../primitives/DeleteButton';
 import { ExpandToggle } from '../primitives/ExpandToggle';
 import { NodeCard } from '../primitives/NodeCard';
 import { PortDot } from '../primitives/PortDot';
+import { SectionLabel } from '../primitives/SectionLabel';
 import { StatRow } from '../primitives/StatRow';
 import { StatusDot } from '../primitives/StatusDot';
 import { CastInspector } from './CastInspector';
 import { castExpansionFor, castSize, NodeExpansion, nextExpansion } from './patch-geometry';
 import type { NodeRect } from './patch-layout';
+import { SourceTiles } from './SourceTiles';
 
 const { destination } = layout;
 
@@ -37,6 +41,8 @@ type CastDestinationProps = {
 export const CastDestination = ({ rect, selected }: CastDestinationProps) => {
   const select = useStudioStore((state) => state.select);
   const station = useCastConfigurationStore(selectedCastConfiguration);
+  const cast = useCastDestination();
+  const removeCastTarget = useCastConfigurationStore((state) => state.removeTarget);
   const { isLive, isBusy, toggle, status, uptimeSeconds } = useStreamTransport();
   const listeners = useListenerStats(isLive);
   const grab = useNodeDrag(STREAM_TARGET_KEY, rect);
@@ -89,6 +95,15 @@ export const CastDestination = ({ rect, selected }: CastDestinationProps) => {
           <Text size="2xs" c={color.textDim}>
             MP3 {bitrate}
           </Text>
+          {/* Takes the station off this patch, not out of the studio. Its
+              routing is left where it is, so putting it back finds the sources
+              it had rather than a destination to wire up again. */}
+          {cast && !isLive && (
+            <DeleteButton
+              onDelete={() => void removeCastTarget(cast.castConfigurationId)}
+              title={`Take ${cast.name} off this patch`}
+            />
+          )}
           <ExpandToggle
             grows={NodeExpansion.indexOf(next) > NodeExpansion.indexOf(expansion)}
             onToggle={() => setRung(next)}
@@ -132,6 +147,16 @@ export const CastDestination = ({ rect, selected }: CastDestinationProps) => {
             <StatRow label="UPTIME">{isLive ? asElapsed(uptimeSeconds) : '—'}</StatRow>
             <StatRow label="SENT">{sent ? asBytes(sent) : '—'}</StatRow>
           </SimpleGrid>
+
+          {/* The broadcast is routed to like any other destination now: its
+              output identity comes from the station rather than from the
+              running stream, so this can be wired up off air. */}
+          {cast && (
+            <Group gap="md" wrap="nowrap" w="100%">
+              <SectionLabel tracking="tight">FROM</SectionLabel>
+              <SourceTiles deviceId={cast.deviceId} />
+            </Group>
+          )}
 
           {expansion === 'expanded' && (
             <CastInspector isLive={isLive} isBusy={isBusy} onToggle={() => void toggle()} />

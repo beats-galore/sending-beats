@@ -45,6 +45,13 @@ type PatchRectsInput = {
   /** A mix lists what feeds it, so how tall it stands follows from its members. */
   buses: { id: string; members: number }[];
   outputIds: string[];
+  /**
+   * Whether a station is on this patch.
+   *
+   * A cast is added and removed like any other destination, so its slot closes
+   * up when there is none rather than leaving a gap the column flows around.
+   */
+  hasCast: boolean;
 };
 
 /**
@@ -87,7 +94,7 @@ const stackEnd = (tops: number[], heights: number[], top: number, gap: number): 
   tops.length === 0 ? top : tops[tops.length - 1] + heights[heights.length - 1] + gap;
 
 export const resolvePatchRects = (
-  { channels, buses, outputIds }: PatchRectsInput,
+  { channels, buses, outputIds, hasCast }: PatchRectsInput,
   placements: Placements
 ): PatchRects => {
   const channelKeys = channels.map((channel) => channelTargetKey(channel.id));
@@ -120,7 +127,9 @@ export const resolvePatchRects = (
 
   // The right column runs cast, then tape, then the hardware outputs, each
   // group flowing from the one above it.
-  const castSlotHeight = resolveHeight(placements, STREAM_TARGET_KEY, castSize('collapsed'));
+  const castSlotHeight = hasCast
+    ? resolveHeight(placements, STREAM_TARGET_KEY, castSize('collapsed'))
+    : 0;
   const castRect = resolveRect(placements[STREAM_TARGET_KEY], {
     left: destination.x,
     top: destination.top,
@@ -165,7 +174,7 @@ export const resolvePatchRects = (
       ...channelKeys.map((key, index): [PatchTargetKey, NodeRect] => [key, channelRects[index]]),
       ...busKeys.map((key, index): [PatchTargetKey, NodeRect] => [key, busRects[index]]),
       ...outputKeys.map((key, index): [PatchTargetKey, NodeRect] => [key, outputRects[index]]),
-      [STREAM_TARGET_KEY, castRect],
+      ...(hasCast ? [[STREAM_TARGET_KEY, castRect] as const] : []),
       [TAPE_TARGET_KEY, tapeRect],
     ]),
     placements,

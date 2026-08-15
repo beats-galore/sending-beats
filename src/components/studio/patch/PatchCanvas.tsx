@@ -5,11 +5,13 @@ import { useChannelsData } from '../../../hooks';
 import type { PatchTargetKey } from '../../../services/patch-color-service';
 import { useMixerStore } from '../../../stores';
 import { orderedBuses, useBusStore } from '../../../stores/bus-store';
+import { useCastConfigurationStore } from '../../../stores/cast-configuration-store';
 import { usePatchColorStore } from '../../../stores/patch-color-store';
 import { usePatchLayoutStore } from '../../../stores/patch-layout-store';
 import { useStudioStore } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
+import { useAvailableCastTargets, useCastDestination } from '../hooks/use-cast-destination';
 import { useChannelCardVariants } from '../hooks/use-channel-card-variants';
 import { useChannelDevices } from '../hooks/use-channel-devices';
 import { useFocusedNode } from '../hooks/use-focused-node';
@@ -36,6 +38,9 @@ const { source, bus, destination, canvas } = layout;
 export const PatchCanvas = () => {
   const { channels } = useChannelsData();
   const addChannel = useMixerStore((state) => state.addChannel);
+  const cast = useCastDestination();
+  const castOptions = useAvailableCastTargets();
+  const addCastTarget = useCastConfigurationStore((state) => state.addTarget);
   const {
     outputs,
     available,
@@ -110,10 +115,11 @@ export const PatchCanvas = () => {
             members: busEntry.inputs.length,
           })),
           outputIds: outputs.map((output) => output.id),
+          hasCast: cast !== null,
         },
         placements
       ),
-    [channels, variants, buses, outputs, placements]
+    [channels, variants, buses, outputs, placements, cast]
   );
 
   // Cables are painted in the colour of whatever they carry, the same rule the
@@ -201,7 +207,9 @@ export const PatchCanvas = () => {
         ))
       )}
 
-      <CastDestination rect={rects.cast} selected={focused?.kind === 'cast'} />
+      {/* Only when a station has been put on this patch. Nothing to broadcast
+          to is nothing to draw, and the column closes up around it. */}
+      {cast && <CastDestination rect={rects.cast} selected={focused?.kind === 'cast'} />}
       <TapeDestination rect={rects.tape} selected={focused?.kind === 'tape'} />
 
       {outputs.map((output, index) => (
@@ -225,6 +233,8 @@ export const PatchCanvas = () => {
       <AddDestination
         top={rects.addDestinationTop}
         available={available}
+        castOptions={castOptions}
+        onPickCast={(id) => void addCastTarget(id)}
         onPick={selectOutput}
       />
 

@@ -32,4 +32,19 @@ export const castConfigurationService = {
   async setPassword(id: string, password: string): Promise<boolean> {
     return invoke<boolean>('set_cast_configuration_password', { id, password });
   },
+
+  /** The stations on the current patch, by id */
+  async listTargets(): Promise<string[]> {
+    return invoke<string[]>('list_cast_targets');
+  },
+
+  /** Put a station on the current patch so it can be routed to */
+  async addTarget(castConfigurationId: string): Promise<void> {
+    return invoke('add_cast_target', { castConfigurationId });
+  },
+
+  /** Take it off again, leaving its routing where it is */
+  async removeTarget(castConfigurationId: string): Promise<void> {
+    return invoke('remove_cast_target', { castConfigurationId });
+  },
 } as const;

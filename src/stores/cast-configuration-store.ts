@@ -9,9 +9,13 @@ type CastConfigurationStore = {
   configurations: CastConfiguration[];
   /** Which station the transmitter is pointed at */
   selectedId: string | null;
+  /** Stations on the current patch's canvas, by id */
+  targetIds: string[];
   loaded: boolean;
 
   load: () => Promise<void>;
+  addTarget: (id: string) => Promise<void>;
+  removeTarget: (id: string) => Promise<void>;
   select: (id: string) => void;
   add: () => Promise<CastConfiguration | null>;
   update: (id: string, input: CastConfigurationInput) => Promise<void>;
@@ -24,11 +28,15 @@ export const useCastConfigurationStore = create<CastConfigurationStore>()(
     (set, get) => ({
       configurations: [],
       selectedId: null,
+      targetIds: [],
       loaded: false,
 
       load: async () => {
         try {
-          const configurations = await castConfigurationService.list();
+          const [configurations, targetIds] = await Promise.all([
+            castConfigurationService.list(),
+            castConfigurationService.listTargets(),
+          ]);
 
           // A selection is remembered across launches, but the station behind it
           // may have been deleted since — falling back to the first keeps the
@@ -38,6 +46,7 @@ export const useCastConfigurationStore = create<CastConfigurationStore>()(
 
           set({
             configurations,
+            targetIds,
             selectedId: stillThere ? selectedId : (configurations.at(0)?.id ?? null),
             loaded: true,
           });
@@ -48,6 +57,34 @@ export const useCastConfigurationStore = create<CastConfigurationStore>()(
       },
 
       select: (id) => set({ selectedId: id }),
+
+      addTarget: async (id) => {
+        const previous = get().targetIds;
+        if (previous.includes(id)) {
+          return;
+        }
+
+        set({ targetIds: [...previous, id] });
+
+        try {
+          await castConfigurationService.addTarget(id);
+        } catch (error) {
+          console.error('Failed to add the cast destination:', error);
+          set({ targetIds: previous });
+        }
+      },
+
+      removeTarget: async (id) => {
+        const previous = get().targetIds;
+        set({ targetIds: previous.filter((entry) => entry !== id) });
+
+        try {
+          await castConfigurationService.removeTarget(id);
+        } catch (error) {
+          console.error('Failed to remove the cast destination:', error);
+          set({ targetIds: previous });
+        }
+      },
 
       add: async () => {
         try {
@@ -96,6 +133,8 @@ export const useCastConfigurationStore = create<CastConfigurationStore>()(
             const configurations = state.configurations.filter((entry) => entry.id !== id);
             return {
               configurations,
+              // The row is gone, so the canvas cannot be pointed at it either.
+              targetIds: state.targetIds.filter((entry) => entry !== id),
               selectedId:
                 state.selectedId === id ? (configurations.at(0)?.id ?? null) : state.selectedId,
             };

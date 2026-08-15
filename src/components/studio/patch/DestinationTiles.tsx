@@ -1,7 +1,9 @@
 import { Group } from '@mantine/core';
 import { useCallback } from 'react';
 
+import { STREAM_TARGET_KEY } from '../../../services/patch-color-service';
 import { sourcesOf, useBusStore } from '../../../stores/bus-store';
+import { useCastDestination } from '../hooks/use-cast-destination';
 import { usePatchOutputs } from '../hooks/use-patch-outputs';
 import { DestinationTile } from './DestinationTile';
 
@@ -16,6 +18,7 @@ type DestinationTilesProps = {
 /** Which destinations one source reaches. Click a tile to add or remove it. */
 export const DestinationTiles = ({ deviceIdentifier }: DestinationTilesProps) => {
   const { outputs } = usePatchOutputs();
+  const cast = useCastDestination();
   const buses = useBusStore((state) => state.buses);
   const setOutputSources = useBusStore((state) => state.setOutputSources);
 
@@ -38,7 +41,7 @@ export const DestinationTiles = ({ deviceIdentifier }: DestinationTilesProps) =>
     [buses, deviceIdentifier, setOutputSources]
   );
 
-  if (!deviceIdentifier || outputs.length === 0) {
+  if (!deviceIdentifier || (outputs.length === 0 && !cast)) {
     return null;
   }
 
@@ -56,6 +59,20 @@ export const DestinationTiles = ({ deviceIdentifier }: DestinationTilesProps) =>
           onToggle={toggle}
         />
       ))}
+
+      {/* The broadcast is a destination like the rest: it has a stable output
+          identity now, so it can be routed to while off air and still be the
+          same output when it goes live. */}
+      {cast && (
+        <DestinationTile
+          deviceId={cast.deviceId}
+          targetKey={STREAM_TARGET_KEY}
+          name={cast.name}
+          index={outputs.length}
+          on={sourcesOf(buses, cast.deviceId).includes(deviceIdentifier)}
+          onToggle={toggle}
+        />
+      )}
     </Group>
   );
 };

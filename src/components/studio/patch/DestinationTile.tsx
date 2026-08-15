@@ -6,8 +6,16 @@ import { border, color } from '../../../theme/tokens';
 import { usePatchColor } from '../hooks/use-patch-color';
 
 type DestinationTileProps = {
-  /** The destination this tile refers to, which is also what it is coloured by */
+  /** The destination this tile refers to */
   deviceId: string;
+  /**
+   * What its colour is stored against, when that is not the device itself.
+   *
+   * The broadcast and the tape reserve their colours rather than being given
+   * one, so a tile pointing at either has to ask under the key that reservation
+   * is held under.
+   */
+  targetKey?: string;
   name: string;
   /** Position in the destination column, for the number shown and the colour */
   index: number;
@@ -22,8 +30,10 @@ type DestinationTileProps = {
  * The mirror of `SourceTile`: painted in the destination's colour, because the
  * tile refers to the card on the far side of the canvas.
  */
-export const DestinationTile = ({ deviceId, name, index, on, onToggle }: DestinationTileProps) => {
-  const swatch = usePatchColor(outputTargetKey(deviceId), index);
+export const DestinationTile = ({
+  deviceId,
+  targetKey, name, index, on, onToggle }: DestinationTileProps) => {
+  const swatch = usePatchColor(targetKey ?? outputTargetKey(deviceId), index);
 
   return (
     <Box

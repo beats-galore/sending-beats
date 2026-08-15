@@ -5,8 +5,17 @@
  */
 const TAPE_OUTPUT_ID = 'recording_output';
 
-/** Icecast registers one output per broadcast, keyed by that broadcast's id. */
+/** Icecast registers one output per broadcast, keyed by the station's id. */
 const CAST_OUTPUT_PREFIX = 'icecast_output_';
+
+/**
+ * What the mixer names a station's broadcast.
+ *
+ * Built from the station's own row key, so routing set while off air is still
+ * pointing at the same output when it goes live.
+ */
+export const castOutputId = (castConfigurationId: string): string =>
+  `${CAST_OUTPUT_PREFIX}${castConfigurationId}`;
 
 /**
  * Where a bus member sits on the canvas.

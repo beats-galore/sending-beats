@@ -125,3 +125,87 @@ pub struct CastConfigurationDraft {
     pub variable_bitrate: bool,
     pub vbr_quality: i32,
 }
+
+/// Which stations a patch broadcasts to
+///
+/// The station is global; this is the patch's side of the relationship, so a
+/// cast can be put on a canvas and taken off it like any other destination.
+pub struct CastTargetService;
+
+impl CastTargetService {
+    /// The stations on a patch, oldest first
+    pub async fn list_for_configuration(
+        db: &DatabaseConnection,
+        configuration_id: &str,
+    ) -> Result<Vec<String>> {
+        use crate::entities::configuration_cast_target;
+        use sea_orm::{ColumnTrait, QueryFilter};
+
+        let rows = configuration_cast_target::Entity::find()
+            .filter(configuration_cast_target::Column::ConfigurationId.eq(configuration_id))
+            .order_by_asc(configuration_cast_target::Column::CreatedAt)
+            .all(db)
+            .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| row.cast_configuration_id)
+            .collect())
+    }
+
+    /// Put a station on a patch. Adding one already there changes nothing.
+    pub async fn add(
+        db: &DatabaseConnection,
+        configuration_id: &str,
+        cast_configuration_id: &str,
+    ) -> Result<()> {
+        use crate::entities::configuration_cast_target;
+        use sea_orm::{ColumnTrait, QueryFilter};
+
+        let existing = configuration_cast_target::Entity::find()
+            .filter(configuration_cast_target::Column::ConfigurationId.eq(configuration_id))
+            .filter(
+                configuration_cast_target::Column::CastConfigurationId.eq(cast_configuration_id),
+            )
+            .one(db)
+            .await?;
+
+        if existing.is_some() {
+            return Ok(());
+        }
+
+        let now = chrono::Utc::now();
+        configuration_cast_target::ActiveModel {
+            id: Set(uuid::Uuid::new_v4().to_string()),
+            configuration_id: Set(configuration_id.to_string()),
+            cast_configuration_id: Set(cast_configuration_id.to_string()),
+            created_at: Set(now),
+            updated_at: Set(now),
+        }
+        .insert(db)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Take a station off a patch. Its routing is left alone: putting it back
+    /// should find the sources it had rather than a blank destination.
+    pub async fn remove(
+        db: &DatabaseConnection,
+        configuration_id: &str,
+        cast_configuration_id: &str,
+    ) -> Result<()> {
+        use crate::entities::configuration_cast_target;
+        use sea_orm::{ColumnTrait, QueryFilter};
+
+        configuration_cast_target::Entity::delete_many()
+            .filter(configuration_cast_target::Column::ConfigurationId.eq(configuration_id))
+            .filter(
+                configuration_cast_target::Column::CastConfigurationId.eq(cast_configuration_id),
+            )
+            .exec(db)
+            .await?;
+
+        Ok(())
+    }
+}
