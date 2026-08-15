@@ -9,9 +9,13 @@ import type { AudioDeviceInfo } from '../types';
 import {
   DEVICES_CHANGED_EVENT,
   DEVICE_DISCONNECTED_EVENT,
+  DEVICE_RECONNECTED_EVENT,
 } from '../types/device-hotplug.types';
 
-import type { DeviceDisconnectedEvent } from '../types/device-hotplug.types';
+import type {
+  DeviceDisconnectedEvent,
+  DeviceReconnectedEvent,
+} from '../types/device-hotplug.types';
 
 type AudioDeviceStore = {
   // State
@@ -235,6 +239,25 @@ export const useAudioDeviceStore = create<AudioDeviceStore>()(
 
       await listen<DeviceDisconnectedEvent>(DEVICE_DISCONNECTED_EVENT, ({ payload }) => {
         console.warn(`🔌 Device disconnected: ${payload.deviceName} (${payload.deviceId})`);
+        set((state) =>
+          state.disconnectedDeviceIds.includes(payload.deviceId)
+            ? state
+            : { disconnectedDeviceIds: [...state.disconnectedDeviceIds, payload.deviceId] }
+        );
+      });
+
+      // Arrives after the device list, so a device whose stream could not be
+      // rebuilt goes back to showing an error rather than looking healthy
+      // just because the hardware is present again.
+      await listen<DeviceReconnectedEvent>(DEVICE_RECONNECTED_EVENT, ({ payload }) => {
+        if (payload.restored) {
+          console.info(
+            `🔌 Device restored: ${payload.deviceName} on channel ${payload.channelNumber}`
+          );
+          return;
+        }
+
+        console.error(`🔌 Device came back but could not be restored: ${payload.deviceName}`);
         set((state) =>
           state.disconnectedDeviceIds.includes(payload.deviceId)
             ? state

@@ -5,6 +5,7 @@ pub mod audio_effects;
 pub mod audio_effects_default;
 pub mod configurations;
 pub mod debug;
+pub mod device_attachment;
 pub mod file_player;
 pub mod icecast;
 pub mod mixer;

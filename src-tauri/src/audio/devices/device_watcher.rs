@@ -7,12 +7,13 @@
 
 use anyhow::Result;
 use colored::Colorize;
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::async_runtime::JoinHandle;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc::{Sender, UnboundedReceiver};
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{info, warn};
@@ -21,9 +22,12 @@ use super::property_listener::{DeviceEvent, DevicePropertyListener, LOG_TAG};
 use super::AudioDeviceManager;
 use crate::audio::mixer::stream_management::AudioCommand;
 use crate::audio::types::AudioDeviceInfo;
+use crate::commands::device_attachment::attach_input_device;
+use crate::AudioState;
 
 pub const DEVICES_CHANGED_EVENT: &str = "audio-devices-changed";
 pub const DEVICE_DISCONNECTED_EVENT: &str = "audio-device-disconnected";
+pub const DEVICE_RECONNECTED_EVENT: &str = "audio-device-reconnected";
 
 /// One physical event reaches us as several notifications - an interface
 /// arriving is a device-list change plus, if the system promotes it, two
@@ -36,6 +40,16 @@ pub struct DeviceDisconnectedEvent {
     pub device_id: String,
     pub device_name: String,
     pub is_input: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceReconnectedEvent {
+    pub device_id: String,
+    pub device_name: String,
+    pub channel_number: i32,
+    /// False when the device came back but its stream could not be rebuilt.
+    pub restored: bool,
 }
 
 /// Owns the listener registrations and the task reacting to them. Dropping it
@@ -64,6 +78,103 @@ impl DeviceWatcher {
             task: Some(task),
             _listener: listener,
         })
+    }
+}
+
+/// Restore every device that just came back and still has a saved input
+/// configuration.
+///
+/// Arrivals come out of Core Audio enumeration, so they are always hardware
+/// devices - application sources are keyed `app-<bundle>` and never appear
+/// here, which is why this always attaches as non-application audio.
+async fn handle_arrivals(
+    app: &AppHandle,
+    known: &HashMap<String, AudioDeviceInfo>,
+    current: &HashMap<String, AudioDeviceInfo>,
+) {
+    let arrivals: Vec<&AudioDeviceInfo> = current
+        .values()
+        .filter(|device| device.is_input && !known.contains_key(&device.id))
+        .collect();
+
+    if arrivals.is_empty() {
+        return;
+    }
+
+    let Some(state) = app.try_state::<AudioState>() else {
+        return;
+    };
+
+    for device in arrivals {
+        let Some(configuration) = saved_input_configuration(&state, &device.id).await else {
+            continue;
+        };
+
+        info!(
+            "{} {} came back, restoring channel {}",
+            LOG_TAG.on_cyan().black(),
+            device.name,
+            configuration.channel_number
+        );
+
+        let restored = match attach_input_device(
+            &state,
+            &device.id,
+            false,
+            Some(configuration.channel_number),
+        )
+        .await
+        {
+            Ok(_) => true,
+            Err(error) => {
+                warn!(
+                    "{} Could not restore {}: {}",
+                    LOG_TAG.on_cyan().black(),
+                    device.id,
+                    error
+                );
+                false
+            }
+        };
+
+        emit(
+            app,
+            DEVICE_RECONNECTED_EVENT,
+            DeviceReconnectedEvent {
+                device_id: device.id.clone(),
+                device_name: device.name.clone(),
+                channel_number: configuration.channel_number,
+                restored,
+            },
+        );
+    }
+}
+
+/// The saved channel binding for a device, if the user ever patched one.
+///
+/// Departure deliberately leaves this row in place, so its presence is what
+/// separates a device worth restoring from one that merely showed up.
+async fn saved_input_configuration(
+    state: &AudioState,
+    device_id: &str,
+) -> Option<crate::entities::configured_audio_device::Model> {
+    let found = crate::entities::configured_audio_device::Entity::find()
+        .filter(crate::entities::configured_audio_device::Column::DeviceIdentifier.eq(device_id))
+        .filter(crate::entities::configured_audio_device::Column::IsInput.eq(true))
+        .one(state.database.sea_orm())
+        .await;
+
+    match found {
+        Ok(configuration) => configuration,
+        Err(error) => {
+            warn!(
+                "{} Could not look up saved configuration for {}: {}",
+                LOG_TAG.on_cyan().black(),
+                device_id,
+                error
+            );
+            None
+        }
     }
 }
 
@@ -111,7 +222,13 @@ async fn watch_loop(
         };
 
         handle_departures(&app, &device_manager, &audio_command_tx, &known, &current).await;
+
+        // The list goes out before recovery is attempted so the arrival shows
+        // up immediately, and so a failed restore - reported afterwards - is
+        // not overwritten by a list that says the device is present and fine.
         emit_device_list(&app, &current);
+        handle_arrivals(&app, &known, &current).await;
+
         known = current;
     }
 

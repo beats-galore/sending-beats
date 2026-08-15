@@ -3,6 +3,7 @@
 
 export const DEVICES_CHANGED_EVENT = 'audio-devices-changed';
 export const DEVICE_DISCONNECTED_EVENT = 'audio-device-disconnected';
+export const DEVICE_RECONNECTED_EVENT = 'audio-device-reconnected';
 
 /**
  * A device the mixer was using has gone away. The backend has already torn its
@@ -12,4 +13,15 @@ export type DeviceDisconnectedEvent = {
   deviceId: string;
   deviceName: string;
   isInput: boolean;
+};
+
+/**
+ * A device with a saved channel binding came back. The backend has already
+ * tried to rebuild its stream; `restored` says whether that worked.
+ */
+export type DeviceReconnectedEvent = {
+  deviceId: string;
+  deviceName: string;
+  channelNumber: number;
+  restored: boolean;
 };

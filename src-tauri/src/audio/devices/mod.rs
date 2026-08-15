@@ -45,7 +45,9 @@ pub use monitor::{
 #[cfg(target_os = "macos")]
 pub use coreaudio_stream::{CoreAudioInputStream, CoreAudioOutputStream};
 #[cfg(target_os = "macos")]
-pub use device_watcher::{DeviceWatcher, DEVICES_CHANGED_EVENT, DEVICE_DISCONNECTED_EVENT};
+pub use device_watcher::{
+    DeviceWatcher, DEVICES_CHANGED_EVENT, DEVICE_DISCONNECTED_EVENT, DEVICE_RECONNECTED_EVENT,
+};
 #[cfg(target_os = "macos")]
 pub use property_listener::{DeviceEvent, DevicePropertyListener};
 #[cfg(target_os = "macos")]
