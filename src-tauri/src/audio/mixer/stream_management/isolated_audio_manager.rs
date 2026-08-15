@@ -129,7 +129,12 @@ pub enum AudioCommand {
         gain: f32,
         response_tx: oneshot::Sender<Result<()>>,
     },
+    /// Which inputs feed which mix, and which outputs take it
+    Bus(BusCommand),
 }
+
+mod bus_commands;
+pub use bus_commands::BusCommand;
 
 /// Audio System Coordinator - lightweight interface between Tauri commands and audio pipeline
 /// **NEW ARCHITECTURE**: AudioPipeline handles all audio processing, this just coordinates
@@ -463,6 +468,7 @@ impl IsolatedAudioManager {
                 let result = self.audio_pipeline.update_master_gain(gain);
                 let _ = response_tx.send(result);
             }
+            AudioCommand::Bus(command) => self.handle_bus_command(command),
         }
     }
 

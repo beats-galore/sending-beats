@@ -1,15 +1,21 @@
 pub mod audio_application;
+pub mod audio_bus;
+pub mod audio_bus_member;
 pub mod audio_effects_custom;
 pub mod audio_effects_default;
 pub mod audio_mixer_configuration;
 pub mod configured_audio_device;
 pub mod mixer_channel;
+pub mod patch_color;
 pub mod system_audio_state;
 
 pub use audio_application::Entity as AudioApplication;
+pub use audio_bus::Entity as AudioBus;
+pub use audio_bus_member::Entity as AudioBusMember;
 pub use audio_effects_custom::Entity as AudioEffectsCustom;
 pub use audio_effects_default::Entity as AudioEffectsDefault;
 pub use audio_mixer_configuration::Entity as AudioMixerConfiguration;
 pub use configured_audio_device::Entity as ConfiguredAudioDevice;
 pub use mixer_channel::Entity as MixerChannel;
+pub use patch_color::Entity as PatchColor;
 pub use system_audio_state::Entity as SystemAudioState;

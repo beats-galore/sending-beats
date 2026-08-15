@@ -1,12 +1,13 @@
 use colored::*;
 use crossbeam_channel::{bounded, Receiver, Sender};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use tauri::ipc::Channel;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
-use crate::audio::events::{MasterVULevelEvent, VUChannelData, VULevelEvent};
+use crate::audio::events::{BusVULevelEvent, MasterVULevelEvent, VUChannelData, VULevelEvent};
 
 /// The channel every VU service currently reports through.
 ///
@@ -23,7 +24,47 @@ pub fn new_shared_vu_channel() -> SharedVUChannel {
 
 enum VUSample {
     Channel { id: u32, samples: Arc<[f32]> },
+    Bus { id: String, samples: Arc<[f32]> },
     Master { samples: Arc<[f32]> },
+}
+
+/// Peak and RMS of each side of an interleaved stereo block, in linear scale
+///
+/// Ordered (peak_left, rms_left, peak_right, rms_right) to match how the
+/// processing thread stores what it last measured.
+fn stereo_levels(samples: &[f32]) -> (f32, f32, f32, f32) {
+    let mut left = Vec::with_capacity(samples.len() / 2);
+    let mut right = Vec::with_capacity(samples.len() / 2);
+
+    for (i, &sample) in samples.iter().enumerate() {
+        if i % 2 == 0 {
+            left.push(sample);
+        } else {
+            right.push(sample);
+        }
+    }
+
+    let peak_left = calculate_peak(&left);
+    let rms_left = calculate_rms(&left);
+    let (peak_right, rms_right) = if right.is_empty() {
+        (0.0, 0.0)
+    } else {
+        (calculate_peak(&right), calculate_rms(&right))
+    };
+
+    (peak_left, rms_left, peak_right, rms_right)
+}
+
+fn calculate_peak(samples: &[f32]) -> f32 {
+    samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max)
+}
+
+fn calculate_rms(samples: &[f32]) -> f32 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let sum_of_squares: f32 = samples.iter().map(|&s| s * s).sum();
+    (sum_of_squares / samples.len() as f32).sqrt()
 }
 
 pub struct VUChannelService {
@@ -81,6 +122,19 @@ impl VUChannelService {
         });
     }
 
+    /// Meter what a bus handed its outputs this block
+    pub fn queue_bus_audio(&self, bus_id: &str, samples: &[f32]) {
+        if samples.is_empty() {
+            return;
+        }
+
+        let samples_arc = Arc::from(samples);
+        let _ = self.sample_tx.try_send(VUSample::Bus {
+            id: bus_id.to_string(),
+            samples: samples_arc,
+        });
+    }
+
     pub fn queue_master_audio(&self, samples: &[f32]) {
         if samples.is_empty() {
             return;
@@ -111,6 +165,9 @@ impl VUChannelService {
 
         let mut pending_channel_events: Vec<VUChannelData> = Vec::new();
         let mut latest_channel_levels: Vec<Option<(f32, f32, f32, f32)>> = vec![None; max_channels];
+        // Keyed rather than indexed: buses are named and created at runtime, so
+        // there is no fixed count to size a slot for each of them
+        let mut latest_bus_levels: HashMap<String, (f32, f32, f32, f32)> = HashMap::new();
         let mut latest_master_levels: Option<(f32, f32, f32, f32)> = None;
 
         while !shutdown.load(Ordering::Relaxed) {
@@ -125,51 +182,16 @@ impl VUChannelService {
                                 continue;
                             }
 
-                            let mut left = Vec::with_capacity(samples.len() / 2);
-                            let mut right = Vec::with_capacity(samples.len() / 2);
-
-                            for (i, &sample) in samples.iter().enumerate() {
-                                if i % 2 == 0 {
-                                    left.push(sample);
-                                } else {
-                                    right.push(sample);
-                                }
-                            }
-
-                            let peak_left = Self::calculate_peak(&left);
-                            let rms_left = Self::calculate_rms(&left);
-                            let (peak_right, rms_right) = if !right.is_empty() {
-                                (Self::calculate_peak(&right), Self::calculate_rms(&right))
-                            } else {
-                                (0.0, 0.0)
-                            };
-
                             drained_count += 1;
-
-                            latest_channel_levels[channel_idx] =
-                                Some((peak_left, rms_left, peak_right, rms_right));
+                            latest_channel_levels[channel_idx] = Some(stereo_levels(&samples));
+                        }
+                        Ok(VUSample::Bus { id, samples }) => {
+                            drained_count += 1;
+                            latest_bus_levels.insert(id, stereo_levels(&samples));
                         }
                         Ok(VUSample::Master { samples }) => {
-                            let mut left = Vec::with_capacity(samples.len() / 2);
-                            let mut right = Vec::with_capacity(samples.len() / 2);
-
-                            for (i, &sample) in samples.iter().enumerate() {
-                                if i % 2 == 0 {
-                                    left.push(sample);
-                                } else {
-                                    right.push(sample);
-                                }
-                            }
-
-                            let peak_left = Self::calculate_peak(&left);
-                            let rms_left = Self::calculate_rms(&left);
-                            let peak_right = Self::calculate_peak(&right);
-                            let rms_right = Self::calculate_rms(&right);
-
                             drained_count += 1;
-
-                            latest_master_levels =
-                                Some((peak_left, rms_left, peak_right, rms_right));
+                            latest_master_levels = Some(stereo_levels(&samples));
                         }
                         Err(_) => {
                             break;
@@ -192,6 +214,19 @@ impl VUChannelService {
                         );
                         pending_channel_events.push(VUChannelData::from_channel(event));
                     }
+                }
+
+                for (bus_id, (peak_left, rms_left, peak_right, rms_right)) in
+                    latest_bus_levels.iter()
+                {
+                    let event = BusVULevelEvent::new(
+                        bus_id.clone(),
+                        Self::to_db(*peak_left),
+                        Self::to_db(*peak_right),
+                        Self::to_db(*rms_left),
+                        Self::to_db(*rms_right),
+                    );
+                    pending_channel_events.push(VUChannelData::from_bus(event));
                 }
 
                 if let Some((peak_left, rms_left, peak_right, rms_right)) = latest_master_levels {
@@ -227,18 +262,6 @@ impl VUChannelService {
         );
     }
 
-    fn calculate_peak(samples: &[f32]) -> f32 {
-        samples.iter().map(|&s| s.abs()).fold(0.0f32, f32::max)
-    }
-
-    fn calculate_rms(samples: &[f32]) -> f32 {
-        if samples.is_empty() {
-            return 0.0;
-        }
-        let sum_of_squares: f32 = samples.iter().map(|&s| s * s).sum();
-        (sum_of_squares / samples.len() as f32).sqrt()
-    }
-
     fn to_db(value: f32) -> f32 {
         if value > 1e-10 {
             20.0 * value.log10()
@@ -258,5 +281,56 @@ impl VUChannelService {
 impl Drop for VUChannelService {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stereo_levels_read_each_side_separately() {
+        // Interleaved: left is full scale, right is half
+        let samples = [1.0, 0.5, -1.0, -0.5, 1.0, 0.5, -1.0, -0.5];
+
+        let (peak_left, rms_left, peak_right, rms_right) = stereo_levels(&samples);
+
+        assert_eq!(peak_left, 1.0);
+        assert_eq!(peak_right, 0.5);
+        assert!((rms_left - 1.0).abs() < 1e-6);
+        assert!((rms_right - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_silent_block_reads_as_nothing_rather_than_dividing_by_zero() {
+        let (peak_left, rms_left, peak_right, rms_right) = stereo_levels(&[0.0; 8]);
+
+        assert_eq!(
+            (peak_left, rms_left, peak_right, rms_right),
+            (0.0, 0.0, 0.0, 0.0)
+        );
+        assert_eq!(stereo_levels(&[]), (0.0, 0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn a_block_with_no_right_side_reports_zero_for_it() {
+        // A single sample leaves the right side empty, which must not become NaN
+        let (peak_left, rms_left, peak_right, rms_right) = stereo_levels(&[0.5]);
+
+        assert_eq!(peak_left, 0.5);
+        assert!((rms_left - 0.5).abs() < 1e-6);
+        assert_eq!(peak_right, 0.0);
+        assert_eq!(rms_right, 0.0);
+    }
+
+    #[test]
+    fn full_scale_is_zero_db_and_silence_is_floored() {
+        assert!((VUChannelService::to_db(1.0) - 0.0).abs() < 1e-6);
+        assert!((VUChannelService::to_db(0.5) + 6.0206).abs() < 1e-3);
+        assert_eq!(
+            VUChannelService::to_db(0.0),
+            -100.0,
+            "silence floors rather than running to negative infinity"
+        );
     }
 }

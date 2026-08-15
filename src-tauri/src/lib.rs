@@ -35,12 +35,14 @@ use commands::application_audio::*;
 use commands::audio_devices::*;
 use commands::audio_effects::*;
 use commands::audio_effects_default::*;
+use commands::buses::*;
 use commands::configurations::*;
 use commands::debug::*;
 use commands::file_player::*;
 use commands::icecast::*;
 use commands::mixer::*;
 use commands::now_playing::*;
+use commands::patch_colors::*;
 use commands::process_metrics::*;
 use commands::recording::*;
 use commands::streaming::*;
@@ -465,6 +467,18 @@ pub fn run() {
             get_dj_mixer_config,
             rename_mixer_channel,
             update_master_gain,
+            // Bus routing commands
+            list_audio_buses,
+            restore_audio_buses,
+            set_output_sources,
+            list_patch_colors,
+            set_patch_color,
+            clear_patch_color,
+            create_audio_bus,
+            remove_audio_bus,
+            set_audio_bus_gain,
+            set_input_bus_sends,
+            set_output_audio_bus,
             get_pipeline_latency,
             get_process_metrics,
             set_debug_log_config,
