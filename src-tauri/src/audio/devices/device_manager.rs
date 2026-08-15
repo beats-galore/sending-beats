@@ -164,6 +164,13 @@ impl AudioDeviceManager {
         ))
     }
 
+    /// Direct CoreAudio access, for callers that need a raw `AudioDeviceID`
+    /// rather than a device handle.
+    #[cfg(target_os = "macos")]
+    pub fn coreaudio(&self) -> &super::coreaudio_integration::CoreAudioIntegration {
+        self.enumerator.get_coreaudio()
+    }
+
     /// Initialize device health tracking for a device
     pub async fn initialize_device_health(&self, device_info: &AudioDeviceInfo) {
         self.health_monitor

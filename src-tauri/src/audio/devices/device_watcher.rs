@@ -7,9 +7,10 @@
 
 use anyhow::Result;
 use colored::Colorize;
+use coreaudio_sys::AudioObjectID;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::async_runtime::JoinHandle;
@@ -22,7 +23,7 @@ use super::property_listener::{DeviceEvent, DevicePropertyListener, LOG_TAG};
 use super::AudioDeviceManager;
 use crate::audio::mixer::stream_management::AudioCommand;
 use crate::audio::types::AudioDeviceInfo;
-use crate::commands::device_attachment::attach_input_device;
+use crate::commands::device_attachment::{attach_input_device, attach_output_device};
 use crate::AudioState;
 
 pub const DEVICES_CHANGED_EVENT: &str = "audio-devices-changed";
@@ -52,11 +53,10 @@ pub struct DeviceReconnectedEvent {
     pub restored: bool,
 }
 
-/// Owns the listener registrations and the task reacting to them. Dropping it
-/// unregisters from the HAL and stops the task.
+/// Owns the task reacting to hotplug events. Aborting it drops the listener the
+/// task holds, which unregisters every HAL registration.
 pub struct DeviceWatcher {
     task: Option<JoinHandle<()>>,
-    _listener: DevicePropertyListener,
 }
 
 impl DeviceWatcher {
@@ -71,22 +71,20 @@ impl DeviceWatcher {
             app,
             device_manager,
             audio_command_tx,
+            listener,
             receiver,
         ));
 
-        Ok(Self {
-            task: Some(task),
-            _listener: listener,
-        })
+        Ok(Self { task: Some(task) })
     }
 }
 
-/// Restore every device that just came back and still has a saved input
+/// Restore every device that just came back and still has a saved
 /// configuration.
 ///
 /// Arrivals come out of Core Audio enumeration, so they are always hardware
 /// devices - application sources are keyed `app-<bundle>` and never appear
-/// here, which is why this always attaches as non-application audio.
+/// here, which is why inputs always reattach as non-application audio.
 async fn handle_arrivals(
     app: &AppHandle,
     known: &HashMap<String, AudioDeviceInfo>,
@@ -94,7 +92,7 @@ async fn handle_arrivals(
 ) {
     let arrivals: Vec<&AudioDeviceInfo> = current
         .values()
-        .filter(|device| device.is_input && !known.contains_key(&device.id))
+        .filter(|device| !known.contains_key(&device.id))
         .collect();
 
     if arrivals.is_empty() {
@@ -106,26 +104,31 @@ async fn handle_arrivals(
     };
 
     for device in arrivals {
-        let Some(configuration) = saved_input_configuration(&state, &device.id).await else {
+        let Some(configuration) = saved_configuration(&state, &device.id).await else {
             continue;
         };
 
         info!(
-            "{} {} came back, restoring channel {}",
+            "{} {} came back, restoring",
             LOG_TAG.on_cyan().black(),
-            device.name,
-            configuration.channel_number
+            device.name
         );
 
-        let restored = match attach_input_device(
-            &state,
-            &device.id,
-            false,
-            Some(configuration.channel_number),
-        )
-        .await
-        {
-            Ok(_) => true,
+        let outcome = if configuration.is_input {
+            attach_input_device(
+                &state,
+                &device.id,
+                false,
+                Some(configuration.channel_number),
+            )
+            .await
+            .map(|_| ())
+        } else {
+            attach_output_device(&state, &device.id).await
+        };
+
+        let restored = match outcome {
+            Ok(()) => true,
             Err(error) => {
                 warn!(
                     "{} Could not restore {}: {}",
@@ -150,17 +153,39 @@ async fn handle_arrivals(
     }
 }
 
-/// The saved channel binding for a device, if the user ever patched one.
+/// Every device identifier the user has patched to something, in one query
+/// rather than one per device on the machine.
+async fn patched_device_identifiers(state: &AudioState) -> HashSet<String> {
+    let found = crate::entities::configured_audio_device::Entity::find()
+        .all(state.database.sea_orm())
+        .await;
+
+    match found {
+        Ok(configurations) => configurations
+            .into_iter()
+            .map(|configuration| configuration.device_identifier)
+            .collect(),
+        Err(error) => {
+            warn!(
+                "{} Could not list saved device configurations: {}",
+                LOG_TAG.on_cyan().black(),
+                error
+            );
+            HashSet::new()
+        }
+    }
+}
+
+/// The saved binding for a device, if the user ever patched one.
 ///
 /// Departure deliberately leaves this row in place, so its presence is what
 /// separates a device worth restoring from one that merely showed up.
-async fn saved_input_configuration(
+async fn saved_configuration(
     state: &AudioState,
     device_id: &str,
 ) -> Option<crate::entities::configured_audio_device::Model> {
     let found = crate::entities::configured_audio_device::Entity::find()
         .filter(crate::entities::configured_audio_device::Column::DeviceIdentifier.eq(device_id))
-        .filter(crate::entities::configured_audio_device::Column::IsInput.eq(true))
         .one(state.database.sea_orm())
         .await;
 
@@ -191,6 +216,7 @@ async fn watch_loop(
     app: AppHandle,
     device_manager: Arc<AsyncMutex<AudioDeviceManager>>,
     audio_command_tx: Sender<AudioCommand>,
+    mut listener: DevicePropertyListener,
     mut receiver: UnboundedReceiver<DeviceEvent>,
 ) {
     let mut known = match enumerate(&device_manager).await {
@@ -205,10 +231,15 @@ async fn watch_loop(
         }
     };
 
-    while let Some(event) = receiver.recv().await {
-        drain_burst(&mut receiver).await;
+    // Device id to CoreAudio object id, for everything currently registered for
+    // individual death notifications.
+    let mut watched: HashMap<String, AudioObjectID> = HashMap::new();
+    sync_watched_devices(&app, &device_manager, &mut listener, &known, &mut watched).await;
 
-        let current = match enumerate(&device_manager).await {
+    while let Some(event) = receiver.recv().await {
+        let died = drain_burst(&mut receiver, event).await;
+
+        let mut current = match enumerate(&device_manager).await {
             Ok(devices) => devices,
             Err(error) => {
                 warn!(
@@ -221,6 +252,19 @@ async fn watch_loop(
             }
         };
 
+        // A device can die while CoreAudio still lists it - an interface losing
+        // power rather than being unplugged - so enumeration alone would call
+        // it present. Drop it from the set to make the departure path fire.
+        for device_id in dead_device_ids(&watched, &died) {
+            if current.remove(&device_id).is_some() {
+                warn!(
+                    "{} {} stopped responding while still listed",
+                    LOG_TAG.on_cyan().black(),
+                    device_id
+                );
+            }
+        }
+
         handle_departures(&app, &device_manager, &audio_command_tx, &known, &current).await;
 
         // The list goes out before recovery is attempted so the arrival shows
@@ -229,6 +273,7 @@ async fn watch_loop(
         emit_device_list(&app, &current);
         handle_arrivals(&app, &known, &current).await;
 
+        sync_watched_devices(&app, &device_manager, &mut listener, &current, &mut watched).await;
         known = current;
     }
 
@@ -239,10 +284,108 @@ async fn watch_loop(
 }
 
 /// Swallow the rest of a notification burst so one physical change causes one
-/// pass, rather than one pass per property the HAL touched.
-async fn drain_burst(receiver: &mut UnboundedReceiver<DeviceEvent>) {
+/// pass, rather than one pass per property the HAL touched, and report which
+/// devices the burst said had died.
+async fn drain_burst(
+    receiver: &mut UnboundedReceiver<DeviceEvent>,
+    first: DeviceEvent,
+) -> HashSet<AudioObjectID> {
+    let mut died = HashSet::new();
+    let mut record = |event: DeviceEvent| {
+        if let DeviceEvent::DeviceDied(object_id) = event {
+            died.insert(object_id);
+        }
+    };
+
+    record(first);
     tokio::time::sleep(COALESCE_WINDOW).await;
-    while receiver.try_recv().is_ok() {}
+    while let Ok(event) = receiver.try_recv() {
+        record(event);
+    }
+
+    died
+}
+
+/// One physical device is listed twice when it has both directions, so a single
+/// dead object id can account for more than one device id.
+fn dead_device_ids(
+    watched: &HashMap<String, AudioObjectID>,
+    died: &HashSet<AudioObjectID>,
+) -> Vec<String> {
+    watched
+        .iter()
+        .filter(|(_, object_id)| died.contains(object_id))
+        .map(|(device_id, _)| device_id.clone())
+        .collect()
+}
+
+/// Keep individual death notifications registered for exactly the devices that
+/// are present and patched to something.
+///
+/// An unpatched device dying is not interesting - it is not carrying audio, and
+/// its removal from the device list is caught by the system-wide listener.
+async fn sync_watched_devices(
+    app: &AppHandle,
+    device_manager: &Arc<AsyncMutex<AudioDeviceManager>>,
+    listener: &mut DevicePropertyListener,
+    current: &HashMap<String, AudioDeviceInfo>,
+    watched: &mut HashMap<String, AudioObjectID>,
+) {
+    let Some(state) = app.try_state::<AudioState>() else {
+        return;
+    };
+
+    let patched = patched_device_identifiers(&state).await;
+
+    let mut desired: HashMap<String, AudioObjectID> = HashMap::new();
+    {
+        let manager = device_manager.lock().await;
+        for device in current.values() {
+            let Some(uid) = device.uid.as_deref() else {
+                continue;
+            };
+            if !patched.contains(&device.id) {
+                continue;
+            }
+
+            match manager.coreaudio().translate_uid_to_device(uid) {
+                Ok(object_id) => {
+                    desired.insert(device.id.clone(), object_id);
+                }
+                Err(error) => {
+                    warn!(
+                        "{} No CoreAudio object for {} ({}): {}",
+                        LOG_TAG.on_cyan().black(),
+                        device.id,
+                        uid,
+                        error
+                    );
+                }
+            }
+        }
+    }
+
+    for (device_id, object_id) in watched.iter() {
+        if !desired.contains_key(device_id) {
+            listener.unwatch_device(*object_id);
+        }
+    }
+
+    for (device_id, object_id) in desired.iter() {
+        if watched.contains_key(device_id) {
+            continue;
+        }
+        if let Err(error) = listener.watch_device(*object_id) {
+            warn!(
+                "{} Could not watch {} for death: {}",
+                LOG_TAG.on_cyan().black(),
+                device_id,
+                error
+            );
+        }
+    }
+
+    *watched = desired;
 }
 
 async fn enumerate(

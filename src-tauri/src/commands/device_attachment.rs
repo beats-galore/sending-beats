@@ -1,4 +1,4 @@
-// Bringing an input device up on the mixer: resolve a handle for it, record its
+// Bringing a device up on the mixer: resolve a handle for it, record its
 // configuration, and hand the stream to the audio thread.
 //
 // The user-driven device switch and the device watcher's reconnect recovery
@@ -107,6 +107,56 @@ pub async fn attach_input_device(
             rollback_device_configuration(state, device_id, inserted_this_call).await;
             Err("Audio system did not respond".to_string())
         }
+    }
+}
+
+/// Connect `device_id` as an output.
+///
+/// Unlike the input path this writes nothing to the database - an output's
+/// configuration row is created by the switch command once the stream is live,
+/// so reconnect only has to rebuild the stream.
+pub async fn attach_output_device(state: &AudioState, device_id: &str) -> Result<(), String> {
+    let device_handle = {
+        let device_manager = state.device_manager.lock().await;
+        device_manager
+            .find_audio_device(device_id, false) // false = output device
+            .await
+            .map_err(|e| format!("Failed to find output device {}: {}", device_id, e))?
+    };
+
+    let (response_tx, response_rx) = oneshot::channel();
+
+    let command = match device_handle {
+        #[cfg(target_os = "macos")]
+        AudioDeviceHandle::CoreAudio(coreaudio_device) => AudioCommand::AddCoreAudioOutputStream {
+            device_id: device_id.to_string(),
+            coreaudio_device,
+            response_tx,
+        },
+        #[cfg(target_os = "macos")]
+        AudioDeviceHandle::ApplicationAudio(_) => {
+            return Err(
+                "Application audio devices are input-only and cannot be used as outputs"
+                    .to_string(),
+            );
+        }
+        #[cfg(not(target_os = "macos"))]
+        _ => return Err("Unsupported device type for this platform".to_string()),
+    };
+
+    if let Err(e) = state.audio_command_tx.send(command).await {
+        let error_msg = format!("Audio system not available - failed to send command: {}", e);
+        error!("{}", error_msg);
+        return Err(error_msg);
+    }
+
+    match response_rx.await {
+        Ok(Ok(())) => {
+            info!("✅ Successfully set output stream: {}", device_id);
+            Ok(())
+        }
+        Ok(Err(e)) => Err(format!("Failed to set output stream: {}", e)),
+        Err(_) => Err("Audio system did not respond".to_string()),
     }
 }
 

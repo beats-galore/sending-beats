@@ -551,61 +551,7 @@ pub async fn set_output_stream(
         return Err("Device ID too long".to_string());
     }
 
-    // **STREAMLINED ARCHITECTURE**: Bypass VirtualMixer and send command directly to IsolatedAudioManager
-    println!(
-        "🔊 Setting output stream directly via AudioCommand: {}",
-        device_id
-    );
-
-    // Get device handle using device manager
-    let device_manager = audio_state.device_manager.lock().await;
-    let device_handle = device_manager
-        .find_audio_device(&device_id, false) // false = output device
-        .await
-        .map_err(|e| format!("Failed to find output device {}: {}", device_id, e))?;
-
-    // Create command based on device type
-    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-
-    let command = match device_handle {
-        #[cfg(target_os = "macos")]
-        crate::audio::types::AudioDeviceHandle::CoreAudio(coreaudio_device) => {
-            crate::audio::mixer::stream_management::AudioCommand::AddCoreAudioOutputStream {
-                device_id: device_id.clone(),
-                coreaudio_device,
-                response_tx,
-            }
-        }
-        #[cfg(target_os = "macos")]
-        crate::audio::types::AudioDeviceHandle::ApplicationAudio(_) => {
-            return Err(
-                "Application audio devices are input-only and cannot be used as outputs"
-                    .to_string(),
-            );
-        }
-        #[cfg(not(target_os = "macos"))]
-        _ => return Err("Unsupported device type for this platform".to_string()),
-    };
-
-    // Send command to isolated audio thread
-    if let Err(e) = audio_state.audio_command_tx.send(command).await {
-        let error_msg = format!("Audio system not available - failed to send command: {}", e);
-        tracing::error!("{}", error_msg);
-        return Err(error_msg);
-    }
-
-    // Wait for response from isolated audio thread
-    match response_rx.await {
-        Ok(Ok(())) => {
-            println!(
-                "✅ Successfully set output stream via direct command: {}",
-                device_id
-            );
-            Ok(())
-        }
-        Ok(Err(e)) => Err(format!("Failed to set output stream: {}", e)),
-        Err(_) => Err("Audio system did not respond".to_string()),
-    }
+    crate::commands::device_attachment::attach_output_device(&audio_state, &device_id).await
 }
 
 // Device monitoring commands
