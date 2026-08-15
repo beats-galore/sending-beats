@@ -16,6 +16,7 @@ use super::media_remote::{read_stream, spawn_stream, AdapterPaths};
 use super::types::{NowPlayingTrack, SupportedPlayer};
 use crate::db::AudioDatabase;
 use std::path::PathBuf;
+use std::sync::Mutex as StdMutex;
 use tauri::path::BaseDirectory;
 use tauri::Manager;
 
@@ -51,6 +52,15 @@ struct PlayerReading {
     error: Option<String>,
 }
 
+/// The application the system session currently describes, if any.
+///
+/// The two sources overlap wherever a player is both scriptable and publishing
+/// to the session. MediaRemote carries more for those players - genre, track
+/// number, a playhead that needs no polling - so it takes precedence, and the
+/// poller stands down for whichever player it is speaking for rather than the
+/// two of them overwriting each other.
+type SessionOwner = Arc<StdMutex<Option<String>>>;
+
 /// Owns the two tasks that follow what configured inputs are playing.
 ///
 /// They cover different ground and neither subsumes the other: AppleScript can
@@ -82,11 +92,18 @@ impl NowPlayingWatcher {
             POLL_INTERVAL.as_secs()
         );
 
+        let session_owner: SessionOwner = Arc::new(StdMutex::new(None));
+
         self.task = Some(tauri::async_runtime::spawn(poll_loop(
             app.clone(),
             database.clone(),
+            session_owner.clone(),
         )));
-        self.session_task = Some(tauri::async_runtime::spawn(session_loop(app, database)));
+        self.session_task = Some(tauri::async_runtime::spawn(session_loop(
+            app,
+            database,
+            session_owner,
+        )));
     }
 
     pub fn stop(&mut self) {
@@ -138,10 +155,11 @@ fn adapter_paths(app: &AppHandle) -> AdapterPaths {
 /// Follow the system now-playing session, reporting it against whichever
 /// configured input it belongs to.
 ///
-/// Players AppleScript already covers are skipped: it can describe each of them
-/// at once, where this can only ever describe the active one, so letting both
-/// report the same player would have them overwrite each other.
-async fn session_loop(app: AppHandle, database: Arc<AudioDatabase>) {
+/// This covers any application at all, including the scriptable ones, and takes
+/// precedence over the poller for whichever it is currently describing. What it
+/// cannot do is describe two at once - the session only ever names one - which
+/// is why the poller still runs for everything else.
+async fn session_loop(app: AppHandle, database: Arc<AudioDatabase>, owner: SessionOwner) {
     let paths = adapter_paths(&app);
 
     let mut child = match spawn_stream(&paths) {
@@ -172,9 +190,6 @@ async fn session_loop(app: AppHandle, database: Arc<AudioDatabase>) {
     let mut reported: Option<NowPlayingTrack> = None;
 
     while let Some(track) = rx.recv().await {
-        let track =
-            track.filter(|track| SupportedPlayer::from_bundle_id(&track.bundle_id).is_none());
-
         // Only speak for an application the mixer is actually capturing.
         let configured = match configured_application_bundles(database.sea_orm()).await {
             Ok(bundles) => bundles,
@@ -189,6 +204,12 @@ async fn session_loop(app: AppHandle, database: Arc<AudioDatabase>) {
         };
 
         let track = track.filter(|track| configured.contains(&track.bundle_id));
+
+        // Claimed before emitting, so the poller has already stood down by the
+        // time this reading reaches a listener.
+        if let Ok(mut owner) = owner.lock() {
+            *owner = track.as_ref().map(|track| track.bundle_id.clone());
+        }
 
         if reported.as_ref().map(|previous| previous.bundle_id.clone())
             != track.as_ref().map(|current| current.bundle_id.clone())
@@ -261,7 +282,7 @@ fn log_session_change(track: &Option<NowPlayingTrack>) {
     }
 }
 
-async fn poll_loop(app: AppHandle, database: Arc<AudioDatabase>) {
+async fn poll_loop(app: AppHandle, database: Arc<AudioDatabase>, owner: SessionOwner) {
     let mut ticker = interval(POLL_INTERVAL);
     // A player slow to answer should push the next poll back, not bank missed
     // ticks and fire them off back to back once it recovers.
@@ -293,7 +314,17 @@ async fn poll_loop(app: AppHandle, database: Arc<AudioDatabase>) {
 
         forget_unconfigured(&app, &mut readings, &players);
 
+        let session_owner = owner.lock().ok().and_then(|owner| owner.clone());
+
         for player in players {
+            // The session is already describing this one, and in more detail
+            // than a script can. Forget what was polled so that handing the
+            // player back produces a fresh reading rather than a stale match.
+            if session_owner.as_deref() == Some(player.bundle_id()) {
+                readings.remove(&player);
+                continue;
+            }
+
             poll_player(&app, player, &mut readings).await;
         }
     }
