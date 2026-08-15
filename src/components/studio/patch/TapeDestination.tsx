@@ -6,7 +6,7 @@ import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
 import { asBytes, asClock } from '../format';
 import { useNodeDrag, useNodeFront } from '../hooks/use-node-drag';
-import { useNodeResize, useNodeSize } from '../hooks/use-node-resize';
+import { useNodeResize, useNodeSize, useUnshrink } from '../hooks/use-node-resize';
 import { useTapeTransport } from '../hooks/use-tape-transport';
 import { ExpandToggle } from '../primitives/ExpandToggle';
 import { NodeCard } from '../primitives/NodeCard';
@@ -39,6 +39,7 @@ export const TapeDestination = ({ rect, selected }: TapeDestinationProps) => {
   const expansion = tapeExpansionFor(rect);
   const compact = expansion === 'compact';
   const next = nextExpansion(expansion, NodeExpansion);
+  const unshrink = useUnshrink(TAPE_TARGET_KEY, compact, tapeSize('collapsed'));
 
   const fileName = tape.filePath?.split('/').pop();
 
@@ -49,7 +50,10 @@ export const TapeDestination = ({ rect, selected }: TapeDestinationProps) => {
       raised={front}
       borderColor={selected ? color.acc : color.line}
       onPress={bringToFront}
-      onClick={() => select({ kind: 'tape' })}
+      onClick={() => {
+        select({ kind: 'tape' });
+        unshrink();
+      }}
       onGrab={grab}
       onResize={resize}
       ports={

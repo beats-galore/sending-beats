@@ -8,7 +8,7 @@ import { border, color, glow } from '../../../theme/tokens';
 import type { Bus } from '../../../types/bus.types';
 import { asGain, meterPosition } from '../format';
 import { useNodeDrag, useNodeFront } from '../hooks/use-node-drag';
-import { useNodeResize, useNodeSize } from '../hooks/use-node-resize';
+import { useNodeResize, useNodeSize, useUnshrink } from '../hooks/use-node-resize';
 import { DragBar } from '../primitives/DragBar';
 import { ExpandToggle } from '../primitives/ExpandToggle';
 import { LevelMeter } from '../primitives/LevelMeter';
@@ -52,6 +52,7 @@ export const BusNode = ({ bus, rect, selected, onGainChange }: BusNodeProps) => 
   const expansion = busExpansionFor(rect);
   const compact = expansion === 'compact';
   const next = nextExpansion(expansion, NodeExpansion);
+  const unshrink = useUnshrink(targetKey, compact, busSize('collapsed'));
 
   // A bus nobody sends to still produces silence for its outputs, which is not
   // the same as one carrying audio, and the node should not claim otherwise.
@@ -65,6 +66,7 @@ export const BusNode = ({ bus, rect, selected, onGainChange }: BusNodeProps) => 
       onClick={(event) => {
         event.stopPropagation();
         select({ kind: 'bus', busId: bus.id });
+        unshrink();
       }}
       onPointerDown={bringToFront}
       style={{

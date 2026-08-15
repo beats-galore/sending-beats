@@ -8,7 +8,7 @@ import type { AudioChannel } from '../../../types';
 import { useChannelNowPlaying } from '../hooks/use-channel-now-playing';
 import { useChannelSource } from '../hooks/use-channel-source';
 import { useNodeDrag, useNodeFront } from '../hooks/use-node-drag';
-import { useNodeResize, useNodeSize } from '../hooks/use-node-resize';
+import { useNodeResize, useNodeSize, useUnshrink } from '../hooks/use-node-resize';
 import { usePatchChannel } from '../hooks/use-patch-channel';
 import { DeleteButton } from '../primitives/DeleteButton';
 import { ExpandToggle } from '../primitives/ExpandToggle';
@@ -70,6 +70,11 @@ export const ChannelNode = ({ channel, index, rect, variant, selected }: Channel
   const expansion = expansionFor(variant, rect);
   const order = toggleOrder(channel.effects_enabled);
   const next = nextExpansion(expansion, order);
+  const unshrink = useUnshrink(
+    targetKey,
+    expansion === 'compact',
+    channelSize(variant, 'collapsed')
+  );
 
   // An unavailable source outranks mute and tap styling: the channel is patched
   // to something that cannot deliver audio, which the user has to see.
@@ -88,7 +93,10 @@ export const ChannelNode = ({ channel, index, rect, variant, selected }: Channel
     raised: front,
     borderColor: selected ? color.acc : color.line,
     onPress: bringToFront,
-    onClick: () => select({ kind: 'channel', channelId: channel.id }),
+    onClick: () => {
+      select({ kind: 'channel', channelId: channel.id });
+      unshrink();
+    },
     onGrab: grab,
     onResize: resize,
     ports: <PortDot tone={tone} side="right" top={channelPortOffset} />,

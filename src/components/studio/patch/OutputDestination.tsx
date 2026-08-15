@@ -5,7 +5,7 @@ import type { DestinationRole } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
 import { useNodeDrag, useNodeFront } from '../hooks/use-node-drag';
-import { useNodeResize, useNodeSize } from '../hooks/use-node-resize';
+import { useNodeResize, useNodeSize, useUnshrink } from '../hooks/use-node-resize';
 import type { PatchOutput } from '../hooks/use-patch-outputs';
 import { DeleteButton } from '../primitives/DeleteButton';
 import { ExpandToggle } from '../primitives/ExpandToggle';
@@ -81,12 +81,16 @@ export const OutputDestination = ({
   const expansion = outputExpansionFor(rect);
   const compact = expansion === 'compact';
   const next = nextExpansion(expansion, OutputExpansion);
+  const unshrink = useUnshrink(targetKey, compact, outputSize('collapsed'));
 
   return (
     <NodeCard
       position={rect}
       raised={front}
       onPress={bringToFront}
+      // A destination has nothing to select, so it is only clickable while it
+      // is shrunk — where the click is asking to see it rather than to pick it.
+      onClick={compact ? unshrink : undefined}
       onGrab={grab}
       onResize={resize}
       borderColor={unavailable ? color.hotBorder : output.live ? color.line : color.dash}

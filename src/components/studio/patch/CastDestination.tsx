@@ -7,7 +7,7 @@ import { border, color } from '../../../theme/tokens';
 import { asBytes, asElapsed } from '../format';
 import { useListenerStats } from '../hooks/use-listener-stats';
 import { useNodeDrag, useNodeFront } from '../hooks/use-node-drag';
-import { useNodeResize, useNodeSize } from '../hooks/use-node-resize';
+import { useNodeResize, useNodeSize, useUnshrink } from '../hooks/use-node-resize';
 import { useStreamTransport } from '../hooks/use-stream-transport';
 import { ExpandToggle } from '../primitives/ExpandToggle';
 import { NodeCard } from '../primitives/NodeCard';
@@ -42,6 +42,7 @@ export const CastDestination = ({ rect, selected }: CastDestinationProps) => {
 
   const expansion = castExpansionFor(rect);
   const next = nextExpansion(expansion, NodeExpansion);
+  const unshrink = useUnshrink(STREAM_TARGET_KEY, expansion === 'compact', castSize('collapsed'));
 
   const bitrate = status?.bitrate_info.current_bitrate ?? stream.bitrate;
   const sent = status?.icecast_stats?.bytes_sent;
@@ -56,7 +57,10 @@ export const CastDestination = ({ rect, selected }: CastDestinationProps) => {
       borderColor={isLive ? color.hotBorder : selected ? color.acc : color.line}
       headerSurface={isLive ? 'hotBg' : 'bgRaised'}
       onPress={bringToFront}
-      onClick={() => select({ kind: 'cast' })}
+      onClick={() => {
+        select({ kind: 'cast' });
+        unshrink();
+      }}
       onGrab={grab}
       onResize={resize}
       ports={

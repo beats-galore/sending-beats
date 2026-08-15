@@ -30,6 +30,27 @@ export const useNodeSize = (targetKey: PatchTargetKey) => {
 };
 
 /**
+ * Reaching for a node that has been shrunk out of the way brings it back.
+ *
+ * A node shrunk that far is showing one reading and nothing else, so clicking
+ * it is a request to read it — the click that focuses it gives it the room to
+ * answer. Every larger size is left alone: a click on a node you can already
+ * read is not a request to resize it.
+ *
+ * A drag ends in a click on the node it moved, but that one is swallowed before
+ * it lands, so shoving a shrunk node across the canvas does not also open it.
+ */
+export const useUnshrink = (targetKey: PatchTargetKey, shrunk: boolean, restored: Size) => {
+  const setSize = useNodeSize(targetKey);
+
+  return () => {
+    if (shrunk) {
+      setSize(restored);
+    }
+  };
+};
+
+/**
  * Makes the corner grip resize its node.
  *
  * Both axes, because how open a node is follows from how big it is — dragging a
