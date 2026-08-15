@@ -5,7 +5,6 @@ import { create } from 'zustand';
 import type {
   NowPlayingErrorEvent,
   NowPlayingEvent,
-  NowPlayingPlayerInfo,
   NowPlayingTrack,
 } from '../types/now-playing.types';
 import { NOW_PLAYING_CHANGED_EVENT, NOW_PLAYING_ERROR_EVENT } from '../types/now-playing.types';
@@ -16,10 +15,14 @@ type NowPlayingStore = {
   /** Last failure per bundle identifier, most often denied Automation consent. */
   errors: Record<string, string>;
   /**
-   * Applications the backend can read a track from. An application source
-   * outside this list is captured like any other but has no metadata to show.
+   * Applications that have reported a track at least once this session.
+   *
+   * Whether an application publishes anything readable cannot be known before
+   * it does: Serato captures audio like any other source but never announces
+   * what it is playing, and a card that says "Nothing playing" over a deck in
+   * full flow is simply wrong. So a source earns its readout by producing one.
    */
-  supportedBundleIds: string[];
+  reportedBundleIds: string[];
   subscribed: boolean;
 
   subscribe: () => Promise<void>;
@@ -28,7 +31,7 @@ type NowPlayingStore = {
 export const useNowPlayingStore = create<NowPlayingStore>((set, get) => ({
   tracks: {},
   errors: {},
-  supportedBundleIds: [],
+  reportedBundleIds: [],
   subscribed: false,
 
   /**
@@ -49,9 +52,18 @@ export const useNowPlayingStore = create<NowPlayingStore>((set, get) => ({
         } else {
           delete tracks[payload.bundleId];
         }
+
         const errors = { ...state.errors };
         delete errors[payload.bundleId];
-        return { tracks, errors };
+
+        // Reporting a track is what proves a source has metadata to show, so
+        // the claim is only ever added and never taken back on a stop.
+        const reportedBundleIds =
+          payload.track && !state.reportedBundleIds.includes(payload.bundleId)
+            ? [...state.reportedBundleIds, payload.bundleId]
+            : state.reportedBundleIds;
+
+        return { tracks, errors, reportedBundleIds };
       });
     });
 
@@ -62,8 +74,6 @@ export const useNowPlayingStore = create<NowPlayingStore>((set, get) => ({
     });
 
     try {
-      const players = await invoke<NowPlayingPlayerInfo[]>('list_now_playing_players');
-      set({ supportedBundleIds: players.map((player) => player.bundleId) });
       await invoke('start_now_playing_watch');
     } catch (error) {
       console.error('Failed to start now-playing watch:', error);
