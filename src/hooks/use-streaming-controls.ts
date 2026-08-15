@@ -1,24 +1,13 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useState, useCallback } from 'react';
 
-export type StreamConfig = {
-  server_host: string;
-  server_port: number;
-  mount_point: string;
-  password: string;
-  stream_name: string;
-  bitrate: number;
-};
-
 export type StreamingControlsState = {
-  isConnecting: boolean;
   isStarting: boolean;
   isStopping: boolean;
   error: string | null;
 };
 
 export type StreamingControlsActions = {
-  initialize: (config: StreamConfig) => Promise<void>;
   startStreaming: (castConfigurationId: string) => Promise<void>;
   stopStreaming: () => Promise<void>;
   updateMetadata: (title: string, artist: string) => Promise<void>;
@@ -27,7 +16,6 @@ export type StreamingControlsActions = {
 
 export const useStreamingControls = () => {
   const [state, setState] = useState<StreamingControlsState>({
-    isConnecting: false,
     isStarting: false,
     isStopping: false,
     error: null,
@@ -36,33 +24,6 @@ export const useStreamingControls = () => {
   const updateState = useCallback((updates: Partial<StreamingControlsState>) => {
     setState((prev) => ({ ...prev, ...updates }));
   }, []);
-
-  const initialize = useCallback(
-    async (config: StreamConfig) => {
-      updateState({ isConnecting: true, error: null });
-
-      try {
-        await invoke<string>('initialize_icecast_streaming', {
-          serverHost: config.server_host,
-          serverPort: config.server_port,
-          mountPoint: config.mount_point,
-          password: config.password,
-          streamName: config.stream_name,
-          bitrate: config.bitrate,
-        });
-
-        updateState({ isConnecting: false });
-      } catch (err) {
-        console.error('Failed to initialize streaming:', err);
-        updateState({
-          isConnecting: false,
-          error: `Failed to initialize streaming: ${err}`,
-        });
-        throw err;
-      }
-    },
-    [updateState]
-  );
 
   const startStreaming = useCallback(async (castConfigurationId: string) => {
     updateState({ isStarting: true, error: null });
@@ -119,7 +80,6 @@ export const useStreamingControls = () => {
   }, [updateState]);
 
   const actions: StreamingControlsActions = {
-    initialize,
     startStreaming,
     stopStreaming,
     updateMetadata,

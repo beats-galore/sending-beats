@@ -19,18 +19,6 @@ pub async fn get_streaming_service() -> Arc<StreamingService> {
         .clone()
 }
 
-/// Initialize streaming with configuration
-pub async fn initialize_streaming(config: StreamingServiceConfig) -> Result<()> {
-    let service = get_streaming_service().await;
-    service.initialize(config).await
-}
-
-/// Connect streaming to mixer
-pub async fn connect_streaming_to_mixer(mixer: &VirtualMixer) -> Result<()> {
-    let service = get_streaming_service().await;
-    service.connect_mixer_ref(mixer).await
-}
-
 /// Start streaming
 pub async fn start_streaming() -> Result<()> {
     let service = get_streaming_service().await;

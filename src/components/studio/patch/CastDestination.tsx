@@ -1,6 +1,10 @@
 import { Box, Group, SimpleGrid, Stack, Text } from '@mantine/core';
 
 import { STREAM_TARGET_KEY } from '../../../services/patch-color-service';
+import {
+  selectedCastConfiguration,
+  useCastConfigurationStore,
+} from '../../../stores/cast-configuration-store';
 import { useStudioStore } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { border, color } from '../../../theme/tokens';
@@ -32,7 +36,7 @@ type CastDestinationProps = {
 /** The stream, as seen from the patchbay. Opens in place to show the transmitter. */
 export const CastDestination = ({ rect, selected }: CastDestinationProps) => {
   const select = useStudioStore((state) => state.select);
-  const stream = useStudioStore((state) => state.stream);
+  const station = useCastConfigurationStore(selectedCastConfiguration);
   const { isLive, isBusy, toggle, status, uptimeSeconds } = useStreamTransport();
   const listeners = useListenerStats(isLive);
   const grab = useNodeDrag(STREAM_TARGET_KEY, rect);
@@ -44,10 +48,14 @@ export const CastDestination = ({ rect, selected }: CastDestinationProps) => {
   const next = nextExpansion(expansion, NodeExpansion);
   const unshrink = useUnshrink(STREAM_TARGET_KEY, expansion === 'compact');
 
-  const bitrate = status?.bitrate_info.current_bitrate ?? stream.bitrate;
+  const bitrate = status?.bitrate_info.current_bitrate ?? station?.bitrateKbps ?? 0;
   const sent = status?.icecast_stats?.bytes_sent;
-  const target = `${stream.host}:${stream.port}${stream.mount}`;
-  const quality = stream.variableBitrate ? `VBR q${stream.vbrQuality}` : 'CBR';
+  // The station the transmitter is pointed at, so the node says where the mix
+  // is actually going rather than what was last typed somewhere else.
+  const target = station
+    ? `${station.serverHost}:${station.serverPort}${station.mountPoint}`
+    : 'no station';
+  const quality = station?.variableBitrate ? `VBR q${station.vbrQuality}` : 'CBR';
 
   return (
     <NodeCard

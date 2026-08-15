@@ -18,7 +18,7 @@ export const useStreamTransport = (pollingInterval?: number) => {
   const station = useCastConfigurationStore(selectedCastConfiguration);
 
   const isLive = Boolean(status?.is_streaming);
-  const isBusy = controlState.isStarting || controlState.isStopping || controlState.isConnecting;
+  const isBusy = controlState.isStarting || controlState.isStopping;
 
   const toggle = useCallback(async () => {
     if (isBusy) {

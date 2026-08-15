@@ -22,9 +22,8 @@ pub use streaming::{StreamConfig, StreamManager};
 
 // Re-export service types and all modularized components
 pub use service::{
-    connect_streaming_to_mixer, create_stream_bitrate_preset, get_available_bitrates,
-    get_current_stream_bitrate, get_streaming_service, get_streaming_status,
-    get_variable_bitrate_settings, initialize_streaming, set_stream_bitrate,
+    create_stream_bitrate_preset, get_available_bitrates, get_current_stream_bitrate,
+    get_streaming_service, get_streaming_status, get_variable_bitrate_settings, set_stream_bitrate,
     set_variable_bitrate_streaming, start_streaming, stop_streaming, update_stream_metadata,
     AudioStreamingStats, BitrateInfo, ConnectionDiagnostics, ConnectionHealth,
     IcecastStreamingStats, ServiceState, StreamingService, StreamingServiceConfig,

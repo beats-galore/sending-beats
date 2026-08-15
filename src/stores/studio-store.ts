@@ -24,17 +24,6 @@ export type StudioSelection =
   | { kind: 'tape' }
   | { kind: 'output'; deviceId: string };
 
-export type StreamSettings = {
-  host: string;
-  port: number;
-  mount: string;
-  username: string;
-  password: string;
-  bitrate: number;
-  variableBitrate: boolean;
-  vbrQuality: number;
-};
-
 export type LaunchSettings = {
   autoStartEngine: boolean;
   restoreLastPatch: boolean;
@@ -83,27 +72,13 @@ type StudioStore = {
   metadataPushed: boolean;
   markMetadataPushed: (pushed: boolean) => void;
 
-  /** Icecast target. Persisted so a restart comes back ready to go live. */
-  stream: StreamSettings;
-  setStream: (settings: Partial<StreamSettings>) => void;
-
+  /** How the app comes up: engine running, last patch restored. */
   launch: LaunchSettings;
   toggleLaunch: (setting: keyof LaunchSettings) => void;
 };
 
 /** The slice written to local storage — durable preferences only. */
-type PersistedStudioState = Pick<StudioStore, 'stream' | 'launch' | 'outputRoles' | 'outputGains'>;
-
-const DEFAULT_STREAM: StreamSettings = {
-  host: 'localhost',
-  port: 8000,
-  mount: '/live',
-  username: 'source',
-  password: '',
-  bitrate: 192,
-  variableBitrate: false,
-  vbrQuality: 2,
-};
+type PersistedStudioState = Pick<StudioStore, 'launch' | 'outputRoles' | 'outputGains'>;
 
 const nextRole = (role: DestinationRole): DestinationRole =>
   DestinationRole[(DestinationRole.indexOf(role) + 1) % DestinationRole.length];
@@ -164,19 +139,16 @@ export const useStudioStore = create<StudioStore>()(
         metadataPushed: false,
         markMetadataPushed: (metadataPushed) => set({ metadataPushed }),
 
-        stream: DEFAULT_STREAM,
-        setStream: (settings) => set((state) => ({ stream: { ...state.stream, ...settings } })),
-
         launch: { autoStartEngine: true, restoreLastPatch: true },
         toggleLaunch: (setting) =>
           set((state) => ({ launch: { ...state.launch, [setting]: !state.launch[setting] } })),
       }),
       {
         name: 'sweet-beats-studio',
-        // Only durable preferences are stored. The stream password is deliberately
-        // left out — it would otherwise sit in plain text in local storage.
+        // Only durable preferences. Where to broadcast to used to be here and is
+        // now its own table, with the password in the keychain rather than in
+        // local storage.
         partialize: (state) => ({
-          stream: { ...state.stream, password: '' },
           launch: state.launch,
           outputRoles: state.outputRoles,
           outputGains: state.outputGains,

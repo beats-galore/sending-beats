@@ -519,7 +519,6 @@ pub fn run() {
             set_debug_log_config,
             get_debug_log_config,
             // Icecast commands
-            initialize_icecast_streaming,
             start_icecast_streaming,
             stop_icecast_streaming,
             update_icecast_metadata,
