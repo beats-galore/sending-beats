@@ -14,8 +14,10 @@ export const useAudioDevices = () => {
     outputDevices,
     defaultInputDevice,
     defaultOutputDevice,
+    disconnectedDeviceIds,
     loadDevices,
     refreshDevices,
+    subscribeToHotplug,
     findDevice,
     isValidInput,
     isValidOutput,
@@ -27,6 +29,12 @@ export const useAudioDevices = () => {
     console.debug('🎧 useAudioDevices: Loading devices on mount...');
     loadDevices();
   }, [loadDevices]);
+
+  // The backend pushes the list on every hardware change, so this is the only
+  // thing keeping it current after the initial load.
+  useEffect(() => {
+    void subscribeToHotplug();
+  }, [subscribeToHotplug]);
 
   // Helper functions
   const getDeviceById = useCallback(
@@ -70,6 +78,7 @@ export const useAudioDevices = () => {
       outputDevices,
       defaultInputDevice,
       defaultOutputDevice,
+      disconnectedDeviceIds,
 
       // Actions
       refreshDevices,
@@ -89,6 +98,7 @@ export const useAudioDevices = () => {
       outputDevices,
       defaultInputDevice,
       defaultOutputDevice,
+      disconnectedDeviceIds,
       refreshDevices,
       clearError,
       getDeviceById,

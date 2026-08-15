@@ -398,6 +398,27 @@ pub fn run() {
         }
     });
 
+    // Device hotplug tracking belongs to the app rather than the window: a
+    // disconnect has to be noticed, and a reconnect recovered, whether or not
+    // the UI is mounted to ask about it.
+    #[cfg(target_os = "macos")]
+    let builder = builder.setup(|app| {
+        let audio_state = app.state::<AudioState>();
+        match audio::devices::DeviceWatcher::start(
+            app.handle().clone(),
+            audio_state.device_manager.clone(),
+            audio_state.audio_command_tx.clone(),
+        ) {
+            Ok(watcher) => {
+                app.manage(watcher);
+            }
+            Err(error) => {
+                tracing::error!("Failed to start Core Audio device watcher: {}", error);
+            }
+        }
+        Ok(())
+    });
+
     builder
         .invoke_handler(tauri::generate_handler![
             // Application lifecycle commands
