@@ -8,6 +8,8 @@ use std::time::Duration;
 
 pub mod audio_bus_service;
 pub mod broadcasts;
+pub mod cast_configuration_service;
+pub mod cast_secrets;
 pub mod file_player_service;
 pub mod patch_color_service;
 pub mod patch_layout_service;
@@ -18,6 +20,7 @@ pub mod seaorm_services;
 
 pub use audio_bus_service::AudioBusService;
 pub use broadcasts::*;
+pub use cast_configuration_service::{CastConfigurationDraft, CastConfigurationService};
 pub use file_player_service::{
     device_identifier_for, FilePlayerStore, QueuedTrackRow, TRACK_PENDING, TRACK_PLAYED,
 };

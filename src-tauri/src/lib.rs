@@ -36,6 +36,7 @@ use commands::audio_devices::*;
 use commands::audio_effects::*;
 use commands::audio_effects_default::*;
 use commands::buses::*;
+use commands::cast_configurations::*;
 use commands::configurations::*;
 use commands::debug::*;
 use commands::file_player::*;
@@ -494,6 +495,12 @@ pub fn run() {
             list_audio_buses,
             restore_audio_buses,
             set_output_sources,
+            // Cast configurations
+            list_cast_configurations,
+            create_cast_configuration,
+            update_cast_configuration,
+            delete_cast_configuration,
+            set_cast_configuration_password,
             list_patch_colors,
             set_patch_color,
             clear_patch_color,

@@ -4,6 +4,7 @@ pub mod audio_devices;
 pub mod audio_effects;
 pub mod audio_effects_default;
 pub mod buses;
+pub mod cast_configurations;
 pub mod configurations;
 pub mod debug;
 pub mod device_attachment;

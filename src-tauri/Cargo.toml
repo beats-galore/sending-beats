@@ -66,6 +66,7 @@ tauri-plugin-webdriver-automation = "0.1.3"
 
 # Platform-specific audio system integration
 [target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "2.11" # Keychain, for stream passwords that have no business in the database
 coreaudio-rs = "0.13"     # macOS Core Audio integration
 libc = "0.2"               # System calls for thread priority
 core-foundation = "0.9"   # Core Foundation framework

@@ -36,6 +36,7 @@ dependencies = [
  "rubato",
  "rustfft",
  "sea-orm",
+ "security-framework",
  "serde",
  "serde_json",
  "serial_test",
