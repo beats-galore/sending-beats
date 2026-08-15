@@ -8,7 +8,7 @@ import { SectionLabel } from './SectionLabel';
 type SwatchPickerProps = {
   /** What opens the picker — the thing being coloured */
   children: ReactNode;
-  selected: Swatch;
+  selected: Swatch | null;
   /** False while `selected` is only the derived fallback */
   assigned: boolean;
   onSelect: (key: Swatch) => void;

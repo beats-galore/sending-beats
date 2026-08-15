@@ -4,6 +4,7 @@ import { Channel, invoke } from '@tauri-apps/api/core';
 import { useEffect } from 'react';
 
 import { useVUMeterStore } from '../stores';
+import type { StereoLevels } from '../stores/vu-meter-store';
 
 type VULevelEvent = {
   device_id: string;
@@ -28,9 +29,6 @@ type MasterVULevelEvent = {
  * Levels of one bus, measured after its own gain, so this is what the outputs
  * taking that bus are being handed. Keyed by bus id rather than the channel
  * number a `VULevelEvent` carries, which a bus has no equivalent of.
- *
- * Arriving but not yet rendered — the backend emits one of these per bus every
- * batch, and the main bus additionally feeds the master meter below.
  */
 type BusVULevelEvent = {
   bus_id: string;
@@ -59,25 +57,26 @@ export const useVUChannelStream = (isEnabled = true) => {
     let channel: Channel<VUChannelData> | null = null;
 
     let pendingChannelLevels: Record<number, [number, number, number, number]> = {};
-    let pendingMasterLevels: {
-      left: { peak_level: number; rms_level: number };
-      right: { peak_level: number; rms_level: number };
-    } | null = null;
+    let pendingBusLevels: Record<string, StereoLevels> = {};
+    let pendingMasterLevels: StereoLevels | null = null;
     let rafId: number | null = null;
 
     // Batch all VU updates into a single store update per animation frame
     const flushUpdates = () => {
       const updates: {
         channelLevels?: Record<number, [number, number, number, number]>;
-        masterLevels?: {
-          left: { peak_level: number; rms_level: number };
-          right: { peak_level: number; rms_level: number };
-        };
+        busLevels?: Record<string, StereoLevels>;
+        masterLevels?: StereoLevels;
       } = {};
 
       if (Object.keys(pendingChannelLevels).length > 0) {
         updates.channelLevels = pendingChannelLevels;
         pendingChannelLevels = {};
+      }
+
+      if (Object.keys(pendingBusLevels).length > 0) {
+        updates.busLevels = pendingBusLevels;
+        pendingBusLevels = {};
       }
 
       if (pendingMasterLevels) {
@@ -114,7 +113,21 @@ export const useVUChannelStream = (isEnabled = true) => {
               dbToLinear(vuData.peak_right),
               dbToLinear(vuData.rms_right),
             ];
-          } else if (data.type === 'Master') {
+          } else if (data.type === 'Bus') {
+            const vuData = data.data;
+            const dbToLinear = (db: number) => 10 ** (db / 20);
+
+            pendingBusLevels[vuData.bus_id] = {
+              left: {
+                peak_level: dbToLinear(vuData.peak_left),
+                rms_level: dbToLinear(vuData.rms_left),
+              },
+              right: {
+                peak_level: dbToLinear(vuData.peak_right),
+                rms_level: dbToLinear(vuData.rms_right),
+              },
+            };
+          } else {
             // Handle master VU data - accumulate in pending batch
             const vuData = data.data;
 

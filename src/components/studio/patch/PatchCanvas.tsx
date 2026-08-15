@@ -1,30 +1,32 @@
-import { Box } from '@mantine/core';
+import { Box, Text } from '@mantine/core';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useChannelsData } from '../../../hooks';
 import { useMixerStore } from '../../../stores';
+import { orderedBuses, useBusStore } from '../../../stores/bus-store';
 import { usePatchColorStore } from '../../../stores/patch-color-store';
 import { useStudioStore } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
+import { MAIN_BUS_ID } from '../../../types/bus.types';
 import { useChannelCardVariants } from '../hooks/use-channel-card-variants';
+import { useChannelDevices } from '../hooks/use-channel-devices';
 import { useFocusedNode } from '../hooks/use-focused-node';
 import { usePatchOutputs } from '../hooks/use-patch-outputs';
-import { useStreamTransport } from '../hooks/use-stream-transport';
-import { useTapeTransport } from '../hooks/use-tape-transport';
 import { DashedTarget } from '../primitives/DashedTarget';
 import { PortDot } from '../primitives/PortDot';
 import { SectionLabel } from '../primitives/SectionLabel';
 import { AddDestination } from './AddDestination';
+import { BusNode } from './BusNode';
 import { CableLayer } from './CableLayer';
 import type { Cable } from './CableLayer';
 import { CastDestination } from './CastDestination';
 import { ChannelNode } from './ChannelNode';
-import { MasterBus } from './MasterBus';
+import { resolveDestination } from './destination-target';
 import { OutputDestination } from './OutputDestination';
 import {
-  busInPort,
-  busOutPort,
+  busPort,
+  busTop,
   cablePath,
   canvasHeight,
   channelPort,
@@ -57,8 +59,6 @@ export const PatchCanvas = () => {
     cycleOutputRole,
     setOutputGain,
   } = usePatchOutputs();
-  const { isLive } = useStreamTransport();
-  const tape = useTapeTransport();
 
   // Colours belong to a configuration, so switching patches has to fetch the
   // new one's rather than leave the previous patch's colours on screen.
@@ -67,6 +67,19 @@ export const PatchCanvas = () => {
   useEffect(() => {
     void loadPatchColors();
   }, [loadPatchColors, activeConfigurationId]);
+
+  // Routing is stored per configuration too, and restoring it is what moves
+  // devices off the main bus they each registered onto.
+  const loadBuses = useBusStore((state) => state.load);
+  useEffect(() => {
+    void loadBuses();
+  }, [loadBuses, activeConfigurationId]);
+
+  const storedBuses = useBusStore((state) => state.buses);
+  const buses = useMemo(() => orderedBuses(storedBuses), [storedBuses]);
+  const setBusGain = useBusStore((state) => state.setGain);
+  const channelDevices = useChannelDevices();
+  const outputIds = useMemo(() => outputs.map((output) => output.id), [outputs]);
 
   // Kept per destination rather than in the store: a destination that refuses a
   // device is a problem with that node, and routing it through the mixer's
@@ -103,57 +116,76 @@ export const PatchCanvas = () => {
       channel.id !== selectedId ? 'collapsed' : channel.effects_enabled ? 'effects' : 'inspector',
   }));
 
-  const destinationCount = 2 + outputs.length;
-  const height = canvasHeight(layouts, destinationFocus, outputs.length, 0, false);
+  // Main is open whenever nothing else is, so the column is never all shut and
+  // the mix a device falls back to is the one on show by default. Expanding
+  // another bus closes it; clicking away from that bus hands the focus back.
+  const expandedBusId = focused?.kind === 'bus' ? focused.busId : MAIN_BUS_ID;
+  const busExpansions = useMemo(
+    () => buses.map((busEntry) => busEntry.id === expandedBusId),
+    [buses, expandedBusId]
+  );
 
+  const height = canvasHeight(layouts, destinationFocus, outputs.length, 0, false, busExpansions);
+
+  // One cable per membership rather than per card: a source feeding two buses
+  // draws two cables, which is what makes a split visible on the canvas.
   const cables = useMemo<Cable[]>(() => {
-    const sourceCables: Cable[] = channels.map((channel, index) => ({
-      id: `ch-${channel.id}`,
-      path: cablePath(channelPort(index, layouts), busInPort(index, channels.length)),
-      tone: 'accent',
-      active: true,
-    }));
+    const sourceCables: Cable[] = buses.flatMap((busEntry, busIndex) =>
+      busEntry.inputs.flatMap((deviceId, portIndex) => {
+        const channel = channelDevices.find(
+          (candidate) => candidate.deviceIdentifier === deviceId
+        );
+        if (!channel) {
+          return [];
+        }
 
-    const castCable: Cable = {
-      id: 'cast',
-      path: cablePath(busOutPort(0, destinationCount), {
-        x: destination.x,
-        y: destination.top + CAST_PORT_OFFSET,
-      }),
-      tone: 'hot',
-      active: isLive,
-    };
+        return [
+          {
+            id: `in-${busEntry.id}-${deviceId}`,
+            path: cablePath(
+              channelPort(channel.index, layouts),
+              busPort(busIndex, busExpansions, portIndex, busEntry.inputs.length, 'in')
+            ),
+            tone: 'accent' as const,
+            active: true,
+          },
+        ];
+      })
+    );
 
-    const tapeCable: Cable = {
-      id: 'tape',
-      path: cablePath(busOutPort(1, destinationCount), {
-        x: destination.x,
-        y: tapeTop(destinationFocus) + TAPE_PORT_OFFSET,
-      }),
-      tone: 'hot',
-      active: tape.isRecording,
-    };
+    const outputCables: Cable[] = buses.flatMap((busEntry, busIndex) =>
+      busEntry.outputs.flatMap((deviceId, portIndex) => {
+        const target = resolveDestination(deviceId, outputIds);
+        if (!target) {
+          return [];
+        }
 
-    const outputCables: Cable[] = outputs.map((output, index) => ({
-      id: `out-${output.id}`,
-      path: cablePath(busOutPort(2 + index, destinationCount), {
-        x: destination.x,
-        y: outputTop(index, destinationFocus) + OUTPUT_PORT_OFFSET,
-      }),
-      tone: output.role === 'CUE' ? 'warn' : 'accent',
-      active: output.live,
-    }));
+        const landing =
+          target.kind === 'output'
+            ? {
+                y: outputTop(target.index, destinationFocus) + OUTPUT_PORT_OFFSET,
+                tone: outputs[target.index].role === 'CUE' ? ('warn' as const) : ('accent' as const),
+              }
+            : target.kind === 'cast'
+              ? { y: destination.top + CAST_PORT_OFFSET, tone: 'hot' as const }
+              : { y: tapeTop(destinationFocus) + TAPE_PORT_OFFSET, tone: 'hot' as const };
 
-    return [...sourceCables, castCable, tapeCable, ...outputCables];
-  }, [
-    channels,
-    layouts,
-    destinationFocus,
-    destinationCount,
-    isLive,
-    tape.isRecording,
-    outputs,
-  ]);
+        return [
+          {
+            id: `out-${busEntry.id}-${deviceId}`,
+            path: cablePath(busPort(busIndex, busExpansions, portIndex, busEntry.outputs.length, 'out'), {
+              x: destination.x,
+              y: landing.y,
+            }),
+            tone: landing.tone,
+            active: busEntry.inputs.length > 0,
+          },
+        ];
+      })
+    );
+
+    return [...sourceCables, ...outputCables];
+  }, [buses, busExpansions, channelDevices, layouts, destinationFocus, outputs, outputIds]);
 
   return (
     <Box
@@ -205,40 +237,49 @@ export const PatchCanvas = () => {
         }}
       />
 
-      <MasterBus
-        inputCount={channels.length}
-        outputCount={destinationCount}
-        inPorts={channels.map((channel, index) => (
-          <PortDot
-            key={channel.id}
-            tone="accent"
-            side="left"
-            top={busInPort(index, channels.length).y - bus.top}
+      {buses.length === 0 ? (
+        <Box style={{ position: 'absolute', left: bus.x, top: bus.top, width: bus.width }}>
+          <Text size="xs" c={color.textFaint} ta="center">
+            No mixes yet. Route a source to a destination and one appears here.
+          </Text>
+        </Box>
+      ) : (
+        buses.map((busEntry, busIndex) => (
+          <BusNode
+            key={busEntry.id}
+            bus={busEntry}
+            top={busTop(busIndex, busExpansions)}
+            expanded={busExpansions[busIndex]}
+            onGainChange={(busId, gainDb) => void setBusGain(busId, gainDb)}
+            ports={
+              <>
+                {busEntry.inputs.map((deviceId, portIndex) => (
+                  <PortDot
+                    key={`in-${deviceId}`}
+                    tone="accent"
+                    side="left"
+                    top={
+                      busPort(busIndex, busExpansions, portIndex, busEntry.inputs.length, 'in').y -
+                      busTop(busIndex, busExpansions)
+                    }
+                  />
+                ))}
+                {busEntry.outputs.map((deviceId, portIndex) => (
+                  <PortDot
+                    key={`out-${deviceId}`}
+                    tone={busEntry.inputs.length > 0 ? 'accent' : 'dead'}
+                    side="right"
+                    top={
+                      busPort(busIndex, busExpansions, portIndex, busEntry.outputs.length, 'out').y -
+                      busTop(busIndex, busExpansions)
+                    }
+                  />
+                ))}
+              </>
+            }
           />
-        ))}
-        outPorts={
-          <>
-            <PortDot
-              tone={isLive ? 'hot' : 'dead'}
-              side="right"
-              top={busOutPort(0, destinationCount).y - bus.top}
-            />
-            <PortDot
-              tone={tape.isRecording ? 'hot' : 'dead'}
-              side="right"
-              top={busOutPort(1, destinationCount).y - bus.top}
-            />
-            {outputs.map((output, index) => (
-              <PortDot
-                key={output.id}
-                tone={output.live ? (output.role === 'CUE' ? 'warn' : 'accent') : 'dead'}
-                side="right"
-                top={busOutPort(2 + index, destinationCount).y - bus.top}
-              />
-            ))}
-          </>
-        }
-      />
+        ))
+      )}
 
       <CastDestination focused={destinationFocus === 'cast'} />
       <TapeDestination top={tapeTop(destinationFocus)} focused={destinationFocus === 'tape'} />
@@ -248,6 +289,9 @@ export const PatchCanvas = () => {
           key={output.id}
           output={output}
           top={outputTop(index, destinationFocus)}
+          // Counts the hardware outputs only. The stream and the tape sit above
+          // these but carry no number, so counting them would start this at 03.
+          position={index}
           options={optionsFor(output.id)}
           switchError={outputErrors[output.id] ?? null}
           onSelect={selectOutput}

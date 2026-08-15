@@ -18,6 +18,8 @@ type TapeDestinationProps = {
   focused: boolean;
 };
 
+// Unnumbered and uncoloured by hand: there is only one tape, so it keeps the red
+// it turns while recording. See `reservedPatchColor`.
 /** The recorder, as seen from the patchbay. Opens in place to show its output settings. */
 export const TapeDestination = ({ top, focused }: TapeDestinationProps) => {
   const select = useStudioStore((state) => state.select);

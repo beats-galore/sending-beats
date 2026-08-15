@@ -63,19 +63,26 @@ export const layout = {
   },
 
   /** Centre column — the master sum. */
+  // Middle column — one node per bus. There is no separate master sum: a bus
+  // with no output is not mixed at all, so every mix on the canvas is a bus.
   bus: {
     x: 540,
-    top: 120,
+    top: 60,
     width: 360,
-    height: 360,
+    /** Shut: the header, a pair of meters, the FROM and TO rows and a trim. */
+    height: 168,
+    /** Open: adds the metering column, the large gain readout and the stats. */
+    heightExpanded: 424,
+    /** Vertical gap between bus nodes. */
+    gap: 24,
     headerHeight: 34,
-    /** Distance from the bus top edge to the first input port centre. */
+    /** Room kept for the empty-state note when there are no mixes at all. */
+    emptyHeight: 96,
+    /** Distance from a node's top edge to the first port centre. */
     portOffset: 59,
-    /** Vertical gap between ports, capped so long channel lists stay inside. */
+    /** Vertical gap between ports, capped so long member lists stay inside. */
     portSpacing: 60,
     portSpan: 300,
-    /** Distance from the bus top edge to the first output port centre. */
-    outPortOffset: 79,
   },
 
   /** Right column — every destination the master sum feeds. */
@@ -92,14 +99,27 @@ export const layout = {
     tapeHeight: 140,
     /** Focused, with the take's output settings showing. */
     tapeHeightExpanded: 385,
-    outputStep: 96,
-    outputHeight: 84,
+    /** Tall enough for the gain row and the row of source tiles beneath it. */
+    outputStep: 124,
+    outputHeight: 112,
     /** Gap between the last hardware output and the first extra destination. */
     extraOffset: 72,
     extraStep: 84,
     extraHeight: 60,
     pickerHeight: 300,
     addHeight: 56,
+  },
+
+  /** Routing tiles — the chips saying where a signal goes. */
+  tile: {
+    /**
+     * Ceiling on a tile's width, past which the name truncates.
+     *
+     * A tile carries the name so the routing can be read without counting
+     * numbers back to a card, but a long device name would push the row wider
+     * than the node holding it, so the name gives way rather than the layout.
+     */
+    maxWidth: 104,
   },
 
   /** Cable and port geometry. */

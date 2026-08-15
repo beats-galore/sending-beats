@@ -19,6 +19,8 @@ type CastDestinationProps = {
   focused: boolean;
 };
 
+// Unnumbered and uncoloured by hand: there is only one broadcast, so its colour
+// is reserved rather than picked. See `reservedPatchColor`.
 /** The stream, as seen from the patchbay. Opens in place to show the transmitter. */
 export const CastDestination = ({ focused }: CastDestinationProps) => {
   const select = useStudioStore((state) => state.select);

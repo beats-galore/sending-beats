@@ -19,6 +19,7 @@ export type DestinationRole = (typeof DestinationRole)[number];
  */
 export type StudioSelection =
   | { kind: 'channel'; channelId: number }
+  | { kind: 'bus'; busId: string }
   | { kind: 'cast' }
   | { kind: 'tape' }
   | { kind: 'output'; deviceId: string };

@@ -108,13 +108,16 @@ export const dark: MantineColorsTuple = [
 //
 // Stored by key rather than by value: `patch_colors.color` holds "saffron", so
 // swapping the palette recolours everything already assigned.
+//
+// Deliberately excludes the accent and the hot red. Those two are reserved for
+// the broadcast and the tape, whose colours say what they are rather than which
+// one they are, and a pickable duplicate of either would be unreadable.
 export const swatch = {
   saffron: '#F0C24F',
   mint: '#6BE58A',
   blossom: '#FF7BC2',
   iris: '#9B8CFF',
   ember: '#FF9E5C',
-  cyan: '#4FD8F0',
 } as const;
 
 // Hot — on air, recording, destructive.

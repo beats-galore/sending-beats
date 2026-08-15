@@ -69,16 +69,42 @@ export const channelPort = (index: number, layouts: ChannelLayout[]) => ({
 const portStep = (count: number): number =>
   Math.min(bus.portSpacing, bus.portSpan / Math.max(count, 1));
 
-/** Input port `index` on the master bus, in canvas coordinates. */
-export const busInPort = (index: number, count: number) => ({
-  x: bus.x,
-  y: bus.top + bus.portOffset + index * portStep(count),
-});
+/**
+ * How tall a bus node is drawn.
+ *
+ * The middle column flows the way the source column does: the node that opens
+ * pushes the ones below it down rather than overlapping them.
+ */
+export const busHeight = (expanded: boolean): number =>
+  expanded ? bus.heightExpanded : bus.height;
 
-/** Output port `index` on the master bus, in canvas coordinates. */
-export const busOutPort = (index: number, count: number) => ({
-  x: bus.x + bus.width,
-  y: bus.top + bus.outPortOffset + index * portStep(count),
+/** Top edge of bus node `index`, given which nodes above it are open. */
+export const busTop = (index: number, expansions: boolean[]): number =>
+  expansions
+    .slice(0, index)
+    .reduce<number>((top, expanded) => top + busHeight(expanded) + bus.gap, bus.top);
+
+/** Total height of the bus column, or room for the empty note when there are none. */
+export const busStackHeight = (expansions: boolean[]): number =>
+  expansions.length === 0
+    ? bus.emptyHeight
+    : expansions.reduce<number>((total, expanded) => total + busHeight(expanded) + bus.gap, 0);
+
+/**
+ * A port on one bus node, in canvas coordinates.
+ *
+ * Members are listed on the node in the same order the ports run down its edge,
+ * so a cable lands beside the tile naming what it carries.
+ */
+export const busPort = (
+  busIndex: number,
+  expansions: boolean[],
+  portIndex: number,
+  portCount: number,
+  side: 'in' | 'out'
+) => ({
+  x: side === 'in' ? bus.x : bus.x + bus.width,
+  y: busTop(busIndex, expansions) + bus.portOffset + portIndex * portStep(portCount),
 });
 
 /**
@@ -119,7 +145,8 @@ export const canvasHeight = (
   focus: DestinationFocus,
   outputCount: number,
   extraCount: number,
-  pickerOpen: boolean
+  pickerOpen: boolean,
+  busExpansions: boolean[]
 ): number => {
   const sourceColumn = source.top + sourceStackHeight(layouts) + canvas.bottomPadding;
   const destinationColumn =
@@ -127,7 +154,7 @@ export const canvasHeight = (
     extraCount * destination.extraStep +
     (pickerOpen ? destination.pickerHeight : destination.addHeight) +
     28;
-  const busColumn = bus.top + bus.height + 40;
+  const busColumn = bus.top + busStackHeight(busExpansions) + 40;
 
   return Math.max(canvas.minHeight, sourceColumn, destinationColumn, busColumn);
 };

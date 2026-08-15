@@ -39,14 +39,18 @@ export const studioComponents = {
 
   // Inputs read as inset wells cut into the panel they sit on. The border is
   // left to Mantine's own variables so the accent focus ring keeps working.
+  // The well is skipped for `variant="unstyled"`. Theme styles beat the
+  // variant's own CSS variables, so painting every input unconditionally gave
+  // the chromeless selects on the patchbay a visible box and a grey hover —
+  // they read as focused when they were not.
   Input: Input.extend({
     defaultProps: { size: 'sm', radius: 'sm' },
-    styles: {
+    styles: (_theme, props: { variant?: string }) => ({
       input: {
-        backgroundColor: color.bg,
+        backgroundColor: props.variant === 'unstyled' ? 'transparent' : color.bg,
         color: color.text,
       },
-    },
+    }),
   }),
 
   // Field labels are tracked-out capitals sitting just above their control, so

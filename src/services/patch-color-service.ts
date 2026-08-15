@@ -17,6 +17,10 @@ export const channelTargetKey = (channelNumber: number): PatchTargetKey =>
 export const outputTargetKey = (deviceIdentifier: string): PatchTargetKey =>
   `out:${deviceIdentifier}`;
 
+/** The broadcast and the tape are each the only one of their kind, so they key by name */
+export const STREAM_TARGET_KEY: PatchTargetKey = 'stream';
+export const TAPE_TARGET_KEY: PatchTargetKey = 'rec';
+
 export const patchColorService = {
   /** Every colour the active session has assigned, keyed by what it colours */
   async list(): Promise<Record<PatchTargetKey, string>> {

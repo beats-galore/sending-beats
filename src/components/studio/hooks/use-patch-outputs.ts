@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react';
 
 import { useAudioDevices, useMasterSectionData } from '../../../hooks';
 import { audioService } from '../../../services';
+import { sourcesOf, useBusStore } from '../../../stores/bus-store';
 import { useConfigurationStore, useMixerStore } from '../../../stores/mixer-store';
 import { useStudioStore } from '../../../stores/studio-store';
 import type { DestinationRole } from '../../../stores/studio-store';
@@ -10,34 +11,40 @@ import { asDeviceIdentifier } from '../../../types/device-identifier';
 export type PatchOutput = {
   id: string;
   name: string;
-  /** This device is the one the master sum is currently feeding. */
+  /**
+   * At least one source reaches this destination.
+   *
+   * Read from the routing rather than from `master_output_device_id`, which
+   * names the single device the engine drove before buses existed. Every
+   * destination but that one read as idle under the old test, so a routed
+   * output rendered greyed out while it was carrying audio.
+   */
   live: boolean;
   role: DestinationRole;
   gainDb: number;
   /**
-   * Why this destination cannot accept the master sum, or null when it can.
+   * Why this destination cannot accept audio, or null when it can.
    *
-   * `live` is read from the saved configuration, which still names a device that
-   * failed to connect — an unplugged output would otherwise render as though it
-   * were receiving audio.
+   * Kept apart from `live`: a destination can be routed and still be offline,
+   * and an unplugged output would otherwise render as though it were receiving.
    */
   unavailableReason: string | null;
 };
 
 /**
- * The destinations the master sum feeds, and the devices it could feed.
+ * The destinations audio reaches, and the devices it could reach.
  *
- * The engine drives one master output at a time, so exactly one entry is live;
- * selecting another switches the stream over. Role and trim are interface state
- * (see `studio-store`) until the pipeline can carry more than one output.
+ * Role and trim are interface state (see `studio-store`) until the pipeline can
+ * carry them.
  */
 export const usePatchOutputs = () => {
   const { activeSession, removeConfiguredDevice } = useConfigurationStore();
-  const { mixerConfig, setMasterOutputDevice } = useMasterSectionData();
+  const { setMasterOutputDevice } = useMasterSectionData();
   const { outputDevices, disconnectedDeviceIds } = useAudioDevices();
   const restoreFailures = useMixerStore((state) => state.deviceRestoreFailures);
   const changeOutputDevice = useMixerStore((state) => state.changeOutputDevice);
 
+  const buses = useBusStore((state) => state.buses);
   const outputRoles = useStudioStore((state) => state.outputRoles);
   const outputGains = useStudioStore((state) => state.outputGains);
   const cycleOutputRole = useStudioStore((state) => state.cycleOutputRole);
@@ -55,7 +62,7 @@ export const usePatchOutputs = () => {
       return {
         id: device.deviceIdentifier,
         name: device.deviceName ?? device.deviceIdentifier,
-        live: mixerConfig?.master_output_device_id === device.deviceIdentifier,
+        live: sourcesOf(buses, device.deviceIdentifier).length > 0,
         role: outputRoles[device.deviceIdentifier] ?? 'MAIN',
         gainDb: outputGains[device.deviceIdentifier] ?? 0,
         // The watcher clears this the moment a device reappears and only puts
@@ -75,7 +82,7 @@ export const usePatchOutputs = () => {
     });
   }, [
     activeSession,
-    mixerConfig?.master_output_device_id,
+    buses,
     outputRoles,
     outputGains,
     restoreFailures,

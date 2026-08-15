@@ -17,7 +17,7 @@ const mantineColor = (name: string, shade: number): string =>
  * they are read back from what the user chose, so a component needs the value
  * for an arbitrary key rather than a fixed name.
  */
-export const Swatch = ['saffron', 'mint', 'blossom', 'iris', 'ember', 'cyan'] as const;
+export const Swatch = ['saffron', 'mint', 'blossom', 'iris', 'ember'] as const;
 export type Swatch = (typeof Swatch)[number];
 
 export const isSwatch = (value: string): value is Swatch =>

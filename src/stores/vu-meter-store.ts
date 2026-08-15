@@ -1,31 +1,36 @@
 import { create } from 'zustand';
 
+/** Peak and RMS for one side, already converted to the 0-1 range meters draw. */
+type SideLevels = { peak_level: number; rms_level: number };
+
+export type StereoLevels = {
+  left: SideLevels;
+  right: SideLevels;
+};
+
+const SILENT: StereoLevels = {
+  left: { peak_level: 0, rms_level: 0 },
+  right: { peak_level: 0, rms_level: 0 },
+};
+
 type VUMeterStore = {
   channelLevels: Record<number, [number, number, number, number]>;
-  masterLevels: {
-    left: { peak_level: number; rms_level: number };
-    right: { peak_level: number; rms_level: number };
-  };
+  /** Levels per bus, measured after that bus's own gain. Keyed by bus id. */
+  busLevels: Record<string, StereoLevels>;
+  masterLevels: StereoLevels;
   updateChannelLevels: (levels: Record<number, [number, number, number, number]>) => void;
-  updateMasterLevels: (levels: {
-    left: { peak_level: number; rms_level: number };
-    right: { peak_level: number; rms_level: number };
-  }) => void;
+  updateMasterLevels: (levels: StereoLevels) => void;
   batchUpdate: (updates: {
     channelLevels?: Record<number, [number, number, number, number]>;
-    masterLevels?: {
-      left: { peak_level: number; rms_level: number };
-      right: { peak_level: number; rms_level: number };
-    };
+    busLevels?: Record<string, StereoLevels>;
+    masterLevels?: StereoLevels;
   }) => void;
 };
 
 export const useVUMeterStore = create<VUMeterStore>((set) => ({
   channelLevels: {},
-  masterLevels: {
-    left: { peak_level: 0, rms_level: 0 },
-    right: { peak_level: 0, rms_level: 0 },
-  },
+  busLevels: {},
+  masterLevels: SILENT,
 
   updateChannelLevels: (levels) => set({ channelLevels: levels }),
 
@@ -39,6 +44,12 @@ export const useVUMeterStore = create<VUMeterStore>((set) => ({
         newState.channelLevels = { ...state.channelLevels, ...updates.channelLevels };
       }
 
+      // Merged rather than replaced, the same way channel levels are: a batch
+      // carries whichever buses reported in it, not the full set.
+      if (updates.busLevels) {
+        newState.busLevels = { ...state.busLevels, ...updates.busLevels };
+      }
+
       if (updates.masterLevels) {
         newState.masterLevels = updates.masterLevels;
       }
@@ -47,3 +58,7 @@ export const useVUMeterStore = create<VUMeterStore>((set) => ({
     });
   },
 }));
+
+/** A bus that has not reported yet reads as silent rather than as missing. */
+export const useBusLevels = (busId: string): StereoLevels =>
+  useVUMeterStore((state) => state.busLevels[busId] ?? SILENT);

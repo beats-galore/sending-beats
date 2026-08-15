@@ -1,5 +1,6 @@
 import { Group, NativeSelect, Text } from '@mantine/core';
 
+import { outputTargetKey } from '../../../services/patch-color-service';
 import type { DestinationRole } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
@@ -12,6 +13,8 @@ import { Pill } from '../primitives/Pill';
 import { PortDot } from '../primitives/PortDot';
 import { SectionLabel } from '../primitives/SectionLabel';
 import { StatusDot } from '../primitives/StatusDot';
+import { PatchBadge } from './PatchBadge';
+import { SourceTiles } from './SourceTiles';
 
 const { destination } = layout;
 
@@ -37,6 +40,8 @@ const ROLE_COLOR: Record<DestinationRole, string> = {
 type OutputDestinationProps = {
   output: PatchOutput;
   top: number;
+  /** Where this sits in the destination column, for its number and colour */
+  position: number;
   options: { value: string; label: string }[];
   /** Why the last attempt to re-point this destination failed, if it did */
   switchError: string | null;
@@ -51,6 +56,7 @@ type OutputDestinationProps = {
 export const OutputDestination = ({
   output,
   top,
+  position,
   options,
   switchError,
   onSelect,
@@ -82,6 +88,15 @@ export const OutputDestination = ({
       }
       header={
         <>
+          {/* Not dimmed for being idle. The engine drives one master output at
+              a time, so every destination but one is `live: false` — greying on
+              that would hide the colour almost everywhere it is needed. */}
+          <PatchBadge
+            targetKey={outputTargetKey(output.id)}
+            position={position}
+            dimmed={unavailable}
+            label="DESTINATION COLOUR"
+          />
           <StatusDot
             tone={unavailable ? 'hot' : output.live ? 'accent' : 'inert'}
             onClick={() => onSelect(output.id)}
@@ -126,7 +141,13 @@ export const OutputDestination = ({
           />
         </>
       }
-      bodyStyle={{ padding: '0 11px', display: 'flex', alignItems: 'center' }}
+      bodyStyle={{
+        padding: '0 11px',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        gap: 8,
+      }}
     >
       <Group gap="md" wrap="nowrap" w="100%">
         <SectionLabel tracking="tight">GAIN</SectionLabel>
@@ -148,6 +169,11 @@ export const OutputDestination = ({
         >
           {asGain(output.gainDb)}
         </Text>
+      </Group>
+
+      <Group gap="md" wrap="nowrap" w="100%">
+        <SectionLabel tracking="tight">FROM</SectionLabel>
+        <SourceTiles deviceId={output.id} />
       </Group>
     </NodeCard>
   );

@@ -1,5 +1,6 @@
 import { Box, Group, NativeSelect, Stack, Text } from '@mantine/core';
 
+import { channelTargetKey } from '../../../services/patch-color-service';
 import { useMixerStore } from '../../../stores/mixer-store';
 import { useStudioStore } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
@@ -16,11 +17,12 @@ import { Pill } from '../primitives/Pill';
 import { PortDot } from '../primitives/PortDot';
 import { StatusDot } from '../primitives/StatusDot';
 import { AppCard } from './AppCard';
-import { ChannelBadge } from './ChannelBadge';
 import { ChannelInspector } from './ChannelInspector';
 import { ChannelName } from './ChannelName';
+import { DestinationTiles } from './DestinationTiles';
 import { DeviceCard } from './DeviceCard';
 import type { ChannelCardVariant, ChannelExpansion } from './patch-geometry';
+import { PatchBadge } from './PatchBadge';
 
 const GAIN_MIN = -60;
 const GAIN_MAX = 12;
@@ -62,10 +64,11 @@ export const ChannelNode = ({ channel, index, top, expansion, variant }: Channel
     ports: <PortDot tone={tone} side="right" top={layout.source.portOffset} />,
     header: (
       <>
-        <ChannelBadge
-          channelNumber={channel.id}
-          index={index}
+        <PatchBadge
+          targetKey={channelTargetKey(channel.id)}
+          position={index}
           dimmed={unavailable || patch.muted}
+          label="SOURCE COLOUR"
         />
         <ChannelName
           channelId={channel.id}
@@ -139,7 +142,13 @@ export const ChannelNode = ({ channel, index, top, expansion, variant }: Channel
       </Group>
 
       <Group gap="xs" wrap="nowrap">
-        <Box style={{ flex: 1 }} />
+        {/* Sits in the space mute and solo already left, so showing where a
+            source goes costs the card no extra height. */}
+        <Box style={{ flex: 1, minWidth: 0 }}>
+          <DestinationTiles
+            deviceIdentifier={source.configuredDevice?.deviceIdentifier ?? null}
+          />
+        </Box>
         <Pill
           tone={patch.muted ? 'hot' : 'muted'}
           filled={patch.muted}
