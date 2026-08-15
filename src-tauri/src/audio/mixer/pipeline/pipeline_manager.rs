@@ -35,6 +35,8 @@ use super::{
     queue_types::{MixedAudioSamples, PipelineQueues, RawAudioSamples},
 };
 
+mod buses;
+
 /// Complete 4-layer audio pipeline manager
 pub struct AudioPipeline {
     // Configuration

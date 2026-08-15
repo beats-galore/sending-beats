@@ -11,27 +11,26 @@ use super::{MixingLayer, MixingLayerCommand};
 use colored::*;
 
 impl MixingLayer {
-    /// Apply a routing change, on the mixing thread if it is running
+    /// Apply a routing change here, then forward it to the mixing thread
     ///
-    /// Before the thread starts the registry is still local, so the change is
-    /// made directly and reports its own error. Once running the registry has
-    /// moved onto the thread, and the outcome is only visible in its log.
+    /// The layer's own registry is applied first and is what a caller's error
+    /// comes from, so an invalid change is rejected before any command is sent
+    /// and the two copies cannot disagree about whether it happened.
     fn route(
         &mut self,
         command: MixingLayerCommand,
         apply: impl FnOnce(&mut BusMixer) -> Result<(), BusError>,
     ) -> Result<(), BusError> {
-        if self.worker_handle.is_some() {
-            if self.command_tx.send(command).is_err() {
-                warn!(
-                    "⚠️ {}: Failed to send routing command",
-                    "MIXING_LAYER".on_green().white()
-                );
-            }
-            return Ok(());
+        apply(&mut self.bus_mixer)?;
+
+        if self.worker_handle.is_some() && self.command_tx.send(command).is_err() {
+            warn!(
+                "⚠️ {}: Failed to send routing command",
+                "MIXING_LAYER".on_green().white()
+            );
         }
 
-        apply(&mut self.bus_mixer)
+        Ok(())
     }
 
     pub fn create_bus(&mut self, bus_id: String, name: String) -> Result<(), BusError> {
@@ -85,15 +84,136 @@ impl MixingLayer {
 
     /// Every bus and its members
     ///
-    /// Only meaningful before the mixing thread starts, which takes ownership of
-    /// the registry. Reporting live routing back to the frontend needs the
-    /// registry to be shared rather than moved.
+    /// Answered from the layer's own registry, which every change passes
+    /// through before reaching the mixing thread, so it describes what the
+    /// mixer is doing without the audio path taking a lock to be read.
     pub fn buses(&self) -> Vec<Bus> {
         self.bus_mixer.registry().buses().cloned().collect()
     }
 }
 
 /// Report a routing change applied on the mixing thread, where no caller is left to return to
+#[cfg(test)]
+mod tests {
+    use super::super::MixingLayer;
+    use crate::audio::mixer::latency_probe::LatencyProbe;
+    use crate::audio::mixer::pipeline::bus_routing::{BusError, MAIN_BUS_ID};
+    use crate::audio::mixer::queue_manager::AtomicQueueTracker;
+    use std::sync::{Arc, Mutex};
+
+    fn layer() -> MixingLayer {
+        MixingLayer::new(LatencyProbe::new())
+    }
+
+    fn add_input(layer: &mut MixingLayer, device_id: &str) {
+        let (_producer, consumer) = rtrb::RingBuffer::<f32>::new(16);
+        layer.add_input_consumer(
+            device_id.to_string(),
+            Arc::new(Mutex::new(consumer)),
+            AtomicQueueTracker::new(format!("{}_in", device_id), 16),
+        );
+    }
+
+    fn add_output(layer: &mut MixingLayer, device_id: &str) {
+        let (producer, _consumer) = rtrb::RingBuffer::<f32>::new(16);
+        layer.add_output_producer(
+            device_id.to_string(),
+            Arc::new(Mutex::new(producer)),
+            AtomicQueueTracker::new(format!("{}_out", device_id), 16),
+        );
+    }
+
+    fn bus<'a>(
+        layer: &'a MixingLayer,
+        bus_id: &str,
+    ) -> crate::audio::mixer::pipeline::bus_routing::Bus {
+        layer
+            .buses()
+            .into_iter()
+            .find(|b| b.id == bus_id)
+            .expect("bus should exist")
+    }
+
+    #[test]
+    fn registered_devices_appear_on_the_main_bus() {
+        let mut layer = layer();
+        add_input(&mut layer, "mic");
+        add_output(&mut layer, "speakers");
+
+        let main = bus(&layer, MAIN_BUS_ID);
+        assert!(main.inputs.contains("mic"));
+        assert!(main.outputs.contains("speakers"));
+    }
+
+    #[test]
+    fn routing_reads_back_what_was_set() {
+        let mut layer = layer();
+        add_input(&mut layer, "deck");
+        add_output(&mut layer, "headphones");
+        layer
+            .create_bus("cue".to_string(), "Cue".to_string())
+            .unwrap();
+
+        layer
+            .set_input_sends("deck".to_string(), vec!["cue".to_string()])
+            .unwrap();
+        layer
+            .set_output_bus("headphones".to_string(), "cue".to_string())
+            .unwrap();
+
+        let cue = bus(&layer, "cue");
+        assert!(cue.inputs.contains("deck"));
+        assert!(cue.outputs.contains("headphones"));
+        assert!(!bus(&layer, MAIN_BUS_ID).inputs.contains("deck"));
+    }
+
+    #[test]
+    fn an_invalid_change_is_rejected_rather_than_reported_as_applied() {
+        let mut layer = layer();
+        add_input(&mut layer, "mic");
+
+        let result = layer.set_input_sends("mic".to_string(), vec!["nope".to_string()]);
+
+        assert_eq!(result, Err(BusError::UnknownBus("nope".to_string())));
+        assert!(bus(&layer, MAIN_BUS_ID).inputs.contains("mic"));
+    }
+
+    #[tokio::test]
+    async fn routing_survives_the_mixing_thread_starting() {
+        let mut layer = layer();
+        add_input(&mut layer, "mic");
+        add_output(&mut layer, "speakers");
+        layer
+            .create_bus("cue".to_string(), "Cue".to_string())
+            .unwrap();
+        layer.update_target_sample_rate(48_000);
+
+        layer.start(crate::audio::new_shared_vu_channel()).unwrap();
+
+        // The thread works from a copy, so the layer can still be asked what the
+        // routing is rather than reporting an empty table
+        let main = bus(&layer, MAIN_BUS_ID);
+        assert!(main.inputs.contains("mic"));
+        assert!(main.outputs.contains("speakers"));
+        assert_eq!(layer.buses().len(), 2);
+
+        layer.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_device_added_while_running_is_still_visible() {
+        let mut layer = layer();
+        layer.update_target_sample_rate(48_000);
+        layer.start(crate::audio::new_shared_vu_channel()).unwrap();
+
+        add_input(&mut layer, "late-mic");
+
+        assert!(bus(&layer, MAIN_BUS_ID).inputs.contains("late-mic"));
+
+        layer.stop().await.unwrap();
+    }
+}
+
 pub(super) fn log_bus_result(action: &str, subject: &str, result: Result<(), BusError>) {
     match result {
         Ok(()) => info!(

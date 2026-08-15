@@ -61,6 +61,7 @@ impl Bus {
 }
 
 /// Every bus and the devices attached to it
+#[derive(Clone)]
 pub struct BusRegistry {
     /// Ordered so the mixing thread visits buses the same way every cycle
     buses: BTreeMap<String, Bus>,

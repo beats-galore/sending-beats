@@ -37,8 +37,16 @@ pub struct BusMixer {
 
 impl BusMixer {
     pub fn new() -> Self {
+        Self::from_registry(BusRegistry::new())
+    }
+
+    /// A mixer working from an existing routing table
+    ///
+    /// The mixing thread is given a copy of the layer's registry rather than
+    /// taking it, so the layer keeps one it can still answer queries from.
+    pub fn from_registry(registry: BusRegistry) -> Self {
         Self {
-            registry: BusRegistry::new(),
+            registry,
             silence: Vec::new(),
         }
     }

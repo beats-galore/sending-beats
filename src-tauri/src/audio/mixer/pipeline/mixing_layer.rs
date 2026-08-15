@@ -158,6 +158,10 @@ impl MixingLayer {
         consumer: Arc<Mutex<rtrb::Consumer<f32>>>,
         queue_tracker: AtomicQueueTracker,
     ) {
+        self.bus_mixer
+            .registry_mut()
+            .attach_input(device_id.clone());
+
         if self.worker_handle.is_some() {
             let cmd = MixingLayerCommand::AddInputStream {
                 device_id: device_id.clone(),
@@ -182,9 +186,6 @@ impl MixingLayer {
                 .insert(device_id.clone(), consumer);
             self.input_queue_trackers
                 .insert(device_id.clone(), queue_tracker);
-            self.bus_mixer
-                .registry_mut()
-                .attach_input(device_id.clone());
             info!(
                 "🎛️ {}: Queued input consumer for device '{}'",
                 "MIXING_LAYER".on_green().white(),
@@ -195,6 +196,8 @@ impl MixingLayer {
 
     /// Remove an input RTRB consumer (stops receiving audio from a device)
     pub fn remove_input_consumer(&mut self, device_id: String) {
+        self.bus_mixer.registry_mut().detach_input(&device_id);
+
         if self.worker_handle.is_some() {
             let cmd = MixingLayerCommand::RemoveInputStream {
                 device_id: device_id.clone(),
@@ -215,7 +218,6 @@ impl MixingLayer {
         } else {
             self.input_rtrb_consumers.remove(&device_id);
             self.input_queue_trackers.remove(&device_id);
-            self.bus_mixer.registry_mut().detach_input(&device_id);
             info!(
                 "🗑️ {}: Removed input consumer for device '{}' (not yet started)",
                 "MIXING_LAYER".on_green().white(),
@@ -231,6 +233,10 @@ impl MixingLayer {
         producer: Arc<Mutex<rtrb::Producer<f32>>>,
         queue_tracker: AtomicQueueTracker,
     ) {
+        self.bus_mixer
+            .registry_mut()
+            .attach_output(device_id.clone());
+
         if self.worker_handle.is_some() {
             // MixingLayer is already running - send command to worker thread
             let cmd = MixingLayerCommand::AddOutputProducer {
@@ -257,9 +263,6 @@ impl MixingLayer {
                 .insert(device_id.clone(), producer);
             self.output_queue_trackers
                 .insert(device_id.clone(), queue_tracker);
-            self.bus_mixer
-                .registry_mut()
-                .attach_output(device_id.clone());
             info!(
                 "🔊 {}: Queued output producer for device '{}' (total: {})",
                 "MIXING_LAYER".on_green().white(),
@@ -275,6 +278,8 @@ impl MixingLayer {
     /// produces once every registered producer can take a full block, so a
     /// producer left behind by a stopped worker stalls the mix permanently.
     pub fn remove_output_producer(&mut self, device_id: String) {
+        self.bus_mixer.registry_mut().detach_output(&device_id);
+
         if self.worker_handle.is_some() {
             let cmd = MixingLayerCommand::RemoveOutputProducer {
                 device_id: device_id.clone(),
@@ -295,7 +300,6 @@ impl MixingLayer {
         } else {
             self.output_rtrb_producers.remove(&device_id);
             self.output_queue_trackers.remove(&device_id);
-            self.bus_mixer.registry_mut().detach_output(&device_id);
             info!(
                 "🗑️ {}: Removed output producer for device '{}' (not yet started)",
                 "MIXING_LAYER".on_green().white(),
@@ -329,7 +333,7 @@ impl MixingLayer {
         let mut input_queue_trackers = std::mem::take(&mut self.input_queue_trackers);
         let mut output_rtrb_producers = std::mem::take(&mut self.output_rtrb_producers);
         let mut output_queue_trackers = std::mem::take(&mut self.output_queue_trackers);
-        let mut bus_mixer = std::mem::take(&mut self.bus_mixer);
+        let mut bus_mixer = BusMixer::from_registry(self.bus_mixer.registry().clone());
         // Started unconditionally. The mixing layer starts with the first device,
         // which can be before the frontend has registered a channel, and it is
         // only ever started once — so creating this conditionally left master
