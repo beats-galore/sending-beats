@@ -176,6 +176,10 @@ impl FilePlayerManager {
             PlaybackAction::Stop => player.stop(),
             PlaybackAction::SkipNext => player.skip_next()?,
             PlaybackAction::SkipPrevious => player.skip_previous()?,
+            PlaybackAction::RestartTrack => player.restart_track()?,
+            PlaybackAction::Seek { seconds } => {
+                player.seek(std::time::Duration::from_secs_f64(seconds.max(0.0)))?
+            }
             PlaybackAction::SetVolume(volume) => player.set_volume(volume),
         }
 
@@ -229,7 +233,15 @@ pub enum PlaybackAction {
     Pause,
     Stop,
     SkipNext,
+    /// Back to the start of this track, or to the one before it — see
+    /// `AudioFilePlayer::skip_previous` for which
     SkipPrevious,
+    /// This track again from the beginning, whatever the playhead says
+    RestartTrack,
+    /// Move the playhead within the current track
+    Seek {
+        seconds: f64,
+    },
     SetVolume(f32),
 }
 

@@ -63,6 +63,28 @@ pub struct PlaybackStatus {
     pub mode: PlaybackMode,
 }
 
+/// What is known about the track currently open, beyond its decoder
+///
+/// Seeking needs the stream to seek within and the timebase to say where it
+/// landed; rebuilding the resampler afterwards needs the rate it was built for.
+struct LoadedTrack {
+    stream_id: u32,
+    time_base: Option<symphonia::core::units::TimeBase>,
+    input_sample_rate: u32,
+}
+
+/// How far into a track "previous" stops meaning the one before
+///
+/// The convention every transport uses: once you are properly into a track,
+/// previous takes you to its start, and only pressing again steps back.
+const RESTART_WINDOW: Duration = Duration::from_secs(3);
+
+/// Steps back the history keeps
+///
+/// Bounded because a player left running all night would otherwise grow one
+/// entry per track forever, and nobody steps back through a whole evening.
+const HISTORY_LIMIT: usize = 128;
+
 /// Something worth writing down that happened while playing
 #[derive(Debug, Clone)]
 pub enum PlayerEvent {
@@ -104,6 +126,16 @@ pub struct AudioFilePlayer {
     /// there is a whole one to give it.
     resample_input: Arc<Mutex<Vec<VecDeque<f32>>>>,
 
+    /// What the loaded track needs for seeking and for reading its own clock
+    loaded: Arc<Mutex<Option<LoadedTrack>>>,
+
+    /// Queue positions in the order they were entered, newest last
+    ///
+    /// Stepping back has to follow what was played rather than what is next to
+    /// it in the queue, or shuffle would send "previous" somewhere the listener
+    /// has never been.
+    played_history: Arc<Mutex<Vec<usize>>>,
+
     /// Where finished tracks are reported, so history can be written down
     ///
     /// A channel rather than a call, because tracks finish on the decoding
@@ -134,6 +166,8 @@ impl AudioFilePlayer {
             pending: Arc::new(Mutex::new(VecDeque::new())),
             resample_input: Arc::new(Mutex::new(Vec::new())),
             events: Arc::new(Mutex::new(None)),
+            loaded: Arc::new(Mutex::new(None)),
+            played_history: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -297,14 +331,35 @@ impl AudioFilePlayer {
     }
 
     /// Skip to previous track
+    /// Go back: to the start of this track, or to the one before it
+    ///
+    /// Which one depends on how far in you are. Past the first few seconds,
+    /// previous means the start of what is playing — pressing it again, now at
+    /// zero, is what steps back a track. It follows what was actually played
+    /// rather than queue order, so it works the same under shuffle.
     pub fn skip_previous(&self) -> Result<()> {
-        // For now, just restart current track
-        // TODO: Implement proper previous track logic
-        {
-            let mut position = self.position.lock().unwrap();
-            *position = Duration::ZERO;
+        let position = *self.position.lock().unwrap();
+
+        if position >= RESTART_WINDOW {
+            println!("⏮️ Restarted current track");
+            return self.restart_track();
         }
-        println!("⏮️ Skipped to previous track");
+
+        let previous = self.played_history.lock().unwrap().pop();
+
+        match previous {
+            Some(index) => {
+                self.load_index(index, false)?;
+                println!("⏮️ Skipped to previous track");
+            }
+            // Nothing has been played before this, so the start of it is as far
+            // back as there is to go.
+            None => {
+                self.restart_track()?;
+                println!("⏮️ Nothing before this, restarted it");
+            }
+        }
+
         Ok(())
     }
 
@@ -497,7 +552,8 @@ impl AudioFilePlayer {
             return Err(anyhow::anyhow!("Queue is empty"));
         }
 
-        self.load_index(0)
+        self.played_history.lock().unwrap().clear();
+        self.load_index(0, false)
     }
 
     /// Move to whatever should play after the current track
@@ -513,7 +569,7 @@ impl AudioFilePlayer {
             return Ok(false);
         };
 
-        self.load_index(next)?;
+        self.load_index(next, true)?;
         Ok(true)
     }
 
@@ -603,7 +659,11 @@ impl AudioFilePlayer {
     }
 
     /// Load the track at `index` and make it the current one
-    fn load_index(&self, index: usize) -> Result<()> {
+    ///
+    /// `remember` records the track being left, which is what "previous" walks
+    /// back through. Stepping back and restarting both pass false: neither is
+    /// somewhere new to come back from.
+    fn load_index(&self, index: usize, remember: bool) -> Result<()> {
         let track = {
             let queue = self.queue.lock().unwrap();
             queue
@@ -612,8 +672,82 @@ impl AudioFilePlayer {
                 .ok_or_else(|| anyhow::anyhow!("No track at index {}", index))?
         };
 
+        if remember {
+            if let Some(leaving) = *self.current_track_index.lock().unwrap() {
+                let mut history = self.played_history.lock().unwrap();
+                history.push(leaving);
+                if history.len() > HISTORY_LIMIT {
+                    history.remove(0);
+                }
+            }
+        }
+
         self.load_track(&track)?;
         *self.current_track_index.lock().unwrap() = Some(index);
+
+        Ok(())
+    }
+
+    /// Play the current track again from its start
+    pub fn restart_track(&self) -> Result<()> {
+        let Some(index) = *self.current_track_index.lock().unwrap() else {
+            return Err(anyhow::anyhow!("Nothing is loaded"));
+        };
+
+        self.load_index(index, false)
+    }
+
+    /// Move the playhead within the current track
+    ///
+    /// Lands on the nearest point the format can start decoding from rather than
+    /// exactly where it was asked, so the reported position is read back from
+    /// where it actually landed instead of being assumed.
+    pub fn seek(&self, target: Duration) -> Result<()> {
+        let loaded = self
+            .loaded
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|track| (track.stream_id, track.time_base, track.input_sample_rate))
+            .ok_or_else(|| anyhow::anyhow!("Nothing is loaded to seek in"))?;
+        let (stream_id, time_base, input_sample_rate) = loaded;
+
+        let landed = {
+            let mut reader_guard = self.current_reader.lock().unwrap();
+            let reader = reader_guard
+                .as_mut()
+                .ok_or_else(|| anyhow::anyhow!("Nothing is loaded to seek in"))?;
+
+            reader
+                .seek(
+                    symphonia::core::formats::SeekMode::Accurate,
+                    symphonia::core::formats::SeekTo::Time {
+                        time: symphonia::core::units::Time::from(target.as_secs_f64()),
+                        track_id: Some(stream_id),
+                    },
+                )
+                .context("Could not seek in this track")?
+        };
+
+        // The decoder holds state from before the jump, and so does everything
+        // downstream of it: leaving any of it in place would be heard as a
+        // moment of the old position after the new one.
+        if let Some(decoder) = self.current_decoder.lock().unwrap().as_mut() {
+            decoder.reset();
+        }
+        self.pending.lock().unwrap().clear();
+        self.resample_input.lock().unwrap().clear();
+        self.configure_resampler(input_sample_rate)?;
+
+        *self.position.lock().unwrap() = match time_base {
+            Some(base) => {
+                let time = base.calc_time(landed.actual_ts);
+                Duration::from_secs_f64(time.seconds as f64 + time.frac)
+            }
+            // No timebase to convert with, so the asked-for position is the best
+            // reading available.
+            None => target,
+        };
 
         Ok(())
     }
@@ -690,7 +824,25 @@ impl AudioFilePlayer {
             .sample_rate
             .unwrap_or(crate::types::DEFAULT_SAMPLE_RATE);
 
+        self.configure_resampler(input_sample_rate)?;
+
+        *self.loaded.lock().unwrap() = Some(LoadedTrack {
+            stream_id: track_id,
+            time_base: track_info_cloned.codec_params.time_base,
+            input_sample_rate,
+        });
+
+        println!("✅ Track loaded successfully");
+        Ok(())
+    }
+
+    /// Build the resampler this track needs, or none when the rates already match
+    ///
+    /// Called again after a seek: the resampler carries filter state across
+    /// chunks, and state from before a jump would be heard after it.
+    fn configure_resampler(&self, input_sample_rate: u32) -> Result<()> {
         let mut current_resampler = self.resampler.lock().unwrap();
+
         *current_resampler = if input_sample_rate == self.sample_rate {
             None
         } else {
@@ -714,7 +866,6 @@ impl AudioFilePlayer {
             )
         };
 
-        println!("✅ Track loaded successfully");
         Ok(())
     }
 

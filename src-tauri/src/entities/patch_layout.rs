@@ -7,6 +7,10 @@ use serde::{Deserialize, Serialize};
 /// column means that part of the placement is still being derived, so a node
 /// that was dragged but never resized keeps growing with its contents.
 ///
+/// A pinned node takes its position from the node named by `pinned_to` instead
+/// of from `x` and `y`, which is what carries a whole group when its anchor is
+/// dragged. Both pin columns are set together or not at all.
+///
 /// Keyed by the patchbay's own vocabulary — `ch:<n>` for an input strip,
 /// `bus:<id>` for a mix, `out:<device identifier>` for a hardware destination,
 /// `stream` and `rec` for the broadcast and the tape.
@@ -22,6 +26,10 @@ pub struct Model {
     pub y: Option<f64>,
     pub width: Option<f64>,
     pub height: Option<f64>,
+    /// Target key of the node this one sits against, if any
+    pub pinned_to: Option<String>,
+    /// Which edge of that node — `bottom`, `left` or `right`
+    pub pin_edge: Option<String>,
     pub created_at: ChronoDateTimeUtc,
     pub updated_at: ChronoDateTimeUtc,
 }

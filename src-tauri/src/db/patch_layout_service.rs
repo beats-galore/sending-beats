@@ -12,19 +12,31 @@ use crate::entities::patch_layout;
 /// Every field is optional because a placement is an override on the computed
 /// layout: a node that was dragged but never resized carries a position and no
 /// size, and still takes its height from whatever it is showing.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+///
+/// A pinned node takes its position from `pinned_to` rather than from `x` and
+/// `y`, so those are left empty while the pin stands and written back when it
+/// is released.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Placement {
     pub x: Option<f64>,
     pub y: Option<f64>,
     pub width: Option<f64>,
     pub height: Option<f64>,
+    /// Target key of the node this one sits against
+    pub pinned_to: Option<String>,
+    /// Which edge of that node — `bottom`, `left` or `right`
+    pub pin_edge: Option<String>,
 }
 
 impl Placement {
     /// Nothing overridden — the same as having no row at all.
     fn is_empty(&self) -> bool {
-        self.x.is_none() && self.y.is_none() && self.width.is_none() && self.height.is_none()
+        self.x.is_none()
+            && self.y.is_none()
+            && self.width.is_none()
+            && self.height.is_none()
+            && self.pinned_to.is_none()
     }
 }
 
@@ -55,6 +67,8 @@ impl PatchLayoutService {
                         y: row.y,
                         width: row.width,
                         height: row.height,
+                        pinned_to: row.pinned_to,
+                        pin_edge: row.pin_edge,
                     },
                 )
             })
@@ -92,6 +106,8 @@ impl PatchLayoutService {
                 active.y = Set(placement.y);
                 active.width = Set(placement.width);
                 active.height = Set(placement.height);
+                active.pinned_to = Set(placement.pinned_to.clone());
+                active.pin_edge = Set(placement.pin_edge.clone());
                 active.updated_at = Set(now);
                 active.update(db).await?;
             }
@@ -104,6 +120,8 @@ impl PatchLayoutService {
                     y: Set(placement.y),
                     width: Set(placement.width),
                     height: Set(placement.height),
+                    pinned_to: Set(placement.pinned_to.clone()),
+                    pin_edge: Set(placement.pin_edge.clone()),
                     created_at: Set(now),
                     updated_at: Set(now),
                 }
@@ -116,6 +134,11 @@ impl PatchLayoutService {
     }
 
     /// Forget where something was put, so it goes back to its column
+    ///
+    /// Deliberately leaves anything pinned to it alone: the node still exists,
+    /// it has only gone back to being placed by the canvas, and its followers
+    /// should go with it. A pin left pointing at a node that has actually been
+    /// deleted is read as no pin at all, so nothing has to be cleaned up here.
     pub async fn clear(
         db: &DatabaseConnection,
         configuration_id: &str,
@@ -169,6 +192,14 @@ mod tests {
         Placement {
             x: Some(x),
             y: Some(y),
+            ..Placement::default()
+        }
+    }
+
+    fn pinned(anchor: &str, edge: &str) -> Placement {
+        Placement {
+            pinned_to: Some(anchor.to_string()),
+            pin_edge: Some(edge.to_string()),
             ..Placement::default()
         }
     }
@@ -318,6 +349,93 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_pin_survives_a_round_trip_and_stores_no_position() {
+        let db = db().await;
+
+        PatchLayoutService::set(&db, CONFIG, "ch:2", pinned("bus:main", "left"))
+            .await
+            .unwrap();
+
+        let stored = PatchLayoutService::list_for_configuration(&db, CONFIG)
+            .await
+            .unwrap();
+
+        let placement = stored.get("ch:2").unwrap();
+        assert_eq!(placement.pinned_to.as_deref(), Some("bus:main"));
+        assert_eq!(placement.pin_edge.as_deref(), Some("left"));
+        assert_eq!(
+            (placement.x, placement.y),
+            (None, None),
+            "a pinned node takes its position from its anchor, not from a stored one"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pin_alone_is_enough_to_keep_a_row() {
+        let db = db().await;
+
+        PatchLayoutService::set(&db, CONFIG, "ch:2", pinned("bus:main", "bottom"))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            PatchLayoutService::list_for_configuration(&db, CONFIG)
+                .await
+                .unwrap()
+                .len(),
+            1,
+            "a placement that overrides nothing but the pin is still a placement"
+        );
+    }
+
+    #[tokio::test]
+    async fn unpinning_puts_the_node_back_where_it_was_drawn() {
+        let db = db().await;
+        PatchLayoutService::set(&db, CONFIG, "ch:2", pinned("bus:main", "bottom"))
+            .await
+            .unwrap();
+
+        // What releasing a pin does: the derived position becomes a stored one,
+        // so the node stays exactly where it was rather than jumping.
+        PatchLayoutService::set(&db, CONFIG, "ch:2", at(540.0, 228.0))
+            .await
+            .unwrap();
+
+        let stored = PatchLayoutService::list_for_configuration(&db, CONFIG)
+            .await
+            .unwrap();
+
+        let placement = stored.get("ch:2").unwrap();
+        assert_eq!(placement.pinned_to, None);
+        assert_eq!((placement.x, placement.y), (Some(540.0), Some(228.0)));
+    }
+
+    #[tokio::test]
+    async fn clearing_an_anchor_leaves_its_followers_pinned_to_it() {
+        let db = db().await;
+        PatchLayoutService::set(&db, CONFIG, "bus:main", at(600.0, 40.0))
+            .await
+            .unwrap();
+        PatchLayoutService::set(&db, CONFIG, "ch:2", pinned("bus:main", "left"))
+            .await
+            .unwrap();
+
+        PatchLayoutService::clear(&db, CONFIG, "bus:main")
+            .await
+            .unwrap();
+
+        let stored = PatchLayoutService::list_for_configuration(&db, CONFIG)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            stored.get("ch:2").unwrap().pinned_to.as_deref(),
+            Some("bus:main"),
+            "the anchor has gone back to its column, not away, so the group holds"
+        );
     }
 
     #[tokio::test]
