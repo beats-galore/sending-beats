@@ -80,18 +80,28 @@ export const layout = {
     width: 360,
     /** Shrunk to nothing but its levels, with the name above them. */
     heightCompact: 72,
-    /** Shut: the header, a pair of meters, the FROM and TO rows and a trim. */
-    height: 168,
-    /** Open: adds the metering column, the large gain readout and the stats. */
-    heightExpanded: 424,
+    /**
+     * Shut, before any member rows: the header, the trim and where it goes.
+     *
+     * A mix lists what feeds it one row per member, so unlike every other node
+     * its height depends on what is patched into it rather than only on how far
+     * it is opened.
+     */
+    heightBase: 104,
+    /** Open, before any member rows: adds the metering, the readout and the stats. */
+    heightExpandedBase: 300,
+    /** One row of the FROM list — a number, a name and that member's level. */
+    memberRowHeight: 22,
+    /** Top of the member list: below the header, inside the body's padding. */
+    membersTop: 46,
     /** Vertical gap between bus nodes. */
     gap: 24,
     headerHeight: 34,
     /** Room kept for the empty-state note when there are no mixes at all. */
     emptyHeight: 96,
-    /** Distance from a node's top edge to the first port centre. */
+    /** Distance from a node's top edge to the first output port centre. */
     portOffset: 59,
-    /** Vertical gap between ports, capped so long member lists stay inside. */
+    /** Vertical gap between output ports, capped so long lists stay inside. */
     portSpacing: 60,
     portSpan: 300,
   },

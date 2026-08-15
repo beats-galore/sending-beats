@@ -109,7 +109,10 @@ export const PatchCanvas = () => {
             // for, so the group opens it only that far.
             effectsEnabled: channel.effects_enabled,
           })),
-          busIds: buses.map((busEntry) => busEntry.id),
+          buses: buses.map((busEntry) => ({
+            id: busEntry.id,
+            members: busEntry.inputs.length,
+          })),
           outputIds: outputs.map((output) => output.id),
         },
         placements

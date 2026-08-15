@@ -19,7 +19,12 @@ import type { ChannelDevice } from '../hooks/use-channel-devices';
 import type { PatchOutput } from '../hooks/use-patch-outputs';
 import type { Cable } from './CableLayer';
 import { resolveDestination } from './destination-target';
-import { busPortOffset, cablePath, channelPortOffset } from './patch-geometry';
+import {
+  busInputPortOffset,
+  busPortOffset,
+  cablePath,
+  channelPortOffset,
+} from './patch-geometry';
 import { leftPort, rightPort } from './patch-layout';
 import type { NodeRect, Port } from './patch-layout';
 import type { PatchRects } from './patch-rects';
@@ -84,7 +89,7 @@ const sourceCables = (input: CableInput): Cable[] => {
           id: `in-${busEntry.id}-${deviceId}`,
           path: cablePath(
             rightPort(from, channelPortOffset),
-            leftPort(rects.buses[busIndex], busPortOffset(portIndex, busEntry.inputs.length))
+            leftPort(rects.buses[busIndex], busInputPortOffset(portIndex))
           ),
           color: colorFor(channelTargetKey(channel.channelId), channel.index),
           active: true,

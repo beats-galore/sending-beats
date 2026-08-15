@@ -179,21 +179,42 @@ const portStep = (count: number): number =>
   Math.min(bus.portSpacing, bus.portSpan / Math.max(count, 1));
 
 /**
- * Distance from a bus node's top edge to one of its port centres.
+ * Distance from a bus node's top edge to one of its output port centres.
  *
- * Members are listed on the node in the same order the ports run down its edge,
- * so a cable lands beside the tile naming what it carries.
+ * Spread evenly down the edge, since nothing on the card lines up with them —
+ * where a mix goes is written as one line rather than a row per destination.
  */
 export const busPortOffset = (portIndex: number, portCount: number): number =>
   bus.portOffset + portIndex * portStep(portCount);
 
+/**
+ * Distance from a bus node's top edge to one of its input port centres.
+ *
+ * Level with the member row it belongs to, so the cable carrying a source lands
+ * beside that source's name and its level. Reading what feeds a mix, and how
+ * hard, is then one horizontal glance.
+ */
+export const busInputPortOffset = (portIndex: number): number =>
+  bus.membersTop + portIndex * bus.memberRowHeight + bus.memberRowHeight / 2;
+
 // None of these widen as they open, so unlike a source it is only height that
 // decides how much of one there is room for.
-const busLadder = heightLadder(bus.width, NodeExpansion, {
-  compact: bus.heightCompact,
-  collapsed: bus.height,
-  expanded: bus.heightExpanded,
-});
+//
+// A mix is the exception to being sized by expansion alone: it lists what feeds
+// it one row per member, so its rungs move down the canvas as sources are
+// patched into it.
+const busLadder = (members: number) =>
+  heightLadder(bus.width, NodeExpansion, {
+    compact: bus.heightCompact,
+    collapsed: bus.heightBase + members * bus.memberRowHeight,
+    expanded: bus.heightExpandedBase + members * bus.memberRowHeight,
+  });
+
+export const busSize = (expansion: NodeExpansion, members: number): Size =>
+  busLadder(members).size(expansion);
+
+export const busExpansionFor = (size: Size, members: number): NodeExpansion =>
+  busLadder(members).expansionFor(size);
 
 const castLadder = heightLadder(destination.width, NodeExpansion, {
   compact: destination.castHeightCompact,
@@ -212,8 +233,6 @@ const outputLadder = heightLadder(destination.width, OutputExpansion, {
   collapsed: destination.outputHeight,
 });
 
-export const busSize = busLadder.size;
-export const busExpansionFor = busLadder.expansionFor;
 export const castSize = castLadder.size;
 export const castExpansionFor = castLadder.expansionFor;
 export const tapeSize = tapeLadder.size;

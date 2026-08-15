@@ -43,7 +43,8 @@ export type Placements = Partial<Record<PatchTargetKey, PatchPlacement>>;
 type PatchRectsInput = {
   /** In column order. The variant decides how tall a shut source stands. */
   channels: { id: number; variant: ChannelCardVariant; effectsEnabled: boolean }[];
-  busIds: string[];
+  /** A mix lists what feeds it, so how tall it stands follows from its members. */
+  buses: { id: string; members: number }[];
   outputIds: string[];
 };
 
@@ -87,7 +88,7 @@ const stackEnd = (tops: number[], heights: number[], top: number, gap: number): 
   tops.length === 0 ? top : tops[tops.length - 1] + heights[heights.length - 1] + gap;
 
 export const resolvePatchRects = (
-  { channels, busIds, outputIds }: PatchRectsInput,
+  { channels, buses, outputIds }: PatchRectsInput,
   placements: Placements
 ): PatchRects => {
   const channelKeys = channels.map((channel) => channelTargetKey(channel.id));
@@ -105,15 +106,15 @@ export const resolvePatchRects = (
     })
   );
 
-  const busKeys = busIds.map(busTargetKey);
-  const busShut = busSize('collapsed');
-  const busHeights = busKeys.map((key) => resolveHeight(placements, key, busShut));
+  const busKeys = buses.map((entry) => busTargetKey(entry.id));
+  const busShut = buses.map((entry) => busSize('collapsed', entry.members));
+  const busHeights = busKeys.map((key, index) => resolveHeight(placements, key, busShut[index]));
   const busTops = stackTops(busHeights, bus.top, bus.gap);
   const busRects = busKeys.map((key, index) =>
     resolveRect(placements[key], {
       left: bus.x,
       top: busTops[index],
-      width: busShut.width,
+      width: busShut[index].width,
       height: busHeights[index],
     })
   );
@@ -187,10 +188,17 @@ export const resolvePatchRects = (
         },
       ];
     }),
-    ...busKeys.map((key): [PatchTargetKey, NodeLadder] => [
-      key,
-      { compact: busSize('compact'), collapsed: busShut, expanded: busSize('expanded') },
-    ]),
+    ...busKeys.map((key, index): [PatchTargetKey, NodeLadder] => {
+      const { members } = buses[index];
+      return [
+        key,
+        {
+          compact: busSize('compact', members),
+          collapsed: busShut[index],
+          expanded: busSize('expanded', members),
+        },
+      ];
+    }),
     ...outputKeys.map((key): [PatchTargetKey, NodeLadder] => [
       key,
       { compact: outputSize('compact'), collapsed: outputShut, expanded: outputShut },

@@ -8,49 +8,46 @@ import { LevelColumn } from '../primitives/LevelColumn';
 import { SectionLabel } from '../primitives/SectionLabel';
 import { StatRow } from '../primitives/StatRow';
 
-const SCALE_MARKS = ['0', '-6', '-12', '-18', '-24', '-36', '-60'];
+const COLUMN_HEIGHT = 64;
 
 type BusMeteringProps = {
   levels: StereoLevels;
   gainDb: number;
 };
 
-/** What a mix gains when it is opened: the metering column, the readout and the stats. */
+/**
+ * What a mix gains when it is opened: how loud it is, and how loud it has been.
+ *
+ * The readout sits beside the meters rather than in a panel of its own — the
+ * number and the columns are answering the same question, and a card that is
+ * mostly member rows has no room to say it twice.
+ */
 export const BusMetering = ({ levels, gainDb }: BusMeteringProps) => (
-  <Group gap="3xl" pt="md" align="stretch" wrap="nowrap" style={{ flex: 1, minHeight: 0 }}>
-    <Group gap="lg" align="stretch" wrap="nowrap">
-      <LevelColumn level={meterPosition(levels.left.peak_level)} />
-      <LevelColumn level={meterPosition(levels.right.peak_level)} />
-      <Stack justify="space-between" gap={0} py="3xs">
-        {SCALE_MARKS.map((mark) => (
-          <Text key={mark} size="3xs" c={color.textFaintest}>
-            {mark}
-          </Text>
-        ))}
-      </Stack>
+  <Stack gap="lg" style={{ flex: 'none' }}>
+    <Group gap="lg" wrap="nowrap" align="center">
+      <Group gap="2xs" wrap="nowrap" style={{ flex: 'none' }}>
+        <LevelColumn level={meterPosition(levels.left.peak_level)} width={10} height={COLUMN_HEIGHT} />
+        <LevelColumn
+          level={meterPosition(levels.right.peak_level)}
+          width={10}
+          height={COLUMN_HEIGHT}
+        />
+      </Group>
+
+      <Text fz="4xl" fw={600} c={color.acc} style={{ letterSpacing: layout.tracking.tight }}>
+        {asGain(gainDb).replace('dB', '')}
+        <Text span fz="lg" c={color.textFaint}>
+          {' '}
+          dB
+        </Text>
+      </Text>
+
+      <SectionLabel tone="faint" tracking="widest" style={{ flex: 1, textAlign: 'right' }}>
+        MIX GAIN
+      </SectionLabel>
     </Group>
 
-    <Stack gap="lg" style={{ flex: 1, minWidth: 0 }}>
-      <Box
-        p="md"
-        style={{
-          background: color.bg,
-          border: border(),
-          borderRadius: 'var(--mantine-radius-md)',
-        }}
-      >
-        <Text fz="4xl" fw={600} c={color.acc} style={{ letterSpacing: layout.tracking.tight }}>
-          {asGain(gainDb).replace('dB', '')}
-          <Text span fz="lg" c={color.textFaint}>
-            {' '}
-            dB
-          </Text>
-        </Text>
-        <SectionLabel tone="faint" tracking="widest" mt="3xs">
-          MIX GAIN
-        </SectionLabel>
-      </Box>
-
+    <Box pt="md" style={{ borderTop: border() }}>
       <Stack gap="xs">
         <StatRow label="PEAK L/R">
           <Text size="xs" c={color.textDim}>
@@ -65,6 +62,6 @@ export const BusMetering = ({ levels, gainDb }: BusMeteringProps) => (
         {/* Loudness metering is not produced by the engine yet. */}
         <StatRow label="LUFS-S">—</StatRow>
       </Stack>
-    </Stack>
-  </Group>
+    </Box>
+  </Stack>
 );

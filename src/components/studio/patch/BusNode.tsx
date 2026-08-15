@@ -14,7 +14,8 @@ import { ExpandToggle } from '../primitives/ExpandToggle';
 import { LevelMeter } from '../primitives/LevelMeter';
 import { ResizeGrip } from '../primitives/ResizeGrip';
 import { SectionLabel } from '../primitives/SectionLabel';
-import { BusMemberTiles } from './BusMemberTiles';
+import { BusDestinations } from './BusDestinations';
+import { BusMembers } from './BusMembers';
 import { BusMetering } from './BusMetering';
 import { BusPorts } from './BusPorts';
 import { busExpansionFor, busSize, NodeExpansion, nextExpansion } from './patch-geometry';
@@ -44,12 +45,15 @@ export const BusNode = ({ bus, rect, selected, onGainChange }: BusNodeProps) => 
   const select = useStudioStore((state) => state.select);
 
   const targetKey = busTargetKey(bus.id);
+  // A mix lists what feeds it one row per member, so how tall it stands at each
+  // rung follows from how many sources are patched into it.
+  const members = bus.inputs.length;
   const grab = useNodeDrag(targetKey, rect);
-  const resize = useNodeResize(targetKey, rect, busSize('compact'));
+  const resize = useNodeResize(targetKey, rect, busSize('compact', members));
   const setRung = useNodeRung(targetKey);
   const { front, bringToFront } = useNodeFront(targetKey);
 
-  const expansion = busExpansionFor(rect);
+  const expansion = busExpansionFor(rect, members);
   const compact = expansion === 'compact';
   const next = nextExpansion(expansion, NodeExpansion);
   const unshrink = useUnshrink(targetKey, compact);
@@ -130,29 +134,33 @@ export const BusNode = ({ bus, rect, selected, onGainChange }: BusNodeProps) => 
         />
       </Group>
 
-      <Stack gap="sm" p="lg" style={{ flex: 1, minHeight: 0 }}>
-        {/* Shrunk to nothing else, a mix is still its levels: whether audio is
-            flowing is the one thing you cannot wait to open it to read. */}
-        <Stack gap="3xs">
-          <LevelMeter
-            level={meterPosition(levels.left.peak_level)}
-            height={compact ? layout.compactMeterHeight : undefined}
-            surface="bgRaised"
-            dimmed={!carrying}
-          />
-          <LevelMeter
-            level={meterPosition(levels.right.peak_level)}
-            height={compact ? layout.compactMeterHeight : undefined}
-            surface="bgRaised"
-            dimmed={!carrying}
-          />
-        </Stack>
-
-        {!compact && (
+      <Stack gap="sm" p="lg" style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        {/* Shrunk to nothing else, a mix is its own levels: whether audio is
+            flowing is the one thing you cannot wait to open it to read. Given
+            any more room it says the same thing per source instead, which
+            answers that and which sources as well. */}
+        {compact ? (
+          <Stack gap="3xs">
+            <LevelMeter
+              level={meterPosition(levels.left.peak_level)}
+              height={layout.compactMeterHeight}
+              surface="bgRaised"
+              dimmed={!carrying}
+            />
+            <LevelMeter
+              level={meterPosition(levels.right.peak_level)}
+              height={layout.compactMeterHeight}
+              surface="bgRaised"
+              dimmed={!carrying}
+            />
+          </Stack>
+        ) : (
           <>
-            <BusMemberTiles bus={bus} />
+            <BusMembers bus={bus} />
 
-            <Group gap="md" wrap="nowrap">
+            {expansion === 'expanded' && <BusMetering levels={levels} gainDb={gainDb} />}
+
+            <Group gap="md" wrap="nowrap" style={{ flex: 'none' }}>
               <SectionLabel tracking="tight">GAIN</SectionLabel>
               <DragBar
                 value={gainDb}
@@ -173,10 +181,10 @@ export const BusNode = ({ bus, rect, selected, onGainChange }: BusNodeProps) => 
                 {asGain(gainDb)}
               </Text>
             </Group>
+
+            <BusDestinations bus={bus} />
           </>
         )}
-
-        {expansion === 'expanded' && <BusMetering levels={levels} gainDb={gainDb} />}
       </Stack>
 
       {/* The grip holds its press back from the node, so bringing the node
