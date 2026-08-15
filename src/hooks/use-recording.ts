@@ -39,12 +39,12 @@ export const useRecording = (pollingInterval = 1000) => {
   const [history, setHistory] = useState<RecordingHistoryEntry[]>([]);
 
   const [error, setError] = useState<string | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
 
+  // Status carries free disk space and the take count, which the transport shows
+  // while idle, and the backend can stop a recording on its own once a silence,
+  // duration or size limit is hit. Both need polling that does not depend on
+  // what the frontend believes is happening.
   const fetchStatus = useCallback(async () => {
-    if (!isRecording) {
-      return;
-    }
     try {
       const result = await invoke<RecordingStatus>('get_recording_status');
       setStatus(result);
@@ -53,7 +53,7 @@ export const useRecording = (pollingInterval = 1000) => {
       console.error('Failed to fetch recording status:', err);
       setError(err as string);
     }
-  }, [isRecording]);
+  }, []);
 
   const fetchConfigs = useCallback(async () => {
     try {
@@ -79,7 +79,6 @@ export const useRecording = (pollingInterval = 1000) => {
         console.log('useRecording: Calling start_recording with config:', config);
         const sessionId = await invoke<string>('start_recording', { config });
         console.log('useRecording: Got session ID:', sessionId);
-        setIsRecording(true);
         await fetchStatus(); // Refresh status immediately
         return sessionId;
       } catch (err) {
@@ -94,13 +93,12 @@ export const useRecording = (pollingInterval = 1000) => {
     try {
       const historyEntry = await invoke<RecordingHistoryEntry | null>('stop_recording');
       await Promise.all([fetchStatus(), fetchHistory()]); // Refresh both status and history
-      setIsRecording(false);
       return historyEntry;
     } catch (err) {
       console.error('Failed to stop recording:', err);
       throw err;
     }
-  }, [fetchStatus, fetchHistory, setIsRecording]);
+  }, [fetchStatus, fetchHistory]);
 
   const saveConfig = useCallback(
     async (config: RecordingConfig) => {
@@ -125,8 +123,6 @@ export const useRecording = (pollingInterval = 1000) => {
   }, []);
 
   const getStatus = useCallback(async () => {
-    console.log('called get status', isRecording);
-
     await fetchStatus();
   }, [fetchStatus]);
 
