@@ -5,6 +5,7 @@ import type { DestinationRole } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
 import { asGain } from '../format';
+import { useNodeDrag } from '../hooks/use-node-drag';
 import type { PatchOutput } from '../hooks/use-patch-outputs';
 import { DeleteButton } from '../primitives/DeleteButton';
 import { DragBar } from '../primitives/DragBar';
@@ -70,10 +71,12 @@ export const OutputDestination = ({
   // A destination the configuration still points at but which never connected.
   // Without this it renders as live and the mix appears to be going somewhere.
   const unavailable = output.unavailableReason !== null;
+  const grab = useNodeDrag(outputTargetKey(output.id), rect);
 
   return (
     <NodeCard
       position={rect}
+      onGrab={grab}
       borderColor={unavailable ? color.hotBorder : output.live ? color.line : color.dash}
       dimmed={!output.live}
       ports={

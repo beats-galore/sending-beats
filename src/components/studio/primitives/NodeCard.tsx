@@ -1,6 +1,6 @@
 import { Box, Group } from '@mantine/core';
 
-import type { CSSProperties, MouseEventHandler, ReactNode } from 'react';
+import type { CSSProperties, MouseEventHandler, PointerEventHandler, ReactNode } from 'react';
 import { color } from '../../../theme/tokens';
 
 import type { ColorToken } from '../../../theme/tokens';
@@ -16,6 +16,8 @@ type NodeCardProps = {
   /** Lifts the node above its neighbours and rings it, for the selected channel. */
   selected?: boolean;
   onClick?: MouseEventHandler<HTMLDivElement>;
+  /** Picks the node up. The title bar is the grip. */
+  onGrab?: PointerEventHandler<HTMLDivElement>;
   dimmed?: boolean;
   /** Ports, which sit outside the card's own bounds. */
   ports?: ReactNode;
@@ -36,6 +38,7 @@ export const NodeCard = ({
   headerSurface = 'bgRaised',
   selected = false,
   onClick,
+  onGrab,
   dimmed = false,
   ports,
   bodyStyle,
@@ -72,11 +75,13 @@ export const NodeCard = ({
       px="lg"
       gap="sm"
       wrap="nowrap"
+      onPointerDown={onGrab}
       style={{
         flex: 'none',
         borderBottom: `1px solid ${color.line}`,
         background: color[headerSurface],
         borderRadius: 'var(--mantine-radius-lg) var(--mantine-radius-lg) 0 0',
+        cursor: onGrab ? 'grab' : undefined,
       }}
     >
       {header}

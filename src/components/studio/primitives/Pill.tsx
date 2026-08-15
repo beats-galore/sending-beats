@@ -45,6 +45,8 @@ export const Pill = ({
   return (
     <Box
       onClick={onClick}
+      // A clickable pill in a node's title bar must not pick the node up instead
+      data-no-drag={onClick ? '' : undefined}
       title={title}
       fz={size}
       style={{

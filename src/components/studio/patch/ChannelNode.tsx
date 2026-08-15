@@ -9,6 +9,7 @@ import type { AudioChannel } from '../../../types';
 import { asGain, meterPosition } from '../format';
 import { useChannelNowPlaying } from '../hooks/use-channel-now-playing';
 import { useChannelSource } from '../hooks/use-channel-source';
+import { useNodeDrag } from '../hooks/use-node-drag';
 import { usePatchChannel } from '../hooks/use-patch-channel';
 import { DeleteButton } from '../primitives/DeleteButton';
 import { DragBar } from '../primitives/DragBar';
@@ -44,6 +45,7 @@ export const ChannelNode = ({ channel, index, rect, expansion, variant }: Channe
   const patch = usePatchChannel(channel);
   const source = useChannelSource(channel.id);
   const track = useChannelNowPlaying(source.configuredDevice?.deviceIdentifier);
+  const grab = useNodeDrag(channelTargetKey(channel.id), rect);
   const expanded = expansion !== 'collapsed';
 
   // An unavailable source outranks mute and tap styling: the channel is patched
@@ -62,6 +64,7 @@ export const ChannelNode = ({ channel, index, rect, expansion, variant }: Channe
     selected: expanded,
     borderColor: expanded ? color.acc : color.line,
     onClick: () => select({ kind: 'channel', channelId: channel.id }),
+    onGrab: grab,
     ports: <PortDot tone={tone} side="right" top={layout.source.portOffset} />,
     header: (
       <>

@@ -35,6 +35,8 @@ export const PatchBadge = ({ targetKey, position, dimmed, label }: PatchBadgePro
     >
       <Box
         fz="3xs"
+        // Opens the colour picker, and sits in the grip that moves the node
+        data-no-drag
         title="Choose this colour"
         style={{
           padding: '2px 7px',

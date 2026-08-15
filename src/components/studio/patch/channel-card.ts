@@ -1,4 +1,4 @@
-import type { MouseEventHandler, ReactNode } from 'react';
+import type { MouseEventHandler, PointerEventHandler, ReactNode } from 'react';
 
 import type { NodeRect } from './patch-layout';
 
@@ -18,4 +18,6 @@ export type ChannelCardProps = {
   borderColor?: string;
   selected?: boolean;
   onClick?: MouseEventHandler<HTMLDivElement>;
+  /** Picks the node up. The title bar is the grip. */
+  onGrab?: PointerEventHandler<HTMLDivElement>;
 };

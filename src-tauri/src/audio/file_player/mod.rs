@@ -6,6 +6,7 @@
 
 pub mod manager;
 pub mod player;
+pub mod source;
 
 // Re-export commonly used types from the player module
 pub use player::{
@@ -15,3 +16,5 @@ pub use player::{
 
 // Re-export commonly used types from the manager module
 pub use manager::{FilePlayerConfig, FilePlayerManager, FilePlayerService, PlaybackAction};
+
+pub use source::{FilePlayerSource, SOURCE_CHUNK_FRAMES};

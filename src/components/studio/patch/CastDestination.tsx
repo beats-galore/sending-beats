@@ -1,10 +1,12 @@
 import { Box, SimpleGrid, Stack, Text } from '@mantine/core';
 
+import { STREAM_TARGET_KEY } from '../../../services/patch-color-service';
 import { useStudioStore } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { border, color } from '../../../theme/tokens';
 import { asBytes, asElapsed } from '../format';
 import { useListenerStats } from '../hooks/use-listener-stats';
+import { useNodeDrag } from '../hooks/use-node-drag';
 import { useStreamTransport } from '../hooks/use-stream-transport';
 import { NodeCard } from '../primitives/NodeCard';
 import { PortDot } from '../primitives/PortDot';
@@ -29,6 +31,7 @@ export const CastDestination = ({ rect, focused }: CastDestinationProps) => {
   const stream = useStudioStore((state) => state.stream);
   const { isLive, isBusy, toggle, status, uptimeSeconds } = useStreamTransport();
   const listeners = useListenerStats(isLive);
+  const grab = useNodeDrag(STREAM_TARGET_KEY, rect);
 
   const bitrate = status?.bitrate_info.current_bitrate ?? stream.bitrate;
   const sent = status?.icecast_stats?.bytes_sent;
@@ -40,6 +43,7 @@ export const CastDestination = ({ rect, focused }: CastDestinationProps) => {
       borderColor={isLive ? color.hotBorder : focused ? color.acc : color.line}
       headerSurface={isLive ? 'hotBg' : 'bgRaised'}
       onClick={() => select({ kind: 'cast' })}
+      onGrab={grab}
       ports={
         <PortDot tone={isLive ? 'hot' : 'dead'} side="left" top={destination.castPortOffset} />
       }

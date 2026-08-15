@@ -1,9 +1,11 @@
 import { Box, Group, Stack, Text } from '@mantine/core';
 
+import { TAPE_TARGET_KEY } from '../../../services/patch-color-service';
 import { useStudioStore } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
 import { asBytes, asClock } from '../format';
+import { useNodeDrag } from '../hooks/use-node-drag';
 import { useTapeTransport } from '../hooks/use-tape-transport';
 import { NodeCard } from '../primitives/NodeCard';
 import { PortDot } from '../primitives/PortDot';
@@ -25,6 +27,7 @@ type TapeDestinationProps = {
 export const TapeDestination = ({ rect, focused }: TapeDestinationProps) => {
   const select = useStudioStore((state) => state.select);
   const tape = useTapeTransport();
+  const grab = useNodeDrag(TAPE_TARGET_KEY, rect);
 
   const fileName = tape.filePath?.split('/').pop();
 
@@ -34,6 +37,7 @@ export const TapeDestination = ({ rect, focused }: TapeDestinationProps) => {
       selected={focused}
       borderColor={focused ? color.acc : color.line}
       onClick={() => select({ kind: 'tape' })}
+      onGrab={grab}
       ports={
         <PortDot
           tone={tape.isRecording ? 'hot' : 'dead'}

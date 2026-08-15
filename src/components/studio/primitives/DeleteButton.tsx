@@ -54,6 +54,8 @@ export const DeleteButton = ({ onDelete, title }: DeleteButtonProps) => {
   return (
     <Box
       onClick={handleClick}
+      // Lives in a node's title bar, which is also the grip that moves the node
+      data-no-drag
       title={armed ? 'Click again to confirm' : title}
       style={{
         display: 'flex',

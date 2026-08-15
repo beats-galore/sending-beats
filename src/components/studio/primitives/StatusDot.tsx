@@ -30,6 +30,8 @@ export const StatusDot = ({ tone, size = 6, flat = false, onClick, title }: Stat
   return (
     <Box
       onClick={onClick}
+      // A clickable dot in a node's title bar must not pick the node up instead
+      data-no-drag={onClick ? '' : undefined}
       title={title}
       style={{
         width: size,

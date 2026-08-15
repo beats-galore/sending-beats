@@ -1,11 +1,13 @@
 import { Box, Group, Stack, Text } from '@mantine/core';
 
+import { busTargetKey } from '../../../services/patch-color-service';
 import { useStudioStore } from '../../../stores/studio-store';
 import { useBusLevels } from '../../../stores/vu-meter-store';
 import { layout } from '../../../theme/layout';
 import { border, color, glow } from '../../../theme/tokens';
 import type { Bus } from '../../../types/bus.types';
 import { asGain, meterPosition } from '../format';
+import { useNodeDrag } from '../hooks/use-node-drag';
 import { DragBar } from '../primitives/DragBar';
 import { LevelColumn } from '../primitives/LevelColumn';
 import { LevelMeter } from '../primitives/LevelMeter';
@@ -39,6 +41,7 @@ type BusNodeProps = {
 export const BusNode = ({ bus, rect, expanded, onGainChange }: BusNodeProps) => {
   const levels = useBusLevels(bus.id);
   const select = useStudioStore((state) => state.select);
+  const grab = useNodeDrag(busTargetKey(bus.id), rect);
 
   // A bus nobody sends to still produces silence for its outputs, which is not
   // the same as one carrying audio, and the node should not claim otherwise.
@@ -73,11 +76,13 @@ export const BusNode = ({ bus, rect, expanded, onGainChange }: BusNodeProps) => 
         px="lg"
         gap="sm"
         wrap="nowrap"
+        onPointerDown={grab}
         style={{
           flex: 'none',
           borderBottom: border(),
           background: color.panelHi,
           borderRadius: 'var(--mantine-radius-xl) var(--mantine-radius-xl) 0 0',
+          cursor: 'grab',
         }}
       >
         <Box

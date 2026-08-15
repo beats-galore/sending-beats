@@ -8,6 +8,7 @@ import { useStreamTransport } from '../hooks/use-stream-transport';
 import { OnAirDrawer } from '../shell/OnAirDrawer';
 import { OnAirRail } from '../shell/OnAirRail';
 import { PatchCanvas } from './PatchCanvas';
+import { PatchTidy } from './PatchTidy';
 
 type PatchViewProps = {
   ready: boolean;
@@ -35,24 +36,28 @@ export const PatchView = ({ ready }: PatchViewProps) => {
     // viewport came back as the canvas's own width, the scale stayed at 1, and
     // the destination column was pushed past the right edge of the window.
     <Box style={{ display: 'flex', flex: 1, minWidth: 0, minHeight: 0, alignItems: 'stretch' }}>
-      <Box ref={viewportRef} style={{ flex: 1, minWidth: 0 }}>
+      <Box ref={viewportRef} style={{ flex: 1, minWidth: 0, position: 'relative' }}>
         {ready ? (
-          <ScrollArea h="100%">
-            <Box
-              style={{
-                width: '100%',
-                height: canvasNaturalHeight * scale,
-                overflow: 'hidden',
-              }}
-            >
+          <>
+            <ScrollArea h="100%">
               <Box
-                ref={canvasRef}
-                style={{ transform: `scale(${scale})`, transformOrigin: 'top left' }}
+                style={{
+                  width: '100%',
+                  height: canvasNaturalHeight * scale,
+                  overflow: 'hidden',
+                }}
               >
-                <PatchCanvas />
+                <Box
+                  ref={canvasRef}
+                  style={{ transform: `scale(${scale})`, transformOrigin: 'top left' }}
+                >
+                  <PatchCanvas />
+                </Box>
               </Box>
-            </Box>
-          </ScrollArea>
+            </ScrollArea>
+            {/* Outside the scroller so it stays put while the canvas moves */}
+            <PatchTidy />
+          </>
         ) : (
           <Center h="100%">
             <Text size="xs" c={color.textFaint}>
