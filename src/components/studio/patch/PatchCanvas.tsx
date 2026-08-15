@@ -1,8 +1,9 @@
 import { Box } from '@mantine/core';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useChannelsData } from '../../../hooks';
 import { useMixerStore } from '../../../stores';
+import { usePatchColorStore } from '../../../stores/patch-color-store';
 import { useStudioStore } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
@@ -58,6 +59,14 @@ export const PatchCanvas = () => {
   } = usePatchOutputs();
   const { isLive } = useStreamTransport();
   const tape = useTapeTransport();
+
+  // Colours belong to a configuration, so switching patches has to fetch the
+  // new one's rather than leave the previous patch's colours on screen.
+  const activeConfigurationId = useMixerStore((state) => state.activeSession?.configuration.id);
+  const loadPatchColors = usePatchColorStore((state) => state.load);
+  useEffect(() => {
+    void loadPatchColors();
+  }, [loadPatchColors, activeConfigurationId]);
 
   // Kept per destination rather than in the store: a destination that refuses a
   // device is a problem with that node, and routing it through the mixer's

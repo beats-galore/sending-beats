@@ -1,4 +1,4 @@
--- Core schema for Sweat Beats Studio database
+-- Core schema for Sweet Beats Studio database
 -- Creates the fundamental tables for audio mixer configurations
 
 -- Audio mixer configurations - parent mapping table

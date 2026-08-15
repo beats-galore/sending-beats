@@ -6,7 +6,9 @@ use std::time::Duration;
 use tracing::info;
 
 const DRIVER_NAME: &str = "SweetBeatsStudio.driver";
-const DRIVER_DEVICE_NAME: &str = "Sweet Beats Studio Audio";
+/// Must match DEVICE_NAME in src-driver/Makefile, which is what the HAL plugin
+/// publishes to CoreAudio.
+const DRIVER_DEVICE_NAME: &str = "Sweet Beats Audio";
 const HAL_PLUGIN_DIR: &str = "/Library/Audio/Plug-Ins/HAL";
 /// Restart coreaudiod so it rescans the HAL plug-in directory
 ///

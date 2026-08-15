@@ -99,6 +99,24 @@ export const dark: MantineColorsTuple = [
   surface[9], // background
 ];
 
+// Identity swatches — which signal is which on the patchbay.
+//
+// Apart from every tuple above, because these carry no meaning. A token says
+// what something *is* (live, warned, muted); a swatch only tells one signal
+// apart from another, and is picked by the user rather than derived from state.
+// Kept clear of the accent so a coloured strip never reads as selection.
+//
+// Stored by key rather than by value: `patch_colors.color` holds "saffron", so
+// swapping the palette recolours everything already assigned.
+export const swatch = {
+  saffron: '#F0C24F',
+  mint: '#6BE58A',
+  blossom: '#FF7BC2',
+  iris: '#9B8CFF',
+  ember: '#FF9E5C',
+  cyan: '#4FD8F0',
+} as const;
+
 // Hot — on air, recording, destructive.
 export const rose: MantineColorsTuple = [
   '#FFE9ED',

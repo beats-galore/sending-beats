@@ -5,8 +5,25 @@
 // directly, so the palette stays swappable and no literal colour ever reaches a
 // component.
 
+import { swatch } from './palette';
+
 const mantineColor = (name: string, shade: number): string =>
   `var(--mantine-color-${name}-${shade})`;
+
+/**
+ * The identity swatches, in the order the picker offers them.
+ *
+ * Unlike the semantic tokens below these are not generated as Mantine shades:
+ * they are read back from what the user chose, so a component needs the value
+ * for an arbitrary key rather than a fixed name.
+ */
+export const Swatch = ['saffron', 'mint', 'blossom', 'iris', 'ember', 'cyan'] as const;
+export type Swatch = (typeof Swatch)[number];
+
+export const isSwatch = (value: string): value is Swatch =>
+  Swatch.includes(value as Swatch);
+
+export const swatchColor = (key: Swatch): string => swatch[key];
 
 export const color = {
   // Surfaces
