@@ -42,7 +42,9 @@ export const ChannelBody = ({
 }: ChannelBodyProps) => {
   const unavailable = source.unavailableReason !== null;
   const tone = unavailable ? 'hot' : source.isApplicationTap ? 'warn' : 'accent';
-  const opened = expansion === 'inspector' || expansion === 'effects';
+  // Every size above compact carries the switch. A source you can see at all is
+  // one you can silence the processing on.
+  const opened = expansion !== 'compact';
 
   return (
     <>

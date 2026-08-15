@@ -64,10 +64,12 @@ export const useNodeSize = (targetKey: PatchTargetKey) => {
 /**
  * Steps a node to one of its three rungs, and its group with it.
  *
- * Each member takes its own size for that rung rather than the one this node
- * would be: a mix opened as far as it goes is not the size a source opened as
- * far as it goes is, and forcing one on the other would show the wrong amount
- * of both.
+ * A group takes the size its hungriest member needs for that rung, not the size
+ * the card that was pressed needs. Members are not the same shape — an
+ * application card carries a track readout a hardware one has no use for, and a
+ * mix opened is not the size a source opened is — and a group is drawn as one
+ * block, so anything less than the largest leaves somebody showing less than
+ * the rung asked for.
  */
 export const useNodeRung = (targetKey: PatchTargetKey) => {
   const place = usePatchLayoutStore((state) => state.place);
@@ -76,12 +78,24 @@ export const useNodeRung = (targetKey: PatchTargetKey) => {
 
   return useCallback(
     (rung: NodeExpansion) => {
-      for (const key of sizedWith(targetKey, rects)) {
+      const group = sizedWith(targetKey, rects);
+      const wanted = group.flatMap((key) => {
         const size = rects?.ladders[key]?.[rung];
-        if (size) {
-          place(key, size);
-          void save(key);
-        }
+        return size ? [size] : [];
+      });
+
+      if (wanted.length === 0) {
+        return;
+      }
+
+      const size = {
+        width: Math.max(...wanted.map((entry) => entry.width)),
+        height: Math.max(...wanted.map((entry) => entry.height)),
+      };
+
+      for (const key of group) {
+        place(key, size);
+        void save(key);
       }
     },
     [targetKey, rects, place, save]

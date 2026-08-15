@@ -49,10 +49,15 @@ export const layout = {
     widthExpanded: 460,
     /** Shrunk to its levels and its mute and solo, with the name above them. */
     heightCompact: 70,
-    height: 172,
-    /** Focused with effects off, so the inspector is only the FX switch. */
-    heightInspector: 263,
-    /** Focused with the effects chain showing. */
+    /**
+     * Shut: the card, down to and including the effects switch.
+     *
+     * The switch is not something a card earns by being opened far enough — a
+     * source you can see at all is one you can silence the processing on — so
+     * every size above compact carries it.
+     */
+    height: 263,
+    /** Open, with the effects chain showing below the switch. */
     heightExpanded: 472,
     /** Thickness of the track progress bar on an application card. */
     trackProgressHeight: 3,

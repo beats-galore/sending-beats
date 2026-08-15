@@ -26,7 +26,6 @@ import {
   busSize,
   castSize,
   channelSize,
-  openExpansion,
   outputSize,
   stackTops,
   tapeSize,
@@ -42,7 +41,7 @@ export type Placements = Partial<Record<PatchTargetKey, PatchPlacement>>;
 
 type PatchRectsInput = {
   /** In column order. The variant decides how tall a shut source stands. */
-  channels: { id: number; variant: ChannelCardVariant; effectsEnabled: boolean }[];
+  channels: { id: number; variant: ChannelCardVariant }[];
   /** A mix lists what feeds it, so how tall it stands follows from its members. */
   buses: { id: string; members: number }[];
   outputIds: string[];
@@ -178,13 +177,13 @@ export const resolvePatchRects = (
   // ordinary card — a group opening around it leaves it as it is.
   const ladders: Record<PatchTargetKey, NodeLadder> = Object.fromEntries([
     ...channelKeys.map((key, index): [PatchTargetKey, NodeLadder] => {
-      const { variant, effectsEnabled } = channels[index];
+      const { variant } = channels[index];
       return [
         key,
         {
           compact: channelSize(variant, 'compact'),
           collapsed: channelSize(variant, 'collapsed'),
-          expanded: channelSize(variant, openExpansion(effectsEnabled)),
+          expanded: channelSize(variant, 'effects'),
         },
       ];
     }),

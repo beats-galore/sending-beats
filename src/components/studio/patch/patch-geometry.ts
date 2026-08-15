@@ -22,12 +22,17 @@ const { source, bus, destination, patch } = layout;
  * How much of a source node is showing, smallest first.
  *
  * Which one a node is at follows from how big it has been made: a node shows as
- * much as it has room for, and nothing more. The effects chain needs the most
- * room, the inspector alone needs less, below that a node is its meters and its
- * trim, and at the bottom it is only a name, a pair of thin meters and its mute
- * and solo — small enough that a canvas full of them still reads.
+ * much as it has room for, and nothing more. Shrunk to the bottom it is only a
+ * name, a pair of thin meters and its mute and solo — small enough that a
+ * canvas full of them still reads. Above that it is the whole card down to and
+ * including the effects switch, and above that again the chain that switch
+ * turns on.
+ *
+ * There is deliberately no rung between the card and the chain. The switch is
+ * not something a card earns by being opened far enough: a source you can see
+ * at all is one you can silence the processing on.
  */
-export const ChannelExpansion = ['compact', 'collapsed', 'inspector', 'effects'] as const;
+export const ChannelExpansion = ['compact', 'collapsed', 'effects'] as const;
 export type ChannelExpansion = (typeof ChannelExpansion)[number];
 
 /**
@@ -44,15 +49,14 @@ export const OutputExpansion = ['compact', 'collapsed'] as const;
 export type OutputExpansion = (typeof OutputExpansion)[number];
 
 /**
- * Which of the three shared rungs a source is standing at.
+ * Which of the shared rungs a source is standing at.
  *
- * A source has a fourth — the inspector alone, without the chain — but it is
- * the same rung as the whole thing seen from outside: both are "open as far as
- * this node goes". Pinned nodes are sized as a group, and a group made of
- * sources, mixes and destinations needs one vocabulary they all answer to.
+ * Pinned nodes are sized as a group, and a group made of sources, mixes and
+ * destinations needs one vocabulary they all answer to. A source's own names
+ * differ only in that its open rung is named for what it reveals.
  */
 export const rungOf = (expansion: ChannelExpansion): NodeExpansion =>
-  expansion === 'compact' || expansion === 'collapsed' ? expansion : 'expanded';
+  expansion === 'effects' ? 'expanded' : expansion;
 
 /**
  * Which card a source is drawn as.
@@ -86,8 +90,10 @@ const heightLadder = <T extends string>(
     order.reduce((fitting, rung) => (size.height >= heights[rung] ? rung : fitting), order[0]),
 });
 
+// Only the chain needs the wider card: it lays an equaliser and a compressor
+// out side by side, where the switch above them fits the narrow one.
 const channelWidth = (expansion: ChannelExpansion): number =>
-  expansion === 'compact' || expansion === 'collapsed' ? source.width : source.widthExpanded;
+  expansion === 'effects' ? source.widthExpanded : source.width;
 
 const expansionHeight = (expansion: ChannelExpansion): number => {
   switch (expansion) {
@@ -95,8 +101,6 @@ const expansionHeight = (expansion: ChannelExpansion): number => {
       return source.heightCompact;
     case 'collapsed':
       return source.height;
-    case 'inspector':
-      return source.heightInspector;
     case 'effects':
       return source.heightExpanded;
   }
@@ -113,9 +117,9 @@ export const channelSize = (variant: ChannelCardVariant, expansion: ChannelExpan
 /**
  * As much of a source as the box it has been given can actually show.
  *
- * Both axes count. The inspector and the chain are laid out against the wider
- * card, so a node made tall but left narrow would have to reflow them rather
- * than reveal them, and stays shut instead.
+ * Both axes count. The chain is laid out against the wider card, so a node made
+ * tall but left narrow would have to reflow it rather than reveal it, and stays
+ * shut instead.
  */
 export const expansionFor = (variant: ChannelCardVariant, size: Size): ChannelExpansion => {
   const fits = (expansion: ChannelExpansion): boolean => {
@@ -128,15 +132,6 @@ export const expansionFor = (variant: ChannelCardVariant, size: Size): ChannelEx
     'compact'
   );
 };
-
-/**
- * How far a source opens when it is toggled all the way open.
- *
- * As far as it has something to show: a channel with its effects switched off
- * has no chain, so opening it to the chain's height would only add dead space.
- */
-export const openExpansion = (effectsEnabled: boolean): ChannelExpansion =>
-  effectsEnabled ? 'effects' : 'inspector';
 
 /**
  * The next rung the condense and expand toggle goes to.
