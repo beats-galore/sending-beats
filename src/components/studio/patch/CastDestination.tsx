@@ -11,18 +11,20 @@ import { PortDot } from '../primitives/PortDot';
 import { StatRow } from '../primitives/StatRow';
 import { StatusDot } from '../primitives/StatusDot';
 import { CastInspector } from './CastInspector';
-import { castHeight } from './patch-geometry';
+import type { NodeRect } from './patch-layout';
 
 const { destination } = layout;
 
 type CastDestinationProps = {
+  /** Box in canvas coordinates, with anything the user arranged applied. */
+  rect: NodeRect;
   focused: boolean;
 };
 
 // Unnumbered and uncoloured by hand: there is only one broadcast, so its colour
 // is reserved rather than picked. See `reservedPatchColor`.
 /** The stream, as seen from the patchbay. Opens in place to show the transmitter. */
-export const CastDestination = ({ focused }: CastDestinationProps) => {
+export const CastDestination = ({ rect, focused }: CastDestinationProps) => {
   const select = useStudioStore((state) => state.select);
   const stream = useStudioStore((state) => state.stream);
   const { isLive, isBusy, toggle, status, uptimeSeconds } = useStreamTransport();
@@ -33,17 +35,14 @@ export const CastDestination = ({ focused }: CastDestinationProps) => {
 
   return (
     <NodeCard
-      position={{
-        left: destination.x,
-        top: destination.top,
-        width: destination.width,
-        height: castHeight(focused ? 'cast' : null),
-      }}
+      position={rect}
       selected={focused}
       borderColor={isLive ? color.hotBorder : focused ? color.acc : color.line}
       headerSurface={isLive ? 'hotBg' : 'bgRaised'}
       onClick={() => select({ kind: 'cast' })}
-      ports={<PortDot tone={isLive ? 'hot' : 'dead'} side="left" top={83} />}
+      ports={
+        <PortDot tone={isLive ? 'hot' : 'dead'} side="left" top={destination.castPortOffset} />
+      }
       header={
         <>
           <StatusDot tone={isLive ? 'hot' : 'inert'} />

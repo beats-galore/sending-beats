@@ -13,6 +13,7 @@ import { Pill } from '../primitives/Pill';
 import { PortDot } from '../primitives/PortDot';
 import { SectionLabel } from '../primitives/SectionLabel';
 import { StatusDot } from '../primitives/StatusDot';
+import type { NodeRect } from './patch-layout';
 import { PatchBadge } from './PatchBadge';
 import { SourceTiles } from './SourceTiles';
 
@@ -39,7 +40,8 @@ const ROLE_COLOR: Record<DestinationRole, string> = {
 
 type OutputDestinationProps = {
   output: PatchOutput;
-  top: number;
+  /** Box in canvas coordinates, with anything the user arranged applied. */
+  rect: NodeRect;
   /** Where this sits in the destination column, for its number and colour */
   position: number;
   options: { value: string; label: string }[];
@@ -55,7 +57,7 @@ type OutputDestinationProps = {
 /** One hardware output the master sum can feed. */
 export const OutputDestination = ({
   output,
-  top,
+  rect,
   position,
   options,
   switchError,
@@ -71,19 +73,14 @@ export const OutputDestination = ({
 
   return (
     <NodeCard
-      position={{
-        left: destination.x,
-        top,
-        width: destination.width,
-        height: destination.outputHeight,
-      }}
+      position={rect}
       borderColor={unavailable ? color.hotBorder : output.live ? color.line : color.dash}
       dimmed={!output.live}
       ports={
         <PortDot
           tone={unavailable ? 'dead' : output.live ? ROLE_PORT[output.role] : 'dead'}
           side="left"
-          top={24}
+          top={destination.outputPortOffset}
         />
       }
       header={

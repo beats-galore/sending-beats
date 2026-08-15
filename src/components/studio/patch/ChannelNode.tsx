@@ -22,6 +22,7 @@ import { ChannelName } from './ChannelName';
 import { DestinationTiles } from './DestinationTiles';
 import { DeviceCard } from './DeviceCard';
 import type { ChannelCardVariant, ChannelExpansion } from './patch-geometry';
+import type { NodeRect } from './patch-layout';
 import { PatchBadge } from './PatchBadge';
 
 const GAIN_MIN = -60;
@@ -30,13 +31,14 @@ const GAIN_MAX = 12;
 type ChannelNodeProps = {
   channel: AudioChannel;
   index: number;
-  top: number;
+  /** Box in canvas coordinates, with anything the user arranged applied. */
+  rect: NodeRect;
   expansion: ChannelExpansion;
   variant: ChannelCardVariant;
 };
 
 /** One source on the patch canvas: what it is, how loud, and how it is processed. */
-export const ChannelNode = ({ channel, index, top, expansion, variant }: ChannelNodeProps) => {
+export const ChannelNode = ({ channel, index, rect, expansion, variant }: ChannelNodeProps) => {
   const select = useStudioStore((state) => state.select);
   const removeChannel = useMixerStore((state) => state.removeChannel);
   const patch = usePatchChannel(channel);
@@ -56,8 +58,7 @@ export const ChannelNode = ({ channel, index, top, expansion, variant }: Channel
         : 'accent';
 
   const card = {
-    expansion,
-    top,
+    rect,
     selected: expanded,
     borderColor: expanded ? color.acc : color.line,
     onClick: () => select({ kind: 'channel', channelId: channel.id }),

@@ -4,10 +4,16 @@ import { invoke } from '@tauri-apps/api/core';
 import type { Swatch } from '../theme/tokens';
 
 /**
- * What a colour is stored against, in the backend's own key vocabulary.
+ * What something on the patchbay is stored against, in the backend's own key
+ * vocabulary.
  *
- * `ch:<channel number>` for an input strip, `out:<device identifier>` for a
- * hardware destination, `stream` and `rec` for the broadcast and the tape.
+ * `ch:<channel number>` for an input strip, `bus:<bus id>` for a mix,
+ * `out:<device identifier>` for a hardware destination, `stream` and `rec` for
+ * the broadcast and the tape.
+ *
+ * Shared with `patch-layout-service`, which keys where a node was dragged to
+ * the same way: both need to name things that have no common row to store
+ * against, and both need those names to survive channels coming and going.
  */
 export type PatchTargetKey = string;
 
@@ -16,6 +22,9 @@ export const channelTargetKey = (channelNumber: number): PatchTargetKey =>
 
 export const outputTargetKey = (deviceIdentifier: string): PatchTargetKey =>
   `out:${deviceIdentifier}`;
+
+/** Buses carry no colour of their own, but they are placed like every other node */
+export const busTargetKey = (busId: string): PatchTargetKey => `bus:${busId}`;
 
 /** The broadcast and the tape are each the only one of their kind, so they key by name */
 export const STREAM_TARGET_KEY: PatchTargetKey = 'stream';

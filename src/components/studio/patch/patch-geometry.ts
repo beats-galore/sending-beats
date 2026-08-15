@@ -2,10 +2,16 @@
 //
 // Nodes are placed absolutely and joined by bezier cables, so positions have to
 // be computed rather than laid out. Everything here is pure: given the channel
-// list and what is selected, it returns where each node and port sits.
+// list and what is selected, it returns how much room each node asks for and
+// where a column puts it.
+//
+// This is the arrangement the canvas would make on its own. `patch-rects` puts
+// hand-placed nodes on top of it, so what is here is the default rather than
+// the final word.
 import { layout } from '../../../theme/layout';
+import type { Port } from './patch-layout';
 
-const { source, bus, destination, canvas, patch } = layout;
+const { source, bus, destination, patch } = layout;
 
 /**
  * How much of a source node is showing. The focused node drops its effects
@@ -49,25 +55,41 @@ const expansionHeight = (expansion: ChannelExpansion): number => {
 export const channelHeight = ({ variant, expansion }: ChannelLayout): number =>
   expansionHeight(expansion) + (variant === 'app' ? source.trackReadoutHeight : 0);
 
-/** Top edge of the node at `index`, given how much room each node before it takes. */
-export const channelTop = (index: number, layouts: ChannelLayout[]): number =>
-  layouts
-    .slice(0, index)
-    .reduce<number>((top, channel) => top + channelHeight(channel) + source.gap, source.top);
+/**
+ * Top edge of each item in a column, given how much room each one takes.
+ *
+ * A node that opens pushes the ones below it down rather than overlapping them,
+ * which is what every column on the canvas does. Heights come in resolved, so a
+ * node the user made taller pushes its neighbours the same way an opened one
+ * does.
+ */
+export const stackTops = (heights: number[], top: number, gap: number): number[] => {
+  const tops: number[] = [];
+  let next = top;
 
-/** Total height of the source column including the trailing gap. */
-export const sourceStackHeight = (layouts: ChannelLayout[]): number =>
-  layouts.reduce<number>((total, channel) => total + channelHeight(channel) + source.gap, 0);
+  for (const height of heights) {
+    tops.push(next);
+    next += height + gap;
+  }
 
-/** Where a channel's output port sits, in canvas coordinates. */
-export const channelPort = (index: number, layouts: ChannelLayout[]) => ({
-  x: source.x + channelWidth(layouts[index].expansion),
-  y: channelTop(index, layouts) + source.portOffset,
-});
+  return tops;
+};
+
+/** Distance from a source node's top edge to its output port centre. */
+export const channelPortOffset = source.portOffset;
 
 /** Ports are spread evenly but never further apart than `portSpacing`. */
 const portStep = (count: number): number =>
   Math.min(bus.portSpacing, bus.portSpan / Math.max(count, 1));
+
+/**
+ * Distance from a bus node's top edge to one of its port centres.
+ *
+ * Members are listed on the node in the same order the ports run down its edge,
+ * so a cable lands beside the tile naming what it carries.
+ */
+export const busPortOffset = (portIndex: number, portCount: number): number =>
+  bus.portOffset + portIndex * portStep(portCount);
 
 /**
  * How tall a bus node is drawn.
@@ -77,35 +99,6 @@ const portStep = (count: number): number =>
  */
 export const busHeight = (expanded: boolean): number =>
   expanded ? bus.heightExpanded : bus.height;
-
-/** Top edge of bus node `index`, given which nodes above it are open. */
-export const busTop = (index: number, expansions: boolean[]): number =>
-  expansions
-    .slice(0, index)
-    .reduce<number>((top, expanded) => top + busHeight(expanded) + bus.gap, bus.top);
-
-/** Total height of the bus column, or room for the empty note when there are none. */
-export const busStackHeight = (expansions: boolean[]): number =>
-  expansions.length === 0
-    ? bus.emptyHeight
-    : expansions.reduce<number>((total, expanded) => total + busHeight(expanded) + bus.gap, 0);
-
-/**
- * A port on one bus node, in canvas coordinates.
- *
- * Members are listed on the node in the same order the ports run down its edge,
- * so a cable lands beside the tile naming what it carries.
- */
-export const busPort = (
-  busIndex: number,
-  expansions: boolean[],
-  portIndex: number,
-  portCount: number,
-  side: 'in' | 'out'
-) => ({
-  x: side === 'in' ? bus.x : bus.x + bus.width,
-  y: busTop(busIndex, expansions) + bus.portOffset + portIndex * portStep(portCount),
-});
 
 /**
  * Which destination card is opened, if any.
@@ -121,40 +114,20 @@ export const castHeight = (focus: DestinationFocus): number =>
 export const tapeHeight = (focus: DestinationFocus): number =>
   focus === 'tape' ? destination.tapeHeightExpanded : destination.tapeHeight;
 
-export const tapeTop = (focus: DestinationFocus): number =>
-  destination.top + castHeight(focus) + destination.gap;
-
-export const outputTop = (index: number, focus: DestinationFocus): number =>
-  tapeTop(focus) + tapeHeight(focus) + destination.gap + index * destination.outputStep;
-
-/** Top edge of the first extra destination, below the hardware outputs. */
-export const extraTop = (outputCount: number, focus: DestinationFocus): number =>
-  outputTop(outputCount, focus) + destination.extraOffset;
-
 /**
  * A cable between two ports: horizontal at both ends, curving in the middle, so
  * it leaves and lands square against the node it connects to.
+ *
+ * The reach grows with the run when a cable has to double back — a source
+ * dragged to the right of the mix it feeds still leaves its node rightwards and
+ * still lands square, and without the extra reach the two ends would meet in a
+ * knot rather than a legible loop.
  */
-export const cablePath = (from: { x: number; y: number }, to: { x: number; y: number }): string =>
-  `M${from.x},${from.y} C${from.x + patch.cableControlReach},${from.y} ` +
-  `${to.x - patch.cableControlReach},${to.y} ${to.x},${to.y}`;
+export const cablePath = (from: Port, to: Port): string => {
+  const reach = Math.max(patch.cableControlReach, (from.x - to.x) / 2);
 
-/** Overall canvas height — tall enough for whichever column runs longest. */
-export const canvasHeight = (
-  layouts: ChannelLayout[],
-  focus: DestinationFocus,
-  outputCount: number,
-  extraCount: number,
-  pickerOpen: boolean,
-  busExpansions: boolean[]
-): number => {
-  const sourceColumn = source.top + sourceStackHeight(layouts) + canvas.bottomPadding;
-  const destinationColumn =
-    extraTop(outputCount, focus) +
-    extraCount * destination.extraStep +
-    (pickerOpen ? destination.pickerHeight : destination.addHeight) +
-    28;
-  const busColumn = bus.top + busStackHeight(busExpansions) + 40;
-
-  return Math.max(canvas.minHeight, sourceColumn, destinationColumn, busColumn);
+  return (
+    `M${from.x},${from.y} C${from.x + reach},${from.y} ` +
+    `${to.x - reach},${to.y} ${to.x},${to.y}`
+  );
 };

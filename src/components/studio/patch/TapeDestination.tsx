@@ -8,20 +8,21 @@ import { useTapeTransport } from '../hooks/use-tape-transport';
 import { NodeCard } from '../primitives/NodeCard';
 import { PortDot } from '../primitives/PortDot';
 import { StatusDot } from '../primitives/StatusDot';
-import { tapeHeight } from './patch-geometry';
+import type { NodeRect } from './patch-layout';
 import { TapeInspector } from './TapeInspector';
 
 const { destination } = layout;
 
 type TapeDestinationProps = {
-  top: number;
+  /** Box in canvas coordinates, with anything the user arranged applied. */
+  rect: NodeRect;
   focused: boolean;
 };
 
 // Unnumbered and uncoloured by hand: there is only one tape, so it keeps the red
 // it turns while recording. See `reservedPatchColor`.
 /** The recorder, as seen from the patchbay. Opens in place to show its output settings. */
-export const TapeDestination = ({ top, focused }: TapeDestinationProps) => {
+export const TapeDestination = ({ rect, focused }: TapeDestinationProps) => {
   const select = useStudioStore((state) => state.select);
   const tape = useTapeTransport();
 
@@ -29,16 +30,17 @@ export const TapeDestination = ({ top, focused }: TapeDestinationProps) => {
 
   return (
     <NodeCard
-      position={{
-        left: destination.x,
-        top,
-        width: destination.width,
-        height: tapeHeight(focused ? 'tape' : null),
-      }}
+      position={rect}
       selected={focused}
       borderColor={focused ? color.acc : color.line}
       onClick={() => select({ kind: 'tape' })}
-      ports={<PortDot tone={tape.isRecording ? 'hot' : 'dead'} side="left" top={63} />}
+      ports={
+        <PortDot
+          tone={tape.isRecording ? 'hot' : 'dead'}
+          side="left"
+          top={destination.tapePortOffset}
+        />
+      }
       header={
         <>
           <StatusDot tone={tape.isRecording ? 'hot' : 'inert'} />

@@ -1,6 +1,5 @@
 import { Box, Group, Stack, Text } from '@mantine/core';
 
-import type { ReactNode } from 'react';
 import { useStudioStore } from '../../../stores/studio-store';
 import { useBusLevels } from '../../../stores/vu-meter-store';
 import { layout } from '../../../theme/layout';
@@ -10,10 +9,12 @@ import { asGain, meterPosition } from '../format';
 import { DragBar } from '../primitives/DragBar';
 import { LevelColumn } from '../primitives/LevelColumn';
 import { LevelMeter } from '../primitives/LevelMeter';
+import { PortDot } from '../primitives/PortDot';
 import { SectionLabel } from '../primitives/SectionLabel';
 import { StatRow } from '../primitives/StatRow';
 import { BusMemberTiles } from './BusMemberTiles';
-import { busHeight } from './patch-geometry';
+import { busPortOffset } from './patch-geometry';
+import type { NodeRect } from './patch-layout';
 
 const SCALE_MARKS = ['0', '-6', '-12', '-18', '-24', '-36', '-60'];
 const GAIN_MIN = -60;
@@ -21,12 +22,11 @@ const GAIN_MAX = 12;
 
 type BusNodeProps = {
   bus: Bus;
-  top: number;
+  /** Box in canvas coordinates, with anything the user arranged applied. */
+  rect: NodeRect;
   /** Open, showing the metering column, the large readout and the stats. */
   expanded: boolean;
   onGainChange: (busId: string, gainDb: number) => void;
-  /** Ports, which sit outside the node's own bounds. */
-  ports: ReactNode;
 };
 
 /**
@@ -36,7 +36,7 @@ type BusNodeProps = {
  * listening to it — a bus with no output is dropped rather than summed — so
  * every node here is a mix that is actually being produced.
  */
-export const BusNode = ({ bus, top, expanded, onGainChange, ports }: BusNodeProps) => {
+export const BusNode = ({ bus, rect, expanded, onGainChange }: BusNodeProps) => {
   const levels = useBusLevels(bus.id);
   const select = useStudioStore((state) => state.select);
 
@@ -55,10 +55,10 @@ export const BusNode = ({ bus, top, expanded, onGainChange, ports }: BusNodeProp
       }}
       style={{
         position: 'absolute',
-        left: layout.bus.x,
-        top,
-        width: layout.bus.width,
-        height: busHeight(expanded),
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
         background: color.bgRaised,
         border: border(expanded ? 'acc' : carrying ? 'lineStrong' : 'line'),
         borderRadius: 'var(--mantine-radius-2xl)',
@@ -195,7 +195,24 @@ export const BusNode = ({ bus, top, expanded, onGainChange, ports }: BusNodeProp
         )}
       </Stack>
 
-      {ports}
+      {/* Ports straddle the node's own edges, and are listed in the order the
+          member tiles are, so a cable lands beside the tile naming it. */}
+      {bus.inputs.map((deviceId, portIndex) => (
+        <PortDot
+          key={`in-${deviceId}`}
+          tone="accent"
+          side="left"
+          top={busPortOffset(portIndex, bus.inputs.length)}
+        />
+      ))}
+      {bus.outputs.map((deviceId, portIndex) => (
+        <PortDot
+          key={`out-${deviceId}`}
+          tone={carrying ? 'accent' : 'dead'}
+          side="right"
+          top={busPortOffset(portIndex, bus.outputs.length)}
+        />
+      ))}
     </Box>
   );
 };

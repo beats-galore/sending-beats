@@ -99,9 +99,19 @@ export const layout = {
     tapeHeight: 140,
     /** Focused, with the take's output settings showing. */
     tapeHeightExpanded: 385,
+    /**
+     * Distance from each card's top edge to its input port centre.
+     *
+     * The cable is drawn by the canvas and the dot by the card, so both have to
+     * read the same number or the wire lands beside the socket.
+     */
+    castPortOffset: 83,
+    tapePortOffset: 63,
+    outputPortOffset: 24,
     /** Tall enough for the gain row and the row of source tiles beneath it. */
-    outputStep: 124,
     outputHeight: 112,
+    /** Between hardware outputs, which sit closer together than the groups above. */
+    outputGap: 12,
     /** Gap between the last hardware output and the first extra destination. */
     extraOffset: 72,
     extraStep: 84,

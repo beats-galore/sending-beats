@@ -5,6 +5,7 @@ import { useChannelsData } from '../../../hooks';
 import { useMixerStore } from '../../../stores';
 import { orderedBuses, useBusStore } from '../../../stores/bus-store';
 import { usePatchColorStore } from '../../../stores/patch-color-store';
+import { usePatchLayoutStore } from '../../../stores/patch-layout-store';
 import { useStudioStore } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
@@ -14,36 +15,19 @@ import { useChannelDevices } from '../hooks/use-channel-devices';
 import { useFocusedNode } from '../hooks/use-focused-node';
 import { usePatchOutputs } from '../hooks/use-patch-outputs';
 import { DashedTarget } from '../primitives/DashedTarget';
-import { PortDot } from '../primitives/PortDot';
 import { SectionLabel } from '../primitives/SectionLabel';
 import { AddDestination } from './AddDestination';
 import { BusNode } from './BusNode';
 import { CableLayer } from './CableLayer';
-import type { Cable } from './CableLayer';
 import { CastDestination } from './CastDestination';
 import { ChannelNode } from './ChannelNode';
-import { resolveDestination } from './destination-target';
 import { OutputDestination } from './OutputDestination';
-import {
-  busPort,
-  busTop,
-  cablePath,
-  canvasHeight,
-  channelPort,
-  channelTop,
-  extraTop,
-  outputTop,
-  sourceStackHeight,
-  tapeTop,
-} from './patch-geometry';
+import { patchCables } from './patch-cables';
 import type { ChannelLayout, DestinationFocus } from './patch-geometry';
+import { resolvePatchRects } from './patch-rects';
 import { TapeDestination } from './TapeDestination';
 
 const { source, bus, destination, canvas } = layout;
-
-const CAST_PORT_OFFSET = 83;
-const TAPE_PORT_OFFSET = 63;
-const OUTPUT_PORT_OFFSET = 24;
 
 /** The wiring diagram: sources on the left, the sum in the middle, destinations on the right. */
 export const PatchCanvas = () => {
@@ -60,26 +44,23 @@ export const PatchCanvas = () => {
     setOutputGain,
   } = usePatchOutputs();
 
-  // Colours belong to a configuration, so switching patches has to fetch the
-  // new one's rather than leave the previous patch's colours on screen.
+  // Colours, routing and the arrangement all belong to a configuration, so
+  // switching patches has to fetch the new one's rather than leave the previous
+  // patch's on screen.
   const activeConfigurationId = useMixerStore((state) => state.activeSession?.configuration.id);
   const loadPatchColors = usePatchColorStore((state) => state.load);
+  const loadBuses = useBusStore((state) => state.load);
+  const loadPatchLayout = usePatchLayoutStore((state) => state.load);
   useEffect(() => {
     void loadPatchColors();
-  }, [loadPatchColors, activeConfigurationId]);
-
-  // Routing is stored per configuration too, and restoring it is what moves
-  // devices off the main bus they each registered onto.
-  const loadBuses = useBusStore((state) => state.load);
-  useEffect(() => {
     void loadBuses();
-  }, [loadBuses, activeConfigurationId]);
+    void loadPatchLayout();
+  }, [loadPatchColors, loadBuses, loadPatchLayout, activeConfigurationId]);
 
   const storedBuses = useBusStore((state) => state.buses);
   const buses = useMemo(() => orderedBuses(storedBuses), [storedBuses]);
   const setBusGain = useBusStore((state) => state.setGain);
   const channelDevices = useChannelDevices();
-  const outputIds = useMemo(() => outputs.map((output) => output.id), [outputs]);
 
   // Kept per destination rather than in the store: a destination that refuses a
   // device is a problem with that node, and routing it through the mixer's
@@ -110,11 +91,19 @@ export const PatchCanvas = () => {
 
   const variants = useChannelCardVariants();
 
-  const layouts = channels.map<ChannelLayout>((channel) => ({
-    variant: variants[channel.id] ?? 'device',
-    expansion:
-      channel.id !== selectedId ? 'collapsed' : channel.effects_enabled ? 'effects' : 'inspector',
-  }));
+  const layouts = useMemo(
+    () =>
+      channels.map<ChannelLayout>((channel) => ({
+        variant: variants[channel.id] ?? 'device',
+        expansion:
+          channel.id !== selectedId
+            ? 'collapsed'
+            : channel.effects_enabled
+              ? 'effects'
+              : 'inspector',
+      })),
+    [channels, variants, selectedId]
+  );
 
   // One bus is always open, so the column is never all shut. Main by default,
   // falling back to the first — main is only present while some destination is
@@ -129,72 +118,30 @@ export const PatchCanvas = () => {
     return buses.at(0)?.id ?? null;
   }, [focused, buses]);
 
-  const busExpansions = useMemo(
-    () => buses.map((busEntry) => busEntry.id === expandedBusId),
-    [buses, expandedBusId]
+  // Memoised because the cables are drawn as animating SVG paths: rebuilding
+  // them on every render of the canvas would restart the marching dashes.
+  const placements = usePatchLayoutStore((state) => state.placements);
+  const rects = useMemo(
+    () =>
+      resolvePatchRects(
+        {
+          channels: channels.map((channel, index) => ({ id: channel.id, layout: layouts[index] })),
+          buses: buses.map((busEntry) => ({
+            id: busEntry.id,
+            expanded: busEntry.id === expandedBusId,
+          })),
+          outputIds: outputs.map((output) => output.id),
+          destinationFocus,
+        },
+        placements
+      ),
+    [channels, layouts, buses, expandedBusId, outputs, destinationFocus, placements]
   );
 
-  const height = canvasHeight(layouts, destinationFocus, outputs.length, 0, false, busExpansions);
-
-  // One cable per membership rather than per card: a source feeding two buses
-  // draws two cables, which is what makes a split visible on the canvas.
-  const cables = useMemo<Cable[]>(() => {
-    const sourceCables: Cable[] = buses.flatMap((busEntry, busIndex) =>
-      busEntry.inputs.flatMap((deviceId, portIndex) => {
-        const channel = channelDevices.find(
-          (candidate) => candidate.deviceIdentifier === deviceId
-        );
-        if (!channel) {
-          return [];
-        }
-
-        return [
-          {
-            id: `in-${busEntry.id}-${deviceId}`,
-            path: cablePath(
-              channelPort(channel.index, layouts),
-              busPort(busIndex, busExpansions, portIndex, busEntry.inputs.length, 'in')
-            ),
-            tone: 'accent' as const,
-            active: true,
-          },
-        ];
-      })
-    );
-
-    const outputCables: Cable[] = buses.flatMap((busEntry, busIndex) =>
-      busEntry.outputs.flatMap((deviceId, portIndex) => {
-        const target = resolveDestination(deviceId, outputIds);
-        if (!target) {
-          return [];
-        }
-
-        const landing =
-          target.kind === 'output'
-            ? {
-                y: outputTop(target.index, destinationFocus) + OUTPUT_PORT_OFFSET,
-                tone: outputs[target.index].role === 'CUE' ? ('warn' as const) : ('accent' as const),
-              }
-            : target.kind === 'cast'
-              ? { y: destination.top + CAST_PORT_OFFSET, tone: 'hot' as const }
-              : { y: tapeTop(destinationFocus) + TAPE_PORT_OFFSET, tone: 'hot' as const };
-
-        return [
-          {
-            id: `out-${busEntry.id}-${deviceId}`,
-            path: cablePath(busPort(busIndex, busExpansions, portIndex, busEntry.outputs.length, 'out'), {
-              x: destination.x,
-              y: landing.y,
-            }),
-            tone: landing.tone,
-            active: busEntry.inputs.length > 0,
-          },
-        ];
-      })
-    );
-
-    return [...sourceCables, ...outputCables];
-  }, [buses, busExpansions, channelDevices, layouts, destinationFocus, outputs, outputIds]);
+  const cables = useMemo(
+    () => patchCables({ buses, channelDevices, outputs, rects }),
+    [buses, channelDevices, outputs, rects]
+  );
 
   return (
     <Box
@@ -204,13 +151,13 @@ export const PatchCanvas = () => {
       style={{
         position: 'relative',
         width: canvas.width,
-        height,
+        height: rects.height,
         transformOrigin: 'top left',
         backgroundImage: `radial-gradient(${color.canvasDot} 1px, transparent 1px)`,
         backgroundSize: `${canvas.dotGridSize}px ${canvas.dotGridSize}px`,
       }}
     >
-      <CableLayer cables={cables} width={canvas.width} height={height} />
+      <CableLayer cables={cables} width={canvas.width} height={rects.height} />
 
       <Box style={{ position: 'absolute', left: source.x, top: 4 }}>
         <SectionLabel tracking="widest">SOURCES</SectionLabel>
@@ -227,7 +174,7 @@ export const PatchCanvas = () => {
           key={channel.id}
           channel={channel}
           index={index}
-          top={channelTop(index, layouts)}
+          rect={rects.channels[index]}
           expansion={layouts[index].expansion}
           variant={layouts[index].variant}
         />
@@ -241,7 +188,7 @@ export const PatchCanvas = () => {
         style={{
           position: 'absolute',
           left: source.x,
-          top: source.top + sourceStackHeight(layouts),
+          top: rects.addSourceTop,
           width: source.addNodeWidth,
         }}
       />
@@ -257,47 +204,21 @@ export const PatchCanvas = () => {
           <BusNode
             key={busEntry.id}
             bus={busEntry}
-            top={busTop(busIndex, busExpansions)}
-            expanded={busExpansions[busIndex]}
+            rect={rects.buses[busIndex]}
+            expanded={busEntry.id === expandedBusId}
             onGainChange={(busId, gainDb) => void setBusGain(busId, gainDb)}
-            ports={
-              <>
-                {busEntry.inputs.map((deviceId, portIndex) => (
-                  <PortDot
-                    key={`in-${deviceId}`}
-                    tone="accent"
-                    side="left"
-                    top={
-                      busPort(busIndex, busExpansions, portIndex, busEntry.inputs.length, 'in').y -
-                      busTop(busIndex, busExpansions)
-                    }
-                  />
-                ))}
-                {busEntry.outputs.map((deviceId, portIndex) => (
-                  <PortDot
-                    key={`out-${deviceId}`}
-                    tone={busEntry.inputs.length > 0 ? 'accent' : 'dead'}
-                    side="right"
-                    top={
-                      busPort(busIndex, busExpansions, portIndex, busEntry.outputs.length, 'out').y -
-                      busTop(busIndex, busExpansions)
-                    }
-                  />
-                ))}
-              </>
-            }
           />
         ))
       )}
 
-      <CastDestination focused={destinationFocus === 'cast'} />
-      <TapeDestination top={tapeTop(destinationFocus)} focused={destinationFocus === 'tape'} />
+      <CastDestination rect={rects.cast} focused={destinationFocus === 'cast'} />
+      <TapeDestination rect={rects.tape} focused={destinationFocus === 'tape'} />
 
       {outputs.map((output, index) => (
         <OutputDestination
           key={output.id}
           output={output}
-          top={outputTop(index, destinationFocus)}
+          rect={rects.outputs[index]}
           // Counts the hardware outputs only. The stream and the tape sit above
           // these but carry no number, so counting them would start this at 03.
           position={index}
@@ -312,7 +233,7 @@ export const PatchCanvas = () => {
       ))}
 
       <AddDestination
-        top={extraTop(outputs.length, destinationFocus)}
+        top={rects.addDestinationTop}
         available={available}
         onPick={selectOutput}
       />

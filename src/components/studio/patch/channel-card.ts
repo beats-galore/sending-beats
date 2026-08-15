@@ -1,17 +1,17 @@
 import type { MouseEventHandler, ReactNode } from 'react';
 
-import type { ChannelExpansion } from './patch-geometry';
+import type { NodeRect } from './patch-layout';
 
 /**
  * What every source card needs regardless of variant.
  *
- * The variants differ in what they draw and how tall they stand, not in how
- * they are addressed, so the canvas can place any of them the same way.
+ * The variants differ in what they draw, not in how they are addressed or how
+ * they are placed — the canvas has already resolved the box, so a card only has
+ * to fill it.
  */
 export type ChannelCardProps = {
-  expansion: ChannelExpansion;
-  /** Top edge in canvas coordinates. */
-  top: number;
+  /** Box in canvas coordinates, with anything the user arranged applied. */
+  rect: NodeRect;
   header: ReactNode;
   children: ReactNode;
   ports?: ReactNode;
