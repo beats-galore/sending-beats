@@ -82,6 +82,26 @@ impl MixingLayer {
         })
     }
 
+    /// Point an output at exactly the inputs it should receive
+    ///
+    /// What the patchbay's tiles write, from either side of the connection.
+    pub fn set_output_sources(
+        &mut self,
+        device_id: String,
+        input_ids: Vec<String>,
+    ) -> Result<(), BusError> {
+        let command = MixingLayerCommand::SetOutputSources {
+            device_id: device_id.clone(),
+            input_ids: input_ids.clone(),
+        };
+        self.route(command, |mixer| {
+            mixer
+                .registry_mut()
+                .set_output_sources(&device_id, &input_ids);
+            Ok(())
+        })
+    }
+
     /// Lay stored routing over the devices currently registered
     pub fn restore_routing(&mut self, buses: Vec<Bus>) -> Result<(), BusError> {
         let command = MixingLayerCommand::RestoreRouting {

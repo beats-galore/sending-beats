@@ -212,6 +212,38 @@ pub async fn set_input_bus_sends(
     Ok(())
 }
 
+/// Point a destination at exactly the inputs it should receive
+///
+/// What the patchbay's tiles write, from either side of the connection —
+/// toggling an input on a destination and toggling a destination on an input
+/// are the same edit. Destinations wanting the same inputs are put on the same
+/// bus, so the mix is summed once between them.
+#[tauri::command]
+pub async fn set_output_sources(
+    device_id: String,
+    input_ids: Vec<String>,
+    state: State<'_, AudioState>,
+) -> Result<Vec<Bus>, String> {
+    log_command!(
+        "set_output_sources",
+        "{} from [{}]",
+        device_id,
+        input_ids.join(", ")
+    );
+
+    dispatch(&state, |response_tx| {
+        AudioCommand::Bus(BusCommand::SetOutputSources {
+            device_id,
+            input_ids,
+            response_tx,
+        })
+    })
+    .await?;
+
+    persist(&state).await;
+    list_audio_buses(state).await
+}
+
 /// Move an output onto a bus, taking it off the one it was on
 #[tauri::command]
 pub async fn set_output_audio_bus(

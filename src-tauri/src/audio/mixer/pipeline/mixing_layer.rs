@@ -85,6 +85,10 @@ pub enum MixingLayerCommand {
     RestoreRouting {
         buses: Vec<super::bus_routing::Bus>,
     },
+    SetOutputSources {
+        device_id: String,
+        input_ids: Vec<String>,
+    },
 }
 
 /// Mixing layer that combines all processed input streams
@@ -501,6 +505,21 @@ impl MixingLayer {
                                 bus_mixer
                                     .registry_mut()
                                     .set_input_sends(&device_id, &bus_ids),
+                            );
+                        }
+                        MixingLayerCommand::SetOutputSources {
+                            device_id,
+                            input_ids,
+                        } => {
+                            let bus_id = bus_mixer
+                                .registry_mut()
+                                .set_output_sources(&device_id, &input_ids);
+                            info!(
+                                "🔀 {}: '{}' now takes {} inputs on bus '{}'",
+                                "BUS_ROUTING".on_green().white(),
+                                device_id,
+                                input_ids.len(),
+                                bus_id
                             );
                         }
                         MixingLayerCommand::RestoreRouting { buses } => {

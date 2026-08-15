@@ -42,6 +42,11 @@ pub enum BusCommand {
         buses: Vec<Bus>,
         response_tx: oneshot::Sender<Result<()>>,
     },
+    SetOutputSources {
+        device_id: String,
+        input_ids: Vec<String>,
+        response_tx: oneshot::Sender<Result<()>>,
+    },
 }
 
 impl IsolatedAudioManager {
@@ -80,6 +85,14 @@ impl IsolatedAudioManager {
                 response_tx,
             } => {
                 let _ = response_tx.send(self.audio_pipeline.set_output_bus(device_id, bus_id));
+            }
+            BusCommand::SetOutputSources {
+                device_id,
+                input_ids,
+                response_tx,
+            } => {
+                let _ =
+                    response_tx.send(self.audio_pipeline.set_output_sources(device_id, input_ids));
             }
             BusCommand::Restore { buses, response_tx } => {
                 let _ = response_tx.send(self.audio_pipeline.restore_routing(buses));
