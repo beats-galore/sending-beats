@@ -111,10 +111,13 @@ impl BusMixer {
                 &mixed
             };
 
-            // Master metering still means the main bus. Per-bus meters are the
-            // follow-up that gives every bus its own reading.
-            if bus.id == MAIN_BUS_ID {
-                if let Some(vu_service) = vu {
+            // Metered after the bus's own gain, so the reading is what the
+            // outputs taking it are being handed. The main bus additionally
+            // feeds the master meter, which predates buses and is what the
+            // frontend reads today.
+            if let Some(vu_service) = vu {
+                vu_service.queue_bus_audio(&bus.id, block);
+                if bus.id == MAIN_BUS_ID {
                     vu_service.queue_master_audio(block);
                 }
             }

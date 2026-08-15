@@ -24,9 +24,27 @@ type MasterVULevelEvent = {
   timestamp: number;
 };
 
+/**
+ * Levels of one bus, measured after its own gain, so this is what the outputs
+ * taking that bus are being handed. Keyed by bus id rather than the channel
+ * number a `VULevelEvent` carries, which a bus has no equivalent of.
+ *
+ * Arriving but not yet rendered — the backend emits one of these per bus every
+ * batch, and the main bus additionally feeds the master meter below.
+ */
+type BusVULevelEvent = {
+  bus_id: string;
+  peak_left: number;
+  peak_right: number;
+  rms_left: number;
+  rms_right: number;
+  timestamp: number;
+};
+
 // Using the serde tag format from the Rust enum
 type VUChannelData =
   | { type: 'Channel'; data: VULevelEvent }
+  | { type: 'Bus'; data: BusVULevelEvent }
   | { type: 'Master'; data: MasterVULevelEvent };
 
 export const useVUChannelStream = (isEnabled = true) => {
