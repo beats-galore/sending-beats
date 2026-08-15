@@ -1,4 +1,4 @@
-import { Box, SimpleGrid, Stack, Text } from '@mantine/core';
+import { Box, Group, SimpleGrid, Stack, Text } from '@mantine/core';
 
 import { STREAM_TARGET_KEY } from '../../../services/patch-color-service';
 import { useStudioStore } from '../../../stores/studio-store';
@@ -15,7 +15,7 @@ import { PortDot } from '../primitives/PortDot';
 import { StatRow } from '../primitives/StatRow';
 import { StatusDot } from '../primitives/StatusDot';
 import { CastInspector } from './CastInspector';
-import { castExpandedFor, castSize } from './patch-geometry';
+import { castExpansionFor, castSize, NodeExpansion, nextExpansion } from './patch-geometry';
 import type { NodeRect } from './patch-layout';
 
 const { destination } = layout;
@@ -36,13 +36,17 @@ export const CastDestination = ({ rect, selected }: CastDestinationProps) => {
   const { isLive, isBusy, toggle, status, uptimeSeconds } = useStreamTransport();
   const listeners = useListenerStats(isLive);
   const grab = useNodeDrag(STREAM_TARGET_KEY, rect);
-  const resize = useNodeResize(STREAM_TARGET_KEY, rect, castSize(false));
+  const resize = useNodeResize(STREAM_TARGET_KEY, rect, castSize('compact'));
   const setSize = useNodeSize(STREAM_TARGET_KEY);
   const { front, bringToFront } = useNodeFront(STREAM_TARGET_KEY);
-  const expanded = castExpandedFor(rect);
+
+  const expansion = castExpansionFor(rect);
+  const next = nextExpansion(expansion, NodeExpansion);
 
   const bitrate = status?.bitrate_info.current_bitrate ?? stream.bitrate;
   const sent = status?.icecast_stats?.bytes_sent;
+  const target = `${stream.host}:${stream.port}${stream.mount}`;
+  const quality = stream.variableBitrate ? `VBR q${stream.vbrQuality}` : 'CBR';
 
   return (
     <NodeCard
@@ -73,40 +77,55 @@ export const CastDestination = ({ rect, selected }: CastDestinationProps) => {
           <Text size="2xs" c={color.textDim}>
             MP3 {bitrate}
           </Text>
-          <ExpandToggle expanded={expanded} onToggle={() => setSize(castSize(!expanded))} />
+          <ExpandToggle
+            grows={NodeExpansion.indexOf(next) > NodeExpansion.indexOf(expansion)}
+            onToggle={() => setSize(castSize(next))}
+          />
         </>
       }
       bodyStyle={{ padding: 12 }}
     >
-      <Stack gap="md" h="100%">
-        <Box
-          px="md"
-          py="sm"
-          style={{
-            background: color.bg,
-            border: border(),
-            borderRadius: 'var(--mantine-radius-sm)',
-          }}
-        >
-          <Text size="xs" truncate>
-            {stream.host}:{stream.port}
-            {stream.mount}
+      {/* Shrunk, the broadcast is where it is sending and at what rate — enough
+          to tell one configured transmitter from another without opening it. */}
+      {expansion === 'compact' ? (
+        <Group gap="sm" wrap="nowrap" h="100%" align="center">
+          <Text size="xs" truncate style={{ flex: 1, minWidth: 0 }}>
+            {target}
           </Text>
-        </Box>
+          <Text size="2xs" c={color.textFaint} style={{ flex: 'none' }}>
+            {bitrate} kbps · {quality}
+          </Text>
+        </Group>
+      ) : (
+        <Stack gap="md" h="100%">
+          <Box
+            px="md"
+            py="sm"
+            style={{
+              background: color.bg,
+              border: border(),
+              borderRadius: 'var(--mantine-radius-sm)',
+            }}
+          >
+            <Text size="xs" truncate>
+              {target}
+            </Text>
+          </Box>
 
-        <SimpleGrid cols={2} spacing="sm" verticalSpacing="sm">
-          <StatRow label="LISTENERS" tone={color.acc}>
-            {listeners.current ?? '—'}
-          </StatRow>
-          <StatRow label="PEAK">{listeners.peak ?? '—'}</StatRow>
-          <StatRow label="UPTIME">{isLive ? asElapsed(uptimeSeconds) : '—'}</StatRow>
-          <StatRow label="SENT">{sent ? asBytes(sent) : '—'}</StatRow>
-        </SimpleGrid>
+          <SimpleGrid cols={2} spacing="sm" verticalSpacing="sm">
+            <StatRow label="LISTENERS" tone={color.acc}>
+              {listeners.current ?? '—'}
+            </StatRow>
+            <StatRow label="PEAK">{listeners.peak ?? '—'}</StatRow>
+            <StatRow label="UPTIME">{isLive ? asElapsed(uptimeSeconds) : '—'}</StatRow>
+            <StatRow label="SENT">{sent ? asBytes(sent) : '—'}</StatRow>
+          </SimpleGrid>
 
-        {expanded && (
-          <CastInspector isLive={isLive} isBusy={isBusy} onToggle={() => void toggle()} />
-        )}
-      </Stack>
+          {expansion === 'expanded' && (
+            <CastInspector isLive={isLive} isBusy={isBusy} onToggle={() => void toggle()} />
+          )}
+        </Stack>
+      )}
     </NodeCard>
   );
 };

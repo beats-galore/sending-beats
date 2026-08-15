@@ -1,23 +1,21 @@
-import { Group, NativeSelect, Text } from '@mantine/core';
+import { Text } from '@mantine/core';
 
 import { outputTargetKey } from '../../../services/patch-color-service';
 import type { DestinationRole } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
-import { asGain } from '../format';
 import { useNodeDrag, useNodeFront } from '../hooks/use-node-drag';
-import { useNodeResize } from '../hooks/use-node-resize';
+import { useNodeResize, useNodeSize } from '../hooks/use-node-resize';
 import type { PatchOutput } from '../hooks/use-patch-outputs';
 import { DeleteButton } from '../primitives/DeleteButton';
-import { DragBar } from '../primitives/DragBar';
+import { ExpandToggle } from '../primitives/ExpandToggle';
 import { NodeCard } from '../primitives/NodeCard';
 import { Pill } from '../primitives/Pill';
 import { PortDot } from '../primitives/PortDot';
-import { SectionLabel } from '../primitives/SectionLabel';
-import { StatusDot } from '../primitives/StatusDot';
+import { OutputBody } from './OutputBody';
+import { nextExpansion, OutputExpansion, outputExpansionFor, outputSize } from './patch-geometry';
 import type { NodeRect } from './patch-layout';
 import { PatchBadge } from './PatchBadge';
-import { SourceTiles } from './SourceTiles';
 
 const { destination } = layout;
 
@@ -32,12 +30,6 @@ const ROLE_PORT: Record<DestinationRole, 'accent' | 'warn'> = {
   MAIN: 'accent',
   CUE: 'warn',
   SEND: 'accent',
-};
-
-const ROLE_COLOR: Record<DestinationRole, string> = {
-  MAIN: color.acc,
-  CUE: color.warn,
-  SEND: color.textDim,
 };
 
 type OutputDestinationProps = {
@@ -80,13 +72,15 @@ export const OutputDestination = ({
   const unavailable = output.unavailableReason !== null;
   const targetKey = outputTargetKey(output.id);
   const grab = useNodeDrag(targetKey, rect);
-  // A destination has nothing further to reveal, so it carries no expand
-  // toggle — it is only resized to fit a hand-arranged canvas.
-  const resize = useNodeResize(targetKey, rect, {
-    width: destination.width,
-    height: destination.outputHeight,
-  });
+  const resize = useNodeResize(targetKey, rect, outputSize('compact'));
+  const setSize = useNodeSize(targetKey);
   const { front, bringToFront } = useNodeFront(targetKey);
+
+  // A destination has nothing to open into, so it only shrinks: the device
+  // picker and the trim give way, and the tiles saying which mixes feed it stay.
+  const expansion = outputExpansionFor(rect);
+  const compact = expansion === 'compact';
+  const next = nextExpansion(expansion, OutputExpansion);
 
   return (
     <NodeCard
@@ -138,6 +132,10 @@ export const OutputDestination = ({
               {output.role}
             </Pill>
           )}
+          <ExpandToggle
+            grows={OutputExpansion.indexOf(next) > OutputExpansion.indexOf(expansion)}
+            onToggle={() => setSize(outputSize(next))}
+          />
           <DeleteButton
             onDelete={() => onRemove(output.id)}
             title={`Remove ${output.name} from the mix`}
@@ -152,57 +150,14 @@ export const OutputDestination = ({
         overflow: 'hidden',
       }}
     >
-      <Group gap="xs" wrap="nowrap">
-        <StatusDot
-          tone={unavailable ? 'hot' : output.live ? 'accent' : 'inert'}
-          onClick={() => onSelect(output.id)}
-          title={
-            output.unavailableReason ??
-            (output.live ? 'Receiving the master sum' : 'Send the master sum here')
-          }
-        />
-        <NativeSelect
-          value={output.id}
-          onChange={(event) => onChangeDevice(output.id, event.currentTarget.value)}
-          onClick={(event) => event.stopPropagation()}
-          data={options}
-          variant="unstyled"
-          style={{ flex: 1, minWidth: 0 }}
-          styles={{
-            input: {
-              color: unavailable ? color.hotText : color.textDim,
-              fontSize: 'var(--mantine-font-size-xs)',
-            },
-          }}
-        />
-      </Group>
-
-      <Group gap="md" wrap="nowrap" w="100%">
-        <SectionLabel tracking="tight">GAIN</SectionLabel>
-        <DragBar
-          value={output.gainDb}
-          min={-60}
-          max={12}
-          height={5}
-          tone={output.live ? 'accent' : 'muted'}
-          knob={[10, 16]}
-          onChange={(value) => onGainChange(output.id, value)}
-        />
-        <Text
-          size="2xs"
-          w={52}
-          ta="right"
-          c={output.live ? ROLE_COLOR[output.role] : color.textFaint}
-          style={{ flex: 'none' }}
-        >
-          {asGain(output.gainDb)}
-        </Text>
-      </Group>
-
-      <Group gap="md" wrap="nowrap" w="100%">
-        <SectionLabel tracking="tight">FROM</SectionLabel>
-        <SourceTiles deviceId={output.id} />
-      </Group>
+      <OutputBody
+        output={output}
+        compact={compact}
+        options={options}
+        onSelect={onSelect}
+        onChangeDevice={onChangeDevice}
+        onGainChange={onGainChange}
+      />
     </NodeCard>
   );
 };

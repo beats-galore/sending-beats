@@ -19,15 +19,29 @@ import type { Port, Size } from './patch-layout';
 const { source, bus, destination, patch } = layout;
 
 /**
- * How much of a source node is showing.
+ * How much of a source node is showing, smallest first.
  *
  * Which one a node is at follows from how big it has been made: a node shows as
  * much as it has room for, and nothing more. The effects chain needs the most
- * room, the inspector alone needs less, and below that a node is only its
- * meters and its trim.
+ * room, the inspector alone needs less, below that a node is its meters and its
+ * trim, and at the bottom it is only a name, a pair of thin meters and its mute
+ * and solo — small enough that a canvas full of them still reads.
  */
-export const ChannelExpansion = ['collapsed', 'inspector', 'effects'] as const;
+export const ChannelExpansion = ['compact', 'collapsed', 'inspector', 'effects'] as const;
 export type ChannelExpansion = (typeof ChannelExpansion)[number];
+
+/**
+ * How much of any other node is showing, smallest first.
+ *
+ * Buses, the broadcast and the tape all have the same three: shrunk to the one
+ * reading that says what they are doing, shut, and open with their settings.
+ */
+export const NodeExpansion = ['compact', 'collapsed', 'expanded'] as const;
+export type NodeExpansion = (typeof NodeExpansion)[number];
+
+/** A hardware destination has nothing to open into, so it only shrinks. */
+export const OutputExpansion = ['compact', 'collapsed'] as const;
+export type OutputExpansion = (typeof OutputExpansion)[number];
 
 /**
  * Which card a source is drawn as.
@@ -40,11 +54,34 @@ export type ChannelExpansion = (typeof ChannelExpansion)[number];
 export const ChannelCardVariant = ['device', 'app'] as const;
 export type ChannelCardVariant = (typeof ChannelCardVariant)[number];
 
+/**
+ * A run of sizes a node can be at, smallest first.
+ *
+ * Read forwards it answers "how big does this node have to be to show that",
+ * which is what the condense and expand toggle needs; read backwards it answers
+ * "how much does a node this big have room for", which is what makes dragging
+ * one bigger reveal more of it. The two have to come from one place or a node
+ * would toggle to a size that shows something else.
+ */
+const heightLadder = <T extends string>(
+  width: number,
+  order: readonly T[],
+  heights: Record<T, number>
+) => ({
+  size: (expansion: T): Size => ({ width, height: heights[expansion] }),
+
+  /** The most a box this tall has room for, never less than the smallest rung. */
+  expansionFor: (size: Size): T =>
+    order.reduce((fitting, rung) => (size.height >= heights[rung] ? rung : fitting), order[0]),
+});
+
 const channelWidth = (expansion: ChannelExpansion): number =>
-  expansion === 'collapsed' ? source.width : source.widthExpanded;
+  expansion === 'compact' || expansion === 'collapsed' ? source.width : source.widthExpanded;
 
 const expansionHeight = (expansion: ChannelExpansion): number => {
   switch (expansion) {
+    case 'compact':
+      return source.heightCompact;
     case 'collapsed':
       return source.height;
     case 'inspector':
@@ -75,17 +112,33 @@ export const expansionFor = (variant: ChannelCardVariant, size: Size): ChannelEx
     return size.width >= needed.width && size.height >= needed.height;
   };
 
-  return fits('effects') ? 'effects' : fits('inspector') ? 'inspector' : 'collapsed';
+  return ChannelExpansion.reduce<ChannelExpansion>(
+    (fitting, expansion) => (fits(expansion) ? expansion : fitting),
+    'compact'
+  );
 };
 
 /**
- * How far a source opens when it is toggled open.
+ * How far a source opens when it is toggled all the way open.
  *
  * As far as it has something to show: a channel with its effects switched off
  * has no chain, so opening it to the chain's height would only add dead space.
  */
 export const openExpansion = (effectsEnabled: boolean): ChannelExpansion =>
   effectsEnabled ? 'effects' : 'inspector';
+
+/**
+ * The next rung the condense and expand toggle goes to.
+ *
+ * One button, so it walks up through the sizes and folds all the way back down
+ * from the top. Every state is a press or two away, and the button can say
+ * which way the next press goes rather than claiming a node is simply open or
+ * shut when there are more than two answers.
+ */
+export const nextExpansion = <T extends string>(current: T, order: readonly T[]): T => {
+  const next = order.indexOf(current) + 1;
+  return next < order.length ? order[next] : order[0];
+};
 
 /**
  * Top edge of each item in a column, given how much room each one takes.
@@ -123,36 +176,39 @@ const portStep = (count: number): number =>
 export const busPortOffset = (portIndex: number, portCount: number): number =>
   bus.portOffset + portIndex * portStep(portCount);
 
-/**
- * The nodes with only one thing to reveal.
- *
- * A bus gains its metering column and stats, the broadcast its transmitter, the
- * tape its output settings. None of them widen to do it, so unlike a source it
- * is only height that decides whether there is room.
- */
-const sizeAt = (width: number, shut: number, open: number) => ({
-  size: (expanded: boolean): Size => ({ width, height: expanded ? open : shut }),
-  expandedFor: (size: Size): boolean => size.height >= open,
+// None of these widen as they open, so unlike a source it is only height that
+// decides how much of one there is room for.
+const busLadder = heightLadder(bus.width, NodeExpansion, {
+  compact: bus.heightCompact,
+  collapsed: bus.height,
+  expanded: bus.heightExpanded,
 });
 
-const busGeometry = sizeAt(bus.width, bus.height, bus.heightExpanded);
-const castGeometry = sizeAt(
-  destination.width,
-  destination.castHeight,
-  destination.castHeightExpanded
-);
-const tapeGeometry = sizeAt(
-  destination.width,
-  destination.tapeHeight,
-  destination.tapeHeightExpanded
-);
+const castLadder = heightLadder(destination.width, NodeExpansion, {
+  compact: destination.castHeightCompact,
+  collapsed: destination.castHeight,
+  expanded: destination.castHeightExpanded,
+});
 
-export const busSize = busGeometry.size;
-export const busExpandedFor = busGeometry.expandedFor;
-export const castSize = castGeometry.size;
-export const castExpandedFor = castGeometry.expandedFor;
-export const tapeSize = tapeGeometry.size;
-export const tapeExpandedFor = tapeGeometry.expandedFor;
+const tapeLadder = heightLadder(destination.width, NodeExpansion, {
+  compact: destination.tapeHeightCompact,
+  collapsed: destination.tapeHeight,
+  expanded: destination.tapeHeightExpanded,
+});
+
+const outputLadder = heightLadder(destination.width, OutputExpansion, {
+  compact: destination.outputHeightCompact,
+  collapsed: destination.outputHeight,
+});
+
+export const busSize = busLadder.size;
+export const busExpansionFor = busLadder.expansionFor;
+export const castSize = castLadder.size;
+export const castExpansionFor = castLadder.expansionFor;
+export const tapeSize = tapeLadder.size;
+export const tapeExpansionFor = tapeLadder.expansionFor;
+export const outputSize = outputLadder.size;
+export const outputExpansionFor = outputLadder.expansionFor;
 
 /**
  * A cable between two ports: horizontal at both ends, curving in the middle, so

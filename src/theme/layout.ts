@@ -34,12 +34,21 @@ export const layout = {
     bottomPadding: 116,
   },
 
+  /**
+   * Height of the two-channel meter pair as a node draws it when it has been
+   * shrunk to nothing but its levels. Thin enough that a stack of shrunk nodes
+   * reads as a row of meters rather than a row of cards.
+   */
+  compactMeterHeight: 4,
+
   /** Left column — one node per mixer channel. */
   source: {
     x: 36,
     top: 24,
     width: 308,
     widthExpanded: 460,
+    /** Shrunk to its levels and its mute and solo, with the name above them. */
+    heightCompact: 70,
     height: 172,
     /** Focused with effects off, so the inspector is only the FX switch. */
     heightInspector: 263,
@@ -69,6 +78,8 @@ export const layout = {
     x: 540,
     top: 60,
     width: 360,
+    /** Shrunk to nothing but its levels, with the name above them. */
+    heightCompact: 72,
     /** Shut: the header, a pair of meters, the FROM and TO rows and a trim. */
     height: 168,
     /** Open: adds the metering column, the large gain readout and the stats. */
@@ -93,9 +104,13 @@ export const layout = {
     top: 60,
     /** Vertical gap between the cast, tape and output groups. */
     gap: 24,
+    /** Shrunk to where it is sending and at what rate. */
+    castHeightCompact: 72,
     castHeight: 180,
     /** Focused, with the transmitter's settings showing. */
     castHeightExpanded: 453,
+    /** Shrunk to whether it is rolling and how long for. */
+    tapeHeightCompact: 78,
     tapeHeight: 140,
     /** Focused, with the take's output settings showing. */
     tapeHeightExpanded: 385,
@@ -108,6 +123,8 @@ export const layout = {
     castPortOffset: 83,
     tapePortOffset: 63,
     outputPortOffset: 24,
+    /** Shrunk to the tiles saying which mixes feed it. */
+    outputHeightCompact: 72,
     /**
      * Tall enough for the device row, the gain row and the row of source tiles
      * beneath them — the same three rows a shut source card carries.

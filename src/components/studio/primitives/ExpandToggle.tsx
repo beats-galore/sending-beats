@@ -4,20 +4,24 @@ import { useHover } from '@mantine/hooks';
 import { color } from '../../../theme/tokens';
 
 type ExpandToggleProps = {
-  expanded: boolean;
+  /** Whether the next press makes the node bigger or folds it back down. */
+  grows: boolean;
   onToggle: () => void;
 };
 
 /**
- * Condenses and expands a node.
+ * Steps a node through its sizes.
  *
  * A node shows as much as it has room for, so this is only a shortcut: it sizes
- * the node to exactly what the state it is going to needs, which is the same
- * place dragging the corner there would land. Expanding a source with its
- * effects switched off stops at the inspector, because there is no chain below
- * it to make room for.
+ * the node to exactly what the next state needs, which is the same place
+ * dragging the corner there would land.
+ *
+ * There are more than two states now — shrunk to one reading, shut, and open —
+ * so rather than claiming a node is simply open or shut, the arrow says which
+ * way the next press goes. It walks up through the sizes and folds all the way
+ * back down from the top.
  */
-export const ExpandToggle = ({ expanded, onToggle }: ExpandToggleProps) => {
+export const ExpandToggle = ({ grows, onToggle }: ExpandToggleProps) => {
   const { hovered, ref } = useHover();
 
   return (
@@ -29,7 +33,7 @@ export const ExpandToggle = ({ expanded, onToggle }: ExpandToggleProps) => {
       }}
       // Lives in the title bar, which is also the grip that moves the node
       data-no-drag
-      title={expanded ? 'Condense' : 'Expand'}
+      title={grows ? 'Show more' : 'Shrink to a single line'}
       style={{
         width: 16,
         height: 16,
@@ -45,7 +49,7 @@ export const ExpandToggle = ({ expanded, onToggle }: ExpandToggleProps) => {
         lineHeight: 1,
       }}
     >
-      {expanded ? '▲' : '▼'}
+      {grows ? '▼' : '▲'}
     </Box>
   );
 };

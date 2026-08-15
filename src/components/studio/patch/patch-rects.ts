@@ -22,7 +22,7 @@ import {
 } from '../../../services/patch-color-service';
 import type { PatchPlacement } from '../../../services/patch-layout-service';
 import { layout } from '../../../theme/layout';
-import { busSize, castSize, channelSize, stackTops, tapeSize } from './patch-geometry';
+import { busSize, castSize, channelSize, outputSize, stackTops, tapeSize } from './patch-geometry';
 import type { ChannelCardVariant } from './patch-geometry';
 import { canvasHeightOf, resolveRect } from './patch-layout';
 import type { NodeRect, Size } from './patch-layout';
@@ -81,7 +81,7 @@ export const resolvePatchRects = (
   );
 
   const busKeys = busIds.map(busTargetKey);
-  const busShut = busSize(false);
+  const busShut = busSize('collapsed');
   const busHeights = busKeys.map((key) => resolveHeight(placements, key, busShut));
   const busTops = stackTops(busHeights, bus.top, bus.gap);
   const busRects = busKeys.map((key, index) =>
@@ -95,7 +95,7 @@ export const resolvePatchRects = (
 
   // The right column runs cast, then tape, then the hardware outputs, each
   // group flowing from the one above it.
-  const castSlotHeight = resolveHeight(placements, STREAM_TARGET_KEY, castSize(false));
+  const castSlotHeight = resolveHeight(placements, STREAM_TARGET_KEY, castSize('collapsed'));
   const castRect = resolveRect(placements[STREAM_TARGET_KEY], {
     left: destination.x,
     top: destination.top,
@@ -104,7 +104,7 @@ export const resolvePatchRects = (
   });
 
   const tapeSlotTop = destination.top + castSlotHeight + destination.gap;
-  const tapeSlotHeight = resolveHeight(placements, TAPE_TARGET_KEY, tapeSize(false));
+  const tapeSlotHeight = resolveHeight(placements, TAPE_TARGET_KEY, tapeSize('collapsed'));
   const tapeRect = resolveRect(placements[TAPE_TARGET_KEY], {
     left: destination.x,
     top: tapeSlotTop,
@@ -113,7 +113,7 @@ export const resolvePatchRects = (
   });
 
   const outputKeys = outputIds.map(outputTargetKey);
-  const outputShut: Size = { width: destination.width, height: destination.outputHeight };
+  const outputShut = outputSize('collapsed');
   const outputHeights = outputKeys.map((key) => resolveHeight(placements, key, outputShut));
   const outputColumnTop = tapeSlotTop + tapeSlotHeight + destination.gap;
   const outputTops = stackTops(outputHeights, outputColumnTop, destination.outputGap);
