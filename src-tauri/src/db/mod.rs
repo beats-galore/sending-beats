@@ -8,6 +8,7 @@ use std::time::Duration;
 
 pub mod audio_bus_service;
 pub mod broadcasts;
+pub mod file_player_service;
 pub mod patch_color_service;
 pub mod patch_layout_service;
 pub mod recordings;
@@ -17,6 +18,9 @@ pub mod seaorm_services;
 
 pub use audio_bus_service::AudioBusService;
 pub use broadcasts::*;
+pub use file_player_service::{
+    device_identifier_for, FilePlayerStore, QueuedTrackRow, TRACK_PENDING, TRACK_PLAYED,
+};
 pub use patch_color_service::PatchColorService;
 pub use patch_layout_service::{PatchLayoutService, Placement};
 pub use recordings::*;
