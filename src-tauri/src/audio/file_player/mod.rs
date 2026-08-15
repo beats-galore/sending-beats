@@ -10,8 +10,8 @@ pub mod source;
 
 // Re-export commonly used types from the player module
 pub use player::{
-    AudioFilePlayer, FilePlayerDevice, PlaybackMode, PlaybackState, PlaybackStatus, QueuedTrack,
-    RepeatMode,
+    AudioFilePlayer, FilePlayerDevice, PlaybackMode, PlaybackState, PlaybackStatus, PlayerEvent,
+    QueuedTrack, RepeatMode,
 };
 
 // Re-export commonly used types from the manager module

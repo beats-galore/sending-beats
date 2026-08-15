@@ -63,6 +63,13 @@ pub struct PlaybackStatus {
     pub mode: PlaybackMode,
 }
 
+/// Something worth writing down that happened while playing
+#[derive(Debug, Clone)]
+pub enum PlayerEvent {
+    /// The player left this track, having played it or been skipped past it
+    TrackFinished { track_id: String },
+}
+
 /// Audio file player that decodes files and provides audio samples
 pub struct AudioFilePlayer {
     // Queue management
@@ -96,6 +103,13 @@ pub struct AudioFilePlayer {
     /// The resampler takes a fixed chunk, so short packets accumulate here until
     /// there is a whole one to give it.
     resample_input: Arc<Mutex<Vec<VecDeque<f32>>>>,
+
+    /// Where finished tracks are reported, so history can be written down
+    ///
+    /// A channel rather than a call, because tracks finish on the decoding
+    /// thread, which is a plain thread with no runtime to write to a database
+    /// from and no business waiting on one mid-block.
+    events: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<PlayerEvent>>>>,
 }
 
 impl AudioFilePlayer {
@@ -119,7 +133,29 @@ impl AudioFilePlayer {
             resampler: Arc::new(Mutex::new(None)),
             pending: Arc::new(Mutex::new(VecDeque::new())),
             resample_input: Arc::new(Mutex::new(Vec::new())),
+            events: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Send finished tracks here. Without one, playing simply reports nothing.
+    pub fn set_event_sender(&self, sender: tokio::sync::mpsc::UnboundedSender<PlayerEvent>) {
+        *self.events.lock().unwrap() = Some(sender);
+    }
+
+    /// Put an already-built track on the end of the queue
+    ///
+    /// Used where the track exists before the player sees it — restoring a saved
+    /// queue, or queueing a file that has just been written to the database, so
+    /// the id in the queue is the id of the row it came from.
+    pub fn enqueue(&self, track: QueuedTrack) {
+        self.queue.lock().unwrap().push_back(track);
+    }
+
+    /// How the queue is played: repeat and shuffle
+    pub fn set_mode(&self, repeat_mode: RepeatMode, shuffle: bool) {
+        let mut mode = self.mode.lock().unwrap();
+        mode.repeat_mode = repeat_mode;
+        mode.shuffle = shuffle;
     }
 
     /// The rate and layout this player emits, whatever the files in its queue are
@@ -469,12 +505,43 @@ impl AudioFilePlayer {
     /// False once the queue has played out, which is what tells the decoder to
     /// stop rather than to keep asking for packets from a finished file.
     fn advance_track(&self) -> Result<bool> {
+        // Reported before moving on, so a queue that plays out still records its
+        // last track rather than dropping the one nothing followed.
+        self.report_finished();
+
         let Some(next) = self.next_index() else {
             return Ok(false);
         };
 
         self.load_index(next)?;
         Ok(true)
+    }
+
+    /// Say that the current track is done, if anyone is listening
+    ///
+    /// Finishing here means leaving the track, which includes being skipped past
+    /// it. What was played rather than merely reached is a finer question than
+    /// the queue can answer on its own.
+    fn report_finished(&self) {
+        let Some(index) = *self.current_track_index.lock().unwrap() else {
+            return;
+        };
+
+        let Some(track_id) = self
+            .queue
+            .lock()
+            .unwrap()
+            .get(index)
+            .map(|track| track.id.clone())
+        else {
+            return;
+        };
+
+        if let Some(sender) = self.events.lock().unwrap().as_ref() {
+            // A closed receiver means nothing is recording history any more,
+            // which is not a reason to interrupt playback.
+            let _ = sender.send(PlayerEvent::TrackFinished { track_id });
+        }
     }
 
     /// Which track follows the current one, or None when the queue is done

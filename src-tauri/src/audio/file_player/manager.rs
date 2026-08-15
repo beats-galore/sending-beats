@@ -52,6 +52,19 @@ impl FilePlayerManager {
             id
         };
 
+        self.create_player_with_id(player_id, config)
+    }
+
+    /// Create a player under an identifier chosen by the caller
+    ///
+    /// Used where the player already exists on disk: its row key is the identity
+    /// everything else refers to, and minting a second one here would leave the
+    /// running player and the stored one unable to find each other.
+    pub fn create_player_with_id(
+        &self,
+        player_id: String,
+        config: FilePlayerConfig,
+    ) -> Result<String> {
         let device_name = format!("{} (File Player)", config.name);
         let device = Arc::new(FilePlayerDevice::new(
             device_name,

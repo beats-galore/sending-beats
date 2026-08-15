@@ -533,6 +533,7 @@ pub fn run() {
             // File player commands
             create_file_player,
             remove_file_player,
+            restore_file_players,
             list_file_players,
             get_file_player_devices,
             add_track_to_player,
