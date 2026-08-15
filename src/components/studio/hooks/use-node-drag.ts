@@ -2,9 +2,14 @@ import { useCallback } from 'react';
 
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { PatchTargetKey } from '../../../services/patch-color-service';
+import { PinEdge } from '../../../services/patch-layout-service';
 import { usePatchLayoutStore } from '../../../stores/patch-layout-store';
 import { clampToCanvas, snapToGrid } from '../patch/patch-layout';
 import type { NodeRect } from '../patch/patch-layout';
+import { pinnedAt, pinnedGroup, pinOf } from '../patch/patch-pins';
+import type { Pin } from '../patch/patch-pins';
+import type { PatchRects } from '../patch/patch-rects';
+import { usePatchRectsContext } from '../patch/patch-rects-context';
 
 /**
  * Controls inside a node's title bar that must not start a drag.
@@ -15,6 +20,43 @@ import type { NodeRect } from '../patch/patch-layout';
  */
 const CONTROL_SELECTOR = 'input, select, textarea, button, [data-no-drag]';
 
+/** How close an edge has to come before the node snaps flush against it. */
+const PIN_SNAP = 22;
+
+/**
+ * The edge this node is close enough to be dropped against, if any.
+ *
+ * Its own group is skipped: pinning a node to one of its own followers would
+ * make a loop, and the arrangement would have no anchor to derive from.
+ */
+const pinCandidate = (
+  targetKey: PatchTargetKey,
+  dragged: NodeRect,
+  rects: PatchRects,
+  placements: Parameters<typeof pinnedGroup>[2]
+): { pin: Pin; at: { left: number; top: number } } | null => {
+  const own = new Set(pinnedGroup(targetKey, rects.keys, placements));
+
+  for (const anchorKey of rects.keys) {
+    if (own.has(anchorKey)) {
+      continue;
+    }
+
+    const anchor = rects.byKey[anchorKey];
+    for (const edge of PinEdge) {
+      // Always against the first slot: a second node wanting the same edge is
+      // dropped under the one already there, which pins it to that node
+      // instead and builds a chain.
+      const at = pinnedAt(anchor, edge, dragged, 0);
+      if (Math.abs(at.left - dragged.left) <= PIN_SNAP && Math.abs(at.top - dragged.top) <= PIN_SNAP) {
+        return { pin: { anchor: anchorKey, edge }, at };
+      }
+    }
+  }
+
+  return null;
+};
+
 /**
  * Makes a node's title bar a grip that moves it.
  *
@@ -24,12 +66,23 @@ const CONTROL_SELECTOR = 'input, select, textarea, button, [data-no-drag]';
  * it was drawn at — rather than threaded down from the view, so a node cannot
  * be handed a stale one.
  *
+ * Dragging a node flush against another's edge pins the two together. ⌥ turns
+ * that off along with the grid snap, which is the one rule the canvas has about
+ * modifiers: ⌥ means no help, put it exactly where I said.
+ *
+ * Dragging a node that is already pinned pulls it out of its group — the pin is
+ * released at the position it was being drawn at, so it comes away from under
+ * the pointer rather than jumping.
+ *
  * Nothing is written down until the pointer is released. Storing each frame
  * would put a few hundred round trips through a single drag.
  */
 export const useNodeDrag = (targetKey: PatchTargetKey, rect: NodeRect) => {
   const place = usePatchLayoutStore((state) => state.place);
   const save = usePatchLayoutStore((state) => state.save);
+  const setPinTarget = usePatchLayoutStore((state) => state.setPinTarget);
+  const pin = usePatchLayoutStore((state) => state.pin);
+  const rects = usePatchRectsContext();
 
   return useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
@@ -46,18 +99,27 @@ export const useNodeDrag = (targetKey: PatchTargetKey, rect: NodeRect) => {
       const scale = grip.width > 0 ? grip.width / rect.width : 1;
       const origin = { x: event.clientX, y: event.clientY };
       let moved = false;
+      let landing: Pin | null = null;
 
       const apply = (point: PointerEvent) => {
         const free = point.altKey;
         const left = rect.left + (point.clientX - origin.x) / scale;
         const top = rect.top + (point.clientY - origin.y) / scale;
-        const snapped = {
+        const dragged = {
+          ...rect,
           left: free ? left : snapToGrid(left),
           top: free ? top : snapToGrid(top),
         };
-        const position = clampToCanvas({ ...rect, ...snapped });
 
-        place(targetKey, { x: position.x, y: position.y });
+        const placements = usePatchLayoutStore.getState().placements;
+        const candidate =
+          free || !rects ? null : pinCandidate(targetKey, dragged, rects, placements);
+
+        landing = candidate?.pin ?? null;
+        setPinTarget(landing);
+
+        const position = clampToCanvas({ ...dragged, ...(candidate?.at ?? {}) });
+        place(targetKey, { x: position.x, y: position.y, pinnedTo: null, pinEdge: null });
       };
 
       const handleMove = (moveEvent: PointerEvent) => {
@@ -68,12 +130,17 @@ export const useNodeDrag = (targetKey: PatchTargetKey, rect: NodeRect) => {
       const handleUp = () => {
         window.removeEventListener('pointermove', handleMove);
         window.removeEventListener('pointerup', handleUp);
+        setPinTarget(null);
 
         if (!moved) {
           return;
         }
 
-        void save(targetKey);
+        if (landing) {
+          void pin(targetKey, landing.anchor, landing.edge);
+        } else {
+          void save(targetKey);
+        }
 
         // A drag ends with a click on whatever ancestor the press and release
         // share, which for a node is the node itself — and every node selects
@@ -89,7 +156,7 @@ export const useNodeDrag = (targetKey: PatchTargetKey, rect: NodeRect) => {
       window.addEventListener('pointermove', handleMove);
       window.addEventListener('pointerup', handleUp);
     },
-    [targetKey, rect, place, save]
+    [targetKey, rect, rects, place, save, pin, setPinTarget]
   );
 };
 
@@ -110,3 +177,7 @@ export const useNodeFront = (targetKey: PatchTargetKey) => {
     bringToFront: useCallback(() => bringToFront(targetKey), [bringToFront, targetKey]),
   };
 };
+
+/** Whether this node is pinned, and to what. */
+export const useNodePin = (targetKey: PatchTargetKey): Pin | null =>
+  usePatchLayoutStore((state) => pinOf(state.placements[targetKey], targetKey));

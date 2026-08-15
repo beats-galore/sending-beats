@@ -26,6 +26,7 @@ import { busSize, castSize, channelSize, outputSize, stackTops, tapeSize } from 
 import type { ChannelCardVariant } from './patch-geometry';
 import { canvasHeightOf, resolveRect } from './patch-layout';
 import type { NodeRect, Size } from './patch-layout';
+import { applyPins } from './patch-pins';
 
 const { source, bus, destination } = layout;
 
@@ -39,6 +40,10 @@ type PatchRectsInput = {
 };
 
 export type PatchRects = {
+  /** Every node on the canvas, in the order they are drawn. */
+  keys: PatchTargetKey[];
+  /** Every node's box, for anything that has a key rather than an index. */
+  byKey: Record<PatchTargetKey, NodeRect>;
   /** By index, parallel to the lists given. */
   channels: NodeRect[];
   buses: NodeRect[];
@@ -131,14 +136,31 @@ export const resolvePatchRects = (
     stackEnd(outputTops, outputHeights, outputColumnTop, destination.outputGap) +
     destination.extraOffset;
 
-  const rects = [...channelRects, ...busRects, ...outputRects, castRect, tapeRect];
+  // Pins are applied last, over the finished positions: a pinned node's box is
+  // its own in every respect but where it sits, which comes from its anchor.
+  const keys = [...channelKeys, ...busKeys, STREAM_TARGET_KEY, TAPE_TARGET_KEY, ...outputKeys];
+  const byKey = applyPins({
+    keys,
+    rects: Object.fromEntries([
+      ...channelKeys.map((key, index): [PatchTargetKey, NodeRect] => [key, channelRects[index]]),
+      ...busKeys.map((key, index): [PatchTargetKey, NodeRect] => [key, busRects[index]]),
+      ...outputKeys.map((key, index): [PatchTargetKey, NodeRect] => [key, outputRects[index]]),
+      [STREAM_TARGET_KEY, castRect],
+      [TAPE_TARGET_KEY, tapeRect],
+    ]),
+    placements,
+  });
+
+  const rects = keys.map((key) => byKey[key]);
 
   return {
-    channels: channelRects,
-    buses: busRects,
-    outputs: outputRects,
-    cast: castRect,
-    tape: tapeRect,
+    keys,
+    byKey,
+    channels: channelKeys.map((key) => byKey[key]),
+    buses: busKeys.map((key) => byKey[key]),
+    outputs: outputKeys.map((key) => byKey[key]),
+    cast: byKey[STREAM_TARGET_KEY],
+    tape: byKey[TAPE_TARGET_KEY],
     addSourceTop,
     addDestinationTop,
     // The targets contribute their top rather than their bottom: the padding

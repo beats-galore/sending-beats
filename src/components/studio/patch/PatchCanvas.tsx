@@ -23,6 +23,9 @@ import { ChannelNode } from './ChannelNode';
 import { OutputDestination } from './OutputDestination';
 import { patchCables } from './patch-cables';
 import { resolvePatchRects } from './patch-rects';
+import { PatchRectsProvider } from './patch-rects-context';
+import { PinIndicator } from './PinIndicator';
+import { PinSeams } from './PinSeams';
 import { TapeDestination } from './TapeDestination';
 
 const { source, bus, destination, canvas } = layout;
@@ -114,6 +117,9 @@ export const PatchCanvas = () => {
   );
 
   return (
+    // A dragged node has to hit-test itself against every other to know whether
+    // it is being dropped against an edge, and a node knows only its own box.
+    <PatchRectsProvider value={rects}>
     <Box
       // Nodes stop their own clicks, so anything arriving here landed on bare
       // canvas and means "close whatever is open".
@@ -207,6 +213,10 @@ export const PatchCanvas = () => {
         available={available}
         onPick={selectOutput}
       />
+
+      <PinSeams rects={rects} />
+      <PinIndicator rects={rects} />
     </Box>
+    </PatchRectsProvider>
   );
 };

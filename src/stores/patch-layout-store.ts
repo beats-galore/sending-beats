@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 
 import type { PatchTargetKey } from '../services/patch-color-service';
-import type { PatchPlacement } from '../services/patch-layout-service';
-import { EMPTY_PLACEMENT, patchLayoutService } from '../services/patch-layout-service';
+import type { PatchPlacement, PinEdge } from '../services/patch-layout-service';
+import { EMPTY_PLACEMENT, isPinEdge, patchLayoutService } from '../services/patch-layout-service';
 
 type PatchLayoutStore = {
   /** Hand-arranged nodes only. A key absent here is still placed by the canvas. */
@@ -24,6 +24,17 @@ type PatchLayoutStore = {
   front: PatchTargetKey | null;
   bringToFront: (targetKey: PatchTargetKey) => void;
 
+  /**
+   * The edge the node being dragged would pin to if it were let go now.
+   *
+   * Held while a drag is in flight so the canvas can light that edge up: a pin
+   * happens by dropping a node flush against another, and without seeing where
+   * it is about to land, there would be no telling that apart from dropping it
+   * somewhere that merely overlaps.
+   */
+  pinTarget: { anchor: PatchTargetKey; edge: PinEdge } | null;
+  setPinTarget: (target: { anchor: PatchTargetKey; edge: PinEdge } | null) => void;
+
   load: () => Promise<void>;
   /** Move or resize a node on screen, without writing anything down. */
   place: (targetKey: PatchTargetKey, patch: Partial<PatchPlacement>) => void;
@@ -33,6 +44,16 @@ type PatchLayoutStore = {
   reset: (targetKey: PatchTargetKey) => Promise<void>;
   /** Put every node back in its column. */
   tidy: () => Promise<void>;
+
+  /** Stick a node to an edge of another, so the two move as one. */
+  pin: (targetKey: PatchTargetKey, anchor: PatchTargetKey, edge: PinEdge) => Promise<void>;
+  /**
+   * Let a node go, leaving it exactly where it was drawn.
+   *
+   * The position it was taking from its anchor becomes its own, so releasing a
+   * pin never moves anything — which is what makes it safe to try.
+   */
+  unpin: (targetKey: PatchTargetKey, at: { x: number; y: number }) => Promise<void>;
 };
 
 /** Whether anything is actually overridden, or the node is being placed anyway. */
@@ -40,7 +61,18 @@ const overridesNothing = (placement: PatchPlacement): boolean =>
   placement.x === null &&
   placement.y === null &&
   placement.width === null &&
-  placement.height === null;
+  placement.height === null &&
+  placement.pinnedTo === null;
+
+/**
+ * A pin naming an edge this build no longer understands is dropped rather than
+ * drawn somewhere arbitrary — the same treatment a colour from an older palette
+ * gets. The node falls back to being placed by the canvas.
+ */
+const readPlacement = (stored: PatchPlacement): PatchPlacement =>
+  stored.pinnedTo !== null && !isPinEdge(stored.pinEdge)
+    ? { ...stored, pinnedTo: null, pinEdge: null }
+    : stored;
 
 export const usePatchLayoutStore = create<PatchLayoutStore>((set, get) => ({
   placements: {},
@@ -49,9 +81,18 @@ export const usePatchLayoutStore = create<PatchLayoutStore>((set, get) => ({
   front: null,
   bringToFront: (front) => set({ front }),
 
+  pinTarget: null,
+  setPinTarget: (pinTarget) => set({ pinTarget }),
+
   load: async () => {
     try {
-      set({ placements: await patchLayoutService.list(), loaded: true });
+      const stored = await patchLayoutService.list();
+      const placements: Partial<Record<PatchTargetKey, PatchPlacement>> = {};
+      for (const [targetKey, placement] of Object.entries(stored)) {
+        placements[targetKey] = readPlacement(placement);
+      }
+
+      set({ placements, loaded: true });
     } catch (error) {
       console.error('Failed to load the patch arrangement:', error);
       set({ loaded: true });
@@ -118,5 +159,17 @@ export const usePatchLayoutStore = create<PatchLayoutStore>((set, get) => ({
       console.error('Failed to tidy the patch arrangement:', error);
       set({ placements: previous });
     }
+  },
+
+  // A pinned node's position comes from its anchor, so the stored one is
+  // dropped rather than left to go stale behind the pin.
+  pin: async (targetKey, anchor, edge) => {
+    get().place(targetKey, { pinnedTo: anchor, pinEdge: edge, x: null, y: null });
+    await get().save(targetKey);
+  },
+
+  unpin: async (targetKey, at) => {
+    get().place(targetKey, { pinnedTo: null, pinEdge: null, x: at.x, y: at.y });
+    await get().save(targetKey);
   },
 }));
