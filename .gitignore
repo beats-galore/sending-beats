@@ -5,6 +5,7 @@ node_modules
 dist
 .turbo/
 .env
+.claude/worktrees
 
 logs/
 *.log
