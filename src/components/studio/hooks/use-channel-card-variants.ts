@@ -8,17 +8,21 @@ import type { ChannelCardVariant } from '../patch/patch-geometry';
 /**
  * Which card each channel is drawn as, keyed by channel number.
  *
- * Every application source gets the taller card. Metadata no longer comes only
- * from the two players with a scripting dictionary — anything that publishes to
- * the system now-playing session can fill the readout — so which applications
- * have something to show is not knowable ahead of time. One that never does
- * shows "Nothing playing" rather than resizing the moment it starts.
+ * An application source earns the taller card by having reported a track, not
+ * by being an application. Plenty never report one — Serato is captured like
+ * any other source but never announces what it is playing — and giving those a
+ * readout only to leave it empty states something false about a deck that is
+ * audibly running.
+ *
+ * The cost is that a source resizes once, when its first track lands. That
+ * beats a permanent empty row on every source that will never fill one.
  *
  * This is also where the now-playing watcher is attached, so the subscription
  * is made once for the canvas rather than once per node.
  */
 export const useChannelCardVariants = (): Record<number, ChannelCardVariant> => {
   const subscribe = useNowPlayingStore((state) => state.subscribe);
+  const reportedBundleIds = useNowPlayingStore((state) => state.reportedBundleIds);
   const { activeSession } = useConfigurationStore();
 
   useEffect(() => {
@@ -32,11 +36,11 @@ export const useChannelCardVariants = (): Record<number, ChannelCardVariant> => 
       if (!device.isInput) {
         continue;
       }
-      variants[device.channelNumber] = bundleIdFromDeviceIdentifier(device.deviceIdentifier)
-        ? 'app'
-        : 'device';
+      const bundleId = bundleIdFromDeviceIdentifier(device.deviceIdentifier);
+      variants[device.channelNumber] =
+        bundleId && reportedBundleIds.includes(bundleId) ? 'app' : 'device';
     }
 
     return variants;
-  }, [activeSession]);
+  }, [activeSession, reportedBundleIds]);
 };
