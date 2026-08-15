@@ -8,16 +8,17 @@ import type { ChannelCardVariant } from '../patch/patch-geometry';
 /**
  * Which card each channel is drawn as, keyed by channel number.
  *
- * Only an application the backend can read a track from earns the taller card;
- * one it cannot read is captured the same way but has nothing to show, so it
- * stays a plain device card.
+ * Every application source gets the taller card. Metadata no longer comes only
+ * from the two players with a scripting dictionary — anything that publishes to
+ * the system now-playing session can fill the readout — so which applications
+ * have something to show is not knowable ahead of time. One that never does
+ * shows "Nothing playing" rather than resizing the moment it starts.
  *
  * This is also where the now-playing watcher is attached, so the subscription
  * is made once for the canvas rather than once per node.
  */
 export const useChannelCardVariants = (): Record<number, ChannelCardVariant> => {
   const subscribe = useNowPlayingStore((state) => state.subscribe);
-  const supportedBundleIds = useNowPlayingStore((state) => state.supportedBundleIds);
   const { activeSession } = useConfigurationStore();
 
   useEffect(() => {
@@ -31,11 +32,11 @@ export const useChannelCardVariants = (): Record<number, ChannelCardVariant> => 
       if (!device.isInput) {
         continue;
       }
-      const bundleId = bundleIdFromDeviceIdentifier(device.deviceIdentifier);
-      variants[device.channelNumber] =
-        bundleId && supportedBundleIds.includes(bundleId) ? 'app' : 'device';
+      variants[device.channelNumber] = bundleIdFromDeviceIdentifier(device.deviceIdentifier)
+        ? 'app'
+        : 'device';
     }
 
     return variants;
-  }, [activeSession, supportedBundleIds]);
+  }, [activeSession]);
 };

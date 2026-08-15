@@ -76,7 +76,18 @@ pub struct NowPlayingTrack {
     pub artist: String,
     pub album: String,
     pub duration_seconds: f64,
+    /// Where the playhead was at `position_taken_at_ms`, not where it is now.
     pub position_seconds: f64,
+    /// Epoch milliseconds at which `position_seconds` was true.
+    ///
+    /// MediaRemote reports a snapshot rather than a live value and republishes
+    /// it only when playback changes, so a reader has to age it:
+    /// `position_seconds + elapsed_since * playback_rate`. Taking the snapshot
+    /// at face value leaves the playhead pinned wherever it was last announced.
+    pub position_taken_at_ms: i64,
+    /// Zero while paused, one at normal speed. Multiplying the aged position by
+    /// this stops a paused playhead from drifting forwards.
+    pub playback_rate: f64,
     pub player_state: PlayerState,
     /// Spotify only; Apple Music exposes artwork as image data rather than a URL.
     pub artwork_url: Option<String>,
@@ -90,6 +101,13 @@ impl NowPlayingTrack {
     /// Position is excluded deliberately, so that a playhead simply advancing
     /// reads as the same state. Callers that care about the playhead compare
     /// the whole reading instead.
+    pub fn now_ms() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|since| since.as_millis() as i64)
+            .unwrap_or(0)
+    }
+
     pub fn is_same_state(&self, other: &Self) -> bool {
         self.bundle_id == other.bundle_id
             && self.track_id == other.track_id
@@ -116,6 +134,9 @@ pub enum NowPlayingError {
 
     #[error("osascript failed: {0}")]
     ScriptFailed(String),
+
+    #[error("MediaRemote adapter not found at {path} - run `make native`")]
+    AdapterMissing { path: String },
 
     #[error("Could not run osascript: {0}")]
     Spawn(#[from] std::io::Error),

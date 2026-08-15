@@ -4,6 +4,7 @@ import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
 import type { NowPlayingTrack } from '../../../types/now-playing.types';
 import { asTrackTime } from '../format';
+import { useTrackPosition } from '../hooks/use-track-position';
 
 type ChannelTrackProps = {
   /** Null while the application is running but has nothing loaded. */
@@ -12,6 +13,8 @@ type ChannelTrackProps = {
 
 /** What the patched application is playing, read above its meters. */
 export const ChannelTrack = ({ track }: ChannelTrackProps) => {
+  const position = useTrackPosition(track);
+
   if (!track) {
     return (
       <Text size="2xs" c={color.textFaintest} truncate>
@@ -24,7 +27,7 @@ export const ChannelTrack = ({ track }: ChannelTrackProps) => {
   // A live stream reports no length, which would make any progress meaningless.
   const progress =
     track.durationSeconds > 0
-      ? Math.min(1, Math.max(0, track.positionSeconds / track.durationSeconds))
+      ? Math.min(1, Math.max(0, position / track.durationSeconds))
       : 0;
 
   return (
@@ -43,7 +46,7 @@ export const ChannelTrack = ({ track }: ChannelTrackProps) => {
             {track.artist}
           </Text>
           <Text size="3xs" c={color.textFaintest} style={{ flex: 'none' }}>
-            {asTrackTime(track.positionSeconds)} / {asTrackTime(track.durationSeconds)}
+            {asTrackTime(position)} / {asTrackTime(track.durationSeconds)}
           </Text>
         </Group>
       </Stack>
@@ -62,7 +65,7 @@ export const ChannelTrack = ({ track }: ChannelTrackProps) => {
             height: '100%',
             background: playing ? color.playback : color.playbackDim,
             // Matches the poll beat, so the bar creeps rather than steps.
-            transition: 'width 1s linear',
+            transition: 'width 500ms linear',
           }}
         />
       </Box>
