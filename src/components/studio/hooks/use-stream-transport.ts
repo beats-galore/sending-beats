@@ -1,7 +1,10 @@
 import { useCallback } from 'react';
 
 import { useStreamingControls, useStreamingStatus } from '../../../hooks';
-import { useStudioStore } from '../../../stores/studio-store';
+import {
+  selectedCastConfiguration,
+  useCastConfigurationStore,
+} from '../../../stores/cast-configuration-store';
 
 /**
  * Stream status plus a single go-live / cut-the-feed toggle.
@@ -12,7 +15,7 @@ import { useStudioStore } from '../../../stores/studio-store';
 export const useStreamTransport = (pollingInterval?: number) => {
   const { status, isLoading, error, actions } = useStreamingStatus(pollingInterval);
   const { state: controlState, actions: controls } = useStreamingControls();
-  const settings = useStudioStore((state) => state.stream);
+  const station = useCastConfigurationStore(selectedCastConfiguration);
 
   const isLive = Boolean(status?.is_streaming);
   const isBusy = controlState.isStarting || controlState.isStopping || controlState.isConnecting;
@@ -25,21 +28,20 @@ export const useStreamTransport = (pollingInterval?: number) => {
     if (isLive) {
       await controls.stopStreaming();
     } else {
-      // Going live always re-initialises first: the target is edited in CAST and
-      // the engine only learns about it when the connection is established.
-      await controls.initialize({
-        server_host: settings.host,
-        server_port: settings.port,
-        mount_point: settings.mount,
-        password: settings.password,
-        stream_name: settings.mount.replace(/^\//, '') || 'live',
-        bitrate: settings.bitrate,
-      });
-      await controls.startStreaming();
+      // Nothing to go live to. The button is only reachable with a station
+      // selected, so this is the case where the last one was deleted.
+      if (!station) {
+        return;
+      }
+
+      // The station is named rather than described: the backend reads its
+      // details and its keychain password itself, so what goes on air is what is
+      // stored rather than a copy the interface was holding.
+      await controls.startStreaming(station.id);
     }
 
     await actions.refreshStatus();
-  }, [isBusy, isLive, controls, actions, settings]);
+  }, [isBusy, isLive, controls, actions, station]);
 
   return {
     status,

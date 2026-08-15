@@ -1,12 +1,24 @@
-import { Group, NativeSelect, PasswordInput, SimpleGrid, Switch, Text, TextInput } from '@mantine/core';
+import {
+  Group,
+  NativeSelect,
+  PasswordInput,
+  SimpleGrid,
+  Switch,
+  Text,
+  TextInput,
+} from '@mantine/core';
+import { useState } from 'react';
 
-import { useStudioStore } from '../../../stores/studio-store';
+import {
+  selectedCastConfiguration,
+  useCastConfigurationStore,
+} from '../../../stores/cast-configuration-store';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
+import type { CastConfigurationInput } from '../../../types/cast.types';
+import { CAST_BITRATES, toInput } from '../../../types/cast.types';
 import { ActionButton } from '../primitives/ActionButton';
 import type { ControlDensity } from '../primitives/control-density';
-
-const BITRATES = [96, 128, 192, 256, 320];
 
 type TransmitterControlsProps = {
   density: ControlDensity;
@@ -16,7 +28,7 @@ type TransmitterControlsProps = {
 };
 
 /**
- * The Icecast target and the control that puts it on air.
+ * The station the transmitter is pointed at, and the control that puts it on air.
  *
  * Rows only — the caller supplies the surface and the gap between them, which
  * is what separates the patchbay's cast node from the CAST view.
@@ -31,8 +43,24 @@ export const TransmitterControls = ({
   isBusy,
   onToggle,
 }: TransmitterControlsProps) => {
-  const stream = useStudioStore((state) => state.stream);
-  const setStream = useStudioStore((state) => state.setStream);
+  const station = useCastConfigurationStore(selectedCastConfiguration);
+  const update = useCastConfigurationStore((state) => state.update);
+  const setPassword = useCastConfigurationStore((state) => state.setPassword);
+
+  // Held here rather than in the store: the stored password is in the keychain
+  // and never comes back, so this field is only ever what is being typed now.
+  const [passwordDraft, setPasswordDraft] = useState('');
+
+  if (!station) {
+    return (
+      <Text size="xs" c={color.textFaint}>
+        No station selected. Add one to say where the mix goes.
+      </Text>
+    );
+  }
+
+  const edit = (changes: Partial<CastConfigurationInput>) =>
+    void update(station.id, { ...toInput(station), ...changes });
 
   // Read-only inputs keep their layout but read as settled rather than editable,
   // so a live target does not look like a field waiting for input.
@@ -46,14 +74,14 @@ export const TransmitterControls = ({
       <Group gap="sm" wrap="nowrap" align="flex-end">
         <TextInput
           label="SERVER"
-          value={stream.host}
-          onChange={(event) => setStream({ host: event.currentTarget.value })}
+          value={station.serverHost}
+          onChange={(event) => edit({ serverHost: event.currentTarget.value })}
           style={{ flex: 1, minWidth: 0 }}
           {...locked}
         />
         <TextInput
-          value={String(stream.port)}
-          onChange={(event) => setStream({ port: Number(event.currentTarget.value) || 0 })}
+          value={String(station.serverPort)}
+          onChange={(event) => edit({ serverPort: Number(event.currentTarget.value) || 0 })}
           w={74}
           {...locked}
         />
@@ -62,41 +90,51 @@ export const TransmitterControls = ({
       <SimpleGrid cols={2} spacing={density === 'compact' ? 'lg' : 'xl'} verticalSpacing="lg">
         <TextInput
           label="MOUNT"
-          value={stream.mount}
-          onChange={(event) => setStream({ mount: event.currentTarget.value })}
+          value={station.mountPoint}
+          onChange={(event) => edit({ mountPoint: event.currentTarget.value })}
           {...locked}
         />
         <NativeSelect
           label="BITRATE"
-          value={String(stream.bitrate)}
-          onChange={(event) => setStream({ bitrate: Number(event.currentTarget.value) })}
-          data={BITRATES.map((rate) => ({ value: String(rate), label: `${rate} kbps` }))}
+          value={String(station.bitrateKbps)}
+          onChange={(event) => edit({ bitrateKbps: Number(event.currentTarget.value) })}
+          data={CAST_BITRATES.map((rate) => ({ value: String(rate), label: `${rate} kbps` }))}
         />
         <TextInput
           label="USER"
-          value={stream.username}
-          onChange={(event) => setStream({ username: event.currentTarget.value })}
+          value={station.username}
+          onChange={(event) => edit({ username: event.currentTarget.value })}
           {...locked}
         />
+        {/* Typing replaces what is in the keychain; leaving it alone keeps it.
+            The placeholder is the only report of what is stored, because the
+            password itself never leaves the keychain. */}
         <PasswordInput
           label="PASSWORD"
-          value={stream.password}
-          onChange={(event) => setStream({ password: event.currentTarget.value })}
+          value={passwordDraft}
+          placeholder={station.hasPassword ? '••••••••  stored' : 'not set'}
+          onChange={(event) => setPasswordDraft(event.currentTarget.value)}
+          onBlur={() => {
+            if (passwordDraft.length > 0) {
+              void setPassword(station.id, passwordDraft);
+              setPasswordDraft('');
+            }
+          }}
           {...locked}
         />
       </SimpleGrid>
 
       <Group gap="md" wrap="nowrap">
         <Switch
-          checked={stream.variableBitrate}
-          onChange={(event) => setStream({ variableBitrate: event.currentTarget.checked })}
+          checked={station.variableBitrate}
+          onChange={(event) => edit({ variableBitrate: event.currentTarget.checked })}
           label="Variable bitrate"
           style={{ flex: 1 }}
         />
         <Text size="2xs" c={color.textFaint}>
-          {stream.variableBitrate
-            ? `quality ~V${stream.vbrQuality}`
-            : `constant ${stream.bitrate} kbps`}
+          {station.variableBitrate
+            ? `quality ~V${station.vbrQuality}`
+            : `constant ${station.bitrateKbps} kbps`}
         </Text>
       </Group>
 

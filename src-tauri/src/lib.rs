@@ -501,6 +501,7 @@ pub fn run() {
             update_cast_configuration,
             delete_cast_configuration,
             set_cast_configuration_password,
+            start_cast,
             list_patch_colors,
             set_patch_color,
             clear_patch_color,

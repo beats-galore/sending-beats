@@ -80,13 +80,27 @@ pub async fn start_icecast_streaming(
     audio_state: State<'_, AudioState>,
     config: StreamingServiceConfig,
 ) -> Result<String, String> {
+    // A broadcast with no station behind it still gets an identifier, it just
+    // gets a fresh one each time and nothing can be routed to it.
+    start_icecast_with_id(&audio_state, uuid::Uuid::new_v4().to_string(), config).await
+}
+
+/// Put a stream on air under an identifier the caller chooses
+///
+/// Casting from a stored station passes that station's key, which is what gives
+/// the broadcast an output the mixer can be routed to across going off air and
+/// back on. See #116.
+pub(crate) async fn start_icecast_with_id(
+    audio_state: &State<'_, AudioState>,
+    stream_id: String,
+    config: StreamingServiceConfig,
+) -> Result<String, String> {
     println!(
         "🎯 Starting Icecast streaming with config to {}:{}{}",
         config.server_host, config.server_port, config.mount_point
     );
 
     // Step 1: Send command to IsolatedAudioManager to create Icecast OutputWorker
-    let stream_id = uuid::Uuid::new_v4().to_string();
     let (response_tx, response_rx) = tokio::sync::oneshot::channel();
     let command = crate::audio::mixer::stream_management::AudioCommand::StartIcecast {
         stream_id: stream_id.clone(),

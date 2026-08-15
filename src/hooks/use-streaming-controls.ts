@@ -19,7 +19,7 @@ export type StreamingControlsState = {
 
 export type StreamingControlsActions = {
   initialize: (config: StreamConfig) => Promise<void>;
-  startStreaming: () => Promise<void>;
+  startStreaming: (castConfigurationId: string) => Promise<void>;
   stopStreaming: () => Promise<void>;
   updateMetadata: (title: string, artist: string) => Promise<void>;
   clearError: () => void;
@@ -64,11 +64,14 @@ export const useStreamingControls = () => {
     [updateState]
   );
 
-  const startStreaming = useCallback(async () => {
+  const startStreaming = useCallback(async (castConfigurationId: string) => {
     updateState({ isStarting: true, error: null });
 
     try {
-      await invoke<string>('start_icecast_streaming');
+      // The station is named rather than its fields being sent: the password is
+      // in the keychain, and the backend registers the stream under this id so
+      // the broadcast can be routed to.
+      await invoke<string>('start_cast', { id: castConfigurationId });
       updateState({ isStarting: false });
     } catch (err) {
       console.error('Failed to start streaming:', err);

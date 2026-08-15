@@ -1,6 +1,10 @@
 import { Group, SimpleGrid, Stack } from '@mantine/core';
+import { useEffect } from 'react';
 
-import { useStudioStore } from '../../../stores/studio-store';
+import {
+  selectedCastConfiguration,
+  useCastConfigurationStore,
+} from '../../../stores/cast-configuration-store';
 import { color } from '../../../theme/tokens';
 import { asBytes, asElapsed } from '../format';
 import { useCastTelemetry } from '../hooks/use-cast-telemetry';
@@ -9,19 +13,25 @@ import { useStreamTransport } from '../hooks/use-stream-transport';
 import { StatTile } from '../primitives/StatTile';
 import { ConnectionLog } from './ConnectionLog';
 import { ListenerSparkline } from './ListenerSparkline';
+import { StationPicker } from './StationPicker';
 import { TransmitterPanel } from './TransmitterPanel';
 
 /** Streaming: where the mix goes, and how the connection is holding up. */
 export const CastView = () => {
-  const stream = useStudioStore((state) => state.stream);
+  const load = useCastConfigurationStore((state) => state.load);
+  const station = useCastConfigurationStore(selectedCastConfiguration);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
   const { isLive, isBusy, status, uptimeSeconds, toggle } = useStreamTransport();
   const listeners = useListenerStats(isLive);
 
   const { series, log } = useCastTelemetry({
     isLive,
     listeners: listeners.current,
-    bitrate: stream.bitrate,
-    variableBitrate: stream.variableBitrate,
+    bitrate: station?.bitrateKbps ?? 0,
+    variableBitrate: station?.variableBitrate ?? false,
     lastError: status?.last_error ?? null,
   });
 
@@ -38,6 +48,7 @@ export const CastView = () => {
       {/* Metadata is not set here. What is playing comes from the mix, and the
           on-air drawer is where it is corrected while broadcasting. */}
       <Stack w={420} gap="2xl" style={{ flex: 'none' }}>
+        <StationPicker isLive={isLive} />
         <TransmitterPanel isLive={isLive} isBusy={isBusy} onToggle={() => void toggle()} />
       </Stack>
 

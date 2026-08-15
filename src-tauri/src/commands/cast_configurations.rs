@@ -132,3 +132,50 @@ pub async fn set_cast_configuration_password(id: String, password: String) -> Re
     cast_secrets::set_password(&id, &password).map_err(|e| e.to_string())?;
     Ok(cast_secrets::has_password(&id))
 }
+
+/// Put a stored station on air
+///
+/// Where going live actually happens now. The transmitter's fields used to be
+/// sent with the request, except the interface never sent them — the settings
+/// on screen and the ones the engine used had no connection at all.
+///
+/// The password is read from the keychain here rather than being carried
+/// through the interface, so the only place it is ever in memory is the moment
+/// it is handed to the encoder.
+///
+/// The stream is registered under the station's own key, which is what makes it
+/// something the mixer can be routed to across going off air and back on.
+#[tauri::command]
+pub async fn start_cast(state: State<'_, AudioState>, id: String) -> Result<String, String> {
+    let station = CastConfigurationService::get(state.database.sea_orm(), &id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("No cast configuration '{}'", id))?;
+
+    let password = cast_secrets::password(&id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| {
+            format!(
+                "'{}' has no password stored. Set one before going live.",
+                station.name
+            )
+        })?;
+
+    let config = crate::audio::broadcasting::StreamingServiceConfig {
+        server_host: station.server_host.clone(),
+        server_port: station.server_port as u16,
+        mount_point: station.mount_point.clone(),
+        password,
+        stream_name: station.stream_name.clone(),
+        stream_description: station.stream_description.clone(),
+        stream_genre: station.stream_genre.clone(),
+        stream_url: station.stream_url.clone(),
+        is_public: station.is_public,
+        selected_bitrate: station.bitrate_kbps as u32,
+        enable_variable_bitrate: station.variable_bitrate,
+        vbr_quality: station.vbr_quality as u8,
+        ..Default::default()
+    };
+
+    crate::commands::icecast::start_icecast_with_id(&state, id, config).await
+}
