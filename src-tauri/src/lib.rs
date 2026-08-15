@@ -41,6 +41,7 @@ use commands::debug::*;
 use commands::file_player::*;
 use commands::icecast::*;
 use commands::mixer::*;
+use commands::patch_colors::*;
 use commands::process_metrics::*;
 use commands::recording::*;
 use commands::streaming::*;
@@ -441,6 +442,9 @@ pub fn run() {
             list_audio_buses,
             restore_audio_buses,
             set_output_sources,
+            list_patch_colors,
+            set_patch_color,
+            clear_patch_color,
             create_audio_bus,
             remove_audio_bus,
             set_audio_bus_gain,

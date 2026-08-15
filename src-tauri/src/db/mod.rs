@@ -8,6 +8,7 @@ use std::time::Duration;
 
 pub mod audio_bus_service;
 pub mod broadcasts;
+pub mod patch_color_service;
 pub mod recordings;
 
 // SeaORM services
@@ -15,6 +16,7 @@ pub mod seaorm_services;
 
 pub use audio_bus_service::AudioBusService;
 pub use broadcasts::*;
+pub use patch_color_service::PatchColorService;
 pub use recordings::*;
 pub use seaorm_services::{
     AudioEffectsDefaultService, AudioMixerConfigurationService, ConfiguredAudioDeviceService,
