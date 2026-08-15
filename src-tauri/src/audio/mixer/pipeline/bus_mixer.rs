@@ -95,14 +95,12 @@ impl BusMixer {
                     .copied(),
             );
 
-            // A bus with nothing routed to it still owes its outputs a block.
-            // Writing nothing starves them and the output workers underrun.
+            // A bus exists because inputs reach it, so this only fires when a
+            // source stopped delivering mid-cycle. Its outputs are still owed a
+            // block either way: writing nothing starves them and they underrun.
             let mixed;
             let block: &[f32] = if routed.is_empty() {
-                if silence.len() != block_samples {
-                    silence.resize(block_samples, 0.0);
-                }
-                silence.as_slice() // any gain on silence is still silence
+                silence_block(silence, block_samples)
             } else {
                 mixed = apply_gain(
                     VirtualMixer::mix_input_samples_ref(&routed),
@@ -138,8 +136,33 @@ impl BusMixer {
             stats.samples_per_bus = block.len();
         }
 
+        // A destination told to take nothing is on no bus at all, but its worker
+        // is still draining a queue on a hardware clock. Silence keeps it fed;
+        // skipping it would underrun and be heard as a stutter on the outputs
+        // that *are* routed, since they share the mixer's pacing.
+        for output_id in registry.unfed_outputs() {
+            let Some(producer) = sinks.producers.get(output_id) else {
+                continue;
+            };
+
+            let block = silence_block(silence, block_samples);
+            let written = write_block(output_id, producer, block);
+            if let Some(tracker) = sinks.trackers.get(output_id) {
+                tracker.record_samples_written(written);
+            }
+            stats.outputs_written += 1;
+        }
+
         stats
     }
+}
+
+/// A block of silence of the right length, reusing the buffer between cycles
+fn silence_block(silence: &mut Vec<f32>, block_samples: usize) -> &[f32] {
+    if silence.len() != block_samples {
+        silence.resize(block_samples, 0.0);
+    }
+    silence.as_slice()
 }
 
 impl Default for BusMixer {

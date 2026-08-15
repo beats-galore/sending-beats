@@ -30,6 +30,13 @@ use routing::log_bus_result;
 /// Block size before any output device has said what its hardware wants
 const DEFAULT_MIX_BLOCK_SAMPLES: usize = 1024;
 
+/// Blocks an output may hold before the mixer stops producing
+///
+/// Production waits for *every* output to be under this at once, so it cannot be
+/// a single block: outputs drain on independent hardware clocks and are rarely
+/// all empty at the same instant. See the gate in the worker loop.
+const OUTPUT_TARGET_BLOCKS: usize = 3;
+
 /// Backlog a device may build before its oldest audio is dropped, in stereo samples
 ///
 /// ~85ms at 48kHz. Deliberately not a multiple of the block size: shrinking the
@@ -628,9 +635,20 @@ impl MixingLayer {
                 // The condition is how much the output is *holding*, not whether it
                 // has room: producing on room refills the ring to capacity each time
                 // a chunk drains, making the whole ring standing delay.
+                //
+                // The target has to cover more than a single block. Every output must
+                // be under it at the same instant, and outputs drain on their own
+                // hardware clocks — so a one-block target makes the mix wait for every
+                // ring to be empty simultaneously, a window that narrows with each
+                // output added. At two outputs it halves the production rate and the
+                // render callback pads the missing half with silence, which is what
+                // the crunch is. A few blocks in hand lets each output ride its own
+                // clock, at the cost of those blocks as standing delay — about a
+                // millisecond each at 48k stereo.
                 let sync_start = std::time::Instant::now();
 
-                let target_queued = target_downstream_samples(block_samples, mix_rate, 2);
+                let target_queued = target_downstream_samples(block_samples, mix_rate, 2)
+                    .max(block_samples * OUTPUT_TARGET_BLOCKS);
                 let mut outputs_ready = !output_rtrb_producers.is_empty();
                 for (device_id, producer) in output_rtrb_producers.iter() {
                     let producer_lock = match producer.lock() {

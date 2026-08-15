@@ -116,10 +116,19 @@ export const PatchCanvas = () => {
       channel.id !== selectedId ? 'collapsed' : channel.effects_enabled ? 'effects' : 'inspector',
   }));
 
-  // Main is open whenever nothing else is, so the column is never all shut and
-  // the mix a device falls back to is the one on show by default. Expanding
-  // another bus closes it; clicking away from that bus hands the focus back.
-  const expandedBusId = focused?.kind === 'bus' ? focused.busId : MAIN_BUS_ID;
+  // One bus is always open, so the column is never all shut. Main by default,
+  // falling back to the first — main is only present while some destination is
+  // still unrouted, and routing every destination by hand makes it go away.
+  const expandedBusId = useMemo(() => {
+    if (focused?.kind === 'bus' && buses.some((busEntry) => busEntry.id === focused.busId)) {
+      return focused.busId;
+    }
+    if (buses.some((busEntry) => busEntry.id === MAIN_BUS_ID)) {
+      return MAIN_BUS_ID;
+    }
+    return buses.at(0)?.id ?? null;
+  }, [focused, buses]);
+
   const busExpansions = useMemo(
     () => buses.map((busEntry) => busEntry.id === expandedBusId),
     [buses, expandedBusId]
