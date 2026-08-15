@@ -1,150 +1,138 @@
-# Sendin Beats - Radio Streaming Platform
+# Sendin Beats
 
-A comprehensive, cross-platform radio streaming application designed to replace
-and enhance tools like Ladiocast/Loopback and radio.co. Built with Tauri (Rust
-backend) + React TypeScript frontend.
+A radio streaming application for DJs. Live audio mixing, recording, and Icecast
+broadcasting in one desktop app — the job Ladiocast and Loopback do, without the
+hand-off between them.
 
-## 🎯 Project Vision
+Tauri (Rust) with a React TypeScript frontend. **macOS only** for now: the audio
+path is built directly on Core Audio and ScreenCaptureKit.
 
-Sendin Beats is a multi-phased radio streaming platform providing an all-in-one
-solution for DJs and radio stations, featuring virtual audio mixing, Icecast
-streaming, and broadcast automation.
+## What works
 
-## 🏗️ Current Architecture
+**Mixing**
 
-### Phase 1: Core Local Audio Functionality _(In Development)_
+- Multiple live inputs mixed to multiple destinations, at whatever sample rates
+  the hardware runs at
+- Bus routing — an input can reach some destinations and not others, so a source
+  can be monitored without going out on the broadcast
+- Per-channel gain, pan, mute and solo
+- Peak/RMS metering per channel, per bus, and on the master
+- Latency accounting for every stage of the pipeline
 
-- ✅ **Virtual Mixer** - Complete UI with channel strips, VU meters, EQ controls
-- ✅ **Cross-Platform Audio Engine** - Ultra-low latency processing architecture
-- ✅ **Audio Device Management** - Automatic enumeration and routing
-- 🔧 **System Audio Capture** - Platform-specific implementation needed
-- 🔧 **Real-time Mixing** - Core processing loops to implement
+**Sources**
 
-### Backend Audio Engine (`src-tauri/src/audio.rs`)
+- Core Audio input devices, including virtual ones such as BlackHole
+- Per-application audio capture via ScreenCaptureKit
+- System audio
+- File playback
 
-**578 lines of grade audio processing:**
+**Destinations**
 
-- Cross-platform audio I/O via `cpal`
-- Ultra-low latency design with lock-free ring buffers (`rtrb`)
-- audio processing (32-bit float, peak/RMS detection)
-- Virtual mixer with multi-channel routing
-- Real-time performance metrics
+- Any Core Audio output device
+- Icecast broadcast
+- Recording to WAV (16, 24 or 32-bit PCM) or MP3
 
-## ⚡ Key Features
+Recording and Icecast register as ordinary mixer outputs, so bus routing applies
+to them the same way it applies to hardware.
 
-### Virtual Audio Mixer (Ladiocast/Loopback Replacement)
+**Devices**
 
-- **Multi-Channel Input Support**: Microphone, system audio, applications, audio
-  interfaces
-- **Output Routing**: Headphones, speakers, main stream output, cue channels
-- **Ultra-Low Latency**: <10ms total pipeline latency for DJ use
-- **Controls**: Gain, pan, mute, solo, 3-band EQ per channel
-- **Real-time Analysis**: Peak/RMS metering, spectrum analysis
+- Hotplug detection, so a device appearing or disappearing is noticed without a
+  refresh
+- Health tracking with recovery for devices that fail while still listed
+- A reconnected input returns to the channel it was patched to
 
-### Performance Specifications
+**State**
 
-- **DJ Preset**: 256 samples (~5.3ms latency at 48kHz)
-- **Streaming Preset**: 1024 samples (~21.3ms latency)
-- **Audio Quality**: 32-bit float processing, >100dB dynamic range
-- **CPU Usage**: <5% on modern hardware during normal operation
+- SQLite, with mixer configurations, channel names, device routing and patch
+  colours stored per session
 
-## 🚀 Development Setup
+## Not working yet
 
-### Prerequisites
+Worth knowing before you go looking for these:
 
-- [Rust](https://rustup.rs/) (latest stable)
-- [Node.js](https://nodejs.org/) (18+)
-- [pnpm](https://pnpm.io/) package manager
+- **EQ, compressor and limiter do not affect audio.** The controls and the DSP
+  both exist, but the chain is not wired into the signal path — only gain, pan,
+  mute and solo reach the audio.
+- **FLAC recording** falls back to WAV.
+- **Windows and Linux** are not supported. There is no non-Core Audio
+  implementation of the capture or output path.
 
-### Audio System Requirements
+Anything else that is missing or broken is tracked in
+[issues](https://github.com/beats-galore/sending-beats/issues).
 
-- **macOS**: Core Audio integration (BlackHole recommended for system audio)
-- **Windows**: WASAPI support, virtual audio cables
-- **Linux**: ALSA/PulseAudio, JACK compatibility
+## Getting started
 
-### Development Commands
+Requirements: [Rust](https://rustup.rs/) (stable), Node 18+,
+[pnpm](https://pnpm.io/), Xcode command line tools, and macOS.
 
 ```bash
-# Install dependencies
 pnpm install
-
-# Start development server (both frontend and backend)
-pnpm dev
-
-# Build application
-pnpm build
-
-# Tauri-specific commands
-pnpm tauri dev      # Development with hot reload
-pnpm tauri build    # Production build
-
-# Type checking
-tsc
+pnpm tauri:dev
 ```
 
-## 📋 Current Implementation Status
+`tauri:dev` builds the Swift ScreenCaptureKit helper first, then starts the app
+with logs written to `logs/output.log`.
 
-### ✅ Complete
+macOS will ask for microphone and screen recording permission the first time
+audio is captured. Screen recording is what ScreenCaptureKit needs to capture
+another application's audio.
 
-- mixer UI architecture
-- Cross-platform audio device enumeration
-- Virtual mixer configuration system
-- Real-time metrics framework
-- Ultra-low latency buffer management
+## Working on it
 
-## 🎚️ Technical Architecture Highlights
+```bash
+turbo rust:check          # type check the backend
+pnpm test                 # backend tests
+turbo lint:fix -- <paths> # lint changed frontend files
+turbo rust:fmt            # format Rust
+```
 
-### Cross-Platform Audio
+Run commands from the repository root. `turbo` drives both sides of the project.
 
-- **Lock-free Ring Buffers**: Zero-copy audio transfer
-- **Hardware Buffer Alignment**: Optimized for audio interfaces
-- **SIMD Processing**: Vectorized calculations where possible
-- **Real-time Thread Priority**: OS-level scheduling optimization
+### Database
 
-### Audio Standards
+Migrations live in `src-tauri/migrations` and run automatically on startup.
 
-- **32-bit Float Processing**: Studio-quality internal precision
-- **Sample Rate Flexibility**: 44.1kHz to 192kHz support
-- **Bit-perfect Output**: Lossless audio chain
-- **Industry Metering**: True peak and RMS measurements
+```bash
+pnpm migration <name>   # create a migration
+pnpm migrate            # apply pending migrations, needs cargo install sqlx-cli
+```
 
-### Extensible Design
+Starting the app is usually enough — `pnpm migrate` only exists for applying
+them without a launch, and needs `sqlx-cli` installed separately.
 
-- **Plugin Architecture**: VST/AU plugin support ready
-- **Modular Effects**: Easy addition of audio processors
-- **Scalable Channels**: Dynamic channel management
-- **Multi-output Routing**: Flexible routing matrix
+Schema changes need matching SeaORM entities in `src-tauri/src/entities`.
 
-## 🎵 Future Roadmap
+## How it is put together
 
-### Phase 2: Enhanced Local Features
+Audio runs as a four-layer pipeline, each layer on its own thread and connected
+by lock-free ring buffers:
 
-- Modern UI design system overhaul
-- Local configuration persistence
-- Audio recording and playback
-- MIDI controller integration
+1. **Capture** — Core Audio and ScreenCaptureKit callbacks write incoming audio
+2. **Input workers** — resample to the mix rate, apply channel controls, meter
+3. **Mixing** — sum each bus and hand it to the outputs taking it
+4. **Output workers** — resample to each device's rate and write to hardware
 
-### Phase 3: Cloud Platform
+The mixing layer produces on a fixed block, paced by how much the outputs are
+holding, so the output hardware's drain rate is what clocks the mixer.
 
-- Multi-organization user system
-- Schedule management (radio.co replacement)
-- Fallback content automation
-- Cloud-synced configurations
+```
+src-tauri/src/
+├── audio/
+│   ├── mixer/pipeline/     the four layers, bus routing, block accumulation
+│   ├── devices/            enumeration, Core Audio streams, hotplug, health
+│   ├── effects/            EQ, compressor, limiter, channel controls
+│   ├── recording/          encoders and file writing
+│   ├── broadcasting/       Icecast
+│   ├── screencapture/      per-application capture (Swift FFI)
+│   └── file_player/
+├── commands/               Tauri command surface
+├── db/                     services over the SQLite schema
+└── entities/               SeaORM models
+src-swift/                  ScreenCaptureKit helper
+src/                        React frontend
+```
 
-## 🛡️ Design Philosophy
+## License
 
-**Grade**: Industry-standard controls, metering, and performance suitable for
-broadcast use.
-
-**Cross-Platform**: Native desktop application with OS-specific audio subsystem
-integration.
-
-**Ultra-Low Latency**: Real-time performance optimized for live DJ use and
-broadcasting.
-
-**Extensible**: Plugin-ready architecture supporting future VST/AU integration
-and advanced features.
-
----
-
-_Built with Tauri, React, and Rust for audio streaming._
+Not yet licensed.
