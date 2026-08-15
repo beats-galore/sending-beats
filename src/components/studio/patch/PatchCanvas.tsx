@@ -3,8 +3,10 @@ import { useCallback, useMemo, useState } from 'react';
 
 import { useChannelsData } from '../../../hooks';
 import { useMixerStore } from '../../../stores';
+import { useStudioStore } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
+import { useChannelCardVariants } from '../hooks/use-channel-card-variants';
 import { useFocusedNode } from '../hooks/use-focused-node';
 import { usePatchOutputs } from '../hooks/use-patch-outputs';
 import { useStreamTransport } from '../hooks/use-stream-transport';
@@ -31,7 +33,7 @@ import {
   sourceStackHeight,
   tapeTop,
 } from './patch-geometry';
-import type { ChannelExpansion, DestinationFocus } from './patch-geometry';
+import type { ChannelLayout, DestinationFocus } from './patch-geometry';
 import { TapeDestination } from './TapeDestination';
 
 const { source, bus, destination, canvas } = layout;
@@ -77,22 +79,27 @@ export const PatchCanvas = () => {
     [changeOutput]
   );
 
+  const clearSelection = useStudioStore((state) => state.clearSelection);
   const focused = useFocusedNode();
   const selectedId = focused?.kind === 'channel' ? focused.channelId : null;
   const destinationFocus: DestinationFocus =
     focused?.kind === 'cast' || focused?.kind === 'tape' ? focused.kind : null;
 
-  const expansion = channels.map<ChannelExpansion>((channel) =>
-    channel.id !== selectedId ? 'collapsed' : channel.effects_enabled ? 'effects' : 'inspector'
-  );
+  const variants = useChannelCardVariants();
+
+  const layouts = channels.map<ChannelLayout>((channel) => ({
+    variant: variants[channel.id] ?? 'device',
+    expansion:
+      channel.id !== selectedId ? 'collapsed' : channel.effects_enabled ? 'effects' : 'inspector',
+  }));
 
   const destinationCount = 2 + outputs.length;
-  const height = canvasHeight(expansion, destinationFocus, outputs.length, 0, false);
+  const height = canvasHeight(layouts, destinationFocus, outputs.length, 0, false);
 
   const cables = useMemo<Cable[]>(() => {
     const sourceCables: Cable[] = channels.map((channel, index) => ({
       id: `ch-${channel.id}`,
-      path: cablePath(channelPort(index, expansion), busInPort(index, channels.length)),
+      path: cablePath(channelPort(index, layouts), busInPort(index, channels.length)),
       tone: 'accent',
       active: true,
     }));
@@ -130,7 +137,7 @@ export const PatchCanvas = () => {
     return [...sourceCables, castCable, tapeCable, ...outputCables];
   }, [
     channels,
-    expansion,
+    layouts,
     destinationFocus,
     destinationCount,
     isLive,
@@ -140,6 +147,9 @@ export const PatchCanvas = () => {
 
   return (
     <Box
+      // Nodes stop their own clicks, so anything arriving here landed on bare
+      // canvas and means "close whatever is open".
+      onClick={clearSelection}
       style={{
         position: 'relative',
         width: canvas.width,
@@ -166,8 +176,9 @@ export const PatchCanvas = () => {
           key={channel.id}
           channel={channel}
           index={index}
-          top={channelTop(index, expansion)}
-          expansion={expansion[index]}
+          top={channelTop(index, layouts)}
+          expansion={layouts[index].expansion}
+          variant={layouts[index].variant}
         />
       ))}
 
@@ -179,7 +190,7 @@ export const PatchCanvas = () => {
         style={{
           position: 'absolute',
           left: source.x,
-          top: source.top + sourceStackHeight(expansion),
+          top: source.top + sourceStackHeight(layouts),
           width: source.addNodeWidth,
         }}
       />

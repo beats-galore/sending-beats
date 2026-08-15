@@ -39,6 +39,16 @@ export const useDragValue = ({ min, max, axis = 'x', onChange }: DragValueOption
       const handleUp = () => {
         window.removeEventListener('pointermove', handleMove);
         window.removeEventListener('pointerup', handleUp);
+
+        // A drag ends with a click on whatever ancestor the press and the
+        // release share — the canvas, once the pointer has left the track. That
+        // would read as a click on the canvas and close the open node, so the
+        // one click a drag produces is swallowed before anything sees it.
+        const swallowDragClick = (clickEvent: MouseEvent) => clickEvent.stopPropagation();
+        window.addEventListener('click', swallowDragClick, { capture: true, once: true });
+        // Not every drag ends in a click; drop the listener rather than leave it
+        // waiting to eat an unrelated one.
+        setTimeout(() => window.removeEventListener('click', swallowDragClick, true), 0);
       };
 
       window.addEventListener('pointermove', handleMove);

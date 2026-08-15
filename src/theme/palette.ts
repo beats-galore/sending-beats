@@ -64,6 +64,21 @@ export const amber: MantineColorsTuple = [
   '#463B18', // warn border
 ];
 
+// Playback — where a source is up to in what it is playing. Deliberately apart
+// from the accent, so a playhead never reads as signal.
+export const orchid: MantineColorsTuple = [
+  '#F4EDFF',
+  '#E6D8FF',
+  '#D3BCFF', // playback
+  '#BE9DFB',
+  '#A97FF5',
+  '#9668E0',
+  '#7E54C4', // playback, paused
+  '#63409C',
+  '#452C6E',
+  '#241839',
+];
+
 // Mantine's built-in `dark` scale, remapped onto the palette above.
 //
 // Stock Mantine components read specific shades of `dark` directly — inputs take

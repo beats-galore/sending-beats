@@ -519,7 +519,7 @@ impl CoreAudioIntegration {
         Ok(cf_string.to_string())
     }
 
-    fn translate_uid_to_device(&self, uid: &str) -> Result<AudioDeviceID> {
+    pub fn translate_uid_to_device(&self, uid: &str) -> Result<AudioDeviceID> {
         use std::mem;
 
         let address = AudioObjectPropertyAddress {

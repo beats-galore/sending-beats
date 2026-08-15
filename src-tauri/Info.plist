@@ -13,6 +13,12 @@
     <key>NSAudioCaptureUsageDescription</key>
     <string>Sendin Beats needs to capture audio from other applications to enable direct application audio input without requiring virtual audio devices.</string>
 
+    <!-- Required for the Automation consent prompt when reading track metadata
+         from Apple Music and Spotify. Without this key macOS denies the Apple
+         Event outright instead of asking the user. -->
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Sendin Beats reads the current track title and artist from Apple Music and Spotify so it can show and broadcast what is playing.</string>
+
     <!-- Bundle Information -->
     <key>CFBundleName</key>
     <string>Sendin Beats</string>

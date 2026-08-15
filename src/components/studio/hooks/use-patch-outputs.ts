@@ -33,7 +33,7 @@ export type PatchOutput = {
 export const usePatchOutputs = () => {
   const { activeSession } = useConfigurationStore();
   const { mixerConfig, setMasterOutputDevice } = useMasterSectionData();
-  const { outputDevices } = useAudioDevices();
+  const { outputDevices, disconnectedDeviceIds } = useAudioDevices();
   const restoreFailures = useMixerStore((state) => state.deviceRestoreFailures);
   const changeOutputDevice = useMixerStore((state) => state.changeOutputDevice);
 
@@ -57,12 +57,19 @@ export const usePatchOutputs = () => {
         live: mixerConfig?.master_output_device_id === device.deviceIdentifier,
         role: outputRoles[device.deviceIdentifier] ?? 'MAIN',
         gainDb: outputGains[device.deviceIdentifier] ?? 0,
-        // Presence wins over the restore record, which is only a snapshot of
-        // what failed at startup. A device plugged back in afterwards is
-        // available again, and reporting it offline hides the live destination.
-        unavailableReason: present
-          ? null
-          : (restoreFailure?.reason ?? 'Device is not currently available'),
+        // The watcher clears this the moment a device reappears and only puts
+        // it back when rebuilding the stream failed, so it outranks presence:
+        // the hardware is there but the master sum is not reaching it.
+        //
+        // Presence in turn wins over the restore record, which is only a
+        // snapshot of what failed at startup. A device plugged back in
+        // afterwards is available again, and reporting it offline hides the
+        // live destination.
+        unavailableReason: disconnectedDeviceIds.includes(device.deviceIdentifier)
+          ? 'Device reconnected but its stream could not be restored'
+          : present
+            ? null
+            : (restoreFailure?.reason ?? 'Device is not currently available'),
       };
     });
   }, [
@@ -71,6 +78,7 @@ export const usePatchOutputs = () => {
     outputRoles,
     outputGains,
     restoreFailures,
+    disconnectedDeviceIds,
     outputDevices,
   ]);
 

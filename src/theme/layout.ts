@@ -40,11 +40,21 @@ export const layout = {
     top: 24,
     width: 308,
     widthExpanded: 460,
-    height: 152,
+    height: 172,
     /** Focused with effects off, so the inspector is only the FX switch. */
-    heightInspector: 243,
+    heightInspector: 263,
     /** Focused with the effects chain showing. */
-    heightExpanded: 452,
+    heightExpanded: 472,
+    /** Thickness of the track progress bar on an application card. */
+    trackProgressHeight: 3,
+    /** Between the track's two lines of type and its progress bar. */
+    trackProgressGap: 4,
+    /**
+     * Extra room an application card takes for its track readout: two lines of
+     * type at `2xs` and `3xs` on the default 1.5 line height, then the progress
+     * bar and its gap, then the gap to the row below.
+     */
+    trackReadoutHeight: Math.ceil(10 * 1.5 + 9 * 1.5) + 4 + 3 + 8,
     gap: 20,
     /** Distance from a node's top edge to its output port centre. */
     portOffset: 59.5,

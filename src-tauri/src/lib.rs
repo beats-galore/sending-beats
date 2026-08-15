@@ -41,6 +41,7 @@ use commands::debug::*;
 use commands::file_player::*;
 use commands::icecast::*;
 use commands::mixer::*;
+use commands::now_playing::*;
 use commands::patch_colors::*;
 use commands::process_metrics::*;
 use commands::recording::*;
@@ -370,6 +371,7 @@ pub fn run() {
         .manage(recording_state)
         .manage(file_player_state)
         .manage(application_audio_state)
+        .manage(commands::now_playing::NowPlayingState::new())
         .manage(ProcessMonitorState(
             crate::process_metrics::ProcessMonitor::new(),
         ));
@@ -398,6 +400,27 @@ pub fn run() {
         }
     });
 
+    // Device hotplug tracking belongs to the app rather than the window: a
+    // disconnect has to be noticed, and a reconnect recovered, whether or not
+    // the UI is mounted to ask about it.
+    #[cfg(target_os = "macos")]
+    let builder = builder.setup(|app| {
+        let audio_state = app.state::<AudioState>();
+        match audio::devices::DeviceWatcher::start(
+            app.handle().clone(),
+            audio_state.device_manager.clone(),
+            audio_state.audio_command_tx.clone(),
+        ) {
+            Ok(watcher) => {
+                app.manage(watcher);
+            }
+            Err(error) => {
+                tracing::error!("Failed to start Core Audio device watcher: {}", error);
+            }
+        }
+        Ok(())
+    });
+
     builder
         .invoke_handler(tauri::generate_handler![
             // Application lifecycle commands
@@ -424,6 +447,12 @@ pub fn run() {
             set_output_stream,
             start_device_monitoring,
             get_device_monitoring_stats,
+            // Now-playing metadata commands
+            list_now_playing_players,
+            get_now_playing,
+            start_now_playing_watch,
+            stop_now_playing_watch,
+            is_now_playing_watch_running,
             // System audio commands
             enable_system_audio_capture,
             disable_system_audio_capture,

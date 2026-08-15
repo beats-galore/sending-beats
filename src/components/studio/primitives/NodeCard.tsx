@@ -41,7 +41,15 @@ export const NodeCard = ({
   bodyStyle,
 }: NodeCardProps) => (
   <Box
-    onClick={onClick}
+    // Held inside the node: the canvas clears the selection on any click that
+    // reaches it, and a click on a node is not a click on the canvas.
+    onClick={
+      onClick &&
+      ((event) => {
+        event.stopPropagation();
+        onClick(event);
+      })
+    }
     style={{
       position: 'absolute',
       left: position.left,

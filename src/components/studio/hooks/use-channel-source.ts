@@ -12,7 +12,7 @@ import { asDeviceIdentifier } from '../../../types/device-identifier';
  * through the same call — an identifier prefixed `app-` marks the tap case.
  */
 export const useChannelSource = (channelId: number) => {
-  const { inputDevices, refreshDevices } = useAudioDevices();
+  const { inputDevices, refreshDevices, disconnectedDeviceIds } = useAudioDevices();
   const applicationAudio = useApplicationAudio();
   const { activeSession, updateConfiguredDevice, removeConfiguredDevice } = useConfigurationStore();
   const restoreFailures = useMixerStore((state) => state.deviceRestoreFailures);
@@ -65,6 +65,14 @@ export const useChannelSource = (channelId: number) => {
     }
 
     const identifier = configuredDevice.deviceIdentifier;
+
+    // The watcher clears this the moment a device reappears and only puts it
+    // back when rebuilding the stream failed, so it outranks presence: the
+    // hardware is there but nothing is reading it.
+    if (disconnectedDeviceIds.includes(identifier)) {
+      return 'Device reconnected but its stream could not be restored';
+    }
+
     const isApp = identifier.startsWith('app-');
     const present = isApp
       ? applicationAudio.knownApps.some((app) => `app-${app.bundle_id}` === identifier)
@@ -81,7 +89,13 @@ export const useChannelSource = (channelId: number) => {
     );
 
     return restoreFailure?.reason ?? 'Device is not currently available';
-  }, [configuredDevice, restoreFailures, inputDevices, applicationAudio.knownApps]);
+  }, [
+    configuredDevice,
+    restoreFailures,
+    disconnectedDeviceIds,
+    inputDevices,
+    applicationAudio.knownApps,
+  ]);
 
   const setSource = useCallback(
     async (deviceId: string) => {

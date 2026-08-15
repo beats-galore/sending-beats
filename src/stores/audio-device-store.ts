@@ -1,11 +1,21 @@
 // Zustand store for audio device state management
+import { listen } from '@tauri-apps/api/event';
 import isEqual from 'fast-deep-equal';
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 
 import { audioService, deviceService } from '../services';
-
 import type { AudioDeviceInfo } from '../types';
+import {
+  DEVICES_CHANGED_EVENT,
+  DEVICE_DISCONNECTED_EVENT,
+  DEVICE_RECONNECTED_EVENT,
+} from '../types/device-hotplug.types';
+
+import type {
+  DeviceDisconnectedEvent,
+  DeviceReconnectedEvent,
+} from '../types/device-hotplug.types';
 
 type AudioDeviceStore = {
   // State
@@ -13,6 +23,9 @@ type AudioDeviceStore = {
   isLoading: boolean;
   initialLoadCompleted: boolean;
   error: string | null;
+  /** Devices that vanished while in use, cleared when they come back. */
+  disconnectedDeviceIds: string[];
+  hotplugSubscribed: boolean;
 
   // Computed values (these will be updated when devices change)
   inputDevices: AudioDeviceInfo[];
@@ -23,6 +36,8 @@ type AudioDeviceStore = {
   // Actions
   loadDevices: () => Promise<void>;
   refreshDevices: () => Promise<void>;
+  /** Attach to the backend device watcher. Idempotent. */
+  subscribeToHotplug: () => Promise<void>;
   setError: (error: string | null) => void;
   clearError: () => void;
 
@@ -32,6 +47,38 @@ type AudioDeviceStore = {
   isValidOutput: (deviceId: string) => boolean;
 };
 
+/**
+ * Recompute the derived device lists, keeping the previous array identity for
+ * anything that did not actually change so selectors do not re-render.
+ */
+const deriveDeviceState = (
+  devices: AudioDeviceInfo[],
+  state: AudioDeviceStore
+): Partial<AudioDeviceStore> => {
+  const inputDevices = deviceService.getInputDevices(devices);
+  const outputDevices = deviceService.getOutputDevices(devices);
+  const defaultInputDevice = deviceService.getDefaultInputDevice(devices) ?? null;
+  const defaultOutputDevice = deviceService.getDefaultOutputDevice(devices) ?? null;
+
+  const updates: Partial<AudioDeviceStore> = {};
+  if (!isEqual(state.devices, devices)) {
+    updates.devices = devices;
+  }
+  if (!isEqual(state.inputDevices, inputDevices)) {
+    updates.inputDevices = inputDevices;
+  }
+  if (!isEqual(state.outputDevices, outputDevices)) {
+    updates.outputDevices = outputDevices;
+  }
+  if (!isEqual(state.defaultInputDevice, defaultInputDevice)) {
+    updates.defaultInputDevice = defaultInputDevice;
+  }
+  if (!isEqual(state.defaultOutputDevice, defaultOutputDevice)) {
+    updates.defaultOutputDevice = defaultOutputDevice;
+  }
+  return updates;
+};
+
 export const useAudioDeviceStore = create<AudioDeviceStore>()(
   subscribeWithSelector((set, get) => ({
     // Initial state
@@ -39,6 +86,8 @@ export const useAudioDeviceStore = create<AudioDeviceStore>()(
     isLoading: false,
     initialLoadCompleted: false,
     error: null,
+    disconnectedDeviceIds: [],
+    hotplugSubscribed: false,
 
     // Computed values (updated whenever devices change)
     inputDevices: [],
@@ -164,6 +213,57 @@ export const useAudioDeviceStore = create<AudioDeviceStore>()(
           error: `Failed to refresh audio devices: ${errorMessage}`,
         });
       }
+    },
+
+    /**
+     * The backend re-enumerates on every Core Audio hotplug notification and
+     * pushes the result, so no polling is needed once this is attached.
+     */
+    subscribeToHotplug: async () => {
+      if (get().hotplugSubscribed) {
+        return;
+      }
+      set({ hotplugSubscribed: true });
+
+      await listen<AudioDeviceInfo[]>(DEVICES_CHANGED_EVENT, ({ payload }) => {
+        set((state) => {
+          const presentIds = new Set(payload.map((device) => device.id));
+          return {
+            ...deriveDeviceState(payload, state),
+            disconnectedDeviceIds: state.disconnectedDeviceIds.filter(
+              (deviceId) => !presentIds.has(deviceId)
+            ),
+          };
+        });
+      });
+
+      await listen<DeviceDisconnectedEvent>(DEVICE_DISCONNECTED_EVENT, ({ payload }) => {
+        console.warn(`🔌 Device disconnected: ${payload.deviceName} (${payload.deviceId})`);
+        set((state) =>
+          state.disconnectedDeviceIds.includes(payload.deviceId)
+            ? state
+            : { disconnectedDeviceIds: [...state.disconnectedDeviceIds, payload.deviceId] }
+        );
+      });
+
+      // Arrives after the device list, so a device whose stream could not be
+      // rebuilt goes back to showing an error rather than looking healthy
+      // just because the hardware is present again.
+      await listen<DeviceReconnectedEvent>(DEVICE_RECONNECTED_EVENT, ({ payload }) => {
+        if (payload.restored) {
+          console.info(
+            `🔌 Device restored: ${payload.deviceName} on channel ${payload.channelNumber}`
+          );
+          return;
+        }
+
+        console.error(`🔌 Device came back but could not be restored: ${payload.deviceName}`);
+        set((state) =>
+          state.disconnectedDeviceIds.includes(payload.deviceId)
+            ? state
+            : { disconnectedDeviceIds: [...state.disconnectedDeviceIds, payload.deviceId] }
+        );
+      });
     },
 
     // Error handling

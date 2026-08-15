@@ -52,6 +52,22 @@ solution for professional radio streaming.
 - Do not use the word "professional" to describe things when adding comments,
   writing code, writing documentation, filing bugs, etc.
 
+## Committing guidelines
+Do not include a tag in the commit message with this at the bottom: `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`
+Only include the high level details
+
+## Voice gudelines when responding to user
+Start every message with a reference to my name, i.e. Aaron, <rest of message>
+
+Voice guidelines in your responses:
+
+ISO 24495-1:2023: information should be relevant, findable, understandable, and usable.
+- W3C Cognitive Accessibility Guidance: clear words, literal language, short text, separate steps, short critical paths, and no reliance on memory. It explicitly considers ADHD, but is advisory rather than required for WAG conformance.
+- US Plain Writing Act: federal communication must be understandable on the first reading.
+- JAN ADHD guidance: recommends written, structured, step-by-step instructions. It is accommodation guidance, not a standard.
+
+I have adhd. Put the important information at the top, not mixed into an over explained multi pragraph description. High level important points first, prose explaining it after. Should be able to understand where we're at, what needs to be actioned by reading the first fewlines of the message, not having to extract it from extensive prose.
+
 ## Coding guidelines
 
 - **Do not overcomment**: The user directing you to change something in your
@@ -274,52 +290,7 @@ logging statements:
 4. Only apply these changes when already editing the code - don't make separate
    PRs just for log conversion
 
-## Current Implementation Status
 
-**Phase**: Early development - Virtual mixer UI implementation with backend
-infrastructure **Architecture**: Tauri (Rust backend) + React TypeScript
-frontend **Current Features**: Professional virtual mixer interface, audio
-device enumeration, streaming client foundation
-
-## MAJOR BREAKTHROUGH: Audio Engine is Working! 🎉
-
-### ✅ **AUDIO SYSTEM FULLY FUNCTIONAL** (Just Completed)
-
-- **Real Audio Capture**: Live audio input from microphones, virtual devices,
-  system audio
-- **Real Audio Output**: Sound playing through speakers, headphones, virtual
-  outputs
-- **Professional Audio Processing**: Live effects chain (EQ, compressor,
-  limiter)
-- **Real-time VU Meters**: Actual audio levels from captured samples
-- **Hardware-Synchronized Timing**: No more timing drift, callback-driven
-  processing
-
-### What's Currently Working
-
-- ✅ **REAL AUDIO SYSTEM**: Live capture, processing, and output working
-- ✅ **Professional Audio Pipeline**: Input → EQ → Compressor → Limiter → Master
-  → Output
-- ✅ **Hardware Synchronization**: Callback-driven processing eliminates timing
-  drift
-- ✅ **Real-time VU Meters**: Displaying actual audio levels from live
-  processing
-- ✅ **Multiple Audio Devices**: Support for BlackHole, system audio,
-  microphones, speakers
-- ✅ **Low-latency Processing**: Hardware-aligned buffer sizes for optimal
-  performance
-- ✅ **Professional Effects**: Working 3-band EQ, compressor, and limiter
-- ✅ **Virtual mixer UI**: Horizontal layout with real audio controls
-
-### Remaining Tasks (Minor Refinements)
-
-- 🔧 **Audio Effects Chain**: Test effects parameters and ensure artifacts-free
-  processing
-- 🔧 **Stereo Channel Mixing**: Verify L/R channel separation and mixing
-  accuracy
-- 🔧 **Performance Optimization**: Fine-tune buffer sizes and CPU usage
-- 🔧 **Error Handling**: Robust recovery from device disconnections
-- 🔧 **UI Polish**: Connect all mixer controls to real audio parameters
 
 ## Development Commands
 
@@ -374,23 +345,6 @@ it reproduces on a hand-built `<select>` with no React involved. Verify select
 state by reading `selectedIndex` / `selectedText` through `execute_script`, and
 ask the user what they actually see before concluding anything about a control's
 appearance.
-
-### Technical Implementation Notes
-
-- User has BlackHole 2CH, microphone, MacBook speakers, and BenQ monitor
-  available
-- Focus on macOS Core Audio implementation first
-- Use cpal for cross-platform audio stream management
-- Audio processing should happen in separate thread from UI
-- Maintain horizontal layout that user requested
-
-## Known Working Components
-
-- Device enumeration and filtering works correctly
-- UI polling and updates work at 10 FPS (100ms intervals)
-- Professional mixer interface is complete and responsive
-- Backend-frontend communication is solid
-- Effects parameter structures are implemented
 
 #### State Management Strategy
 

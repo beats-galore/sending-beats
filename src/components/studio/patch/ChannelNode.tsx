@@ -5,18 +5,19 @@ import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
 import type { AudioChannel } from '../../../types';
 import { asGain, meterPosition } from '../format';
+import { useChannelNowPlaying } from '../hooks/use-channel-now-playing';
 import { useChannelSource } from '../hooks/use-channel-source';
 import { usePatchChannel } from '../hooks/use-patch-channel';
 import { DragBar } from '../primitives/DragBar';
 import { LevelMeter } from '../primitives/LevelMeter';
-import { NodeCard } from '../primitives/NodeCard';
 import { Pill } from '../primitives/Pill';
 import { PortDot } from '../primitives/PortDot';
 import { StatusDot } from '../primitives/StatusDot';
+import { AppCard } from './AppCard';
 import { ChannelInspector } from './ChannelInspector';
 import { ChannelName } from './ChannelName';
-import { channelHeight, channelWidth } from './patch-geometry';
-import type { ChannelExpansion } from './patch-geometry';
+import { DeviceCard } from './DeviceCard';
+import type { ChannelCardVariant, ChannelExpansion } from './patch-geometry';
 
 const GAIN_MIN = -60;
 const GAIN_MAX = 12;
@@ -26,13 +27,15 @@ type ChannelNodeProps = {
   index: number;
   top: number;
   expansion: ChannelExpansion;
+  variant: ChannelCardVariant;
 };
 
 /** One source on the patch canvas: what it is, how loud, and how it is processed. */
-export const ChannelNode = ({ channel, index, top, expansion }: ChannelNodeProps) => {
+export const ChannelNode = ({ channel, index, top, expansion, variant }: ChannelNodeProps) => {
   const select = useStudioStore((state) => state.select);
   const patch = usePatchChannel(channel);
   const source = useChannelSource(channel.id);
+  const track = useChannelNowPlaying(source.configuredDevice?.deviceIdentifier);
   const expanded = expansion !== 'collapsed';
 
   // An unavailable source outranks mute and tap styling: the channel is patched
@@ -46,46 +49,44 @@ export const ChannelNode = ({ channel, index, top, expansion }: ChannelNodeProps
         ? 'warn'
         : 'accent';
 
-  return (
-    <NodeCard
-      position={{
-        left: layout.source.x,
-        top,
-        width: channelWidth(expansion),
-        height: channelHeight(expansion),
-      }}
-      selected={expanded}
-      borderColor={expanded ? color.acc : color.line}
-      onClick={() => select({ kind: 'channel', channelId: channel.id })}
-      ports={<PortDot tone={tone} side="right" top={layout.source.portOffset} />}
-      header={
-        <>
-          <Pill
-            tone={
-              unavailable
-                ? 'hot'
-                : patch.muted
-                  ? 'muted'
-                  : source.isApplicationTap
-                    ? 'warn'
-                    : 'accent'
-            }
-            filled
-          >
-            {String(index + 1).padStart(2, '0')}
-          </Pill>
-          <ChannelName
-            channelId={channel.id}
-            name={channel.name}
-            deviceName={source.configuredDevice?.deviceName ?? null}
-          />
-          <Text size="2xs" c={color.textFaint}>
-            ⌥{index + 1}
-          </Text>
-        </>
-      }
-      bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 8, overflow: 'hidden' }}
-    >
+  const card = {
+    expansion,
+    top,
+    selected: expanded,
+    borderColor: expanded ? color.acc : color.line,
+    onClick: () => select({ kind: 'channel', channelId: channel.id }),
+    ports: <PortDot tone={tone} side="right" top={layout.source.portOffset} />,
+    header: (
+      <>
+        <Pill
+          tone={
+            unavailable
+              ? 'hot'
+              : patch.muted
+                ? 'muted'
+                : source.isApplicationTap
+                  ? 'warn'
+                  : 'accent'
+          }
+          filled
+        >
+          {String(index + 1).padStart(2, '0')}
+        </Pill>
+        <ChannelName
+          channelId={channel.id}
+          name={channel.name}
+          deviceName={source.configuredDevice?.deviceName ?? null}
+          editable={expanded}
+        />
+        <Text size="2xs" c={color.textFaint}>
+          ⌥{index + 1}
+        </Text>
+      </>
+    ),
+  };
+
+  const body = (
+    <>
       <Group gap="xs" wrap="nowrap">
         <StatusDot
           tone={tone === 'dead' ? 'inert' : tone}
@@ -171,6 +172,16 @@ export const ChannelNode = ({ channel, index, top, expansion }: ChannelNodeProps
           port={index + 1}
         />
       )}
-    </NodeCard>
+    </>
   );
+
+  if (variant === 'app') {
+    return (
+      <AppCard {...card} track={track}>
+        {body}
+      </AppCard>
+    );
+  }
+
+  return <DeviceCard {...card}>{body}</DeviceCard>;
 };

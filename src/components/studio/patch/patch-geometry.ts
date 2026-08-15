@@ -15,10 +15,27 @@ const { source, bus, destination, canvas, patch } = layout;
 export const ChannelExpansion = ['collapsed', 'inspector', 'effects'] as const;
 export type ChannelExpansion = (typeof ChannelExpansion)[number];
 
+/**
+ * Which card a source is drawn as.
+ *
+ * An application the backend can read a track from stands taller, because its
+ * card carries a track readout the hardware card has no use for. The variant
+ * follows the patched source rather than whether something is playing, so a
+ * node keeps its size when playback stops.
+ */
+export const ChannelCardVariant = ['device', 'app'] as const;
+export type ChannelCardVariant = (typeof ChannelCardVariant)[number];
+
+/** Everything about a source node that decides how much room it takes. */
+export type ChannelLayout = {
+  variant: ChannelCardVariant;
+  expansion: ChannelExpansion;
+};
+
 export const channelWidth = (expansion: ChannelExpansion): number =>
   expansion === 'collapsed' ? source.width : source.widthExpanded;
 
-export const channelHeight = (expansion: ChannelExpansion): number => {
+const expansionHeight = (expansion: ChannelExpansion): number => {
   switch (expansion) {
     case 'collapsed':
       return source.height;
@@ -29,20 +46,23 @@ export const channelHeight = (expansion: ChannelExpansion): number => {
   }
 };
 
-/** Top edge of the node at `index`, given how far each node before it is opened. */
-export const channelTop = (index: number, expansion: ChannelExpansion[]): number =>
-  expansion
+export const channelHeight = ({ variant, expansion }: ChannelLayout): number =>
+  expansionHeight(expansion) + (variant === 'app' ? source.trackReadoutHeight : 0);
+
+/** Top edge of the node at `index`, given how much room each node before it takes. */
+export const channelTop = (index: number, layouts: ChannelLayout[]): number =>
+  layouts
     .slice(0, index)
-    .reduce<number>((top, state) => top + channelHeight(state) + source.gap, source.top);
+    .reduce<number>((top, channel) => top + channelHeight(channel) + source.gap, source.top);
 
 /** Total height of the source column including the trailing gap. */
-export const sourceStackHeight = (expansion: ChannelExpansion[]): number =>
-  expansion.reduce<number>((total, state) => total + channelHeight(state) + source.gap, 0);
+export const sourceStackHeight = (layouts: ChannelLayout[]): number =>
+  layouts.reduce<number>((total, channel) => total + channelHeight(channel) + source.gap, 0);
 
 /** Where a channel's output port sits, in canvas coordinates. */
-export const channelPort = (index: number, expansion: ChannelExpansion[]) => ({
-  x: source.x + channelWidth(expansion[index]),
-  y: channelTop(index, expansion) + source.portOffset,
+export const channelPort = (index: number, layouts: ChannelLayout[]) => ({
+  x: source.x + channelWidth(layouts[index].expansion),
+  y: channelTop(index, layouts) + source.portOffset,
 });
 
 /** Ports are spread evenly but never further apart than `portSpacing`. */
@@ -95,13 +115,13 @@ export const cablePath = (from: { x: number; y: number }, to: { x: number; y: nu
 
 /** Overall canvas height — tall enough for whichever column runs longest. */
 export const canvasHeight = (
-  expansion: ChannelExpansion[],
+  layouts: ChannelLayout[],
   focus: DestinationFocus,
   outputCount: number,
   extraCount: number,
   pickerOpen: boolean
 ): number => {
-  const sourceColumn = source.top + sourceStackHeight(expansion) + canvas.bottomPadding;
+  const sourceColumn = source.top + sourceStackHeight(layouts) + canvas.bottomPadding;
   const destinationColumn =
     extraTop(outputCount, focus) +
     extraCount * destination.extraStep +

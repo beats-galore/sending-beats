@@ -13,6 +13,7 @@ pub mod effects;
 pub mod events;
 pub mod file_player;
 pub mod mixer;
+pub mod now_playing;
 pub mod recording;
 pub mod tap;
 pub mod types;
