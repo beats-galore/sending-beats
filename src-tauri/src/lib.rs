@@ -386,6 +386,18 @@ pub fn run() {
     let builder = builder.on_window_event(|window, event| {
         if let tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed = event {
             let app_handle = window.app_handle();
+
+            // The now-playing adapter is a child process rather than a thread,
+            // so it survives the app unless something explicitly ends it.
+            if let Some(now_playing) =
+                app_handle.try_state::<commands::now_playing::NowPlayingState>()
+            {
+                let watcher = now_playing.watcher.clone();
+                tauri::async_runtime::spawn(async move {
+                    watcher.lock().await.stop();
+                });
+            }
+
             if let Some(audio_state) = app_handle.try_state::<AudioState>() {
                 let router = audio_state.system_audio_router.clone();
                 tauri::async_runtime::spawn(async move {
@@ -448,7 +460,6 @@ pub fn run() {
             start_device_monitoring,
             get_device_monitoring_stats,
             // Now-playing metadata commands
-            list_now_playing_players,
             get_now_playing,
             start_now_playing_watch,
             stop_now_playing_watch,

@@ -39,11 +39,6 @@ export type NowPlayingErrorEvent = {
   message: string;
 };
 
-export type NowPlayingPlayerInfo = {
-  bundleId: string;
-  displayName: string;
-};
-
 export const NOW_PLAYING_CHANGED_EVENT = 'now-playing-changed';
 export const NOW_PLAYING_ERROR_EVENT = 'now-playing-error';
 

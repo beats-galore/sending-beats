@@ -27,28 +27,6 @@ impl Default for NowPlayingState {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NowPlayingPlayerInfo {
-    pub bundle_id: String,
-    pub display_name: String,
-}
-
-/// Players this build can read track metadata from, so the frontend can tell
-/// which application inputs are worth showing a track readout for.
-#[tauri::command]
-pub async fn list_now_playing_players() -> Result<Vec<NowPlayingPlayerInfo>, String> {
-    log_command!("list_now_playing_players");
-
-    Ok(SupportedPlayer::ALL
-        .iter()
-        .map(|player| NowPlayingPlayerInfo {
-            bundle_id: player.bundle_id().to_string(),
-            display_name: player.display_name().to_string(),
-        })
-        .collect())
-}
-
 /// Read one player's current track immediately.
 #[tauri::command]
 pub async fn get_now_playing(bundle_id: String) -> Result<Option<NowPlayingTrack>, String> {

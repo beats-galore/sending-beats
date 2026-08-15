@@ -14,8 +14,8 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::path::PathBuf;
 use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Child, Command};
+use tokio::io::{AsyncBufReadExt, BufReader, Lines};
+use tokio::process::{Child, ChildStdout, Command};
 
 use super::types::{NowPlayingError, NowPlayingTrack, PlayerState};
 
@@ -243,22 +243,15 @@ mod tests {
     }
 }
 
-/// Read `stream` output line by line, handing each parsed session to `on_change`.
-pub async fn read_stream<F>(child: &mut Child, mut on_change: F)
-where
-    F: FnMut(Option<NowPlayingTrack>),
-{
-    let Some(stdout) = child.stdout.take() else {
-        return;
-    };
-
-    let mut reader = SessionReader::new();
-    let mut lines = BufReader::new(stdout).lines();
-
-    while let Ok(Some(line)) = lines.next_line().await {
-        if line.trim().is_empty() {
-            continue;
-        }
-        on_change(reader.accept(&line));
-    }
+/// Line reader over the adapter's output.
+///
+/// The child is deliberately left with the caller rather than moved in here:
+/// `kill_on_drop` only reaps the adapter when whoever owns the child drops it,
+/// so ownership has to sit in the task that gets aborted on shutdown. Handing
+/// it to a reader that outlives that task is what strands a perl process.
+pub fn stream_lines(child: &mut Child) -> Option<Lines<BufReader<ChildStdout>>> {
+    child
+        .stdout
+        .take()
+        .map(|stdout| BufReader::new(stdout).lines())
 }

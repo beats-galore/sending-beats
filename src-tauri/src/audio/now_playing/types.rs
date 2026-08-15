@@ -13,8 +13,6 @@ pub enum SupportedPlayer {
 }
 
 impl SupportedPlayer {
-    pub const ALL: [SupportedPlayer; 2] = [SupportedPlayer::AppleMusic, SupportedPlayer::Spotify];
-
     pub fn from_bundle_id(bundle_id: &str) -> Option<Self> {
         match bundle_id {
             "com.apple.Music" => Some(Self::AppleMusic),

@@ -12,7 +12,7 @@ use tracing::{info, warn};
 
 use super::applescript::fetch_now_playing;
 use super::configured_inputs::{configured_application_bundles, configured_players};
-use super::media_remote::{read_stream, spawn_stream, AdapterPaths};
+use super::media_remote::{spawn_stream, stream_lines, AdapterPaths, SessionReader};
 use super::types::{NowPlayingTrack, SupportedPlayer};
 use crate::db::AudioDatabase;
 use std::path::PathBuf;
@@ -174,22 +174,32 @@ async fn session_loop(app: AppHandle, database: Arc<AudioDatabase>, owner: Sessi
         }
     };
 
+    let Some(mut lines) = stream_lines(&mut child) else {
+        warn!(
+            "{} Adapter produced no output stream",
+            "NOW_PLAYING".on_magenta().white()
+        );
+        return;
+    };
+
     info!(
         "{} Following the system now-playing session",
         "NOW_PLAYING".on_magenta().white()
     );
 
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    let reader = tauri::async_runtime::spawn(async move {
-        read_stream(&mut child, |track| {
-            let _ = tx.send(track);
-        })
-        .await;
-    });
-
+    // `child` stays owned by this task and nothing else. Aborting the task drops
+    // it, and `kill_on_drop` reaps the adapter - which is the only thing that
+    // stops a perl process outliving the app that started it.
+    let mut session = SessionReader::new();
     let mut reported: Option<NowPlayingTrack> = None;
 
-    while let Some(track) = rx.recv().await {
+    while let Ok(Some(line)) = lines.next_line().await {
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let track = session.accept(&line);
+
         // Only speak for an application the mixer is actually capturing.
         let configured = match configured_application_bundles(database.sea_orm()).await {
             Ok(bundles) => bundles,
@@ -237,8 +247,6 @@ async fn session_loop(app: AppHandle, database: Arc<AudioDatabase>, owner: Sessi
             );
         }
     }
-
-    reader.abort();
 }
 
 /// Tell listeners the application that just lost the session has nothing playing.
