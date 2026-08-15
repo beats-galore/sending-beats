@@ -46,12 +46,22 @@ impl DeviceHealth {
         self.update_last_seen();
     }
 
+    /// Record that the device was seen during enumeration
+    ///
+    /// Presence proves the device exists, not that it opens cleanly, so error
+    /// counts survive. A device that had vanished is no longer disconnected.
+    pub fn mark_present(&mut self) {
+        if matches!(self.status, DeviceStatus::Disconnected) {
+            self.status = DeviceStatus::Connected;
+        }
+        self.update_last_seen();
+    }
+
     /// Update health status with a disconnection
     pub fn mark_disconnected(&mut self) {
         self.status = DeviceStatus::Disconnected;
         self.consecutive_errors += 1;
         self.error_count += 1;
-        self.update_last_seen();
     }
 
     /// Update health status with an error
@@ -59,7 +69,6 @@ impl DeviceHealth {
         self.status = DeviceStatus::Error(error);
         self.consecutive_errors += 1;
         self.error_count += 1;
-        self.update_last_seen();
     }
 
     /// Check if device should be avoided due to consecutive errors

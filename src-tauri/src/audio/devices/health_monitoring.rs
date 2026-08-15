@@ -27,17 +27,28 @@ impl DeviceHealthMonitor {
         }
     }
 
-    /// Initialize device health tracking for a device
+    /// Begin tracking a device, keeping the history of one already known
+    ///
+    /// Enumeration runs continuously, so overwriting the record here would reset
+    /// the error counts that `should_avoid` exists to accumulate.
     pub async fn initialize_device_health(&self, device_info: &AudioDeviceInfo) {
         let mut health_guard = self.device_health.lock().await;
 
-        let health = DeviceHealth::new_healthy(device_info.id.clone(), device_info.name.clone());
-
-        health_guard.insert(device_info.id.clone(), health);
-        crate::device_debug!(
-            "Initialized health tracking for device: {}",
-            device_info.name
-        );
+        match health_guard.get_mut(&device_info.id) {
+            Some(existing) => {
+                existing.device_name = device_info.name.clone();
+                existing.mark_present();
+            }
+            None => {
+                let health =
+                    DeviceHealth::new_healthy(device_info.id.clone(), device_info.name.clone());
+                health_guard.insert(device_info.id.clone(), health);
+                crate::device_debug!(
+                    "Initialized health tracking for device: {}",
+                    device_info.name
+                );
+            }
+        }
     }
 
     /// Check if a device is still available and update its health status
@@ -153,6 +164,181 @@ pub struct HealthStatistics {
     pub connected_devices: usize,
     pub error_devices: usize,
     pub avoided_devices: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn device(id: &str, name: &str) -> AudioDeviceInfo {
+        AudioDeviceInfo {
+            id: id.to_string(),
+            name: name.to_string(),
+            uid: None,
+            is_input: true,
+            is_output: false,
+            is_default: false,
+            supported_sample_rates: vec![48000],
+            supported_channels: vec![2],
+            host_api: "CoreAudio".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn enumeration_does_not_erase_recorded_errors() {
+        let monitor = DeviceHealthMonitor::new();
+        let device = device("mic-1", "Microphone");
+
+        monitor.initialize_device_health(&device).await;
+        monitor
+            .report_device_error("mic-1", "stream failed to open".to_string())
+            .await;
+
+        // Enumeration runs constantly; it must not look like a clean slate
+        monitor.initialize_device_health(&device).await;
+
+        let health = monitor.get_device_health("mic-1").await.unwrap();
+        assert_eq!(health.consecutive_errors, 1);
+        assert_eq!(health.error_count, 1);
+        assert!(matches!(health.status, DeviceStatus::Error(_)));
+    }
+
+    #[tokio::test]
+    async fn repeated_errors_eventually_flag_a_device_to_avoid() {
+        let monitor = DeviceHealthMonitor::new();
+        let device = device("mic-1", "Microphone");
+        monitor.initialize_device_health(&device).await;
+
+        for attempt in 0..3 {
+            monitor
+                .report_device_error("mic-1", format!("failure {}", attempt))
+                .await;
+            // Each retry re-enumerates before touching the device again
+            monitor.initialize_device_health(&device).await;
+        }
+
+        assert!(monitor.should_avoid_device("mic-1").await);
+        assert_eq!(
+            monitor
+                .get_device_health("mic-1")
+                .await
+                .unwrap()
+                .error_count,
+            3
+        );
+    }
+
+    #[tokio::test]
+    async fn a_successful_check_clears_the_error_streak() {
+        let monitor = DeviceHealthMonitor::new();
+        let device = device("mic-1", "Microphone");
+        monitor.initialize_device_health(&device).await;
+
+        for _ in 0..3 {
+            monitor
+                .report_device_error("mic-1", "failure".to_string())
+                .await;
+        }
+        assert!(monitor.should_avoid_device("mic-1").await);
+
+        monitor.check_device_health("mic-1", true).await.unwrap();
+
+        let health = monitor.get_device_health("mic-1").await.unwrap();
+        assert_eq!(health.consecutive_errors, 0, "streak resets");
+        assert_eq!(health.error_count, 3, "lifetime total is kept");
+        assert!(!monitor.should_avoid_device("mic-1").await);
+    }
+
+    #[tokio::test]
+    async fn reappearing_after_a_disconnect_marks_the_device_connected() {
+        let monitor = DeviceHealthMonitor::new();
+        let device = device("mic-1", "Microphone");
+        monitor.initialize_device_health(&device).await;
+
+        monitor.check_device_health("mic-1", false).await.unwrap();
+        let disconnected = monitor.get_device_health("mic-1").await.unwrap();
+        assert!(matches!(disconnected.status, DeviceStatus::Disconnected));
+
+        monitor.initialize_device_health(&device).await;
+
+        let health = monitor.get_device_health("mic-1").await.unwrap();
+        assert!(matches!(health.status, DeviceStatus::Connected));
+        assert_eq!(health.error_count, 1, "the disconnect is still on record");
+    }
+
+    #[tokio::test]
+    async fn last_seen_tracks_presence_rather_than_the_latest_update() {
+        let monitor = DeviceHealthMonitor::new();
+        let device = device("mic-1", "Microphone");
+        monitor.initialize_device_health(&device).await;
+
+        let seen_while_present = monitor.get_device_health("mic-1").await.unwrap().last_seen;
+
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        monitor
+            .report_device_error("mic-1", "failure".to_string())
+            .await;
+
+        assert_eq!(
+            monitor.get_device_health("mic-1").await.unwrap().last_seen,
+            seen_while_present,
+            "an error is not a sighting"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_renamed_device_keeps_its_history_under_the_same_id() {
+        let monitor = DeviceHealthMonitor::new();
+        monitor
+            .initialize_device_health(&device("mic-1", "Microphone"))
+            .await;
+        monitor
+            .report_device_error("mic-1", "failure".to_string())
+            .await;
+
+        monitor
+            .initialize_device_health(&device("mic-1", "Studio Microphone"))
+            .await;
+
+        let health = monitor.get_device_health("mic-1").await.unwrap();
+        assert_eq!(health.device_name, "Studio Microphone");
+        assert_eq!(health.consecutive_errors, 1);
+    }
+
+    #[tokio::test]
+    async fn health_statistics_count_each_device_once() {
+        let monitor = DeviceHealthMonitor::new();
+        monitor
+            .initialize_device_health(&device("mic-1", "Microphone"))
+            .await;
+        monitor
+            .initialize_device_health(&device("out-1", "Speakers"))
+            .await;
+        // A second enumeration pass must not double count
+        monitor
+            .initialize_device_health(&device("mic-1", "Microphone"))
+            .await;
+
+        for _ in 0..3 {
+            monitor
+                .report_device_error("mic-1", "failure".to_string())
+                .await;
+        }
+
+        let stats = monitor.get_health_statistics().await;
+        assert_eq!(stats.total_devices, 2);
+        assert_eq!(stats.connected_devices, 1);
+        assert_eq!(stats.error_devices, 1);
+        assert_eq!(stats.avoided_devices, 1);
+    }
+
+    #[tokio::test]
+    async fn an_untracked_device_is_not_avoided() {
+        let monitor = DeviceHealthMonitor::new();
+        assert!(!monitor.should_avoid_device("never-seen").await);
+        assert!(monitor.get_device_health("never-seen").await.is_none());
+        assert!(monitor.get_all_device_health().await.is_empty());
+    }
 }
 
 impl std::fmt::Debug for DeviceHealthMonitor {
