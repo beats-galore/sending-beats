@@ -65,7 +65,7 @@ impl VirtualMixer {
 
     ///  audio mixing utility with stereo processing, smart gain management, and level calculation
     /// This operates on samples that are already at the same sample rate (after convert_inputs_to_mix_rate)
-    pub fn mix_input_samples_ref(input_samples: &[(String, &[f32])]) -> Vec<f32> {
+    pub fn mix_input_samples_ref(input_samples: &[(&str, &[f32])]) -> Vec<f32> {
         // TODO: Make automatic gain reduction configurable (see GitHub issue)
         // For now, disabled by default as it should be user-controlled
         const ENABLE_AUTO_GAIN_REDUCTION: bool = false;

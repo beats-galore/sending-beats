@@ -11,6 +11,8 @@
 
 pub mod audio_worker;
 pub mod block_accumulator;
+pub mod bus_mixer;
+pub mod bus_routing;
 pub mod input_worker;
 pub mod mixing_layer;
 pub mod output_worker;

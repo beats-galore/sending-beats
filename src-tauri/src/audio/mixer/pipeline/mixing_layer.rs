@@ -16,13 +16,16 @@ use tracing::{error, info, warn};
 
 use super::audio_worker::target_downstream_samples;
 use super::block_accumulator::BlockAccumulator;
+use super::bus_mixer::{BusMixer, OutputSinks};
 use super::pacing::jitter_cushion_samples;
 use super::realtime_thread;
 use crate::audio::mixer::latency_probe::{LatencyProbe, LatencyStage, StageGauge};
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
-use crate::audio::mixer::stream_management::virtual_mixer::VirtualMixer;
 use crate::audio::VUChannelService;
 use colored::*;
+
+mod routing;
+use routing::log_bus_result;
 
 /// Block size before any output device has said what its hardware wants
 const DEFAULT_MIX_BLOCK_SAMPLES: usize = 1024;
@@ -60,6 +63,25 @@ pub enum MixingLayerCommand {
     RemoveOutputProducer {
         device_id: String,
     },
+    CreateBus {
+        bus_id: String,
+        name: String,
+    },
+    RemoveBus {
+        bus_id: String,
+    },
+    SetBusGain {
+        bus_id: String,
+        gain: f32,
+    },
+    SetInputSends {
+        device_id: String,
+        bus_ids: Vec<String>,
+    },
+    SetOutputBus {
+        device_id: String,
+        bus_id: String,
+    },
 }
 
 /// Mixing layer that combines all processed input streams
@@ -75,6 +97,10 @@ pub struct MixingLayer {
 
     // Queue trackers for monitoring producer-side writes (one per output device)
     output_queue_trackers: HashMap<String, AtomicQueueTracker>,
+
+    // Which inputs feed which bus, and which outputs take it. Handed to the
+    // mixing thread on start and mutated through commands from then on.
+    bus_mixer: BusMixer,
 
     // Command channel for dynamic input stream management
     command_tx: mpsc::UnboundedSender<MixingLayerCommand>,
@@ -113,6 +139,7 @@ impl MixingLayer {
             input_queue_trackers: HashMap::new(),
             output_rtrb_producers: HashMap::new(),
             output_queue_trackers: HashMap::new(),
+            bus_mixer: BusMixer::new(),
             command_tx,
             target_sample_rate: Arc::new(AtomicU32::new(0)),
             master_gain: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
@@ -155,6 +182,9 @@ impl MixingLayer {
                 .insert(device_id.clone(), consumer);
             self.input_queue_trackers
                 .insert(device_id.clone(), queue_tracker);
+            self.bus_mixer
+                .registry_mut()
+                .attach_input(device_id.clone());
             info!(
                 "🎛️ {}: Queued input consumer for device '{}'",
                 "MIXING_LAYER".on_green().white(),
@@ -185,6 +215,7 @@ impl MixingLayer {
         } else {
             self.input_rtrb_consumers.remove(&device_id);
             self.input_queue_trackers.remove(&device_id);
+            self.bus_mixer.registry_mut().detach_input(&device_id);
             info!(
                 "🗑️ {}: Removed input consumer for device '{}' (not yet started)",
                 "MIXING_LAYER".on_green().white(),
@@ -226,6 +257,9 @@ impl MixingLayer {
                 .insert(device_id.clone(), producer);
             self.output_queue_trackers
                 .insert(device_id.clone(), queue_tracker);
+            self.bus_mixer
+                .registry_mut()
+                .attach_output(device_id.clone());
             info!(
                 "🔊 {}: Queued output producer for device '{}' (total: {})",
                 "MIXING_LAYER".on_green().white(),
@@ -261,6 +295,7 @@ impl MixingLayer {
         } else {
             self.output_rtrb_producers.remove(&device_id);
             self.output_queue_trackers.remove(&device_id);
+            self.bus_mixer.registry_mut().detach_output(&device_id);
             info!(
                 "🗑️ {}: Removed output producer for device '{}' (not yet started)",
                 "MIXING_LAYER".on_green().white(),
@@ -294,6 +329,7 @@ impl MixingLayer {
         let mut input_queue_trackers = std::mem::take(&mut self.input_queue_trackers);
         let mut output_rtrb_producers = std::mem::take(&mut self.output_rtrb_producers);
         let mut output_queue_trackers = std::mem::take(&mut self.output_queue_trackers);
+        let mut bus_mixer = std::mem::take(&mut self.bus_mixer);
         // Started unconditionally. The mixing layer starts with the first device,
         // which can be before the frontend has registered a channel, and it is
         // only ever started once — so creating this conditionally left master
@@ -382,6 +418,7 @@ impl MixingLayer {
                         } => {
                             input_rtrb_consumers.insert(device_id.clone(), consumer);
                             input_queue_trackers.insert(device_id.clone(), queue_tracker);
+                            bus_mixer.registry_mut().attach_input(device_id.clone());
                             info!(
                                 "🎛️ MIXING_LAYER_WORKER: Added input consumer for device '{}'",
                                 device_id
@@ -390,6 +427,7 @@ impl MixingLayer {
                         MixingLayerCommand::RemoveInputStream { device_id } => {
                             input_rtrb_consumers.remove(&device_id);
                             input_queue_trackers.remove(&device_id);
+                            bus_mixer.registry_mut().detach_input(&device_id);
                             block_accumulator.remove_device(&device_id);
                             backlog_gauges.remove(&device_id);
                             latency_probe.remove_device(&device_id);
@@ -406,6 +444,7 @@ impl MixingLayer {
                         } => {
                             output_rtrb_producers.insert(device_id.clone(), producer);
                             output_queue_trackers.insert(device_id.clone(), queue_tracker);
+                            bus_mixer.registry_mut().attach_output(device_id.clone());
                             info!(
                                 "🔊 MIXING_LAYER_WORKER: Added output producer for device '{}' (total: {})",
                                 device_id,
@@ -419,11 +458,49 @@ impl MixingLayer {
                             // would hold the mix at a standstill forever.
                             output_rtrb_producers.remove(&device_id);
                             output_queue_trackers.remove(&device_id);
+                            bus_mixer.registry_mut().detach_output(&device_id);
                             latency_probe.remove_device(&device_id);
                             info!(
                                 "🗑️ MIXING_LAYER_WORKER: Removed output producer for device '{}' (remaining: {})",
                                 device_id,
                                 output_rtrb_producers.len()
+                            );
+                        }
+                        MixingLayerCommand::CreateBus { bus_id, name } => {
+                            log_bus_result(
+                                "create bus",
+                                &bus_id,
+                                bus_mixer.registry_mut().create(bus_id.clone(), name),
+                            );
+                        }
+                        MixingLayerCommand::RemoveBus { bus_id } => {
+                            log_bus_result(
+                                "remove bus",
+                                &bus_id,
+                                bus_mixer.registry_mut().remove(&bus_id),
+                            );
+                        }
+                        MixingLayerCommand::SetBusGain { bus_id, gain } => {
+                            log_bus_result(
+                                "set bus gain",
+                                &bus_id,
+                                bus_mixer.registry_mut().set_gain(&bus_id, gain),
+                            );
+                        }
+                        MixingLayerCommand::SetInputSends { device_id, bus_ids } => {
+                            log_bus_result(
+                                "set input sends",
+                                &device_id,
+                                bus_mixer
+                                    .registry_mut()
+                                    .set_input_sends(&device_id, &bus_ids),
+                            );
+                        }
+                        MixingLayerCommand::SetOutputBus { device_id, bus_id } => {
+                            log_bus_result(
+                                "set output bus",
+                                &device_id,
+                                bus_mixer.registry_mut().set_output_bus(&device_id, &bus_id),
                             );
                         }
                     }
@@ -548,153 +625,58 @@ impl MixingLayer {
                 produced_block = synchronized_samples.is_some();
                 let sync_duration = sync_start.elapsed();
 
-                // **STEP 3**: Mix the block
+                // **STEP 3**: Mix each bus and hand it to the outputs taking it
+                //
+                // Outputs sharing a bus share its mix, so identically routed
+                // destinations cost one sum between them rather than one each.
                 let mixing_duration = if let Some(synchronized_samples) = synchronized_samples {
                     let mixing_start = std::time::Instant::now();
 
                     // Every block is already exactly block_samples long
-                    let prep_start = std::time::Instant::now();
-
-                    let input_samples_for_mixer: Vec<(String, &[f32])> = synchronized_samples
+                    let inputs: Vec<(&str, &[f32])> = synchronized_samples
                         .iter()
-                        .map(|(device_id, samples)| (device_id.clone(), samples.as_slice()))
+                        .map(|(device_id, samples)| (device_id.as_str(), samples.as_slice()))
                         .collect();
-                    let prep_duration = prep_start.elapsed();
 
-                    let active_inputs = input_samples_for_mixer.len();
+                    let master_gain_now = f32::from_bits(master_gain.load(Ordering::Relaxed));
+                    let stats = bus_mixer.mix_and_dispatch(
+                        &inputs,
+                        block_samples,
+                        master_gain_now,
+                        &OutputSinks {
+                            producers: &output_rtrb_producers,
+                            trackers: &output_queue_trackers,
+                        },
+                        master_vu_service.as_ref(),
+                    );
 
-                    // **DIAGNOSTIC**: Log input sample counts before mixing with detailed chunk info
-                    static PREMIX_LOG_COUNT: std::sync::atomic::AtomicU64 =
-                        std::sync::atomic::AtomicU64::new(0);
-                    let premix_count =
-                        PREMIX_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    if premix_count < 20 || premix_count % 500 == 0 {
-                        // Count chunks per device
-                        let mut device_chunks: std::collections::HashMap<String, Vec<usize>> =
-                            std::collections::HashMap::new();
-                        for (id, samples) in input_samples_for_mixer.iter() {
-                            device_chunks
-                                .entry(id.clone())
-                                .or_insert_with(Vec::new)
-                                .push(samples.len());
-                        }
+                    mix_cycles += 1;
+                    let total_mixing_duration = mixing_start.elapsed();
 
-                        let sample_details: Vec<String> = device_chunks
-                            .iter()
-                            .map(|(id, chunks)| {
-                                if chunks.len() == 1 {
-                                    format!("{}: {} samples", id, chunks[0])
-                                } else {
-                                    format!("{}: {} chunks {:?}", id, chunks.len(), chunks)
-                                }
-                            })
-                            .collect();
+                    if mix_cycles <= 5 || mix_cycles % 1000 == 0 {
                         info!(
-                            "🎛️ {}: Preparing to mix {} total chunks from {} devices: [{}]",
-                            "PRE_MIX".magenta(),
-                            input_samples_for_mixer.len(),
-                            device_chunks.len(),
-                            sample_details.join(", ")
+                            "🎵 {}: mixed {} inputs into {} buses ({} samples each) across {} outputs (cycle #{}, sync {}μs, total {}μs)",
+                            "MIXING_LAYER_TEMPORAL".on_green().white(),
+                            inputs.len(),
+                            stats.buses_mixed,
+                            stats.samples_per_bus,
+                            stats.outputs_written,
+                            mix_cycles,
+                            sync_duration.as_micros(),
+                            total_mixing_duration.as_micros()
                         );
                     }
 
-                    if !input_samples_for_mixer.is_empty() {
-                        let mix_start = std::time::Instant::now();
-                        let mixed_samples =
-                            VirtualMixer::mix_input_samples_ref(&input_samples_for_mixer);
-                        let mix_duration = mix_start.elapsed();
-
-                        // Apply master gain to the mixed samples
-                        let gain_start = std::time::Instant::now();
-                        let mut final_samples = mixed_samples;
-                        let current_gain = f32::from_bits(master_gain.load(Ordering::Relaxed));
-                        for sample in final_samples.iter_mut() {
-                            *sample *= current_gain;
-                        }
-                        let gain_duration = gain_start.elapsed();
-
-                        if let Some(ref vu_service) = master_vu_service {
-                            vu_service.queue_master_audio(&final_samples);
-                        }
-
-                        let samples_count = final_samples.len(); // Get count before moving
-
-                        // Step 3: Write mixed audio directly to all output RTRB queues
-                        let broadcast_start = std::time::Instant::now();
-
-                        for (device_id, producer) in output_rtrb_producers.iter() {
-                            let mut producer_lock = match producer.lock() {
-                                Ok(guard) => guard,
-                                Err(poisoned) => poisoned.into_inner(),
-                            };
-                            let mut samples_written = 0;
-                            let mut remaining = final_samples.as_slice();
-
-                            // Write samples to RTRB queue using the same pattern as audio_worker
-                            while !remaining.is_empty() && samples_written < final_samples.len() {
-                                let chunk_size = remaining.len().min(producer_lock.slots());
-                                if chunk_size == 0 {
-                                    static QUEUE_FULL_LOG: std::sync::atomic::AtomicU64 =
-                                        std::sync::atomic::AtomicU64::new(0);
-                                    let log_count = QUEUE_FULL_LOG
-                                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                    if log_count % 1000 == 0 {
-                                        warn!(
-                                            "⚠️ {}: Output '{}' RTRB queue full, dropping {} remaining samples (occurrence #{})",
-                                            "MIXING_LAYER".on_green().white(),
-                                            device_id,
-                                            remaining.len(),
-                                            log_count
-                                        );
-                                    }
-                                    break;
-                                }
-
-                                let chunk = &remaining[..chunk_size];
-                                for &sample in chunk {
-                                    if producer_lock.push(sample).is_err() {
-                                        break;
-                                    }
-                                    samples_written += 1;
-                                }
-                                remaining = &remaining[chunk_size..];
-                            }
-
-                            // Record samples written for queue tracking
-                            if let Some(tracker) = output_queue_trackers.get(device_id) {
-                                tracker.record_samples_written(samples_written);
-                            }
-                        }
-                        let broadcast_duration = broadcast_start.elapsed();
-
-                        mix_cycles += 1;
-
-                        let total_mixing_duration = mixing_start.elapsed();
-
-                        // Rate-limited logging (only when we actually mixed something)
-                        if mix_cycles <= 5 || mix_cycles % 1000 == 0 {
-                            info!("🎵 {}: TEMPORAL SYNC mixed {} inputs ({} samples) and wrote to {} outputs (cycle #{}, sync took {}μs, total {}μs)",
-                                  "MIXING_LAYER_TEMPORAL".on_green().white(),
-                                  active_inputs, samples_count, output_rtrb_producers.len(), mix_cycles, sync_duration.as_micros(), total_mixing_duration.as_micros());
-                        }
-
-                        // Performance monitoring with detailed breakdown (only when we actually mixed something)
-                        if total_mixing_duration.as_micros() > 1000 {
-                            warn!(
-                                "⏱️ {}: Slow mixing cycle: total {}μs (prep: {}μs, mix: {}μs, gain: {}μs, broadcast: {}μs)",
-                                "MIXING_LAYER_SLOW".on_green().white(),
-                                total_mixing_duration.as_micros(),
-                                prep_duration.as_micros(),
-                                mix_duration.as_micros(),
-                                gain_duration.as_micros(),
-                                broadcast_duration.as_micros()
-                            );
-                        }
-
-                        total_mixing_duration
-                    } else {
-                        std::time::Duration::ZERO
+                    if total_mixing_duration.as_micros() > 1000 {
+                        warn!(
+                            "⏱️ {}: Slow mixing cycle: {}μs across {} buses",
+                            "MIXING_LAYER_SLOW".on_green().white(),
+                            total_mixing_duration.as_micros(),
+                            stats.buses_mixed
+                        );
                     }
+
+                    total_mixing_duration
                 } else {
                     std::time::Duration::ZERO
                 };
