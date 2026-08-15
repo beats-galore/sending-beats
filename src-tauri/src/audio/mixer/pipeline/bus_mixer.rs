@@ -293,21 +293,17 @@ mod tests {
         assert_eq!(harness.drain("stream"), vec![0.25; BLOCK]);
     }
 
+    /// The point of the whole feature: cue/PFL, with neither source crossing over
     #[test]
-    fn an_input_reaches_only_the_outputs_on_its_bus() {
+    fn an_input_reaches_only_the_outputs_that_asked_for_it() {
         let mut mixer = BusMixer::new();
         let registry = mixer.registry_mut();
-        registry
-            .create("cue".to_string(), "Cue".to_string())
-            .unwrap();
         registry.attach_input("mic".to_string());
         registry.attach_input("deck".to_string());
         registry.attach_output("speakers".to_string());
         registry.attach_output("headphones".to_string());
-        registry
-            .set_input_sends("deck", &["cue".to_string()])
-            .unwrap();
-        registry.set_output_bus("headphones", "cue").unwrap();
+        registry.set_output_sources("speakers", &["mic".to_string()]);
+        registry.set_output_sources("headphones", &["deck".to_string()]);
 
         let mut harness = Harness::new(&["speakers", "headphones"]);
         let mic = [0.1f32; BLOCK];
@@ -321,7 +317,7 @@ mod tests {
             None,
         );
 
-        assert_eq!(stats.buses_mixed, 2);
+        assert_eq!(stats.buses_mixed, 2, "different sources, different mixes");
         assert_eq!(harness.drain("speakers"), vec![0.1; BLOCK], "deck excluded");
         assert_eq!(
             harness.drain("headphones"),
@@ -330,66 +326,99 @@ mod tests {
         );
     }
 
+    /// Destinations wanting the same sources are one mix, not two identical ones
     #[test]
-    fn an_input_sending_to_both_buses_reaches_both() {
+    fn outputs_asking_for_the_same_sources_share_a_bus() {
         let mut mixer = BusMixer::new();
         let registry = mixer.registry_mut();
-        registry
-            .create("cue".to_string(), "Cue".to_string())
-            .unwrap();
         registry.attach_input("mic".to_string());
+        registry.attach_input("deck".to_string());
         registry.attach_output("speakers".to_string());
         registry.attach_output("headphones".to_string());
-        registry
-            .set_input_sends("mic", &[MAIN_BUS_ID.to_string(), "cue".to_string()])
-            .unwrap();
-        registry.set_output_bus("headphones", "cue").unwrap();
+        registry.set_output_sources("speakers", &["mic".to_string()]);
+        registry.set_output_sources("headphones", &["mic".to_string()]);
+
+        let mut harness = Harness::new(&["speakers", "headphones"]);
+        let mic = [0.4f32; BLOCK];
+        let deck = [0.9f32; BLOCK];
+
+        let stats = mixer.mix_and_dispatch(
+            &[("mic", &mic), ("deck", &deck)],
+            BLOCK,
+            1.0,
+            &harness.sinks(),
+            None,
+        );
+
+        assert_eq!(stats.buses_mixed, 1, "summed once between them");
+        assert_eq!(stats.outputs_written, 2, "and written to both");
+        assert_eq!(harness.drain("speakers"), vec![0.4; BLOCK]);
+        assert_eq!(harness.drain("headphones"), vec![0.4; BLOCK]);
+    }
+
+    /// One source feeding two different mixes reaches both of them
+    #[test]
+    fn an_input_reaches_every_bus_that_asks_for_it() {
+        let mut mixer = BusMixer::new();
+        let registry = mixer.registry_mut();
+        registry.attach_input("mic".to_string());
+        registry.attach_input("deck".to_string());
+        registry.attach_output("speakers".to_string());
+        registry.attach_output("headphones".to_string());
+        registry.set_output_sources("speakers", &["mic".to_string(), "deck".to_string()]);
+        registry.set_output_sources("headphones", &["mic".to_string()]);
 
         let mut harness = Harness::new(&["speakers", "headphones"]);
         let mic = [0.5f32; BLOCK];
+        let deck = [0.25f32; BLOCK];
 
-        mixer.mix_and_dispatch(&[("mic", &mic)], BLOCK, 1.0, &harness.sinks(), None);
+        let stats = mixer.mix_and_dispatch(
+            &[("mic", &mic), ("deck", &deck)],
+            BLOCK,
+            1.0,
+            &harness.sinks(),
+            None,
+        );
 
-        assert_eq!(harness.drain("speakers"), vec![0.5; BLOCK]);
-        assert_eq!(harness.drain("headphones"), vec![0.5; BLOCK]);
+        assert_eq!(stats.buses_mixed, 2);
+        for sample in harness.drain("speakers") {
+            assert!((sample - 0.75).abs() < 1e-6, "mic and deck: got {}", sample);
+        }
+        assert_eq!(harness.drain("headphones"), vec![0.5; BLOCK], "mic alone");
     }
 
+    /// An output told to take nothing is on no bus, but still has a worker
     #[test]
-    fn a_bus_with_no_inputs_still_feeds_its_outputs_silence() {
+    fn an_output_routed_to_nothing_is_fed_silence() {
         let mut mixer = BusMixer::new();
         let registry = mixer.registry_mut();
-        registry
-            .create("cue".to_string(), "Cue".to_string())
-            .unwrap();
+        registry.attach_input("mic".to_string());
         registry.attach_output("headphones".to_string());
-        registry.set_output_bus("headphones", "cue").unwrap();
+        registry.set_output_sources("headphones", &[]);
 
         let mut harness = Harness::new(&["headphones"]);
+        let mic = [0.5f32; BLOCK];
 
-        mixer.mix_and_dispatch(&[], BLOCK, 1.0, &harness.sinks(), None);
+        let stats = mixer.mix_and_dispatch(&[("mic", &mic)], BLOCK, 1.0, &harness.sinks(), None);
 
-        // Writing nothing here would starve the output worker into an underrun
+        assert_eq!(stats.buses_mixed, 0, "no inputs, so it is not a mix");
+        // Writing nothing here would starve the output worker into an underrun,
+        // and every output shares the mixer's pacing, so the stall would be
+        // heard on the destinations that *are* routed.
         assert_eq!(harness.drain("headphones"), vec![0.0; BLOCK]);
     }
 
     #[test]
-    fn a_bus_nothing_takes_is_not_mixed() {
+    fn a_mix_nothing_takes_is_not_mixed() {
         let mut mixer = BusMixer::new();
-        let registry = mixer.registry_mut();
-        registry
-            .create("cue".to_string(), "Cue".to_string())
-            .unwrap();
-        registry.attach_input("mic".to_string());
-        registry
-            .set_input_sends("mic", &["cue".to_string()])
-            .unwrap();
+        mixer.registry_mut().attach_input("mic".to_string());
 
         let harness = Harness::new(&[]);
         let mic = [0.5f32; BLOCK];
 
         let stats = mixer.mix_and_dispatch(&[("mic", &mic)], BLOCK, 1.0, &harness.sinks(), None);
 
-        assert_eq!(stats.buses_mixed, 0);
+        assert_eq!(stats.buses_mixed, 0, "no destination, nothing to sum for");
     }
 
     #[test]

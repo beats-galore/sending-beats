@@ -164,6 +164,18 @@ mod tests {
             .expect("bus should exist")
     }
 
+    /// The bus a destination is on, which is the only one it can be on
+    fn bus_of<'a>(
+        layer: &'a MixingLayer,
+        output_id: &str,
+    ) -> crate::audio::mixer::pipeline::bus_routing::Bus {
+        layer
+            .buses()
+            .into_iter()
+            .find(|b| b.outputs.contains(output_id))
+            .expect("output should be on a bus")
+    }
+
     #[test]
     fn registered_devices_appear_on_the_main_bus() {
         let mut layer = layer();
@@ -178,29 +190,32 @@ mod tests {
     #[test]
     fn routing_reads_back_what_was_set() {
         let mut layer = layer();
+        add_input(&mut layer, "mic");
         add_input(&mut layer, "deck");
+        add_output(&mut layer, "speakers");
         add_output(&mut layer, "headphones");
-        layer
-            .create_bus("cue".to_string(), "Cue".to_string())
-            .unwrap();
 
         layer
-            .set_input_sends("deck".to_string(), vec!["cue".to_string()])
-            .unwrap();
-        layer
-            .set_output_bus("headphones".to_string(), "cue".to_string())
+            .set_output_sources("headphones".to_string(), vec!["deck".to_string()])
             .unwrap();
 
-        let cue = bus(&layer, "cue");
+        // Routing one destination away splits the mix rather than editing the
+        // one the other destination is still taking.
+        let cue = bus_of(&layer, "headphones");
         assert!(cue.inputs.contains("deck"));
-        assert!(cue.outputs.contains("headphones"));
-        assert!(!bus(&layer, MAIN_BUS_ID).inputs.contains("deck"));
+        assert!(!cue.inputs.contains("mic"));
+        assert_ne!(cue.id, MAIN_BUS_ID);
+
+        let main = bus(&layer, MAIN_BUS_ID);
+        assert!(main.outputs.contains("speakers"));
+        assert!(main.inputs.contains("mic"));
     }
 
     #[test]
     fn an_invalid_change_is_rejected_rather_than_reported_as_applied() {
         let mut layer = layer();
         add_input(&mut layer, "mic");
+        add_output(&mut layer, "speakers");
 
         let result = layer.set_input_sends("mic".to_string(), vec!["nope".to_string()]);
 
@@ -212,9 +227,11 @@ mod tests {
     async fn routing_survives_the_mixing_thread_starting() {
         let mut layer = layer();
         add_input(&mut layer, "mic");
+        add_input(&mut layer, "deck");
         add_output(&mut layer, "speakers");
+        add_output(&mut layer, "headphones");
         layer
-            .create_bus("cue".to_string(), "Cue".to_string())
+            .set_output_sources("headphones".to_string(), vec!["deck".to_string()])
             .unwrap();
         layer.update_target_sample_rate(48_000);
 
@@ -233,11 +250,14 @@ mod tests {
     #[tokio::test]
     async fn a_device_added_while_running_is_still_visible() {
         let mut layer = layer();
+        add_output(&mut layer, "speakers");
         layer.update_target_sample_rate(48_000);
         layer.start(crate::audio::new_shared_vu_channel()).unwrap();
 
         add_input(&mut layer, "late-mic");
 
+        // An unrouted destination takes whatever is attached, so a source added
+        // after the fact is audible without being routed by hand.
         assert!(bus(&layer, MAIN_BUS_ID).inputs.contains("late-mic"));
 
         layer.stop().await.unwrap();
