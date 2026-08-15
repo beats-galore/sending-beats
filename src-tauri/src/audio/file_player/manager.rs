@@ -158,11 +158,11 @@ impl FilePlayerManager {
         let player = device.get_player();
 
         match action {
-            PlaybackAction::Play => player.play().await?,
+            PlaybackAction::Play => player.play()?,
             PlaybackAction::Pause => player.pause(),
             PlaybackAction::Stop => player.stop(),
-            PlaybackAction::SkipNext => player.skip_next().await?,
-            PlaybackAction::SkipPrevious => player.skip_previous().await?,
+            PlaybackAction::SkipNext => player.skip_next()?,
+            PlaybackAction::SkipPrevious => player.skip_previous()?,
             PlaybackAction::SetVolume(volume) => player.set_volume(volume),
         }
 

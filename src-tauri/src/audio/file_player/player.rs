@@ -182,7 +182,7 @@ impl AudioFilePlayer {
     }
 
     /// Start playback
-    pub async fn play(&self) -> Result<()> {
+    pub fn play(&self) -> Result<()> {
         let current_state = {
             let state = self.state.lock().unwrap();
             *state
@@ -191,7 +191,7 @@ impl AudioFilePlayer {
         match current_state {
             PlaybackState::Stopped => {
                 // Start playing first track in queue
-                self.load_next_track().await?;
+                self.load_next_track()?;
                 let mut state = self.state.lock().unwrap();
                 *state = PlaybackState::Playing;
             }
@@ -247,14 +247,21 @@ impl AudioFilePlayer {
     }
 
     /// Skip to next track
-    pub async fn skip_next(&self) -> Result<()> {
-        self.load_next_track().await?;
+    pub fn skip_next(&self) -> Result<()> {
+        // Moves on rather than restarting, and reports the queue having played
+        // out rather than treating it as a failure.
+        if !self.advance_track()? {
+            self.stop();
+            println!("⏭️ Queue finished");
+            return Ok(());
+        }
+
         println!("⏭️ Skipped to next track");
         Ok(())
     }
 
     /// Skip to previous track
-    pub async fn skip_previous(&self) -> Result<()> {
+    pub fn skip_previous(&self) -> Result<()> {
         // For now, just restart current track
         // TODO: Implement proper previous track logic
         {
@@ -316,10 +323,23 @@ impl AudioFilePlayer {
             return Ok(Some(Vec::new()));
         }
 
+        // A track that decodes to nothing must not send this round the queue
+        // forever, so one call moves on at most as many times as there are
+        // tracks to move to.
+        let mut advances_left = self.queue.lock().unwrap().len() + 1;
+
         while self.pending.lock().unwrap().len() < wanted {
-            if !self.decode_one_packet()? {
+            if self.decode_one_packet()? {
+                continue;
+            }
+
+            // The file ran out. The next one picks up within the same block, so
+            // a playlist plays as one continuous stream rather than dropping a
+            // chunk of silence at every join.
+            if advances_left == 0 || !self.advance_track()? {
                 break;
             }
+            advances_left -= 1;
         }
 
         let mut pending = self.pending.lock().unwrap();
@@ -329,13 +349,25 @@ impl AudioFilePlayer {
 
         let take = wanted.min(pending.len());
         let volume = *self.volume.lock().unwrap();
+        let block: Vec<f32> = pending
+            .drain(..take)
+            .map(|sample| sample * volume)
+            .collect();
+        drop(pending);
 
-        Ok(Some(
-            pending
-                .drain(..take)
-                .map(|sample| sample * volume)
-                .collect(),
-        ))
+        self.advance_position(take / self.channels as usize);
+
+        Ok(Some(block))
+    }
+
+    /// Move the playhead on by what was just handed out
+    ///
+    /// Counted from what leaves rather than from a clock: the two only agree
+    /// while audio is actually flowing, and it is the audio the reading is
+    /// about. A paused player hands out nothing and its playhead stays put.
+    fn advance_position(&self, frames: usize) {
+        let elapsed = Duration::from_secs_f64(frames as f64 / self.sample_rate as f64);
+        *self.position.lock().unwrap() += elapsed;
     }
 
     /// Decode one packet into `pending`. False once the file has no more.
@@ -423,30 +455,104 @@ impl AudioFilePlayer {
         Ok(())
     }
 
-    /// Load and start playing the next track
-    async fn load_next_track(&self) -> Result<()> {
-        let track = {
-            let queue = self.queue.lock().unwrap();
+    /// Load the track at the front of the queue, starting playback from the top
+    fn load_next_track(&self) -> Result<()> {
+        if self.queue.lock().unwrap().is_empty() {
+            return Err(anyhow::anyhow!("Queue is empty"));
+        }
 
-            if queue.is_empty() {
-                return Err(anyhow::anyhow!("Queue is empty"));
-            }
+        self.load_index(0)
+    }
 
-            // For now, just play first track
-            // TODO: Implement proper next track logic with shuffle/repeat
-            queue.front().unwrap().clone()
+    /// Move to whatever should play after the current track
+    ///
+    /// False once the queue has played out, which is what tells the decoder to
+    /// stop rather than to keep asking for packets from a finished file.
+    fn advance_track(&self) -> Result<bool> {
+        let Some(next) = self.next_index() else {
+            return Ok(false);
         };
 
-        self.load_track(&track).await?;
+        self.load_index(next)?;
+        Ok(true)
+    }
 
-        let mut current_index = self.current_track_index.lock().unwrap();
-        *current_index = Some(0);
+    /// Which track follows the current one, or None when the queue is done
+    fn next_index(&self) -> Option<usize> {
+        let queue_length = self.queue.lock().unwrap().len();
+        if queue_length == 0 {
+            return None;
+        }
+
+        let current = (*self.current_track_index.lock().unwrap()).unwrap_or(0);
+        let mode = self.mode.lock().unwrap().clone();
+
+        // Repeating one track outranks shuffle: asking for the same track over
+        // and over and getting a random one instead would be nobody's reading.
+        if mode.repeat_mode == RepeatMode::Track {
+            return Some(current);
+        }
+
+        if mode.shuffle {
+            return Some(self.pick_shuffled(queue_length, current));
+        }
+
+        let next = current + 1;
+        if next < queue_length {
+            Some(next)
+        } else if mode.repeat_mode == RepeatMode::Queue {
+            Some(0)
+        } else {
+            None
+        }
+    }
+
+    /// A different track at random
+    ///
+    /// Seeded from the clock rather than from a generator crate, which this is
+    /// not worth taking on: nothing here needs the sequence to be unguessable,
+    /// only for two ads in a row not to be the same one.
+    fn pick_shuffled(&self, queue_length: usize, current: usize) -> usize {
+        if queue_length == 1 {
+            return 0;
+        }
+
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.subsec_nanos() as u64)
+            .unwrap_or(1)
+            | 1;
+
+        // xorshift64, enough to spread a playlist
+        let mut state = seed;
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+
+        // Drawn from the tracks that are not the current one, so a shuffle
+        // always moves
+        let offset = (state % (queue_length as u64 - 1)) as usize;
+        (current + 1 + offset) % queue_length
+    }
+
+    /// Load the track at `index` and make it the current one
+    fn load_index(&self, index: usize) -> Result<()> {
+        let track = {
+            let queue = self.queue.lock().unwrap();
+            queue
+                .get(index)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("No track at index {}", index))?
+        };
+
+        self.load_track(&track)?;
+        *self.current_track_index.lock().unwrap() = Some(index);
 
         Ok(())
     }
 
     /// Load a specific track for playback
-    async fn load_track(&self, track: &QueuedTrack) -> Result<()> {
+    fn load_track(&self, track: &QueuedTrack) -> Result<()> {
         println!("🎵 Loading track: {:?}", track.file_path);
 
         // Open the file
@@ -507,6 +613,7 @@ impl AudioFilePlayer {
         // left mid-chunk, which would otherwise be heard as a click on the join.
         self.pending.lock().unwrap().clear();
         self.resample_input.lock().unwrap().clear();
+        *self.position.lock().unwrap() = Duration::ZERO;
 
         // Rate conversion only. Channels are mapped before the resampler runs,
         // so it is always configured for the player's own layout and does not
