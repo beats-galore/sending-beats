@@ -6,6 +6,7 @@
 
 pub mod applescript;
 pub mod configured_inputs;
+pub mod media_remote;
 pub mod types;
 pub mod watcher;
 

@@ -11,9 +11,13 @@ use tokio::time::{interval, MissedTickBehavior};
 use tracing::{info, warn};
 
 use super::applescript::fetch_now_playing;
-use super::configured_inputs::configured_players;
+use super::configured_inputs::{configured_application_bundles, configured_players};
+use super::media_remote::{read_stream, spawn_stream, AdapterPaths};
 use super::types::{NowPlayingTrack, SupportedPlayer};
 use crate::db::AudioDatabase;
+use std::path::PathBuf;
+use tauri::path::BaseDirectory;
+use tauri::Manager;
 
 pub const NOW_PLAYING_CHANGED_EVENT: &str = "now-playing-changed";
 pub const NOW_PLAYING_ERROR_EVENT: &str = "now-playing-error";
@@ -47,11 +51,16 @@ struct PlayerReading {
     error: Option<String>,
 }
 
-/// Owns the polling task that watches whichever supported players are
-/// configured as inputs.
+/// Owns the two tasks that follow what configured inputs are playing.
+///
+/// They cover different ground and neither subsumes the other: AppleScript can
+/// be asked about each player separately but only reaches players with a
+/// scripting dictionary, while MediaRemote reaches everything but describes
+/// only the one application that currently owns the system session.
 #[derive(Default)]
 pub struct NowPlayingWatcher {
     task: Option<JoinHandle<()>>,
+    session_task: Option<JoinHandle<()>>,
 }
 
 impl NowPlayingWatcher {
@@ -63,7 +72,7 @@ impl NowPlayingWatcher {
         self.task.is_some()
     }
 
-    /// Begin polling, replacing any task already running.
+    /// Begin watching, replacing any tasks already running.
     pub fn start(&mut self, app: AppHandle, database: Arc<AudioDatabase>) {
         self.stop();
 
@@ -73,12 +82,24 @@ impl NowPlayingWatcher {
             POLL_INTERVAL.as_secs()
         );
 
-        self.task = Some(tauri::async_runtime::spawn(poll_loop(app, database)));
+        self.task = Some(tauri::async_runtime::spawn(poll_loop(
+            app.clone(),
+            database.clone(),
+        )));
+        self.session_task = Some(tauri::async_runtime::spawn(session_loop(app, database)));
     }
 
     pub fn stop(&mut self) {
-        if let Some(task) = self.task.take() {
+        let running = self.task.is_some() || self.session_task.is_some();
+
+        for task in [self.task.take(), self.session_task.take()]
+            .into_iter()
+            .flatten()
+        {
             task.abort();
+        }
+
+        if running {
             info!("{} Stopped watching", "NOW_PLAYING".on_magenta().white());
         }
     }
@@ -87,6 +108,156 @@ impl NowPlayingWatcher {
 impl Drop for NowPlayingWatcher {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+/// Where the bundled adapter sits, or where it sits in the source tree when the
+/// app is running from `tauri dev` and has no `Resources` directory yet.
+fn adapter_paths(app: &AppHandle) -> AdapterPaths {
+    let bundled = |relative: &str| {
+        app.path()
+            .resolve(relative, BaseDirectory::Resource)
+            .ok()
+            .filter(|path| path.exists())
+    };
+
+    let source = |relative: &str| {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join(relative)
+    };
+
+    AdapterPaths {
+        script: bundled("_up_/src-mediaremote/bin/mediaremote-adapter.pl")
+            .unwrap_or_else(|| source("src-mediaremote/bin/mediaremote-adapter.pl")),
+        framework: bundled("_up_/src-mediaremote/build/MediaRemoteAdapter.framework")
+            .unwrap_or_else(|| source("src-mediaremote/build/MediaRemoteAdapter.framework")),
+    }
+}
+
+/// Follow the system now-playing session, reporting it against whichever
+/// configured input it belongs to.
+///
+/// Players AppleScript already covers are skipped: it can describe each of them
+/// at once, where this can only ever describe the active one, so letting both
+/// report the same player would have them overwrite each other.
+async fn session_loop(app: AppHandle, database: Arc<AudioDatabase>) {
+    let paths = adapter_paths(&app);
+
+    let mut child = match spawn_stream(&paths) {
+        Ok(child) => child,
+        Err(error) => {
+            warn!(
+                "{} System session unavailable: {}",
+                "NOW_PLAYING".on_magenta().white(),
+                error
+            );
+            return;
+        }
+    };
+
+    info!(
+        "{} Following the system now-playing session",
+        "NOW_PLAYING".on_magenta().white()
+    );
+
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let reader = tauri::async_runtime::spawn(async move {
+        read_stream(&mut child, |track| {
+            let _ = tx.send(track);
+        })
+        .await;
+    });
+
+    let mut reported: Option<NowPlayingTrack> = None;
+
+    while let Some(track) = rx.recv().await {
+        let track =
+            track.filter(|track| SupportedPlayer::from_bundle_id(&track.bundle_id).is_none());
+
+        // Only speak for an application the mixer is actually capturing.
+        let configured = match configured_application_bundles(database.sea_orm()).await {
+            Ok(bundles) => bundles,
+            Err(error) => {
+                warn!(
+                    "{} Could not read configured inputs: {}",
+                    "NOW_PLAYING".on_magenta().white(),
+                    error
+                );
+                continue;
+            }
+        };
+
+        let track = track.filter(|track| configured.contains(&track.bundle_id));
+
+        if reported.as_ref().map(|previous| previous.bundle_id.clone())
+            != track.as_ref().map(|current| current.bundle_id.clone())
+        {
+            clear_previous_session(&app, reported.as_ref(), track.as_ref());
+        }
+
+        if reported == track {
+            continue;
+        }
+
+        if !is_same_reading(&reported, &track) {
+            log_session_change(&track);
+        }
+        reported = track.clone();
+
+        if let Some(current) = track {
+            emit(
+                &app,
+                NOW_PLAYING_CHANGED_EVENT,
+                NowPlayingEvent {
+                    bundle_id: current.bundle_id.clone(),
+                    track: Some(current),
+                },
+            );
+        }
+    }
+
+    reader.abort();
+}
+
+/// Tell listeners the application that just lost the session has nothing playing.
+fn clear_previous_session(
+    app: &AppHandle,
+    previous: Option<&NowPlayingTrack>,
+    current: Option<&NowPlayingTrack>,
+) {
+    let Some(previous) = previous else {
+        return;
+    };
+
+    if current.is_some_and(|track| track.bundle_id == previous.bundle_id) {
+        return;
+    }
+
+    emit(
+        app,
+        NOW_PLAYING_CHANGED_EVENT,
+        NowPlayingEvent {
+            bundle_id: previous.bundle_id.clone(),
+            track: None,
+        },
+    );
+}
+
+fn log_session_change(track: &Option<NowPlayingTrack>) {
+    match track {
+        Some(track) => info!(
+            "{} {}: {} - {} [{:?}]",
+            "NOW_PLAYING".on_magenta().white(),
+            track.bundle_id,
+            track.artist,
+            track.title,
+            track.player_state
+        ),
+        None => info!(
+            "{} System session: nothing playing",
+            "NOW_PLAYING".on_magenta().white()
+        ),
     }
 }
 

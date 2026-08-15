@@ -9,28 +9,30 @@ use crate::entities::{audio_mixer_configuration, configured_audio_device};
 /// `app-<bundle identifier>`.
 const APPLICATION_DEVICE_PREFIX: &str = "app-";
 
+/// Bundle identifiers of every application configured as an input, whether or
+/// not AppleScript can read it.
+pub async fn configured_application_bundles(db: &DatabaseConnection) -> Result<Vec<String>, DbErr> {
+    Ok(active_input_devices(db)
+        .await?
+        .into_iter()
+        .filter_map(|device| {
+            device
+                .device_identifier
+                .strip_prefix(APPLICATION_DEVICE_PREFIX)
+                .map(str::to_string)
+        })
+        .collect())
+}
+
 /// Supported players configured as inputs on the active session.
 ///
 /// Track metadata is only worth asking for when the mixer is actually capturing
 /// the app, so this bounds the watcher's work: with neither player configured it
 /// returns empty and no scripts run at all.
 pub async fn configured_players(db: &DatabaseConnection) -> Result<Vec<SupportedPlayer>, DbErr> {
-    let Some(active_config) = audio_mixer_configuration::Entity::find()
-        .filter(audio_mixer_configuration::Column::SessionActive.eq(true))
-        .one(db)
-        .await?
-    else {
-        return Ok(Vec::new());
-    };
-
-    let devices = configured_audio_device::Entity::find()
-        .filter(configured_audio_device::Column::ConfigurationId.eq(&active_config.id))
-        .filter(configured_audio_device::Column::IsInput.eq(true))
-        .all(db)
-        .await?;
-
     let mut players = Vec::new();
-    for device in devices {
+
+    for device in active_input_devices(db).await? {
         let Some(bundle_id) = device
             .device_identifier
             .strip_prefix(APPLICATION_DEVICE_PREFIX)
@@ -46,4 +48,23 @@ pub async fn configured_players(db: &DatabaseConnection) -> Result<Vec<Supported
     }
 
     Ok(players)
+}
+
+/// Every input device on the active session, application or hardware.
+async fn active_input_devices(
+    db: &DatabaseConnection,
+) -> Result<Vec<configured_audio_device::Model>, DbErr> {
+    let Some(active_config) = audio_mixer_configuration::Entity::find()
+        .filter(audio_mixer_configuration::Column::SessionActive.eq(true))
+        .one(db)
+        .await?
+    else {
+        return Ok(Vec::new());
+    };
+
+    configured_audio_device::Entity::find()
+        .filter(configured_audio_device::Column::ConfigurationId.eq(&active_config.id))
+        .filter(configured_audio_device::Column::IsInput.eq(true))
+        .all(db)
+        .await
 }

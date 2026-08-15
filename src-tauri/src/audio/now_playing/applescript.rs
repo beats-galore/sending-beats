@@ -163,6 +163,8 @@ fn parse_track(player: SupportedPlayer, raw: &str) -> Option<NowPlayingTrack> {
         return None;
     }
 
+    let state = PlayerState::from_script_word(fields[5]);
+
     Some(NowPlayingTrack {
         bundle_id: player.bundle_id().to_string(),
         title: fields[0].to_string(),
@@ -170,7 +172,14 @@ fn parse_track(player: SupportedPlayer, raw: &str) -> Option<NowPlayingTrack> {
         album: fields[2].to_string(),
         duration_seconds: fields[3].parse().unwrap_or(0.0),
         position_seconds: fields[4].parse().unwrap_or(0.0),
-        player_state: PlayerState::from_script_word(fields[5]),
+        // The player answered just now, so the reading is current as of now.
+        position_taken_at_ms: NowPlayingTrack::now_ms(),
+        playback_rate: if state == PlayerState::Playing {
+            1.0
+        } else {
+            0.0
+        },
+        player_state: state,
         track_id: fields[6].to_string(),
         artwork_url: Some(fields[7].to_string()).filter(|url| !url.is_empty()),
     })

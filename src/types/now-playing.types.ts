@@ -12,7 +12,16 @@ export type NowPlayingTrack = {
   artist: string;
   album: string;
   durationSeconds: number;
+  /** Where the playhead was at `positionTakenAtMs`, not where it is now. */
   positionSeconds: number;
+  /**
+   * Epoch milliseconds at which `positionSeconds` was true. The system session
+   * republishes the playhead only when playback changes, so a reader has to age
+   * it rather than take it at face value.
+   */
+  positionTakenAtMs: number;
+  /** Zero while paused, one at normal speed. */
+  playbackRate: number;
   playerState: PlayerState;
   /** Spotify only; Apple Music exposes artwork as image data rather than a URL. */
   artworkUrl: string | null;
@@ -37,6 +46,18 @@ export type NowPlayingPlayerInfo = {
 
 export const NOW_PLAYING_CHANGED_EVENT = 'now-playing-changed';
 export const NOW_PLAYING_ERROR_EVENT = 'now-playing-error';
+
+/**
+ * Where the playhead actually is now, aged from the snapshot the player last
+ * published. Clamped to the track length so a stale reading cannot run past the
+ * end of it.
+ */
+export const trackPosition = (track: NowPlayingTrack, nowMs: number): number => {
+  const elapsedSince = Math.max(0, (nowMs - track.positionTakenAtMs) / 1000);
+  const position = track.positionSeconds + elapsedSince * track.playbackRate;
+
+  return track.durationSeconds > 0 ? Math.min(position, track.durationSeconds) : position;
+};
 
 /** The prefix the mixer stores application audio sources under. */
 const APPLICATION_SOURCE_PREFIX = 'app-';

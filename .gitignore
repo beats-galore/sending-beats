@@ -11,5 +11,6 @@ logs/
 *.log
 
 src-swift/build
+src-mediaremote/build
 # Output from the tauri-automation MCP screenshot tool
 screenshots/

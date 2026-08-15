@@ -37,7 +37,9 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "../src-driver/build/SendinBeatsAudio.driver"
+      "../src-driver/build/SendinBeatsAudio.driver",
+      "../src-mediaremote/build/MediaRemoteAdapter.framework",
+      "../src-mediaremote/bin/mediaremote-adapter.pl"
     ],
     "macOS": {
       "entitlements": "./entitlements.plist",
