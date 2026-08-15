@@ -53,6 +53,8 @@ type StudioStore = {
 
   selection: StudioSelection | null;
   select: (selection: StudioSelection) => void;
+  /** Closes whatever node is open, for a click that lands outside all of them. */
+  clearSelection: () => void;
 
   drawerOpen: boolean;
   toggleDrawer: () => void;
@@ -114,6 +116,7 @@ export const useStudioStore = create<StudioStore>()(
 
         selection: null,
         select: (selection) => set({ selection }),
+        clearSelection: () => set({ selection: null }),
 
         drawerOpen: true,
         toggleDrawer: () => set((state) => ({ drawerOpen: !state.drawerOpen })),

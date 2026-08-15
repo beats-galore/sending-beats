@@ -34,6 +34,10 @@ export const color = {
   acc: mantineColor('ice', 4),
   accDim: mantineColor('ice', 9),
 
+  // Playback
+  playback: mantineColor('orchid', 2),
+  playbackDim: mantineColor('orchid', 6),
+
   // Warning
   warn: mantineColor('amber', 4),
   warnBorder: mantineColor('amber', 9),

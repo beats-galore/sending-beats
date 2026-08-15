@@ -3,14 +3,14 @@ import { createTheme, rem } from '@mantine/core';
 import type { CSSVariablesResolver } from '@mantine/core';
 import { studioComponents } from './components';
 import { layout } from './layout';
-import { amber, carbon, dark, ice, rose, surface } from './palette';
+import { amber, carbon, dark, ice, orchid, rose, surface } from './palette';
 import { color } from './tokens';
 
 const MONO = "'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace";
 const CONDENSED = "'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif";
 
 export const studioTheme = createTheme({
-  colors: { surface, carbon, ice, amber, rose, dark },
+  colors: { surface, carbon, ice, amber, orchid, rose, dark },
   primaryColor: 'ice',
   primaryShade: 4,
 

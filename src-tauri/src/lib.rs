@@ -40,6 +40,7 @@ use commands::debug::*;
 use commands::file_player::*;
 use commands::icecast::*;
 use commands::mixer::*;
+use commands::now_playing::*;
 use commands::process_metrics::*;
 use commands::recording::*;
 use commands::streaming::*;
@@ -368,6 +369,7 @@ pub fn run() {
         .manage(recording_state)
         .manage(file_player_state)
         .manage(application_audio_state)
+        .manage(commands::now_playing::NowPlayingState::new())
         .manage(ProcessMonitorState(
             crate::process_metrics::ProcessMonitor::new(),
         ));
@@ -422,6 +424,12 @@ pub fn run() {
             set_output_stream,
             start_device_monitoring,
             get_device_monitoring_stats,
+            // Now-playing metadata commands
+            list_now_playing_players,
+            get_now_playing,
+            start_now_playing_watch,
+            stop_now_playing_watch,
+            is_now_playing_watch_running,
             // System audio commands
             enable_system_audio_capture,
             disable_system_audio_capture,

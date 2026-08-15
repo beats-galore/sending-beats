@@ -11,6 +11,11 @@ type ChannelNameProps = {
   name: string;
   /** What the channel is patched to, shown in place of a name */
   deviceName: string | null;
+  /**
+   * Renaming is offered only on the focused node. On any other node the title
+   * is just the title, and clicking it focuses the node like the rest of it.
+   */
+  editable: boolean;
 };
 
 /**
@@ -20,7 +25,7 @@ type ChannelNameProps = {
  * a rig the user may not have. Until one is given a name it borrows the name of
  * whatever is patched into it, so the strip still says something useful.
  */
-export const ChannelName = ({ channelId, name, deviceName }: ChannelNameProps) => {
+export const ChannelName = ({ channelId, name, deviceName, editable }: ChannelNameProps) => {
   const renameChannel = useMixerStore((state) => state.renameChannel);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(name);
@@ -39,6 +44,14 @@ export const ChannelName = ({ channelId, name, deviceName }: ChannelNameProps) =
     }
     void renameChannel(channelId, draft);
   }, [channelId, draft, name, renameChannel]);
+
+  // A node that loses focus while being renamed keeps the edit rather than
+  // stranding an open field on a collapsed card.
+  useEffect(() => {
+    if (!editable && editing) {
+      commit();
+    }
+  }, [editable, editing, commit]);
 
   if (editing) {
     return (
@@ -81,13 +94,21 @@ export const ChannelName = ({ channelId, name, deviceName }: ChannelNameProps) =
       fw={600}
       fz="lg"
       truncate
-      title="Click to rename"
+      title={editable ? 'Click to rename' : undefined}
       c={name ? undefined : color.textFaint}
-      onClick={(event) => {
-        event.stopPropagation();
-        setEditing(true);
+      onClick={
+        editable
+          ? (event) => {
+              event.stopPropagation();
+              setEditing(true);
+            }
+          : undefined
+      }
+      style={{
+        flex: 1,
+        letterSpacing: layout.tracking.tight,
+        cursor: editable ? 'text' : 'inherit',
       }}
-      style={{ flex: 1, letterSpacing: layout.tracking.tight, cursor: 'text' }}
     >
       {name || fallback}
     </Text>

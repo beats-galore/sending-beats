@@ -10,6 +10,17 @@ export const asClock = (seconds: number): string =>
 export const asElapsed = (seconds: number): string =>
   `${pad(seconds / 3600)}:${pad((seconds / 60) % 60)}`;
 
+/** Seconds as `M:SS`, or `H:MM:SS` past the hour — track positions and lengths. */
+export const asTrackTime = (seconds: number): string => {
+  const total = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+
+  return hours > 0
+    ? `${hours}:${pad(minutes)}:${pad(total % 60)}`
+    : `${minutes}:${pad(total % 60)}`;
+};
+
 /** A signed decibel reading, e.g. `+2.4dB`. */
 export const asGain = (db: number, decimals = 1): string =>
   `${db > 0 ? '+' : ''}${db.toFixed(decimals)}dB`;
