@@ -43,6 +43,7 @@ use commands::icecast::*;
 use commands::mixer::*;
 use commands::now_playing::*;
 use commands::patch_colors::*;
+use commands::patch_layouts::*;
 use commands::process_metrics::*;
 use commands::recording::*;
 use commands::streaming::*;
@@ -486,6 +487,10 @@ pub fn run() {
             list_patch_colors,
             set_patch_color,
             clear_patch_color,
+            list_patch_layouts,
+            set_patch_layout,
+            clear_patch_layout,
+            clear_patch_layouts,
             create_audio_bus,
             remove_audio_bus,
             set_audio_bus_gain,

@@ -7,6 +7,7 @@ pub mod audio_mixer_configuration;
 pub mod configured_audio_device;
 pub mod mixer_channel;
 pub mod patch_color;
+pub mod patch_layout;
 pub mod system_audio_state;
 
 pub use audio_application::Entity as AudioApplication;
@@ -18,4 +19,5 @@ pub use audio_mixer_configuration::Entity as AudioMixerConfiguration;
 pub use configured_audio_device::Entity as ConfiguredAudioDevice;
 pub use mixer_channel::Entity as MixerChannel;
 pub use patch_color::Entity as PatchColor;
+pub use patch_layout::Entity as PatchLayout;
 pub use system_audio_state::Entity as SystemAudioState;
