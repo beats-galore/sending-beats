@@ -122,7 +122,7 @@ pub enum NowPlayingError {
     UnsupportedPlayer { bundle_id: String },
 
     #[error(
-        "Automation permission denied for {app}. Grant Sendin Beats access under \
+        "Automation permission denied for {app}. Grant Sweet Beats access under \
          System Settings > Privacy & Security > Automation"
     )]
     AutomationDenied { app: &'static str },

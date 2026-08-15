@@ -5,7 +5,7 @@ code in this repository.
 
 ## Project Vision
 
-Sendin Beats is a comprehensive, multi-phased radio streaming platform designed
+Sweet Beats Studio is a comprehensive, multi-phased radio streaming platform designed
 to be a fully-fledged application for DJs to livestream to Icecast internet
 radio streaming providers. The project aims to replace and enhance functionality
 found in tools like Ladiocast/Loopback and radio.co, providing an all-in-one
@@ -259,7 +259,7 @@ organization across the React frontend.
 ### Color-Coded Log Messages
 
 Instead of showing long crate paths like
-`sendin_beats_lib::audio::devices::coreaudio_stream`, use consistent colors for
+`sweet_beats_studio::audio::devices::coreaudio_stream`, use consistent colors for
 main log message identifiers across all files:
 
 **Format**: Use colored main identifiers (e.g., `DYNAMIC_CHUNKS`,
@@ -333,7 +333,7 @@ curl -s http://localhost:1420 > /dev/null 2>&1 || pnpm dev &
 curl -s http://127.0.0.1:4444/status > /dev/null 2>&1 || tauri-wd --port 4444 &
 ```
 
-The binary the MCP server launches is `src-tauri/target/debug/SendinBeats`, which
+The binary the MCP server launches is `src-tauri/target/debug/SweetBeatsStudio`, which
 must have been built at least once (`pnpm tauri:dev` does this).
 
 **`capture_screenshot` does not render native form controls faithfully.** A

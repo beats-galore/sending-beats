@@ -33,9 +33,9 @@ pub async fn initialize_icecast_streaming(
         mount_point: mount_point.clone(),
         password,
         stream_name,
-        stream_description: "Live radio stream from Sendin Beats".to_string(),
+        stream_description: "Live radio stream from Sweet Beats".to_string(),
         stream_genre: "Electronic".to_string(),
-        stream_url: "https://sendinbeats.com".to_string(),
+        stream_url: "https://SweetBeatsStudio.com".to_string(),
         is_public: true,
         audio_format: AudioFormat {
             sample_rate: crate::types::DEFAULT_SAMPLE_RATE,

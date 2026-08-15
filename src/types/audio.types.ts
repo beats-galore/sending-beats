@@ -1,6 +1,6 @@
 import { DEFAULT_SAMPLE_RATE_HZ } from '../utils';
 
-// Core audio types for the Sendin Beats application
+// Core audio types for the Sweet Beats Studio application
 export type AudioDeviceInfo = {
   id: string;
   name: string;

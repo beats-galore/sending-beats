@@ -77,7 +77,7 @@ fn init_logging() {
 
     // Create a formatting layer for console output
     let console_layer = tracing_subscriber::fmt::layer()
-        .with_target(false) // Hide module paths (e.g., sendin_beats_lib::audio::mixer::pipeline::output_worker) for cleaner logs
+        .with_target(false) // Hide module paths (e.g., sweet_beats_studio::audio::mixer::pipeline::output_worker) for cleaner logs
         .with_file(false)
         .with_line_number(false)
         .with_level(true)
@@ -97,7 +97,7 @@ fn init_logging() {
         // Also set up a simple forwarding to system logger
         // macOS will automatically capture stdout/stderr from GUI apps and show them in Console.app
         // under the app's bundle identifier
-        println!("🚀 SendinBeats logging initialized - logs will appear in Console.app under 'com.sendinbeats.app'");
+        println!("🚀 SweetBeatsStudio logging initialized - logs will appear in Console.app under 'com.SweetBeatsStudio.app'");
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -108,7 +108,7 @@ fn init_logging() {
             .init();
     }
 
-    tracing::info!("🚀 SendinBeats logging system ready");
+    tracing::info!("🚀 SweetBeatsStudio logging system ready");
 }
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -121,13 +121,13 @@ async fn restore_system_audio_on_panic() -> Result<(), Box<dyn std::error::Error
 
     // Get database path (same logic as in main initialization)
     let database_path = dirs::home_dir()
-        .map(|home| home.join(".sendin_beats").join("data"))
+        .map(|home| home.join(".sweet_beats_studio").join("data"))
         .unwrap_or_else(|| {
             std::env::current_dir()
                 .unwrap_or_else(|_| std::path::PathBuf::from("."))
                 .join("data")
         })
-        .join("sendin_beats.db");
+        .join("sweet_beats_studio.db");
 
     // Create a fresh database connection
     let database = AudioDatabase::new(&database_path).await?;
@@ -190,14 +190,14 @@ pub fn run() {
 
         // Initialize SQLite database in user's home directory for app bundle compatibility
         let database_path = dirs::home_dir()
-            .map(|home| home.join(".sendin_beats").join("data"))
+            .map(|home| home.join(".sweet_beats_studio").join("data"))
             .unwrap_or_else(|| {
                 // Fallback to current directory for development
                 std::env::current_dir()
                     .unwrap_or_else(|_| std::path::PathBuf::from("."))
                     .join("data")
             })
-            .join("sendin_beats.db");
+            .join("sweet_beats_studio.db");
 
         tracing::info!("🗄️ Initializing database at: {}", database_path.display());
 

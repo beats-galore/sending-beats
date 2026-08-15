@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-Sendin Beats pairs a React UI (`src/`) with a Tauri Rust core (`src-tauri/`).
+Sweet Beats Studio pairs a React UI (`src/`) with a Tauri Rust core (`src-tauri/`).
 Components and hooks live under `src/components` and `src/hooks`, Zustand stores
 in `src/stores`, and shared types in `src/types`. Backend audio sits in
 `src-tauri/src/audio/`, persistence in `src-tauri/src/db/`, and migrations in

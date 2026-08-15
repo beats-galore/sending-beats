@@ -27,7 +27,7 @@ export const VirtualDevicePanel = () => {
       <Group gap="md" wrap="nowrap">
         <StatusDot size={8} tone={diverted ? 'accent' : 'inert'} />
         <Text size="md" style={{ flex: 1 }}>
-          Sendin Beats Audio
+          Sweet Beats Studio
         </Text>
         <Text size="2xs" c={diverted ? color.acc : color.textFaint}>
           {label}

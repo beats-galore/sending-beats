@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "SendinBeats",
+  "productName": "SweetBeatsStudio",
   "version": "0.1.0",
-  "identifier": "com.SendinBeats",
+  "identifier": "com.SweetBeatsStudio",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Sendin Beats - Virtual Audio Mixer",
+        "title": "Sweet Beats Studio - Virtual Audio Mixer",
         "width": 1400,
         "height": 1000,
         "minWidth": 1200,
@@ -37,7 +37,7 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "../src-driver/build/SendinBeatsAudio.driver",
+      "../src-driver/build/SweetBeatsStudio.driver",
       "../src-mediaremote/build/MediaRemoteAdapter.framework",
       "../src-mediaremote/bin/mediaremote-adapter.pl"
     ],

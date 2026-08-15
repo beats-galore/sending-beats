@@ -79,10 +79,10 @@ impl IcecastSourceClient {
             server_port,
             mount_point,
             password,
-            stream_name: "Sendin Beats Radio".to_string(),
-            stream_description: "Live Radio Stream from Sendin Beats".to_string(),
+            stream_name: "Sweet Beats Radio".to_string(),
+            stream_description: "Live Radio Stream from Sweet Beats".to_string(),
             stream_genre: "Electronic".to_string(),
-            stream_url: "https://sendinbeats.com".to_string(),
+            stream_url: "https://SweetBeatsStudio.com".to_string(),
             is_public: true,
             audio_format,
             connection: None,
@@ -242,7 +242,7 @@ impl IcecastSourceClient {
         format!(
             "SOURCE {} HTTP/1.0\r\n\
              Authorization: Basic {}\r\n\
-             User-Agent: Sendin-Beats/1.0\r\n\
+             User-Agent: Sweet-Beats-Studio/1.0\r\n\
              Content-Type: {}\r\n\
              Ice-Name: {}\r\n\
              Ice-Description: {}\r\n\

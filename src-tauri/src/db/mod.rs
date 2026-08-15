@@ -103,9 +103,9 @@ impl AudioDatabase {
         // Create SeaORM connection
         println!("🌊 Initializing SeaORM connection...");
 
-        // Enable SQL logging via environment variable: SENDIN_BEATS_SQL_LOGGING=1
+        // Enable SQL logging via environment variable: SWEET_BEATS_STUDIO_SQL_LOGGING=1
         let enable_sql_logging =
-            std::env::var("SENDIN_BEATS_SQL_LOGGING").unwrap_or_default() == "1";
+            std::env::var("SWEET_BEATS_STUDIO_SQL_LOGGING").unwrap_or_default() == "1";
 
         let mut opt = ConnectOptions::new(database_url.clone());
         opt.max_connections(10)

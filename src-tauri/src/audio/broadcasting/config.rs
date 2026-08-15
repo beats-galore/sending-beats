@@ -40,10 +40,10 @@ impl Default for StreamingServiceConfig {
             server_port: 8000,
             mount_point: "/live".to_string(),
             password: std::env::var("ICECAST_PASSWORD").unwrap_or_else(|_| "changeme".to_string()),
-            stream_name: "Sendin Beats Radio".to_string(),
-            stream_description: "Live radio stream from Sendin Beats".to_string(),
+            stream_name: "Sweet Beats Radio".to_string(),
+            stream_description: "Live radio stream from Sweet Beats Studio".to_string(),
             stream_genre: "Electronic".to_string(),
-            stream_url: "https://sendinbeats.com".to_string(),
+            stream_url: "https://SweetBeatsStudio.com".to_string(),
             is_public: true,
             audio_format: AudioFormat {
                 sample_rate: DEFAULT_SAMPLE_RATE,

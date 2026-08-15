@@ -35,7 +35,7 @@ export const StudioLogo = () => (
       fz="2xl"
       style={{ letterSpacing: layout.tracking.wide, whiteSpace: 'nowrap' }}
     >
-      SENDIN BEATS STUDIO
+      SWEET BEATS STUDIO
     </Text>
   </Group>
 );

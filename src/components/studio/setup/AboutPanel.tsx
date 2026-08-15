@@ -7,7 +7,7 @@ import { Panel } from '../primitives/Panel';
 export const AboutPanel = () => (
   <Panel title="ABOUT" p="3xl" gap="sm" style={{ flex: 1, minHeight: 0 }}>
     <Text size="sm" c={color.textDim} lh="xl">
-      Sendin Beats Studio {__APP_VERSION__}
+      Sweet Beats Studio {__APP_VERSION__}
       <br />
       Tauri desktop build
     </Text>

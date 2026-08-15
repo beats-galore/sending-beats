@@ -156,7 +156,7 @@ impl TccPermissionManager {
 
         // Fallback to the identifier from tauri.conf.json
         // This should match what's in the configuration
-        Ok("com.SendinBeats".to_string())
+        Ok("com.SweetBeatsStudio".to_string())
     }
 
     /// Show system preferences for microphone permissions
@@ -173,10 +173,10 @@ impl TccPermissionManager {
     /// Get user-friendly instructions for enabling permissions
     pub fn get_permission_instructions(&self) -> String {
         format!(
-            "To enable audio capture for Sendin Beats:\n\
+            "To enable audio capture for Sweet Beats Studio:\n\
             1. Open System Preferences > Security & Privacy > Privacy\n\
             2. Select 'Microphone' in the left sidebar\n\
-            3. Check the box next to 'Sendin Beats'\n\
+            3. Check the box next to 'Sweet Beats Studio'\n\
             4. Restart the application if needed\n\n\
             This permission is required to capture audio from applications like Spotify, iTunes, etc."
         )
@@ -241,6 +241,6 @@ mod tests {
 
         assert!(instructions.contains("System Preferences"));
         assert!(instructions.contains("Microphone"));
-        assert!(instructions.contains("Sendin Beats"));
+        assert!(instructions.contains("Sweet Beats Studio"));
     }
 }

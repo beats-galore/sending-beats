@@ -175,7 +175,7 @@ impl StreamManager {
                             .basic_auth(&config.username, Some(&config.password))
                             .header("Content-Type", "audio/mpeg")
                             .header("Ice-Public", "1")
-                            .header("Ice-Name", "Sendin Beats Radio")
+                            .header("Ice-Name", "Sweet Beats Radio")
                             .header("Ice-Description", "Live Radio Stream")
                             .header("Ice-Genre", "Electronic")
                             .body(mp3_data)

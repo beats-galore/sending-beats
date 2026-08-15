@@ -1,4 +1,4 @@
-# Sendin Beats Virtual Audio Driver
+# Sweet Beats Studio Virtual Audio Driver
 
 A CoreAudio AudioServerPlugin that creates a virtual loopback audio device for system audio capture without echo/doubling issues.
 
@@ -40,7 +40,7 @@ cd src-driver
 make
 ```
 
-Produces: `build/SendinBeatsAudio.driver`
+Produces: `build/SweetBeatsStudio.driver`
 
 ## Manual Installation (for testing)
 
@@ -57,7 +57,7 @@ This will:
 
 ## Automatic Installation (production)
 
-The driver is bundled in the Tauri app at `Resources/driver/SendinBeatsAudio.driver`.
+The driver is bundled in the Tauri app at `Resources/driver/SweetBeatsStudio.driver`.
 
 On first run, `VirtualDriverManager::install()` will:
 1. Check if driver is already installed
@@ -76,7 +76,7 @@ if !VirtualDriverManager::is_installed() {
 }
 
 // Get device UID for CoreAudio operations
-let device_uid = VirtualDriverManager::get_device_uid(); // "SendinBeatsAudio_UID"
+let device_uid = VirtualDriverManager::get_device_uid(); // "SweetBeatsStudio_UID"
 
 // Set as system default (to capture system audio)
 system_audio_router.divert_system_audio_to_virtual_device().await?;
@@ -87,9 +87,9 @@ system_audio_router.divert_system_audio_to_virtual_device().await?;
 
 ## Device Information
 
-- **Name**: Sendin Beats Audio
-- **UID**: `SendinBeatsAudio_UID`
-- **Bundle ID**: `com.sendinbeats.audio.driver`
+- **Name**: Sweet Beats Studio
+- **UID**: `SweetBeatsStudio_UID`
+- **Bundle ID**: `com.SweetBeatsStudio.audio.driver`
 - **Channels**: 2 (stereo)
 - **Format**: 32-bit float PCM
 

@@ -1,4 +1,4 @@
-# Sendin Beats
+# Sweet Beats Studio
 
 A radio streaming application for DJs. Live audio mixing, recording, and Icecast
 broadcasting in one desktop app — the job Ladiocast and Loopback do, without the
@@ -59,7 +59,7 @@ Worth knowing before you go looking for these:
   implementation of the capture or output path.
 
 Anything else that is missing or broken is tracked in
-[issues](https://github.com/beats-galore/sending-beats/issues).
+[issues](https://github.com/beats-galore/sweet-beats-studio/issues).
 
 ## Getting started
 

@@ -5,8 +5,8 @@ use std::process::Command;
 use std::time::Duration;
 use tracing::info;
 
-const DRIVER_NAME: &str = "SendinBeatsAudio.driver";
-const DRIVER_DEVICE_NAME: &str = "Sendin Beats Audio";
+const DRIVER_NAME: &str = "SweetBeatsStudio.driver";
+const DRIVER_DEVICE_NAME: &str = "Sweet Beats Studio Audio";
 const HAL_PLUGIN_DIR: &str = "/Library/Audio/Plug-Ins/HAL";
 /// Restart coreaudiod so it rescans the HAL plug-in directory
 ///
@@ -21,12 +21,12 @@ const RELOAD_COREAUDIOD_COMMAND: &str =
 const COREAUDIOD_RESTART_DELAY: Duration = Duration::from_millis(1500);
 
 const INSTALL_PROMPT: &str =
-    "Sendin Beats needs to install its virtual audio driver so system audio can be routed through the mixer.";
+    "Sweet Beats Studio needs to install its virtual audio driver so system audio can be routed through the mixer.";
 
 const RELOAD_PROMPT: &str =
-    "Sendin Beats needs to restart the macOS audio daemon to load its virtual audio driver.";
+    "Sweet Beats Studio needs to restart the macOS audio daemon to load its virtual audio driver.";
 
-const UNINSTALL_PROMPT: &str = "Sendin Beats needs to remove its virtual audio driver.";
+const UNINSTALL_PROMPT: &str = "Sweet Beats Studio needs to remove its virtual audio driver.";
 
 /// Wrap a value in single quotes for safe interpolation into a /bin/sh command
 fn shell_quote(value: &str) -> String {
@@ -296,7 +296,7 @@ impl VirtualDriverManager {
         let binary_path = driver_path
             .join("Contents")
             .join("MacOS")
-            .join("SendinBeatsAudio");
+            .join("SweetBeatsStudio");
 
         if !binary_path.exists() {
             return Err(anyhow::anyhow!(

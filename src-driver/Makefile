@@ -1,14 +1,14 @@
-# Makefile for Sendin Beats Audio Driver
+# Makefile for Sweet Beats Audio Driver
 # Based on BlackHole audio loopback driver
 
-DRIVER_NAME = SendinBeatsAudio
-BUNDLE_ID = com.sendinbeats.audio.driver
-DEVICE_NAME = Sendin\ Beats\ Audio
-MANUFACTURER = Sendin\ Beats
+DRIVER_NAME = SweetBeatsStudio
+BUNDLE_ID = com.SweetBeatsStudio.audio.driver
+DEVICE_NAME = Sweet\ Beats\ Audio
+MANUFACTURER = Sweet\ Beats
 CHANNELS = 2
 
 # Build paths
-SRC = SendinBeatsAudio.c
+SRC = SweetBeatsStudio.c
 BUILD_DIR = build
 BUNDLE_DIR = $(BUILD_DIR)/$(DRIVER_NAME).driver
 CONTENTS_DIR = $(BUNDLE_DIR)/Contents

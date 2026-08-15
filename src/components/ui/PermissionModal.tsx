@@ -49,7 +49,7 @@ export const PermissionModal = ({
             Select <Code>Microphone</Code> from the left sidebar
           </List.Item>
           <List.Item>
-            Find <Code>SendinBeats</Code> in the list and check the box
+            Find <Code>SweetBeatsStudio</Code> in the list and check the box
           </List.Item>
           <List.Item>Return to the app and try selecting an application source again</List.Item>
         </List>

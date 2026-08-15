@@ -4,11 +4,11 @@
 <dict>
     <!-- Audio capture permissions for application audio taps -->
     <key>NSMicrophoneUsageDescription</key>
-    <string>Sendin Beats needs access to capture audio to record your mixes and enable  audio streaming capabilities.</string>
+    <string>Sweet Beats Studio needs access to capture audio to record your mixes and enable  audio streaming capabilities.</string>
 
     <!-- Additional permission for application audio capture (macOS 14.4+) -->
     <key>NSAudioCaptureUsageDescription</key>
-    <string>Sendin Beats needs access to capture audio from other applications (like Spotify, iTunes, Tidal) to enable direct application audio input without requiring virtual audio devices like BlackHole.</string>
+    <string>Sweet Beats Studio needs access to capture audio from other applications (like Spotify, iTunes, Tidal) to enable direct application audio input without requiring virtual audio devices like BlackHole.</string>
 
     <!-- Core Audio framework permissions for system audio access -->
     <!-- <key>com.apple.security.device.audio-input</key>

@@ -10,7 +10,7 @@ import { ActionButton } from '../primitives/ActionButton';
  * Blocking prompt shown once the virtual audio driver has been installed.
  *
  * Installing the driver restarts coreaudiod, which invalidates the running
- * process's Core Audio client, so the driver cannot be used until Sendin Beats
+ * process's Core Audio client, so the driver cannot be used until Sweet Beats Studio
  * is launched again. There is no dismiss path because nothing the user does in
  * this session will finish the setup.
  */
@@ -33,8 +33,8 @@ export const SystemAudioRestartModal = () => {
     >
       <Stack gap="lg">
         <Text size="sm">
-          The Sendin Beats virtual audio driver has been installed. macOS restarted its audio
-          service during setup, so Sendin Beats needs to be launched again before system audio can
+          The Sweet Beats Studio virtual audio driver has been installed. macOS restarted its audio
+          service during setup, so Sweet Beats Studio needs to be launched again before system audio can
           be routed through the mixer.
         </Text>
         <Text size="sm" c={color.textDim}>
@@ -42,7 +42,7 @@ export const SystemAudioRestartModal = () => {
         </Text>
         <Group justify="flex-end">
           <ActionButton tone="hot" padding="9px 14px" size="xs" onClick={handleQuit}>
-            QUIT SENDIN BEATS
+            QUIT SWEET BEATS STUDIO
           </ActionButton>
         </Group>
       </Stack>

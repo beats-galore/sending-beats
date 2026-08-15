@@ -1,4 +1,4 @@
-// Audio module - Modularized audio system for Sending Beats
+// Audio module - Modularized audio system for Sweet Beats Studio
 //
 // This module provides a comprehensive audio processing system broken down into logical components:
 // - types: Core data types and configurations

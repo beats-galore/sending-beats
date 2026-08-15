@@ -238,7 +238,7 @@ impl RecordingMetadata {
     /// Set technical metadata (auto-populated during encoding)
     pub fn set_technical_metadata(&mut self, config: &RecordingConfig, encoder_name: &str) {
         self.sample_rate = Some(config.sample_rate);
-        self.encoder = Some(format!("Sendin Beats v1.0 ({})", encoder_name));
+        self.encoder = Some(format!("Sweet Beats Studio v1.0 ({})", encoder_name));
         self.encoding_date = Some(SystemTime::now());
 
         // Set bitrate if available from format
@@ -781,7 +781,7 @@ impl RecordingPresets {
         let mut metadata = RecordingMetadata::default();
         metadata.genre = Some("Electronic".to_string());
         metadata.album_artist = Some("Various Artists".to_string());
-        metadata.comment = Some("DJ Mix recorded with Sendin Beats".to_string());
+        metadata.comment = Some("DJ Mix recorded with Sweet Beats Studio".to_string());
         metadata.add_custom_tag("mix_type".to_string(), "live_mix".to_string());
         metadata.add_custom_tag("equipment".to_string(), "virtual_mixer".to_string());
 

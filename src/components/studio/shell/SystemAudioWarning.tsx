@@ -24,7 +24,7 @@ export const SystemAudioWarning = () => {
   return (
     <Alert
       icon={<IconAlertTriangle size={16} />}
-      title="System audio not routed through Sendin Beats"
+      title="System audio not routed through Sweet Beats Studio"
       color="amber"
       variant="outline"
       radius="xl"

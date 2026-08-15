@@ -3,7 +3,7 @@
 version = 4
 
 [[package]]
-name = "SendinBeats"
+name = "SweetBeatsStudio"
 version = "0.1.0"
 dependencies = [
  "alsa 0.7.1",

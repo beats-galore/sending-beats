@@ -171,7 +171,7 @@ export const useStudioStore = create<StudioStore>()(
           set((state) => ({ launch: { ...state.launch, [setting]: !state.launch[setting] } })),
       }),
       {
-        name: 'sendin-beats-studio',
+        name: 'sweat-beats-studio',
         // Only durable preferences are stored. The stream password is deliberately
         // left out — it would otherwise sit in plain text in local storage.
         partialize: (state) => ({

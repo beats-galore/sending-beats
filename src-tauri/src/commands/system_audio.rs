@@ -31,7 +31,7 @@ pub async fn enable_system_audio_capture(audio_state: State<'_, AudioState>) -> 
             "SYSTEM_AUDIO_RESTART".bright_yellow()
         );
         return Err(
-            "Sendin Beats must be restarted to finish setting up the virtual audio driver"
+            "Sweet Beats Studio must be restarted to finish setting up the virtual audio driver"
                 .to_string(),
         );
     }
