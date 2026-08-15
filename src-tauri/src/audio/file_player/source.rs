@@ -93,10 +93,10 @@ impl FilePlayerSource {
                         }
                     }
                     Ok(None) => {
-                        // The queue played out. The player is left stopped so
-                        // the interface reads as finished rather than playing
-                        // into silence.
-                        player.stop();
+                        // The queue played out. Nothing is left loaded, so
+                        // playing again runs it from the top rather than
+                        // repeating whatever happened to be last.
+                        player.finish_queue();
                         std::thread::sleep(IDLE_POLL);
                     }
                     Err(e) => {

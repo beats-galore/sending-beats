@@ -260,8 +260,13 @@ impl AudioFilePlayer {
 
         match current_state {
             PlaybackState::Stopped => {
-                // Start playing first track in queue
-                self.load_next_track()?;
+                // A stopped player is still holding its track at the start, so
+                // this resumes that one. Only a player with nothing open goes to
+                // the front of the queue.
+                if self.current_reader.lock().unwrap().is_none() {
+                    self.load_next_track()?;
+                }
+
                 let mut state = self.state.lock().unwrap();
                 *state = PlaybackState::Playing;
             }
@@ -289,31 +294,43 @@ impl AudioFilePlayer {
         }
     }
 
-    /// Stop playback
+    /// Stop playback, holding the current track at its start
+    ///
+    /// Stopped is not unloaded. The track stays open at 0:00 so play starts it
+    /// again — dropping the decoder here meant play fell through to loading the
+    /// front of the queue, so stopping halfway through the third ad and pressing
+    /// play went back to the first one.
     pub fn stop(&self) {
         {
             let mut state = self.state.lock().unwrap();
             *state = PlaybackState::Stopped;
         }
 
-        // Reset position
-        {
-            let mut position = self.position.lock().unwrap();
-            *position = Duration::ZERO;
-        }
-
-        // Clear current decoder
-        {
-            let mut decoder = self.current_decoder.lock().unwrap();
-            *decoder = None;
-        }
-
-        {
-            let mut reader = self.current_reader.lock().unwrap();
-            *reader = None;
-        }
+        // Rewinds the reader, resets the decoder and drops everything buffered
+        // past this point. Nothing loaded is not a failure worth reporting from
+        // a stop — there is simply nothing to rewind.
+        let _ = self.seek(Duration::ZERO);
+        *self.position.lock().unwrap() = Duration::ZERO;
 
         println!("⏹️ Stopped playback");
+    }
+
+    /// The queue played out
+    ///
+    /// Distinct from stopping, which holds the track it was on. Nothing is held
+    /// here, so playing again runs the queue from the top — stopping halfway
+    /// through an ad break should resume that ad, but a break that finished
+    /// should start over rather than repeat its last spot.
+    pub fn finish_queue(&self) {
+        self.stop();
+
+        *self.current_decoder.lock().unwrap() = None;
+        *self.current_reader.lock().unwrap() = None;
+        *self.loaded.lock().unwrap() = None;
+        *self.current_track_index.lock().unwrap() = None;
+        self.played_history.lock().unwrap().clear();
+
+        println!("⏹️ Queue finished");
     }
 
     /// Skip to next track
