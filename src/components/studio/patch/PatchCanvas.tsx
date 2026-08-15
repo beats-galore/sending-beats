@@ -9,7 +9,6 @@ import { usePatchLayoutStore } from '../../../stores/patch-layout-store';
 import { useStudioStore } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
-import { MAIN_BUS_ID } from '../../../types/bus.types';
 import { useChannelCardVariants } from '../hooks/use-channel-card-variants';
 import { useChannelDevices } from '../hooks/use-channel-devices';
 import { useFocusedNode } from '../hooks/use-focused-node';
@@ -23,7 +22,6 @@ import { CastDestination } from './CastDestination';
 import { ChannelNode } from './ChannelNode';
 import { OutputDestination } from './OutputDestination';
 import { patchCables } from './patch-cables';
-import type { ChannelLayout, DestinationFocus } from './patch-geometry';
 import { resolvePatchRects } from './patch-rects';
 import { TapeDestination } from './TapeDestination';
 
@@ -83,40 +81,13 @@ export const PatchCanvas = () => {
     [changeOutput]
   );
 
+  // Selection is a highlight and the target for the keyboard shortcuts. What a
+  // node is showing comes from how big it has been made, not from this.
   const clearSelection = useStudioStore((state) => state.clearSelection);
   const focused = useFocusedNode();
   const selectedId = focused?.kind === 'channel' ? focused.channelId : null;
-  const destinationFocus: DestinationFocus =
-    focused?.kind === 'cast' || focused?.kind === 'tape' ? focused.kind : null;
 
   const variants = useChannelCardVariants();
-
-  const layouts = useMemo(
-    () =>
-      channels.map<ChannelLayout>((channel) => ({
-        variant: variants[channel.id] ?? 'device',
-        expansion:
-          channel.id !== selectedId
-            ? 'collapsed'
-            : channel.effects_enabled
-              ? 'effects'
-              : 'inspector',
-      })),
-    [channels, variants, selectedId]
-  );
-
-  // One bus is always open, so the column is never all shut. Main by default,
-  // falling back to the first — main is only present while some destination is
-  // still unrouted, and routing every destination by hand makes it go away.
-  const expandedBusId = useMemo(() => {
-    if (focused?.kind === 'bus' && buses.some((busEntry) => busEntry.id === focused.busId)) {
-      return focused.busId;
-    }
-    if (buses.some((busEntry) => busEntry.id === MAIN_BUS_ID)) {
-      return MAIN_BUS_ID;
-    }
-    return buses.at(0)?.id ?? null;
-  }, [focused, buses]);
 
   // Memoised because the cables are drawn as animating SVG paths: rebuilding
   // them on every render of the canvas would restart the marching dashes.
@@ -125,17 +96,16 @@ export const PatchCanvas = () => {
     () =>
       resolvePatchRects(
         {
-          channels: channels.map((channel, index) => ({ id: channel.id, layout: layouts[index] })),
-          buses: buses.map((busEntry) => ({
-            id: busEntry.id,
-            expanded: busEntry.id === expandedBusId,
+          channels: channels.map((channel) => ({
+            id: channel.id,
+            variant: variants[channel.id] ?? 'device',
           })),
+          busIds: buses.map((busEntry) => busEntry.id),
           outputIds: outputs.map((output) => output.id),
-          destinationFocus,
         },
         placements
       ),
-    [channels, layouts, buses, expandedBusId, outputs, destinationFocus, placements]
+    [channels, variants, buses, outputs, placements]
   );
 
   const cables = useMemo(
@@ -175,8 +145,8 @@ export const PatchCanvas = () => {
           channel={channel}
           index={index}
           rect={rects.channels[index]}
-          expansion={layouts[index].expansion}
-          variant={layouts[index].variant}
+          variant={variants[channel.id] ?? 'device'}
+          selected={channel.id === selectedId}
         />
       ))}
 
@@ -205,14 +175,14 @@ export const PatchCanvas = () => {
             key={busEntry.id}
             bus={busEntry}
             rect={rects.buses[busIndex]}
-            expanded={busEntry.id === expandedBusId}
+            selected={focused?.kind === 'bus' && focused.busId === busEntry.id}
             onGainChange={(busId, gainDb) => void setBusGain(busId, gainDb)}
           />
         ))
       )}
 
-      <CastDestination rect={rects.cast} focused={destinationFocus === 'cast'} />
-      <TapeDestination rect={rects.tape} focused={destinationFocus === 'tape'} />
+      <CastDestination rect={rects.cast} selected={focused?.kind === 'cast'} />
+      <TapeDestination rect={rects.tape} selected={focused?.kind === 'tape'} />
 
       {outputs.map((output, index) => (
         <OutputDestination

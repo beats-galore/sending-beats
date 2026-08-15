@@ -1,22 +1,30 @@
 // Coordinate maths for the patch canvas.
 //
 // Nodes are placed absolutely and joined by bezier cables, so positions have to
-// be computed rather than laid out. Everything here is pure: given the channel
-// list and what is selected, it returns how much room each node asks for and
-// where a column puts it.
+// be computed rather than laid out. Everything here is pure: it says how much
+// room a node needs to show a given amount of itself, how much it is showing at
+// the size it has, and where a column puts a run of them.
+//
+// Sizes go both ways deliberately. `expansionFor` reads a box and says what
+// fits in it, which is what makes dragging a node bigger reveal more of it;
+// `channelSize` and friends answer the same question backwards, which is what
+// the condense and expand toggle uses to jump straight to a size.
 //
 // This is the arrangement the canvas would make on its own. `patch-rects` puts
 // hand-placed nodes on top of it, so what is here is the default rather than
 // the final word.
 import { layout } from '../../../theme/layout';
-import type { Port } from './patch-layout';
+import type { Port, Size } from './patch-layout';
 
 const { source, bus, destination, patch } = layout;
 
 /**
- * How much of a source node is showing. The focused node drops its effects
- * chain when the channel's effects are switched off, so it takes less room than
- * a focused node whose chain is live.
+ * How much of a source node is showing.
+ *
+ * Which one a node is at follows from how big it has been made: a node shows as
+ * much as it has room for, and nothing more. The effects chain needs the most
+ * room, the inspector alone needs less, and below that a node is only its
+ * meters and its trim.
  */
 export const ChannelExpansion = ['collapsed', 'inspector', 'effects'] as const;
 export type ChannelExpansion = (typeof ChannelExpansion)[number];
@@ -32,13 +40,7 @@ export type ChannelExpansion = (typeof ChannelExpansion)[number];
 export const ChannelCardVariant = ['device', 'app'] as const;
 export type ChannelCardVariant = (typeof ChannelCardVariant)[number];
 
-/** Everything about a source node that decides how much room it takes. */
-export type ChannelLayout = {
-  variant: ChannelCardVariant;
-  expansion: ChannelExpansion;
-};
-
-export const channelWidth = (expansion: ChannelExpansion): number =>
+const channelWidth = (expansion: ChannelExpansion): number =>
   expansion === 'collapsed' ? source.width : source.widthExpanded;
 
 const expansionHeight = (expansion: ChannelExpansion): number => {
@@ -52,8 +54,38 @@ const expansionHeight = (expansion: ChannelExpansion): number => {
   }
 };
 
-export const channelHeight = ({ variant, expansion }: ChannelLayout): number =>
-  expansionHeight(expansion) + (variant === 'app' ? source.trackReadoutHeight : 0);
+/** How big a source node has to be to show a given amount of itself. */
+export const channelSize = (variant: ChannelCardVariant, expansion: ChannelExpansion): Size => ({
+  width: channelWidth(expansion),
+  // An application card carries a track readout the hardware card has no use
+  // for, so it needs that much more room to show the same amount of itself.
+  height: expansionHeight(expansion) + (variant === 'app' ? source.trackReadoutHeight : 0),
+});
+
+/**
+ * As much of a source as the box it has been given can actually show.
+ *
+ * Both axes count. The inspector and the chain are laid out against the wider
+ * card, so a node made tall but left narrow would have to reflow them rather
+ * than reveal them, and stays shut instead.
+ */
+export const expansionFor = (variant: ChannelCardVariant, size: Size): ChannelExpansion => {
+  const fits = (expansion: ChannelExpansion): boolean => {
+    const needed = channelSize(variant, expansion);
+    return size.width >= needed.width && size.height >= needed.height;
+  };
+
+  return fits('effects') ? 'effects' : fits('inspector') ? 'inspector' : 'collapsed';
+};
+
+/**
+ * How far a source opens when it is toggled open.
+ *
+ * As far as it has something to show: a channel with its effects switched off
+ * has no chain, so opening it to the chain's height would only add dead space.
+ */
+export const openExpansion = (effectsEnabled: boolean): ChannelExpansion =>
+  effectsEnabled ? 'effects' : 'inspector';
 
 /**
  * Top edge of each item in a column, given how much room each one takes.
@@ -92,27 +124,35 @@ export const busPortOffset = (portIndex: number, portCount: number): number =>
   bus.portOffset + portIndex * portStep(portCount);
 
 /**
- * How tall a bus node is drawn.
+ * The nodes with only one thing to reveal.
  *
- * The middle column flows the way the source column does: the node that opens
- * pushes the ones below it down rather than overlapping them.
+ * A bus gains its metering column and stats, the broadcast its transmitter, the
+ * tape its output settings. None of them widen to do it, so unlike a source it
+ * is only height that decides whether there is room.
  */
-export const busHeight = (expanded: boolean): number =>
-  expanded ? bus.heightExpanded : bus.height;
+const sizeAt = (width: number, shut: number, open: number) => ({
+  size: (expanded: boolean): Size => ({ width, height: expanded ? open : shut }),
+  expandedFor: (size: Size): boolean => size.height >= open,
+});
 
-/**
- * Which destination card is opened, if any.
- *
- * The right column flows the way the source column does: a card that opens
- * pushes everything below it down rather than overlapping it.
- */
-export type DestinationFocus = 'cast' | 'tape' | null;
+const busGeometry = sizeAt(bus.width, bus.height, bus.heightExpanded);
+const castGeometry = sizeAt(
+  destination.width,
+  destination.castHeight,
+  destination.castHeightExpanded
+);
+const tapeGeometry = sizeAt(
+  destination.width,
+  destination.tapeHeight,
+  destination.tapeHeightExpanded
+);
 
-export const castHeight = (focus: DestinationFocus): number =>
-  focus === 'cast' ? destination.castHeightExpanded : destination.castHeight;
-
-export const tapeHeight = (focus: DestinationFocus): number =>
-  focus === 'tape' ? destination.tapeHeightExpanded : destination.tapeHeight;
+export const busSize = busGeometry.size;
+export const busExpandedFor = busGeometry.expandedFor;
+export const castSize = castGeometry.size;
+export const castExpandedFor = castGeometry.expandedFor;
+export const tapeSize = tapeGeometry.size;
+export const tapeExpandedFor = tapeGeometry.expandedFor;
 
 /**
  * A cable between two ports: horizontal at both ends, curving in the middle, so

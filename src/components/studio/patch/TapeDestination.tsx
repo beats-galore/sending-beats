@@ -5,11 +5,14 @@ import { useStudioStore } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
 import { asBytes, asClock } from '../format';
-import { useNodeDrag } from '../hooks/use-node-drag';
+import { useNodeDrag, useNodeMoving } from '../hooks/use-node-drag';
+import { useNodeResize, useNodeSize } from '../hooks/use-node-resize';
 import { useTapeTransport } from '../hooks/use-tape-transport';
+import { ExpandToggle } from '../primitives/ExpandToggle';
 import { NodeCard } from '../primitives/NodeCard';
 import { PortDot } from '../primitives/PortDot';
 import { StatusDot } from '../primitives/StatusDot';
+import { tapeExpandedFor, tapeSize } from './patch-geometry';
 import type { NodeRect } from './patch-layout';
 import { TapeInspector } from './TapeInspector';
 
@@ -18,26 +21,33 @@ const { destination } = layout;
 type TapeDestinationProps = {
   /** Box in canvas coordinates, with anything the user arranged applied. */
   rect: NodeRect;
-  focused: boolean;
+  /** Holds the ring. Does not open the node. */
+  selected: boolean;
 };
 
 // Unnumbered and uncoloured by hand: there is only one tape, so it keeps the red
 // it turns while recording. See `reservedPatchColor`.
 /** The recorder, as seen from the patchbay. Opens in place to show its output settings. */
-export const TapeDestination = ({ rect, focused }: TapeDestinationProps) => {
+export const TapeDestination = ({ rect, selected }: TapeDestinationProps) => {
   const select = useStudioStore((state) => state.select);
   const tape = useTapeTransport();
   const grab = useNodeDrag(TAPE_TARGET_KEY, rect);
+  const resize = useNodeResize(TAPE_TARGET_KEY, rect, tapeSize(false));
+  const setSize = useNodeSize(TAPE_TARGET_KEY);
+  const moving = useNodeMoving(TAPE_TARGET_KEY);
+  const expanded = tapeExpandedFor(rect);
 
   const fileName = tape.filePath?.split('/').pop();
 
   return (
     <NodeCard
       position={rect}
-      selected={focused}
-      borderColor={focused ? color.acc : color.line}
+      selected={selected}
+      raised={moving}
+      borderColor={selected ? color.acc : color.line}
       onClick={() => select({ kind: 'tape' })}
       onGrab={grab}
+      onResize={resize}
       ports={
         <PortDot
           tone={tape.isRecording ? 'hot' : 'dead'}
@@ -59,11 +69,12 @@ export const TapeDestination = ({ rect, focused }: TapeDestinationProps) => {
           <Text size="2xs" c={color.textDim}>
             {tape.config?.name ?? '—'}
           </Text>
+          <ExpandToggle expanded={expanded} onToggle={() => setSize(tapeSize(!expanded))} />
         </>
       }
       bodyStyle={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 12 }}
     >
-      <Group gap="xl" align="center" wrap="nowrap" h={focused ? undefined : '100%'}>
+      <Group gap="xl" align="center" wrap="nowrap" h={expanded ? undefined : '100%'}>
         <Box
           onClick={(event) => {
             event.stopPropagation();
@@ -91,7 +102,7 @@ export const TapeDestination = ({ rect, focused }: TapeDestinationProps) => {
         </Stack>
       </Group>
 
-      {focused && <TapeInspector tape={tape} />}
+      {expanded && <TapeInspector tape={tape} />}
     </NodeCard>
   );
 };

@@ -3,16 +3,17 @@ import { Box, Group, NativeSelect, Stack, Text } from '@mantine/core';
 import { channelTargetKey } from '../../../services/patch-color-service';
 import { useMixerStore } from '../../../stores/mixer-store';
 import { useStudioStore } from '../../../stores/studio-store';
-import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
 import type { AudioChannel } from '../../../types';
 import { asGain, meterPosition } from '../format';
 import { useChannelNowPlaying } from '../hooks/use-channel-now-playing';
 import { useChannelSource } from '../hooks/use-channel-source';
-import { useNodeDrag } from '../hooks/use-node-drag';
+import { useNodeDrag, useNodeMoving } from '../hooks/use-node-drag';
+import { useNodeResize, useNodeSize } from '../hooks/use-node-resize';
 import { usePatchChannel } from '../hooks/use-patch-channel';
 import { DeleteButton } from '../primitives/DeleteButton';
 import { DragBar } from '../primitives/DragBar';
+import { ExpandToggle } from '../primitives/ExpandToggle';
 import { LevelMeter } from '../primitives/LevelMeter';
 import { Pill } from '../primitives/Pill';
 import { PortDot } from '../primitives/PortDot';
@@ -22,7 +23,8 @@ import { ChannelInspector } from './ChannelInspector';
 import { ChannelName } from './ChannelName';
 import { DestinationTiles } from './DestinationTiles';
 import { DeviceCard } from './DeviceCard';
-import type { ChannelCardVariant, ChannelExpansion } from './patch-geometry';
+import { channelPortOffset, channelSize, expansionFor, openExpansion } from './patch-geometry';
+import type { ChannelCardVariant } from './patch-geometry';
 import type { NodeRect } from './patch-layout';
 import { PatchBadge } from './PatchBadge';
 
@@ -34,19 +36,34 @@ type ChannelNodeProps = {
   index: number;
   /** Box in canvas coordinates, with anything the user arranged applied. */
   rect: NodeRect;
-  expansion: ChannelExpansion;
   variant: ChannelCardVariant;
+  /** Holds the ring and the keyboard shortcuts. Does not open the node. */
+  selected: boolean;
 };
 
 /** One source on the patch canvas: what it is, how loud, and how it is processed. */
-export const ChannelNode = ({ channel, index, rect, expansion, variant }: ChannelNodeProps) => {
+export const ChannelNode = ({ channel, index, rect, variant, selected }: ChannelNodeProps) => {
   const select = useStudioStore((state) => state.select);
   const removeChannel = useMixerStore((state) => state.removeChannel);
   const patch = usePatchChannel(channel);
   const source = useChannelSource(channel.id);
   const track = useChannelNowPlaying(source.configuredDevice?.deviceIdentifier);
-  const grab = useNodeDrag(channelTargetKey(channel.id), rect);
+
+  const targetKey = channelTargetKey(channel.id);
+  const shut = channelSize(variant, 'collapsed');
+  const grab = useNodeDrag(targetKey, rect);
+  const resize = useNodeResize(targetKey, rect, shut);
+  const setSize = useNodeSize(targetKey);
+  const moving = useNodeMoving(targetKey);
+
+  // How much of the node is showing follows from how big it is, so the toggle
+  // only has to size it to whatever it is going to show.
+  const expansion = expansionFor(variant, rect);
   const expanded = expansion !== 'collapsed';
+  const toggle = () =>
+    setSize(
+      expanded ? shut : channelSize(variant, openExpansion(channel.effects_enabled))
+    );
 
   // An unavailable source outranks mute and tap styling: the channel is patched
   // to something that cannot deliver audio, which the user has to see.
@@ -61,15 +78,17 @@ export const ChannelNode = ({ channel, index, rect, expansion, variant }: Channe
 
   const card = {
     rect,
-    selected: expanded,
-    borderColor: expanded ? color.acc : color.line,
+    selected,
+    raised: moving,
+    borderColor: selected ? color.acc : color.line,
     onClick: () => select({ kind: 'channel', channelId: channel.id }),
     onGrab: grab,
-    ports: <PortDot tone={tone} side="right" top={layout.source.portOffset} />,
+    onResize: resize,
+    ports: <PortDot tone={tone} side="right" top={channelPortOffset} />,
     header: (
       <>
         <PatchBadge
-          targetKey={channelTargetKey(channel.id)}
+          targetKey={targetKey}
           position={index}
           dimmed={unavailable || patch.muted}
           label="SOURCE COLOUR"
@@ -78,11 +97,12 @@ export const ChannelNode = ({ channel, index, rect, expansion, variant }: Channe
           channelId={channel.id}
           name={channel.name}
           deviceName={source.configuredDevice?.deviceName ?? null}
-          editable={expanded}
+          editable={selected}
         />
         <Text size="2xs" c={color.textFaint}>
           ⌥{index + 1}
         </Text>
+        <ExpandToggle expanded={expanded} onToggle={toggle} />
         <DeleteButton
           onDelete={() => void removeChannel(channel.id)}
           title={`Remove ${channel.name} from the mix`}
@@ -182,6 +202,7 @@ export const ChannelNode = ({ channel, index, rect, expansion, variant }: Channe
           onPanChange={patch.setPan}
           sourceName={patch.sourceName}
           port={index + 1}
+          showChain={expansion === 'effects'}
         />
       )}
     </>

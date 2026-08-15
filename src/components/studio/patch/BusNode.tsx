@@ -7,15 +7,18 @@ import { layout } from '../../../theme/layout';
 import { border, color, glow } from '../../../theme/tokens';
 import type { Bus } from '../../../types/bus.types';
 import { asGain, meterPosition } from '../format';
-import { useNodeDrag } from '../hooks/use-node-drag';
+import { useNodeDrag, useNodeMoving } from '../hooks/use-node-drag';
+import { useNodeResize, useNodeSize } from '../hooks/use-node-resize';
 import { DragBar } from '../primitives/DragBar';
+import { ExpandToggle } from '../primitives/ExpandToggle';
 import { LevelColumn } from '../primitives/LevelColumn';
 import { LevelMeter } from '../primitives/LevelMeter';
 import { PortDot } from '../primitives/PortDot';
+import { ResizeGrip } from '../primitives/ResizeGrip';
 import { SectionLabel } from '../primitives/SectionLabel';
 import { StatRow } from '../primitives/StatRow';
 import { BusMemberTiles } from './BusMemberTiles';
-import { busPortOffset } from './patch-geometry';
+import { busExpandedFor, busPortOffset, busSize } from './patch-geometry';
 import type { NodeRect } from './patch-layout';
 
 const SCALE_MARKS = ['0', '-6', '-12', '-18', '-24', '-36', '-60'];
@@ -26,8 +29,8 @@ type BusNodeProps = {
   bus: Bus;
   /** Box in canvas coordinates, with anything the user arranged applied. */
   rect: NodeRect;
-  /** Open, showing the metering column, the large readout and the stats. */
-  expanded: boolean;
+  /** Holds the ring. Does not open the node. */
+  selected: boolean;
   onGainChange: (busId: string, gainDb: number) => void;
 };
 
@@ -38,10 +41,17 @@ type BusNodeProps = {
  * listening to it — a bus with no output is dropped rather than summed — so
  * every node here is a mix that is actually being produced.
  */
-export const BusNode = ({ bus, rect, expanded, onGainChange }: BusNodeProps) => {
+export const BusNode = ({ bus, rect, selected, onGainChange }: BusNodeProps) => {
   const levels = useBusLevels(bus.id);
   const select = useStudioStore((state) => state.select);
-  const grab = useNodeDrag(busTargetKey(bus.id), rect);
+
+  const targetKey = busTargetKey(bus.id);
+  const grab = useNodeDrag(targetKey, rect);
+  const resize = useNodeResize(targetKey, rect, busSize(false));
+  const setSize = useNodeSize(targetKey);
+  const moving = useNodeMoving(targetKey);
+
+  const expanded = busExpandedFor(rect);
 
   // A bus nobody sends to still produces silence for its outputs, which is not
   // the same as one carrying audio, and the node should not claim otherwise.
@@ -63,12 +73,13 @@ export const BusNode = ({ bus, rect, expanded, onGainChange }: BusNodeProps) => 
         width: rect.width,
         height: rect.height,
         background: color.bgRaised,
-        border: border(expanded ? 'acc' : carrying ? 'lineStrong' : 'line'),
+        border: border(selected ? 'acc' : carrying ? 'lineStrong' : 'line'),
         borderRadius: 'var(--mantine-radius-2xl)',
         boxShadow: 'var(--mantine-shadow-lg)',
         cursor: 'pointer',
         display: 'flex',
         flexDirection: 'column',
+        zIndex: moving ? 20 : undefined,
       }}
     >
       <Group
@@ -107,6 +118,7 @@ export const BusNode = ({ bus, rect, expanded, onGainChange }: BusNodeProps) => 
         <Text size="2xs" c={color.textFaint} style={{ flex: 'none' }}>
           {bus.inputs.length} IN · {bus.outputs.length} OUT
         </Text>
+        <ExpandToggle expanded={expanded} onToggle={() => setSize(busSize(!expanded))} />
       </Group>
 
       <Stack gap="sm" p="lg" style={{ flex: 1, minHeight: 0 }}>
@@ -199,6 +211,8 @@ export const BusNode = ({ bus, rect, expanded, onGainChange }: BusNodeProps) => 
           </Group>
         )}
       </Stack>
+
+      <ResizeGrip onResize={resize} />
 
       {/* Ports straddle the node's own edges, and are listed in the order the
           member tiles are, so a cable lands beside the tile naming it. */}

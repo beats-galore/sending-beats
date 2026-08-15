@@ -30,6 +30,7 @@ const CONTROL_SELECTOR = 'input, select, textarea, button, [data-no-drag]';
 export const useNodeDrag = (targetKey: PatchTargetKey, rect: NodeRect) => {
   const place = usePatchLayoutStore((state) => state.place);
   const save = usePatchLayoutStore((state) => state.save);
+  const setMoving = usePatchLayoutStore((state) => state.setMoving);
 
   return useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
@@ -37,6 +38,7 @@ export const useNodeDrag = (targetKey: PatchTargetKey, rect: NodeRect) => {
         return;
       }
 
+      setMoving(targetKey);
       const grip = event.currentTarget.getBoundingClientRect();
       const scale = grip.width > 0 ? grip.width / rect.width : 1;
       const origin = { x: event.clientX, y: event.clientY };
@@ -63,6 +65,7 @@ export const useNodeDrag = (targetKey: PatchTargetKey, rect: NodeRect) => {
       const handleUp = () => {
         window.removeEventListener('pointermove', handleMove);
         window.removeEventListener('pointerup', handleUp);
+        setMoving(null);
 
         if (!moved) {
           return;
@@ -84,6 +87,10 @@ export const useNodeDrag = (targetKey: PatchTargetKey, rect: NodeRect) => {
       window.addEventListener('pointermove', handleMove);
       window.addEventListener('pointerup', handleUp);
     },
-    [targetKey, rect, place, save]
+    [targetKey, rect, place, save, setMoving]
   );
 };
+
+/** Whether the pointer currently has hold of this node, so it is drawn clear. */
+export const useNodeMoving = (targetKey: PatchTargetKey): boolean =>
+  usePatchLayoutStore((state) => state.moving === targetKey);

@@ -4,6 +4,10 @@
 // arranged, it returns where each node goes. The canvas and the cables both read
 // from here, so a dragged node and the wire leaving it can never disagree.
 //
+// Nodes start shut. How open a node is follows from how big it is, and a node
+// nobody has sized is the size it needs to be shut — so the whole canvas opens
+// compact, and what is showing on it is what the user asked to see.
+//
 // A node dragged out of its column leaves its slot behind rather than closing
 // it up. Nodes below would otherwise jump the moment a drag started, which is
 // the one thing a direct-manipulation canvas must not do. The tidy action is
@@ -18,31 +22,24 @@ import {
 } from '../../../services/patch-color-service';
 import type { PatchPlacement } from '../../../services/patch-layout-service';
 import { layout } from '../../../theme/layout';
-import {
-  busHeight,
-  castHeight,
-  channelHeight,
-  channelWidth,
-  stackTops,
-  tapeHeight,
-} from './patch-geometry';
-import type { ChannelLayout, DestinationFocus } from './patch-geometry';
+import { busSize, castSize, channelSize, stackTops, tapeSize } from './patch-geometry';
+import type { ChannelCardVariant } from './patch-geometry';
 import { canvasHeightOf, resolveRect } from './patch-layout';
-import type { NodeRect } from './patch-layout';
+import type { NodeRect, Size } from './patch-layout';
 
 const { source, bus, destination } = layout;
 
 export type Placements = Partial<Record<PatchTargetKey, PatchPlacement>>;
 
 type PatchRectsInput = {
-  channels: { id: number; layout: ChannelLayout }[];
-  buses: { id: string; expanded: boolean }[];
+  /** In column order. The variant decides how tall a shut source stands. */
+  channels: { id: number; variant: ChannelCardVariant }[];
+  busIds: string[];
   outputIds: string[];
-  destinationFocus: DestinationFocus;
 };
 
 export type PatchRects = {
-  /** By index, parallel to the channel list given. */
+  /** By index, parallel to the lists given. */
   channels: NodeRect[];
   buses: NodeRect[];
   outputs: NodeRect[];
@@ -56,52 +53,49 @@ export type PatchRects = {
   height: number;
 };
 
-/** A stored height wins over the one the node's contents ask for. */
-const resolveHeight = (
-  placements: Placements,
-  key: PatchTargetKey,
-  computed: number
-): number => placements[key]?.height ?? computed;
+/** A stored height wins over the one a shut node asks for. */
+const resolveHeight = (placements: Placements, key: PatchTargetKey, shut: Size): number =>
+  placements[key]?.height ?? shut.height;
 
 /** Where the next thing below a column goes, given where the column ended. */
 const stackEnd = (tops: number[], heights: number[], top: number, gap: number): number =>
   tops.length === 0 ? top : tops[tops.length - 1] + heights[heights.length - 1] + gap;
 
 export const resolvePatchRects = (
-  { channels, buses, outputIds, destinationFocus }: PatchRectsInput,
+  { channels, busIds, outputIds }: PatchRectsInput,
   placements: Placements
 ): PatchRects => {
   const channelKeys = channels.map((channel) => channelTargetKey(channel.id));
-  const channelHeights = channels.map((channel, index) =>
-    resolveHeight(placements, channelKeys[index], channelHeight(channel.layout))
+  const channelShut = channels.map((channel) => channelSize(channel.variant, 'collapsed'));
+  const channelHeights = channelKeys.map((key, index) =>
+    resolveHeight(placements, key, channelShut[index])
   );
   const channelTops = stackTops(channelHeights, source.top, source.gap);
-  const channelRects = channels.map((channel, index) =>
-    resolveRect(placements[channelKeys[index]], {
+  const channelRects = channelKeys.map((key, index) =>
+    resolveRect(placements[key], {
       left: source.x,
       top: channelTops[index],
-      width: channelWidth(channel.layout.expansion),
+      width: channelShut[index].width,
       height: channelHeights[index],
     })
   );
 
-  const busKeys = buses.map((entry) => busTargetKey(entry.id));
-  const busHeights = buses.map((entry, index) =>
-    resolveHeight(placements, busKeys[index], busHeight(entry.expanded))
-  );
+  const busKeys = busIds.map(busTargetKey);
+  const busShut = busSize(false);
+  const busHeights = busKeys.map((key) => resolveHeight(placements, key, busShut));
   const busTops = stackTops(busHeights, bus.top, bus.gap);
-  const busRects = buses.map((entry, index) =>
-    resolveRect(placements[busKeys[index]], {
+  const busRects = busKeys.map((key, index) =>
+    resolveRect(placements[key], {
       left: bus.x,
       top: busTops[index],
-      width: bus.width,
+      width: busShut.width,
       height: busHeights[index],
     })
   );
 
   // The right column runs cast, then tape, then the hardware outputs, each
   // group flowing from the one above it.
-  const castSlotHeight = resolveHeight(placements, STREAM_TARGET_KEY, castHeight(destinationFocus));
+  const castSlotHeight = resolveHeight(placements, STREAM_TARGET_KEY, castSize(false));
   const castRect = resolveRect(placements[STREAM_TARGET_KEY], {
     left: destination.x,
     top: destination.top,
@@ -110,7 +104,7 @@ export const resolvePatchRects = (
   });
 
   const tapeSlotTop = destination.top + castSlotHeight + destination.gap;
-  const tapeSlotHeight = resolveHeight(placements, TAPE_TARGET_KEY, tapeHeight(destinationFocus));
+  const tapeSlotHeight = resolveHeight(placements, TAPE_TARGET_KEY, tapeSize(false));
   const tapeRect = resolveRect(placements[TAPE_TARGET_KEY], {
     left: destination.x,
     top: tapeSlotTop,
@@ -119,16 +113,15 @@ export const resolvePatchRects = (
   });
 
   const outputKeys = outputIds.map(outputTargetKey);
-  const outputHeights = outputKeys.map((key) =>
-    resolveHeight(placements, key, destination.outputHeight)
-  );
+  const outputShut: Size = { width: destination.width, height: destination.outputHeight };
+  const outputHeights = outputKeys.map((key) => resolveHeight(placements, key, outputShut));
   const outputColumnTop = tapeSlotTop + tapeSlotHeight + destination.gap;
   const outputTops = stackTops(outputHeights, outputColumnTop, destination.outputGap);
   const outputRects = outputKeys.map((key, index) =>
     resolveRect(placements[key], {
       left: destination.x,
       top: outputTops[index],
-      width: destination.width,
+      width: outputShut.width,
       height: outputHeights[index],
     })
   );

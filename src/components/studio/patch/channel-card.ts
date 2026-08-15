@@ -17,7 +17,11 @@ export type ChannelCardProps = {
   ports?: ReactNode;
   borderColor?: string;
   selected?: boolean;
+  /** Lifts the node clear while the pointer has hold of it. */
+  raised?: boolean;
   onClick?: MouseEventHandler<HTMLDivElement>;
   /** Picks the node up. The title bar is the grip. */
   onGrab?: PointerEventHandler<HTMLDivElement>;
+  /** Resizes the node. Draws the corner grip when given. */
+  onResize?: PointerEventHandler<HTMLDivElement>;
 };

@@ -15,12 +15,16 @@ import { layout } from '../../../theme/layout';
 
 const { canvas } = layout;
 
-/** A node's box in canvas coordinates. */
-export type NodeRect = {
-  left: number;
-  top: number;
+/** How much room something takes. */
+export type Size = {
   width: number;
   height: number;
+};
+
+/** A node's box in canvas coordinates. */
+export type NodeRect = Size & {
+  left: number;
+  top: number;
 };
 
 /** A port, in canvas coordinates. */
@@ -84,3 +88,15 @@ export const clampToCanvas = (rect: NodeRect): Port => ({
  */
 export const snapToGrid = (value: number): number =>
   Math.round(value / canvas.dotGridSize) * canvas.dotGridSize;
+
+/**
+ * Keeps a resize within what a node can actually be.
+ *
+ * The floor is whatever the node needs when it is showing the least it can, and
+ * the ceiling is the canvas — a node wider than the canvas would be scaled off
+ * screen along with everything else.
+ */
+export const clampSize = (size: Size, left: number, minimum: Size): Size => ({
+  width: Math.max(minimum.width, Math.min(canvas.width - left, size.width)),
+  height: Math.max(minimum.height, size.height),
+});

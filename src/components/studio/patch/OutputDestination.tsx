@@ -5,7 +5,8 @@ import type { DestinationRole } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
 import { asGain } from '../format';
-import { useNodeDrag } from '../hooks/use-node-drag';
+import { useNodeDrag, useNodeMoving } from '../hooks/use-node-drag';
+import { useNodeResize } from '../hooks/use-node-resize';
 import type { PatchOutput } from '../hooks/use-patch-outputs';
 import { DeleteButton } from '../primitives/DeleteButton';
 import { DragBar } from '../primitives/DragBar';
@@ -71,12 +72,22 @@ export const OutputDestination = ({
   // A destination the configuration still points at but which never connected.
   // Without this it renders as live and the mix appears to be going somewhere.
   const unavailable = output.unavailableReason !== null;
-  const grab = useNodeDrag(outputTargetKey(output.id), rect);
+  const targetKey = outputTargetKey(output.id);
+  const grab = useNodeDrag(targetKey, rect);
+  // A destination has nothing further to reveal, so it carries no expand
+  // toggle — it is only resized to fit a hand-arranged canvas.
+  const resize = useNodeResize(targetKey, rect, {
+    width: destination.width,
+    height: destination.outputHeight,
+  });
+  const moving = useNodeMoving(targetKey);
 
   return (
     <NodeCard
       position={rect}
+      raised={moving}
       onGrab={grab}
+      onResize={resize}
       borderColor={unavailable ? color.hotBorder : output.live ? color.line : color.dash}
       dimmed={!output.live}
       ports={

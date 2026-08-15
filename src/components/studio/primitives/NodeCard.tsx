@@ -2,8 +2,9 @@ import { Box, Group } from '@mantine/core';
 
 import type { CSSProperties, MouseEventHandler, PointerEventHandler, ReactNode } from 'react';
 import { color } from '../../../theme/tokens';
-
 import type { ColorToken } from '../../../theme/tokens';
+import { ResizeGrip } from './ResizeGrip';
+
 
 type NodeCardProps = {
   /** Contents of the title bar. */
@@ -15,9 +16,13 @@ type NodeCardProps = {
   headerSurface?: ColorToken;
   /** Lifts the node above its neighbours and rings it, for the selected channel. */
   selected?: boolean;
+  /** Lifts the node clear while the pointer has hold of it. */
+  raised?: boolean;
   onClick?: MouseEventHandler<HTMLDivElement>;
   /** Picks the node up. The title bar is the grip. */
   onGrab?: PointerEventHandler<HTMLDivElement>;
+  /** Resizes the node. Draws the corner grip when given. */
+  onResize?: PointerEventHandler<HTMLDivElement>;
   dimmed?: boolean;
   /** Ports, which sit outside the card's own bounds. */
   ports?: ReactNode;
@@ -37,8 +42,10 @@ export const NodeCard = ({
   borderColor = color.line,
   headerSurface = 'bgRaised',
   selected = false,
+  raised = false,
   onClick,
   onGrab,
+  onResize,
   dimmed = false,
   ports,
   bodyStyle,
@@ -66,7 +73,7 @@ export const NodeCard = ({
       flexDirection: 'column',
       cursor: onClick ? 'pointer' : undefined,
       opacity: dimmed ? 0.6 : 1,
-      zIndex: selected ? 5 : undefined,
+      zIndex: raised ? 20 : selected ? 5 : undefined,
       boxShadow: selected ? `0 0 0 4px ${color.accDim}` : undefined,
     }}
   >
@@ -91,6 +98,7 @@ export const NodeCard = ({
       <Box style={{ flex: 1, minHeight: 0, padding: '10px 11px', ...bodyStyle }}>{children}</Box>
     )}
 
+    {onResize && <ResizeGrip onResize={onResize} />}
     {ports}
   </Box>
 );

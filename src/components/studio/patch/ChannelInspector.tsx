@@ -19,18 +19,29 @@ type ChannelInspectorProps = {
   onPanChange: (pan: number) => void;
   sourceName: string;
   port: number;
+  /**
+   * Whether the node is tall enough for the chain below the switch.
+   *
+   * A node shows as much as it has room for. Switching the effects on inside a
+   * node that has only been opened as far as the inspector leaves the chain
+   * waiting until the node is made taller, rather than growing the node out
+   * from under the click that switched it on.
+   */
+  showChain: boolean;
 };
 
-/** The processing chain for the selected channel, revealed inside its node. */
+/** The processing chain for a channel, revealed inside its node. */
 export const ChannelInspector = ({
   channel,
   pan,
   onPanChange,
   sourceName,
   port,
+  showChain,
 }: ChannelInspectorProps) => {
   const updateChannel = useMixerStore((state) => state.updateChannel);
   const { setLimiterThreshold, toggleLimiter } = useChannelEffects(channel.id);
+  const chain = channel.effects_enabled && showChain;
 
   const toggleEffects = useCallback(() => {
     void updateChannel(channel.id, { effects_enabled: !channel.effects_enabled });
@@ -52,7 +63,7 @@ export const ChannelInspector = ({
         >
           {channel.effects_enabled ? 'FX ON' : 'FX OFF'}
         </ActionButton>
-        {channel.effects_enabled && (
+        {chain && (
           <>
             <SectionLabel tracking="wide">PAN</SectionLabel>
             <DragBar
@@ -70,7 +81,7 @@ export const ChannelInspector = ({
         )}
       </Group>
 
-      {channel.effects_enabled && (
+      {chain && (
         <>
           <Group gap="xl" align="flex-start" wrap="nowrap">
             <ChannelEqualizer channel={channel} />

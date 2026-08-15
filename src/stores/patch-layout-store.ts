@@ -9,6 +9,15 @@ type PatchLayoutStore = {
   placements: Partial<Record<PatchTargetKey, PatchPlacement>>;
   loaded: boolean;
 
+  /**
+   * The node the pointer currently has hold of.
+   *
+   * Nodes are drawn in the order the canvas lists them, so one dragged across
+   * another would pass behind it. This is what lifts it clear for the duration.
+   */
+  moving: PatchTargetKey | null;
+  setMoving: (targetKey: PatchTargetKey | null) => void;
+
   load: () => Promise<void>;
   /** Move or resize a node on screen, without writing anything down. */
   place: (targetKey: PatchTargetKey, patch: Partial<PatchPlacement>) => void;
@@ -30,6 +39,9 @@ const overridesNothing = (placement: PatchPlacement): boolean =>
 export const usePatchLayoutStore = create<PatchLayoutStore>((set, get) => ({
   placements: {},
   loaded: false,
+
+  moving: null,
+  setMoving: (moving) => set({ moving }),
 
   load: async () => {
     try {
