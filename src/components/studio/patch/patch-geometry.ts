@@ -44,6 +44,17 @@ export const OutputExpansion = ['compact', 'collapsed'] as const;
 export type OutputExpansion = (typeof OutputExpansion)[number];
 
 /**
+ * Which of the three shared rungs a source is standing at.
+ *
+ * A source has a fourth — the inspector alone, without the chain — but it is
+ * the same rung as the whole thing seen from outside: both are "open as far as
+ * this node goes". Pinned nodes are sized as a group, and a group made of
+ * sources, mixes and destinations needs one vocabulary they all answer to.
+ */
+export const rungOf = (expansion: ChannelExpansion): NodeExpansion =>
+  expansion === 'compact' || expansion === 'collapsed' ? expansion : 'expanded';
+
+/**
  * Which card a source is drawn as.
  *
  * An application the backend can read a track from stands taller, because its

@@ -8,7 +8,7 @@ import type { AudioChannel } from '../../../types';
 import { useChannelNowPlaying } from '../hooks/use-channel-now-playing';
 import { useChannelSource } from '../hooks/use-channel-source';
 import { useNodeDrag, useNodeFront } from '../hooks/use-node-drag';
-import { useNodeResize, useNodeSize, useUnshrink } from '../hooks/use-node-resize';
+import { useNodeResize, useNodeRung, useUnshrink } from '../hooks/use-node-resize';
 import { usePatchChannel } from '../hooks/use-patch-channel';
 import { DeleteButton } from '../primitives/DeleteButton';
 import { ExpandToggle } from '../primitives/ExpandToggle';
@@ -22,10 +22,11 @@ import {
   channelPortOffset,
   channelSize,
   expansionFor,
+  NodeExpansion,
   nextExpansion,
-  openExpansion,
+  rungOf,
 } from './patch-geometry';
-import type { ChannelCardVariant, ChannelExpansion } from './patch-geometry';
+import type { ChannelCardVariant } from './patch-geometry';
 import type { NodeRect } from './patch-layout';
 import { PatchBadge } from './PatchBadge';
 
@@ -39,18 +40,6 @@ type ChannelNodeProps = {
   selected: boolean;
 };
 
-/**
- * The sizes the toggle steps through, in order.
- *
- * A channel with its effects switched off has no chain to make room for, so the
- * rung above the ordinary card is the inspector rather than the whole thing.
- */
-const toggleOrder = (effectsEnabled: boolean): ChannelExpansion[] => [
-  'compact',
-  'collapsed',
-  openExpansion(effectsEnabled),
-];
-
 /** One source on the patch canvas: what it is, how loud, and how it is processed. */
 export const ChannelNode = ({ channel, index, rect, variant, selected }: ChannelNodeProps) => {
   const select = useStudioStore((state) => state.select);
@@ -62,19 +51,15 @@ export const ChannelNode = ({ channel, index, rect, variant, selected }: Channel
   const targetKey = channelTargetKey(channel.id);
   const grab = useNodeDrag(targetKey, rect);
   const resize = useNodeResize(targetKey, rect, channelSize(variant, 'compact'));
-  const setSize = useNodeSize(targetKey);
+  const setRung = useNodeRung(targetKey);
   const { front, bringToFront } = useNodeFront(targetKey);
 
   // How much of the node is showing follows from how big it is, so the toggle
   // only has to size it to whatever it is going to show next.
   const expansion = expansionFor(variant, rect);
-  const order = toggleOrder(channel.effects_enabled);
-  const next = nextExpansion(expansion, order);
-  const unshrink = useUnshrink(
-    targetKey,
-    expansion === 'compact',
-    channelSize(variant, 'collapsed')
-  );
+  const rung = rungOf(expansion);
+  const next = nextExpansion(rung, NodeExpansion);
+  const unshrink = useUnshrink(targetKey, expansion === 'compact');
 
   // An unavailable source outranks mute and tap styling: the channel is patched
   // to something that cannot deliver audio, which the user has to see.
@@ -118,8 +103,8 @@ export const ChannelNode = ({ channel, index, rect, variant, selected }: Channel
           ⌥{index + 1}
         </Text>
         <ExpandToggle
-          grows={order.indexOf(next) > order.indexOf(expansion)}
-          onToggle={() => setSize(channelSize(variant, next))}
+          grows={NodeExpansion.indexOf(next) > NodeExpansion.indexOf(rung)}
+          onToggle={() => setRung(next)}
         />
         <DeleteButton
           onDelete={() => void removeChannel(channel.id)}

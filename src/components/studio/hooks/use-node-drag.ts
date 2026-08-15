@@ -101,6 +101,13 @@ export const useNodeDrag = (targetKey: PatchTargetKey, rect: NodeRect) => {
       let moved = false;
       let landing: Pin | null = null;
 
+      // A node being pulled out of a group was taking its size from its anchor.
+      // Freezing that size as it comes away is what stops it springing back to
+      // whatever it was before it was pinned.
+      const detaching =
+        pinOf(usePatchLayoutStore.getState().placements[targetKey], targetKey) !== null;
+      const kept = detaching ? { width: rect.width, height: rect.height } : {};
+
       const apply = (point: PointerEvent) => {
         const free = point.altKey;
         const left = rect.left + (point.clientX - origin.x) / scale;
@@ -119,7 +126,13 @@ export const useNodeDrag = (targetKey: PatchTargetKey, rect: NodeRect) => {
         setPinTarget(landing);
 
         const position = clampToCanvas({ ...dragged, ...(candidate?.at ?? {}) });
-        place(targetKey, { x: position.x, y: position.y, pinnedTo: null, pinEdge: null });
+        place(targetKey, {
+          x: position.x,
+          y: position.y,
+          pinnedTo: null,
+          pinEdge: null,
+          ...kept,
+        });
       };
 
       const handleMove = (moveEvent: PointerEvent) => {

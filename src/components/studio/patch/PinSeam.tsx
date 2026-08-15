@@ -40,9 +40,9 @@ export const PinSeam = ({ targetKey, pin, rect }: PinSeamProps) => {
       ref={ref}
       onClick={(event) => {
         event.stopPropagation();
-        // Released where it is being drawn, so letting go of a pin never moves
-        // anything — which is what makes it safe to try.
-        void unpin(targetKey, { x: rect.left, y: rect.top });
+        // Released exactly as it is being drawn — same place, same size — so
+        // letting go of a pin changes nothing but the pin.
+        void unpin(targetKey, rect);
       }}
       // Sits over two nodes, either of which would otherwise take the press
       onPointerDown={(event) => event.stopPropagation()}

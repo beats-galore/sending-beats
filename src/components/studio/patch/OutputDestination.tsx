@@ -5,7 +5,7 @@ import type { DestinationRole } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
 import { useNodeDrag, useNodeFront } from '../hooks/use-node-drag';
-import { useNodeResize, useNodeSize, useUnshrink } from '../hooks/use-node-resize';
+import { useNodeResize, useNodeRung, useUnshrink } from '../hooks/use-node-resize';
 import type { PatchOutput } from '../hooks/use-patch-outputs';
 import { DeleteButton } from '../primitives/DeleteButton';
 import { ExpandToggle } from '../primitives/ExpandToggle';
@@ -73,7 +73,7 @@ export const OutputDestination = ({
   const targetKey = outputTargetKey(output.id);
   const grab = useNodeDrag(targetKey, rect);
   const resize = useNodeResize(targetKey, rect, outputSize('compact'));
-  const setSize = useNodeSize(targetKey);
+  const setRung = useNodeRung(targetKey);
   const { front, bringToFront } = useNodeFront(targetKey);
 
   // A destination has nothing to open into, so it only shrinks: the device
@@ -81,7 +81,7 @@ export const OutputDestination = ({
   const expansion = outputExpansionFor(rect);
   const compact = expansion === 'compact';
   const next = nextExpansion(expansion, OutputExpansion);
-  const unshrink = useUnshrink(targetKey, compact, outputSize('collapsed'));
+  const unshrink = useUnshrink(targetKey, compact);
 
   return (
     <NodeCard
@@ -138,7 +138,7 @@ export const OutputDestination = ({
           )}
           <ExpandToggle
             grows={OutputExpansion.indexOf(next) > OutputExpansion.indexOf(expansion)}
-            onToggle={() => setSize(outputSize(next))}
+            onToggle={() => setRung(next)}
           />
           <DeleteButton
             onDelete={() => onRemove(output.id)}

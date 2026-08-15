@@ -6,7 +6,7 @@ import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
 import { asBytes, asClock } from '../format';
 import { useNodeDrag, useNodeFront } from '../hooks/use-node-drag';
-import { useNodeResize, useNodeSize, useUnshrink } from '../hooks/use-node-resize';
+import { useNodeResize, useNodeRung, useUnshrink } from '../hooks/use-node-resize';
 import { useTapeTransport } from '../hooks/use-tape-transport';
 import { ExpandToggle } from '../primitives/ExpandToggle';
 import { NodeCard } from '../primitives/NodeCard';
@@ -33,13 +33,13 @@ export const TapeDestination = ({ rect, selected }: TapeDestinationProps) => {
   const tape = useTapeTransport();
   const grab = useNodeDrag(TAPE_TARGET_KEY, rect);
   const resize = useNodeResize(TAPE_TARGET_KEY, rect, tapeSize('compact'));
-  const setSize = useNodeSize(TAPE_TARGET_KEY);
+  const setRung = useNodeRung(TAPE_TARGET_KEY);
   const { front, bringToFront } = useNodeFront(TAPE_TARGET_KEY);
 
   const expansion = tapeExpansionFor(rect);
   const compact = expansion === 'compact';
   const next = nextExpansion(expansion, NodeExpansion);
-  const unshrink = useUnshrink(TAPE_TARGET_KEY, compact, tapeSize('collapsed'));
+  const unshrink = useUnshrink(TAPE_TARGET_KEY, compact);
 
   const fileName = tape.filePath?.split('/').pop();
 
@@ -79,7 +79,7 @@ export const TapeDestination = ({ rect, selected }: TapeDestinationProps) => {
           </Text>
           <ExpandToggle
             grows={NodeExpansion.indexOf(next) > NodeExpansion.indexOf(expansion)}
-            onToggle={() => setSize(tapeSize(next))}
+            onToggle={() => setRung(next)}
           />
         </>
       }

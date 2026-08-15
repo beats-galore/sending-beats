@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 
+import type { NodeRect } from '../components/studio/patch/patch-layout';
 import type { PatchTargetKey } from '../services/patch-color-service';
 import type { PatchPlacement, PinEdge } from '../services/patch-layout-service';
 import { EMPTY_PLACEMENT, isPinEdge, patchLayoutService } from '../services/patch-layout-service';
@@ -48,12 +49,13 @@ type PatchLayoutStore = {
   /** Stick a node to an edge of another, so the two move as one. */
   pin: (targetKey: PatchTargetKey, anchor: PatchTargetKey, edge: PinEdge) => Promise<void>;
   /**
-   * Let a node go, leaving it exactly where it was drawn.
+   * Let a node go, leaving it exactly as it was drawn.
    *
-   * The position it was taking from its anchor becomes its own, so releasing a
-   * pin never moves anything — which is what makes it safe to try.
+   * Both the position and the size it was taking from its anchor become its
+   * own, so releasing a pin neither moves nor resizes anything — which is what
+   * makes it safe to try.
    */
-  unpin: (targetKey: PatchTargetKey, at: { x: number; y: number }) => Promise<void>;
+  unpin: (targetKey: PatchTargetKey, rect: NodeRect) => Promise<void>;
 };
 
 /** Whether anything is actually overridden, or the node is being placed anyway. */
@@ -168,8 +170,15 @@ export const usePatchLayoutStore = create<PatchLayoutStore>((set, get) => ({
     await get().save(targetKey);
   },
 
-  unpin: async (targetKey, at) => {
-    get().place(targetKey, { pinnedTo: null, pinEdge: null, x: at.x, y: at.y });
+  unpin: async (targetKey, rect) => {
+    get().place(targetKey, {
+      pinnedTo: null,
+      pinEdge: null,
+      x: rect.left,
+      y: rect.top,
+      width: rect.width,
+      height: rect.height,
+    });
     await get().save(targetKey);
   },
 }));

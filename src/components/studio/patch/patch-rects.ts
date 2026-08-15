@@ -22,8 +22,16 @@ import {
 } from '../../../services/patch-color-service';
 import type { PatchPlacement } from '../../../services/patch-layout-service';
 import { layout } from '../../../theme/layout';
-import { busSize, castSize, channelSize, outputSize, stackTops, tapeSize } from './patch-geometry';
-import type { ChannelCardVariant } from './patch-geometry';
+import {
+  busSize,
+  castSize,
+  channelSize,
+  openExpansion,
+  outputSize,
+  stackTops,
+  tapeSize,
+} from './patch-geometry';
+import type { ChannelCardVariant, NodeExpansion } from './patch-geometry';
 import { canvasHeightOf, resolveRect } from './patch-layout';
 import type { NodeRect, Size } from './patch-layout';
 import { applyPins } from './patch-pins';
@@ -34,16 +42,28 @@ export type Placements = Partial<Record<PatchTargetKey, PatchPlacement>>;
 
 type PatchRectsInput = {
   /** In column order. The variant decides how tall a shut source stands. */
-  channels: { id: number; variant: ChannelCardVariant }[];
+  channels: { id: number; variant: ChannelCardVariant; effectsEnabled: boolean }[];
   busIds: string[];
   outputIds: string[];
 };
+
+/**
+ * The sizes one node can be at, by rung.
+ *
+ * Published per node because sizing acts on a whole pinned group, and a group
+ * is made of things that are not the same shape: a source open is not the size
+ * a mix open is. Something has to be able to ask what a node it knows nothing
+ * about would be at a given rung, and this is that.
+ */
+export type NodeLadder = Record<NodeExpansion, Size>;
 
 export type PatchRects = {
   /** Every node on the canvas, in the order they are drawn. */
   keys: PatchTargetKey[];
   /** Every node's box, for anything that has a key rather than an index. */
   byKey: Record<PatchTargetKey, NodeRect>;
+  /** What size each node would be at each rung, for sizing a group as one. */
+  ladders: Record<PatchTargetKey, NodeLadder>;
   /** By index, parallel to the lists given. */
   channels: NodeRect[];
   buses: NodeRect[];
@@ -153,9 +173,50 @@ export const resolvePatchRects = (
 
   const rects = keys.map((key) => byKey[key]);
 
+  // A destination has nothing to open into, so its open rung is simply its
+  // ordinary card — a group opening around it leaves it as it is.
+  const ladders: Record<PatchTargetKey, NodeLadder> = Object.fromEntries([
+    ...channelKeys.map((key, index): [PatchTargetKey, NodeLadder] => {
+      const { variant, effectsEnabled } = channels[index];
+      return [
+        key,
+        {
+          compact: channelSize(variant, 'compact'),
+          collapsed: channelSize(variant, 'collapsed'),
+          expanded: channelSize(variant, openExpansion(effectsEnabled)),
+        },
+      ];
+    }),
+    ...busKeys.map((key): [PatchTargetKey, NodeLadder] => [
+      key,
+      { compact: busSize('compact'), collapsed: busShut, expanded: busSize('expanded') },
+    ]),
+    ...outputKeys.map((key): [PatchTargetKey, NodeLadder] => [
+      key,
+      { compact: outputSize('compact'), collapsed: outputShut, expanded: outputShut },
+    ]),
+    [
+      STREAM_TARGET_KEY,
+      {
+        compact: castSize('compact'),
+        collapsed: castSize('collapsed'),
+        expanded: castSize('expanded'),
+      },
+    ],
+    [
+      TAPE_TARGET_KEY,
+      {
+        compact: tapeSize('compact'),
+        collapsed: tapeSize('collapsed'),
+        expanded: tapeSize('expanded'),
+      },
+    ],
+  ]);
+
   return {
     keys,
     byKey,
+    ladders,
     channels: channelKeys.map((key) => byKey[key]),
     buses: busKeys.map((key) => byKey[key]),
     outputs: outputKeys.map((key) => byKey[key]),

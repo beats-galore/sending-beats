@@ -3,8 +3,12 @@ import { useCallback } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import type { PatchTargetKey } from '../../../services/patch-color-service';
 import { usePatchLayoutStore } from '../../../stores/patch-layout-store';
+import type { NodeExpansion } from '../patch/patch-geometry';
 import { clampSize, snapToGrid } from '../patch/patch-layout';
 import type { NodeRect, Size } from '../patch/patch-layout';
+import { pinnedCluster } from '../patch/patch-pins';
+import type { PatchRects } from '../patch/patch-rects';
+import { usePatchRectsContext } from '../patch/patch-rects-context';
 
 /**
  * The grip's own size in canvas coordinates.
@@ -15,17 +19,48 @@ import type { NodeRect, Size } from '../patch/patch-layout';
  */
 export const RESIZE_GRIP_SIZE = 16;
 
-/** Sets a node's size outright — what the condense and expand toggle does. */
-export const useNodeSize = (targetKey: PatchTargetKey) => {
+/**
+ * Everything sized along with this node.
+ *
+ * A pinned group is drawn as one block, so it is sized as one: reaching for the
+ * toggle or the corner of any card in a group acts on the block rather than on
+ * the one card, which is the only reading that makes sense once they are joined
+ * with no seam between them.
+ *
+ * On its own, a node is its own group of one.
+ */
+const sizedWith = (targetKey: PatchTargetKey, rects: PatchRects | null): PatchTargetKey[] => {
+  if (!rects) {
+    return [targetKey];
+  }
+
+  return pinnedCluster(targetKey, rects.keys, usePatchLayoutStore.getState().placements);
+};
+
+/**
+ * Steps a node to one of its three rungs, and its group with it.
+ *
+ * Each member takes its own size for that rung rather than the one this node
+ * would be: a mix opened as far as it goes is not the size a source opened as
+ * far as it goes is, and forcing one on the other would show the wrong amount
+ * of both.
+ */
+export const useNodeRung = (targetKey: PatchTargetKey) => {
   const place = usePatchLayoutStore((state) => state.place);
   const save = usePatchLayoutStore((state) => state.save);
+  const rects = usePatchRectsContext();
 
   return useCallback(
-    (size: Size) => {
-      place(targetKey, size);
-      void save(targetKey);
+    (rung: NodeExpansion) => {
+      for (const key of sizedWith(targetKey, rects)) {
+        const size = rects?.ladders[key]?.[rung];
+        if (size) {
+          place(key, size);
+          void save(key);
+        }
+      }
     },
-    [targetKey, place, save]
+    [targetKey, rects, place, save]
   );
 };
 
@@ -40,22 +75,23 @@ export const useNodeSize = (targetKey: PatchTargetKey) => {
  * A drag ends in a click on the node it moved, but that one is swallowed before
  * it lands, so shoving a shrunk node across the canvas does not also open it.
  */
-export const useUnshrink = (targetKey: PatchTargetKey, shrunk: boolean, restored: Size) => {
-  const setSize = useNodeSize(targetKey);
+export const useUnshrink = (targetKey: PatchTargetKey, shrunk: boolean) => {
+  const setRung = useNodeRung(targetKey);
 
   return () => {
     if (shrunk) {
-      setSize(restored);
+      setRung('collapsed');
     }
   };
 };
 
 /**
- * Makes the corner grip resize its node.
+ * Makes the corner grip resize its node, and its group with it.
  *
  * Both axes, because how open a node is follows from how big it is — dragging a
  * source taller is the same gesture as opening it, and the toggle is only a
- * shortcut to the size it would have been dragged to.
+ * shortcut to the size it would have been dragged to. Every card in a pinned
+ * group takes the same size, so dragging any corner resizes the block.
  *
  * Sizes snap to the same dot grid positions do, and ⌥ bypasses it the same way.
  * Nothing is written until the pointer is released.
@@ -63,6 +99,7 @@ export const useUnshrink = (targetKey: PatchTargetKey, shrunk: boolean, restored
 export const useNodeResize = (targetKey: PatchTargetKey, rect: NodeRect, minimum: Size) => {
   const place = usePatchLayoutStore((state) => state.place);
   const save = usePatchLayoutStore((state) => state.save);
+  const rects = usePatchRectsContext();
 
   return useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
@@ -79,6 +116,7 @@ export const useNodeResize = (targetKey: PatchTargetKey, rect: NodeRect, minimum
       const grip = event.currentTarget.getBoundingClientRect();
       const scale = grip.width > 0 ? grip.width / RESIZE_GRIP_SIZE : 1;
       const origin = { x: event.clientX, y: event.clientY };
+      const group = sizedWith(targetKey, rects);
       let moved = false;
 
       const apply = (point: PointerEvent) => {
@@ -94,7 +132,9 @@ export const useNodeResize = (targetKey: PatchTargetKey, rect: NodeRect, minimum
           minimum
         );
 
-        place(targetKey, size);
+        for (const key of group) {
+          place(key, size);
+        }
       };
 
       const handleMove = (moveEvent: PointerEvent) => {
@@ -107,13 +147,15 @@ export const useNodeResize = (targetKey: PatchTargetKey, rect: NodeRect, minimum
         window.removeEventListener('pointerup', handleUp);
 
         if (moved) {
-          void save(targetKey);
+          for (const key of group) {
+            void save(key);
+          }
         }
       };
 
       window.addEventListener('pointermove', handleMove);
       window.addEventListener('pointerup', handleUp);
     },
-    [targetKey, rect, minimum, place, save]
+    [targetKey, rect, minimum, rects, place, save]
   );
 };

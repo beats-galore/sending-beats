@@ -35,6 +35,24 @@ export const pinOf = (
     : null;
 
 /**
+ * The size a pinned node takes, so a group reads as one block.
+ *
+ * A node conforms across the edge it is held against: pinned to a side it takes
+ * its anchor's height, pinned underneath it takes its anchor's width. Otherwise
+ * two cards pinned side by side end at different depths and the pair reads as
+ * two things that happen to be touching, which is what a pin exists to be
+ * distinguishable from.
+ *
+ * The anchor governs, so resizing it resizes the whole group. A node given less
+ * room than it wants is not clipped — it falls back to showing whatever fits,
+ * the same as at any other size.
+ */
+export const pinnedSize = (anchor: NodeRect, edge: PinEdge, size: Size): Size =>
+  edge === 'bottom'
+    ? { width: anchor.width, height: size.height }
+    : { width: size.width, height: anchor.height };
+
+/**
  * Where a node sits against an edge of its anchor.
  *
  * Flush, with no gap: a gap would read as two nodes that happen to be near each
@@ -106,12 +124,12 @@ export const applyPins = ({
     ancestors.add(key);
     const anchor = place(pin.anchor, ancestors);
 
-    const rect = resolved[key];
+    const size = pinnedSize(anchor, pin.edge, resolved[key]);
     const slot = `${pin.anchor}:${pin.edge}`;
     const offset = claimed[slot] ?? 0;
-    claimed[slot] = offset + rect.height;
+    claimed[slot] = offset + size.height;
 
-    resolved[key] = { ...rect, ...pinnedAt(anchor, pin.edge, rect, offset) };
+    resolved[key] = { ...size, ...pinnedAt(anchor, pin.edge, size, offset) };
     placed.add(key);
 
     return resolved[key];
@@ -124,7 +142,35 @@ export const applyPins = ({
   return resolved;
 };
 
-/** Every node that would move with this one, including itself. */
+/** The node a chain of pins ends at, which is the one the group hangs from. */
+const rootOf = (
+  key: PatchTargetKey,
+  keys: PatchTargetKey[],
+  placements: Partial<Record<PatchTargetKey, PatchPlacement>>
+): PatchTargetKey => {
+  const present = new Set(keys);
+  let current = key;
+
+  for (let step = 0; step < MAX_CHAIN; step += 1) {
+    const pin = pinOf(placements[current], current);
+    // A pin to something that has left the canvas is not holding anything, so
+    // the chain ends here rather than at a node nobody can see.
+    if (!pin || !present.has(pin.anchor) || pin.anchor === key) {
+      break;
+    }
+    current = pin.anchor;
+  }
+
+  return current;
+};
+
+/**
+ * Every node pinned to this one, however far along the chain, including itself.
+ *
+ * This is what moves together. It walks downwards only, so it answers "what
+ * comes with this node when it is dragged" — see `pinnedCluster` for the whole
+ * group a node belongs to.
+ */
 export const pinnedGroup = (
   anchor: PatchTargetKey,
   keys: PatchTargetKey[],
@@ -150,3 +196,16 @@ export const pinnedGroup = (
 
   return [...group];
 };
+
+/**
+ * The whole group a node belongs to, anchors and followers alike.
+ *
+ * Sizing acts on this rather than on followers alone: a group is drawn as one
+ * block, so pressing the toggle on any card in it should size the block, not
+ * just the part of it hanging off that card.
+ */
+export const pinnedCluster = (
+  key: PatchTargetKey,
+  keys: PatchTargetKey[],
+  placements: Partial<Record<PatchTargetKey, PatchPlacement>>
+): PatchTargetKey[] => pinnedGroup(rootOf(key, keys, placements), keys, placements);

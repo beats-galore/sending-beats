@@ -8,7 +8,7 @@ import { border, color, glow } from '../../../theme/tokens';
 import type { Bus } from '../../../types/bus.types';
 import { asGain, meterPosition } from '../format';
 import { useNodeDrag, useNodeFront } from '../hooks/use-node-drag';
-import { useNodeResize, useNodeSize, useUnshrink } from '../hooks/use-node-resize';
+import { useNodeResize, useNodeRung, useUnshrink } from '../hooks/use-node-resize';
 import { DragBar } from '../primitives/DragBar';
 import { ExpandToggle } from '../primitives/ExpandToggle';
 import { LevelMeter } from '../primitives/LevelMeter';
@@ -46,13 +46,13 @@ export const BusNode = ({ bus, rect, selected, onGainChange }: BusNodeProps) => 
   const targetKey = busTargetKey(bus.id);
   const grab = useNodeDrag(targetKey, rect);
   const resize = useNodeResize(targetKey, rect, busSize('compact'));
-  const setSize = useNodeSize(targetKey);
+  const setRung = useNodeRung(targetKey);
   const { front, bringToFront } = useNodeFront(targetKey);
 
   const expansion = busExpansionFor(rect);
   const compact = expansion === 'compact';
   const next = nextExpansion(expansion, NodeExpansion);
-  const unshrink = useUnshrink(targetKey, compact, busSize('collapsed'));
+  const unshrink = useUnshrink(targetKey, compact);
 
   // A bus nobody sends to still produces silence for its outputs, which is not
   // the same as one carrying audio, and the node should not claim otherwise.
@@ -126,7 +126,7 @@ export const BusNode = ({ bus, rect, selected, onGainChange }: BusNodeProps) => 
         </Text>
         <ExpandToggle
           grows={NodeExpansion.indexOf(next) > NodeExpansion.indexOf(expansion)}
-          onToggle={() => setSize(busSize(next))}
+          onToggle={() => setRung(next)}
         />
       </Group>
 

@@ -7,7 +7,7 @@ import { border, color } from '../../../theme/tokens';
 import { asBytes, asElapsed } from '../format';
 import { useListenerStats } from '../hooks/use-listener-stats';
 import { useNodeDrag, useNodeFront } from '../hooks/use-node-drag';
-import { useNodeResize, useNodeSize, useUnshrink } from '../hooks/use-node-resize';
+import { useNodeResize, useNodeRung, useUnshrink } from '../hooks/use-node-resize';
 import { useStreamTransport } from '../hooks/use-stream-transport';
 import { ExpandToggle } from '../primitives/ExpandToggle';
 import { NodeCard } from '../primitives/NodeCard';
@@ -37,12 +37,12 @@ export const CastDestination = ({ rect, selected }: CastDestinationProps) => {
   const listeners = useListenerStats(isLive);
   const grab = useNodeDrag(STREAM_TARGET_KEY, rect);
   const resize = useNodeResize(STREAM_TARGET_KEY, rect, castSize('compact'));
-  const setSize = useNodeSize(STREAM_TARGET_KEY);
+  const setRung = useNodeRung(STREAM_TARGET_KEY);
   const { front, bringToFront } = useNodeFront(STREAM_TARGET_KEY);
 
   const expansion = castExpansionFor(rect);
   const next = nextExpansion(expansion, NodeExpansion);
-  const unshrink = useUnshrink(STREAM_TARGET_KEY, expansion === 'compact', castSize('collapsed'));
+  const unshrink = useUnshrink(STREAM_TARGET_KEY, expansion === 'compact');
 
   const bitrate = status?.bitrate_info.current_bitrate ?? stream.bitrate;
   const sent = status?.icecast_stats?.bytes_sent;
@@ -83,7 +83,7 @@ export const CastDestination = ({ rect, selected }: CastDestinationProps) => {
           </Text>
           <ExpandToggle
             grows={NodeExpansion.indexOf(next) > NodeExpansion.indexOf(expansion)}
-            onToggle={() => setSize(castSize(next))}
+            onToggle={() => setRung(next)}
           />
         </>
       }

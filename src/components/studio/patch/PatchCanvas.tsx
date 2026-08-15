@@ -102,6 +102,10 @@ export const PatchCanvas = () => {
           channels: channels.map((channel) => ({
             id: channel.id,
             variant: variants[channel.id] ?? 'device',
+            // Decides how far "open" goes for this source: with its effects
+            // switched off there is no chain below the inspector to make room
+            // for, so the group opens it only that far.
+            effectsEnabled: channel.effects_enabled,
           })),
           busIds: buses.map((busEntry) => busEntry.id),
           outputIds: outputs.map((output) => output.id),
