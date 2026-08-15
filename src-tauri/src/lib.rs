@@ -455,6 +455,7 @@ pub fn run() {
             get_all_device_health,
             report_device_error,
             remove_input_stream,
+            remove_output_stream,
             clear_session_devices,
             set_output_stream,
             start_device_monitoring,

@@ -1,5 +1,6 @@
 import { Box, Group, NativeSelect, Stack, Text } from '@mantine/core';
 
+import { useMixerStore } from '../../../stores/mixer-store';
 import { useStudioStore } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
@@ -8,6 +9,7 @@ import { asGain, meterPosition } from '../format';
 import { useChannelNowPlaying } from '../hooks/use-channel-now-playing';
 import { useChannelSource } from '../hooks/use-channel-source';
 import { usePatchChannel } from '../hooks/use-patch-channel';
+import { DeleteButton } from '../primitives/DeleteButton';
 import { DragBar } from '../primitives/DragBar';
 import { LevelMeter } from '../primitives/LevelMeter';
 import { Pill } from '../primitives/Pill';
@@ -33,6 +35,7 @@ type ChannelNodeProps = {
 /** One source on the patch canvas: what it is, how loud, and how it is processed. */
 export const ChannelNode = ({ channel, index, top, expansion, variant }: ChannelNodeProps) => {
   const select = useStudioStore((state) => state.select);
+  const removeChannel = useMixerStore((state) => state.removeChannel);
   const patch = usePatchChannel(channel);
   const source = useChannelSource(channel.id);
   const track = useChannelNowPlaying(source.configuredDevice?.deviceIdentifier);
@@ -81,6 +84,10 @@ export const ChannelNode = ({ channel, index, top, expansion, variant }: Channel
         <Text size="2xs" c={color.textFaint}>
           ⌥{index + 1}
         </Text>
+        <DeleteButton
+          onDelete={() => void removeChannel(channel.id)}
+          title={`Remove ${channel.name} from the mix`}
+        />
       </>
     ),
   };

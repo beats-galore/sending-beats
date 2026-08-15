@@ -52,6 +52,7 @@ export const PatchCanvas = () => {
     optionsFor,
     selectOutput,
     changeOutput,
+    removeOutput,
     cycleOutputRole,
     setOutputGain,
   } = usePatchOutputs();
@@ -244,6 +245,7 @@ export const PatchCanvas = () => {
           onChangeDevice={handleChangeOutput}
           onCycleRole={cycleOutputRole}
           onGainChange={setOutputGain}
+          onRemove={(deviceId) => void removeOutput(deviceId)}
         />
       ))}
 

@@ -24,6 +24,10 @@ export const audioService = {
     return invoke('remove_input_stream', { deviceId });
   },
 
+  async removeOutputStream(deviceId: Identifier<ConfiguredAudioDevice>): Promise<void> {
+    return invoke('remove_output_stream', { deviceId });
+  },
+
   /**
    * Tear down every device registered by the current session.
    *

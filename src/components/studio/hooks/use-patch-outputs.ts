@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from 'react';
 
 import { useAudioDevices, useMasterSectionData } from '../../../hooks';
+import { audioService } from '../../../services';
 import { useConfigurationStore, useMixerStore } from '../../../stores/mixer-store';
 import { useStudioStore } from '../../../stores/studio-store';
 import type { DestinationRole } from '../../../stores/studio-store';
@@ -31,7 +32,7 @@ export type PatchOutput = {
  * (see `studio-store`) until the pipeline can carry more than one output.
  */
 export const usePatchOutputs = () => {
-  const { activeSession } = useConfigurationStore();
+  const { activeSession, removeConfiguredDevice } = useConfigurationStore();
   const { mixerConfig, setMasterOutputDevice } = useMasterSectionData();
   const { outputDevices, disconnectedDeviceIds } = useAudioDevices();
   const restoreFailures = useMixerStore((state) => state.deviceRestoreFailures);
@@ -132,12 +133,26 @@ export const usePatchOutputs = () => {
     [changeOutputDevice]
   );
 
+  const removeOutput = useCallback(
+    async (deviceId: string) => {
+      try {
+        await audioService.removeOutputStream(asDeviceIdentifier(deviceId));
+      } catch (error) {
+        console.error(`Failed to remove output ${deviceId}:`, error);
+        return;
+      }
+      removeConfiguredDevice(deviceId);
+    },
+    [removeConfiguredDevice]
+  );
+
   return {
     outputs,
     available,
     optionsFor,
     selectOutput,
     changeOutput,
+    removeOutput,
     cycleOutputRole,
     setOutputGain,
   };

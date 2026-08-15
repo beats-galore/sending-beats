@@ -5,6 +5,7 @@ import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
 import { asGain } from '../format';
 import type { PatchOutput } from '../hooks/use-patch-outputs';
+import { DeleteButton } from '../primitives/DeleteButton';
 import { DragBar } from '../primitives/DragBar';
 import { NodeCard } from '../primitives/NodeCard';
 import { Pill } from '../primitives/Pill';
@@ -43,6 +44,7 @@ type OutputDestinationProps = {
   onChangeDevice: (oldDeviceId: string, newDeviceId: string) => void;
   onCycleRole: (deviceId: string) => void;
   onGainChange: (deviceId: string, gainDb: number) => void;
+  onRemove: (deviceId: string) => void;
 };
 
 /** One hardware output the master sum can feed. */
@@ -55,6 +57,7 @@ export const OutputDestination = ({
   onChangeDevice,
   onCycleRole,
   onGainChange,
+  onRemove,
 }: OutputDestinationProps) => {
   // A destination the configuration still points at but which never connected.
   // Without this it renders as live and the mix appears to be going somewhere.
@@ -117,6 +120,10 @@ export const OutputDestination = ({
               {output.role}
             </Pill>
           )}
+          <DeleteButton
+            onDelete={() => onRemove(output.id)}
+            title={`Remove ${output.name} from the mix`}
+          />
         </>
       }
       bodyStyle={{ padding: '0 11px', display: 'flex', alignItems: 'center' }}

@@ -554,6 +554,16 @@ pub async fn set_output_stream(
     crate::commands::device_attachment::attach_output_device(&audio_state, &device_id).await
 }
 
+/// Drop an output destination from the mix entirely.
+#[tauri::command]
+pub async fn remove_output_stream(
+    audio_state: State<'_, AudioState>,
+    device_id: String,
+) -> Result<(), String> {
+    log_command!("remove_output_stream", "device: {}", device_id);
+    remove_output_stream_internal(&audio_state, &device_id).await
+}
+
 // Device monitoring commands
 #[tauri::command]
 pub async fn start_device_monitoring(audio_state: State<'_, AudioState>) -> Result<String, String> {

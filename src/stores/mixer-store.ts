@@ -58,6 +58,13 @@ type MixerStore = {
   // Actions
   initializeMixer: () => Promise<void>;
   addChannel: () => Promise<void>;
+  /**
+   * Drop a channel from the mix, unpatching whatever it was fed by.
+   *
+   * The last channel is emptied rather than removed, so the patch canvas is
+   * never left with nothing to route.
+   */
+  removeChannel: (channelId: number) => Promise<void>;
   updateChannel: (channelId: number, updates: ChannelUpdate) => Promise<void>;
   updateMasterGain: (gain: number) => Promise<void>;
   /** Name a channel, or pass an empty string to clear it back to its device name */
@@ -166,7 +173,9 @@ export const useMixerStore = create<MixerStore>()(
       }
 
       try {
-        const newChannelId = config.channels.length + 1;
+        // Counting is not enough once a channel can be removed: deleting from
+        // the middle would make the next add collide with an existing id.
+        const newChannelId = config.channels.reduce((highest, c) => Math.max(highest, c.id), 0) + 1;
         const newChannel: AudioChannel = {
           ...DEFAULT_CHANNEL,
           id: newChannelId,
@@ -188,6 +197,46 @@ export const useMixerStore = create<MixerStore>()(
         set({ error: `Failed to add channel: ${errorMessage}` });
         throw error;
       }
+    },
+
+    removeChannel: async (channelId: number) => {
+      const { config, activeSession } = get();
+      if (!config) {
+        throw new Error('Mixer not initialized');
+      }
+
+      const patched = activeSession?.configuredDevices.find(
+        (device) => device.channelNumber === channelId && device.isInput
+      );
+
+      if (patched) {
+        try {
+          await audioService.removeInputStream(patched.deviceIdentifier);
+        } catch (error) {
+          set({ error: `Failed to remove channel input: ${describeError(error)}` });
+          throw error;
+        }
+        get().removeConfiguredDevice(patched.deviceIdentifier);
+      }
+
+      set((state) => {
+        if (!state.config) {
+          return state;
+        }
+
+        // Emptying beats removing when it is the only channel left: the patch
+        // canvas would otherwise have no source to route.
+        const isLast = state.config.channels.length <= 1;
+        const channels = isLast
+          ? state.config.channels.map((channel) =>
+              channel.id === channelId
+                ? { ...DEFAULT_CHANNEL, id: channel.id, name: `Channel ${channel.id}` }
+                : channel
+            )
+          : state.config.channels.filter((channel) => channel.id !== channelId);
+
+        return { config: { ...state.config, channels } };
+      });
     },
 
     // Update channel (with input stream management like original)
