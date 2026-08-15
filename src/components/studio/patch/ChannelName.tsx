@@ -13,7 +13,8 @@ type ChannelNameProps = {
   deviceName: string | null;
   /**
    * Renaming is offered only on the focused node. On any other node the title
-   * is just the title, and clicking it focuses the node like the rest of it.
+   * is just the title — though the first click of a double click focuses the
+   * node, so reaching for a rename gets there in the same gesture.
    */
   editable: boolean;
 };
@@ -24,6 +25,11 @@ type ChannelNameProps = {
  * Channels start unnamed rather than as "Deck A" or "Microphone", which describe
  * a rig the user may not have. Until one is given a name it borrows the name of
  * whatever is patched into it, so the strip still says something useful.
+ *
+ * Opened on a double click rather than a single one. The title is the widest
+ * part of the title bar and the title bar is the grip that moves the node, so a
+ * single click has to stay a press that might become a drag — anything else
+ * turns every attempt to move a card into a rename.
  */
 export const ChannelName = ({ channelId, name, deviceName, editable }: ChannelNameProps) => {
   const renameChannel = useMixerStore((state) => state.renameChannel);
@@ -94,9 +100,12 @@ export const ChannelName = ({ channelId, name, deviceName, editable }: ChannelNa
       fw={600}
       fz="lg"
       truncate
-      title={editable ? 'Click to rename' : undefined}
+      title="Double click to edit"
       c={name ? undefined : color.textFaint}
-      onClick={
+      // Gated on the node being focused, which the first click of the double
+      // click sees to — and which the effect above relies on, since it closes
+      // an edit the moment the node it belongs to stops being focused.
+      onDoubleClick={
         editable
           ? (event) => {
               event.stopPropagation();
@@ -107,7 +116,9 @@ export const ChannelName = ({ channelId, name, deviceName, editable }: ChannelNa
       style={{
         flex: 1,
         letterSpacing: layout.tracking.tight,
-        cursor: editable ? 'text' : 'inherit',
+        // Inherited from the title bar, which is the grip: a single press here
+        // is the start of a drag, and a text caret would promise otherwise.
+        cursor: 'inherit',
       }}
     >
       {name || fallback}
