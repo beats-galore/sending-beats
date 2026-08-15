@@ -82,6 +82,17 @@ impl MixingLayer {
         })
     }
 
+    /// Lay stored routing over the devices currently registered
+    pub fn restore_routing(&mut self, buses: Vec<Bus>) -> Result<(), BusError> {
+        let command = MixingLayerCommand::RestoreRouting {
+            buses: buses.clone(),
+        };
+        self.route(command, |mixer| {
+            mixer.registry_mut().restore(&buses);
+            Ok(())
+        })
+    }
+
     /// Every bus and its members
     ///
     /// Answered from the layer's own registry, which every change passes
@@ -92,7 +103,6 @@ impl MixingLayer {
     }
 }
 
-/// Report a routing change applied on the mixing thread, where no caller is left to return to
 #[cfg(test)]
 mod tests {
     use super::super::MixingLayer;
@@ -214,6 +224,7 @@ mod tests {
     }
 }
 
+/// Report a routing change applied on the mixing thread, where no caller is left to return to
 pub(super) fn log_bus_result(action: &str, subject: &str, result: Result<(), BusError>) {
     match result {
         Ok(()) => info!(

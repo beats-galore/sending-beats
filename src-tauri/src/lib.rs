@@ -439,6 +439,7 @@ pub fn run() {
             update_master_gain,
             // Bus routing commands
             list_audio_buses,
+            restore_audio_buses,
             create_audio_bus,
             remove_audio_bus,
             set_audio_bus_gain,

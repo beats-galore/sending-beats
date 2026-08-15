@@ -44,6 +44,12 @@ impl AudioPipeline {
             .map_err(|e| anyhow::anyhow!(e.to_string()))
     }
 
+    pub fn restore_routing(&mut self, buses: Vec<Bus>) -> Result<()> {
+        self.mixing_layer
+            .restore_routing(buses)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))
+    }
+
     pub fn list_buses(&self) -> Vec<Bus> {
         self.mixing_layer.buses()
     }

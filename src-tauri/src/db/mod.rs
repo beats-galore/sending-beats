@@ -6,12 +6,14 @@ use std::error::Error;
 use std::path::Path;
 use std::time::Duration;
 
+pub mod audio_bus_service;
 pub mod broadcasts;
 pub mod recordings;
 
 // SeaORM services
 pub mod seaorm_services;
 
+pub use audio_bus_service::AudioBusService;
 pub use broadcasts::*;
 pub use recordings::*;
 pub use seaorm_services::{

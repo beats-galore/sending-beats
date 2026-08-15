@@ -213,6 +213,64 @@ impl BusRegistry {
         Ok(())
     }
 
+    /// Lay stored routing over whatever is currently attached
+    ///
+    /// Devices register before their routing is restored, and the set that
+    /// registered need not match the set that was saved — hardware comes and
+    /// goes. A device the stored routing says nothing about therefore keeps
+    /// where it already is rather than being detached, so a source plugged in
+    /// since the save stays on the main bus instead of falling silent.
+    ///
+    /// The cost of that rule is that an input deliberately left reaching
+    /// nothing cannot be told apart from one that was never saved, and comes
+    /// back on the main bus. Muting a channel expresses the same thing and
+    /// does survive.
+    pub fn restore(&mut self, stored: &[Bus]) {
+        let attached_inputs = self.attached(|bus| &bus.inputs);
+        let attached_outputs = self.attached(|bus| &bus.outputs);
+
+        for bus in stored {
+            match self.buses.get_mut(&bus.id) {
+                Some(existing) => {
+                    existing.name = bus.name.clone();
+                    existing.gain = bus.gain;
+                }
+                None => {
+                    let mut restored = Bus::new(bus.id.clone(), bus.name.clone());
+                    restored.gain = bus.gain;
+                    self.buses.insert(bus.id.clone(), restored);
+                }
+            }
+        }
+
+        for device_id in attached_inputs {
+            let sends: Vec<String> = stored
+                .iter()
+                .filter(|bus| bus.inputs.contains(&device_id))
+                .map(|bus| bus.id.clone())
+                .collect();
+
+            if !sends.is_empty() {
+                let _ = self.set_input_sends(&device_id, &sends);
+            }
+        }
+
+        for device_id in attached_outputs {
+            if let Some(bus) = stored.iter().find(|bus| bus.outputs.contains(&device_id)) {
+                let bus_id = bus.id.clone();
+                let _ = self.set_output_bus(&device_id, &bus_id);
+            }
+        }
+    }
+
+    /// Every device currently on some bus, in the given direction
+    fn attached(&self, side: impl Fn(&Bus) -> &BTreeSet<String>) -> BTreeSet<String> {
+        self.buses
+            .values()
+            .flat_map(|bus| side(bus).iter().cloned())
+            .collect()
+    }
+
     /// The bus an output takes, if it is attached to one
     pub fn bus_of_output(&self, device_id: &str) -> Option<&str> {
         self.buses
@@ -426,6 +484,96 @@ mod tests {
         assert_eq!(registry.bus_of_output("headphones"), None);
         assert!(registry.buses().all(|bus| bus.inputs.is_empty()));
         assert!(registry.buses().all(|bus| bus.outputs.is_empty()));
+    }
+
+    fn stored(id: &str, name: &str, inputs: &[&str], outputs: &[&str]) -> Bus {
+        Bus {
+            id: id.to_string(),
+            name: name.to_string(),
+            gain: 1.0,
+            inputs: inputs.iter().map(|s| s.to_string()).collect(),
+            outputs: outputs.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn restoring_recreates_buses_and_puts_devices_back_on_them() {
+        let mut registry = BusRegistry::new();
+        registry.attach_input("mic".to_string());
+        registry.attach_input("deck".to_string());
+        registry.attach_output("speakers".to_string());
+        registry.attach_output("headphones".to_string());
+
+        registry.restore(&[
+            stored(MAIN_BUS_ID, "Main", &["mic"], &["speakers"]),
+            stored("cue", "Cue", &["deck"], &["headphones"]),
+        ]);
+
+        assert_eq!(registry.len(), 2);
+        assert_eq!(registry.sends_of("deck"), vec!["cue"]);
+        assert_eq!(registry.bus_of_output("headphones"), Some("cue"));
+        assert_eq!(registry.sends_of("mic"), vec![MAIN_BUS_ID]);
+    }
+
+    #[test]
+    fn restoring_carries_names_and_gains() {
+        let mut registry = BusRegistry::new();
+        let mut quiet = stored("cue", "Cue Mix", &[], &[]);
+        quiet.gain = 0.25;
+
+        registry.restore(&[quiet]);
+
+        let cue = registry.get("cue").unwrap();
+        assert_eq!(cue.name, "Cue Mix");
+        assert_eq!(cue.gain, 0.25);
+    }
+
+    #[test]
+    fn a_device_the_stored_routing_never_mentions_keeps_its_place() {
+        let mut registry = BusRegistry::new();
+        registry.attach_input("mic".to_string());
+        // Plugged in since the routing was saved
+        registry.attach_input("new-mic".to_string());
+        registry.attach_output("new-speakers".to_string());
+
+        registry.restore(&[stored(MAIN_BUS_ID, "Main", &["mic"], &[])]);
+
+        assert_eq!(
+            registry.sends_of("new-mic"),
+            vec![MAIN_BUS_ID],
+            "a new source stays on air rather than falling silent"
+        );
+        assert_eq!(registry.bus_of_output("new-speakers"), Some(MAIN_BUS_ID));
+    }
+
+    #[test]
+    fn stored_routing_for_a_device_that_is_not_attached_is_ignored() {
+        let mut registry = BusRegistry::new();
+        registry.attach_input("mic".to_string());
+
+        // "deck" was saved but is not plugged in this session
+        registry.restore(&[
+            stored(MAIN_BUS_ID, "Main", &["mic"], &[]),
+            stored("cue", "Cue", &["deck"], &[]),
+        ]);
+
+        assert!(registry.get("cue").unwrap().inputs.is_empty());
+        assert_eq!(registry.sends_of("mic"), vec![MAIN_BUS_ID]);
+    }
+
+    #[test]
+    fn restoring_moves_a_device_off_the_bus_it_defaulted_to() {
+        let mut registry = BusRegistry::new();
+        registry.attach_input("deck".to_string());
+        assert_eq!(registry.sends_of("deck"), vec![MAIN_BUS_ID]);
+
+        registry.restore(&[
+            stored(MAIN_BUS_ID, "Main", &[], &[]),
+            stored("cue", "Cue", &["deck"], &[]),
+        ]);
+
+        assert_eq!(registry.sends_of("deck"), vec!["cue"]);
+        assert!(registry.get(MAIN_BUS_ID).unwrap().inputs.is_empty());
     }
 
     #[test]
