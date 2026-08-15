@@ -8,7 +8,7 @@ import type { AudioChannel } from '../../../types';
 import { useChannelNowPlaying } from '../hooks/use-channel-now-playing';
 import { useChannelSource } from '../hooks/use-channel-source';
 import { useNodeDrag, useNodeFront } from '../hooks/use-node-drag';
-import { useNodeGrow, useNodeResize, useNodeRung, useUnshrink } from '../hooks/use-node-resize';
+import { useNodeResize, useNodeRung, useNodeSize, useUnshrink } from '../hooks/use-node-resize';
 import { usePatchChannel } from '../hooks/use-patch-channel';
 import { usePatchColor } from '../hooks/use-patch-color';
 import { DeleteButton } from '../primitives/DeleteButton';
@@ -25,6 +25,7 @@ import {
   expansionFor,
   NodeExpansion,
   nextExpansion,
+  openExpansion,
   rungOf,
 } from './patch-geometry';
 import type { ChannelCardVariant } from './patch-geometry';
@@ -57,18 +58,16 @@ export const ChannelNode = ({ channel, index, rect, variant, selected }: Channel
   const grab = useNodeDrag(targetKey, rect);
   const resize = useNodeResize(targetKey, rect, channelSize(variant, 'compact'));
   const setRung = useNodeRung(targetKey);
-  const grow = useNodeGrow(targetKey);
+  const setSize = useNodeSize(targetKey);
   const { front, bringToFront } = useNodeFront(targetKey);
 
-  // Switching the effects on is a request to see the chain, so it comes with
-  // the room to show it. Switching them off leaves the size alone — the space
-  // is then spare rather than wrong, and taking it back would discard whatever
-  // size the card had been given.
+  // The switch changes how much the card has to show, so it sizes the card to
+  // suit: on makes room for the chain, off gives that room back rather than
+  // leaving the card standing over an empty half of itself.
   const toggleEffects = () => {
-    void updateChannel(channel.id, { effects_enabled: !channel.effects_enabled });
-    if (!channel.effects_enabled) {
-      grow(channelSize(variant, 'effects'));
-    }
+    const enabling = !channel.effects_enabled;
+    void updateChannel(channel.id, { effects_enabled: enabling });
+    setSize(channelSize(variant, openExpansion(enabling)));
   };
 
   // How much of the node is showing follows from how big it is, so the toggle
