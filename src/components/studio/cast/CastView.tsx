@@ -9,13 +9,12 @@ import { useStreamTransport } from '../hooks/use-stream-transport';
 import { StatTile } from '../primitives/StatTile';
 import { ConnectionLog } from './ConnectionLog';
 import { ListenerSparkline } from './ListenerSparkline';
-import { NowPlayingPanel } from './NowPlayingPanel';
 import { TransmitterPanel } from './TransmitterPanel';
 
 /** Streaming: where the mix goes, and how the connection is holding up. */
 export const CastView = () => {
   const stream = useStudioStore((state) => state.stream);
-  const { isLive, isBusy, status, uptimeSeconds, toggle, controls } = useStreamTransport();
+  const { isLive, isBusy, status, uptimeSeconds, toggle } = useStreamTransport();
   const listeners = useListenerStats(isLive);
 
   const { series, log } = useCastTelemetry({
@@ -36,9 +35,10 @@ export const CastView = () => {
       wrap="nowrap"
       style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}
     >
+      {/* Metadata is not set here. What is playing comes from the mix, and the
+          on-air drawer is where it is corrected while broadcasting. */}
       <Stack w={420} gap="2xl" style={{ flex: 'none' }}>
         <TransmitterPanel isLive={isLive} isBusy={isBusy} onToggle={() => void toggle()} />
-        <NowPlayingPanel onPush={controls.updateMetadata} />
       </Stack>
 
       <Stack gap="2xl" style={{ flex: 1, minWidth: 0 }}>
