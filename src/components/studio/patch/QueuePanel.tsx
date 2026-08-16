@@ -6,6 +6,7 @@ import { border, color } from '../../../theme/tokens';
 import type { FilePlayer } from '../../../types/file-player.types';
 import type { Uuid } from '../../../types/util.types';
 import { asTrackTime } from '../format';
+import { useFileDrop } from '../hooks/use-file-drop';
 import { useFilePlayer } from '../hooks/use-file-player';
 import { usePatchColor } from '../hooks/use-patch-color';
 import type { NodeRect } from './patch-layout';
@@ -52,10 +53,14 @@ export const QueuePanel = ({ playerId, channelId, position, anchor }: QueuePanel
   // the card it stands beside can never be wearing different colours.
   const tint = usePatchColor(channelTargetKey(channelId), position).value;
 
+  // The whole panel takes the drop, not the strip at the bottom of it.
+  const { ref: dropRef, over } = useFileDrop(actions.add);
+
   const track = cuedIndex === null ? null : (queue[cuedIndex] ?? null);
 
   return (
     <Box
+      ref={dropRef}
       // Clicks inside are for the queue. Letting them reach the canvas would
       // clear the selection and close the panel out from under the pointer.
       onClick={(event) => event.stopPropagation()}
@@ -68,7 +73,7 @@ export const QueuePanel = ({ playerId, channelId, position, anchor }: QueuePanel
         display: 'flex',
         flexDirection: 'column',
         background: color.panel,
-        border: border('lineStrong'),
+        border: over ? `1px solid ${tint}` : border('lineStrong'),
         borderRadius: 'var(--mantine-radius-md)',
         boxShadow: 'var(--mantine-shadow-xl)',
         zIndex: 60,
@@ -133,7 +138,7 @@ export const QueuePanel = ({ playerId, channelId, position, anchor }: QueuePanel
         onBreakAfter={actions.breakAfter}
       />
 
-      <QueueDrop tint={tint} onDrop={actions.add} />
+      <QueueDrop tint={tint} over={over} />
     </Box>
   );
 };

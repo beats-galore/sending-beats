@@ -1,8 +1,28 @@
 import { getCurrentWebview } from '@tauri-apps/api/webview';
-import { useEffect, useRef, useState } from 'react';
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { asFilePath, isSupportedAudioFile } from '../../../types/file-player.types';
 import type { FilePath } from '../../../types/util.types';
+
+/**
+ * How far the page's own coordinates sit inside the window's.
+ *
+ * A drop is reported against the window, which on macOS includes the title bar
+ * above the page. Comparing that against an element's box — which is measured
+ * from the top of the page — misses by exactly the height of that bar, and a
+ * drop target only a few rows tall misses entirely.
+ *
+ * Measured rather than assumed: it is a title bar here and nothing at all on a
+ * window without decorations.
+ */
+type WindowChrome = {
+  scale: number;
+  dx: number;
+  dy: number;
+};
+
+const NO_CHROME: WindowChrome = { scale: 1, dx: 0, dy: 0 };
 
 /**
  * A drop target for audio files dragged in from Finder.
@@ -22,6 +42,34 @@ export const useFileDrop = (onDrop: (paths: FilePath[]) => void) => {
   const handler = useRef(onDrop);
   handler.current = onDrop;
 
+  const chrome = useRef<WindowChrome>(NO_CHROME);
+
+  const measureChrome = useCallback(async () => {
+    try {
+      const win = getCurrentWindow();
+      const [size, scale] = await Promise.all([win.innerSize(), win.scaleFactor()]);
+
+      chrome.current = {
+        scale,
+        dx: size.width / scale - window.innerWidth,
+        dy: size.height / scale - window.innerHeight,
+      };
+    } catch {
+      // Nothing to correct by is better than refusing to accept a drop at all.
+      chrome.current = { ...NO_CHROME, scale: window.devicePixelRatio || 1 };
+    }
+  }, []);
+
+  useEffect(() => {
+    const remeasure = () => void measureChrome();
+    remeasure();
+
+    // The bar does not change height, but the viewport does, and the offset is
+    // the difference between the two.
+    window.addEventListener('resize', remeasure);
+    return () => window.removeEventListener('resize', remeasure);
+  }, [measureChrome]);
+
   useEffect(() => {
     let unlisten: (() => void) | null = null;
     let cancelled = false;
@@ -32,10 +80,9 @@ export const useFileDrop = (onDrop: (paths: FilePath[]) => void) => {
         return false;
       }
 
-      // The webview reports physical pixels; the page is laid out in CSS ones.
-      const scale = window.devicePixelRatio || 1;
-      const x = position.x / scale;
-      const y = position.y / scale;
+      const { scale, dx, dy } = chrome.current;
+      const x = position.x / scale - dx;
+      const y = position.y / scale - dy;
 
       return x >= box.left && x <= box.right && y >= box.top && y <= box.bottom;
     };
