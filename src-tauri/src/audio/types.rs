@@ -18,6 +18,15 @@ pub struct AudioDeviceInfo {
     pub supported_sample_rates: Vec<u32>,
     pub supported_channels: Vec<u16>,
     pub host_api: String,
+    /// How the device reaches the machine, which is what separates a real one
+    /// from software presenting itself as one.
+    #[serde(default = "unknown_transport")]
+    pub transport: crate::audio::devices::transport::DeviceTransport,
+}
+
+/// What a device whose transport was never read is recorded as
+fn unknown_transport() -> crate::audio::devices::transport::DeviceTransport {
+    crate::audio::devices::transport::DeviceTransport::Unknown
 }
 
 /// Cross-platform audio device handle

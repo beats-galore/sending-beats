@@ -14,7 +14,6 @@ export const useMixerState = () => {
   const metrics = useMixerStore((store) => store.metrics);
   const masterLevels = useMixerStore((store) => store.masterLevels);
   const initializeMixer = useMixerStore((store) => store.initializeMixer);
-  const addChannel = useMixerStore((store) => store.addChannel);
   const updateChannel = useMixerStore((store) => store.updateChannel);
   const updateMasterGain = useMixerStore((store) => store.updateMasterGain);
   const setError = useMixerStore((store) => store.setError);
@@ -111,18 +110,6 @@ export const useMixerState = () => {
 
   // Start/stop functions removed - mixer is always running after initialization
 
-  // Add channel with error handling
-  const createChannel = useCallback(async () => {
-    try {
-      clearError();
-      await addChannel();
-      return true;
-    } catch (err) {
-      console.error('Failed to add channel:', err);
-      return false;
-    }
-  }, [addChannel, clearError]);
-
   return useMemo(
     () => ({
       // State
@@ -142,7 +129,6 @@ export const useMixerState = () => {
 
       // Core actions
       initialize,
-      createChannel,
 
       // Channel helpers
       getChannelById,
@@ -173,7 +159,6 @@ export const useMixerState = () => {
       hasError,
       isReady,
       initialize,
-      createChannel,
       getChannelById,
       setChannelInputDevice,
       updateChannelEQ,

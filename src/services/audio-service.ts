@@ -38,15 +38,24 @@ export const audioService = {
     return invoke<number>('clear_session_devices');
   },
 
+  /**
+   * Point a channel strip at an input.
+   *
+   * `channelNumber` says which strip. Without it the backend takes the next
+   * number after the devices already configured, which is wrong on any patch
+   * with an empty strip ahead of the one being filled.
+   */
   async switchInputStream(
     oldDeviceId: Identifier<ConfiguredAudioDevice> | null,
     newDeviceId: Identifier<ConfiguredAudioDevice>,
-    isVirtual?: boolean
+    isVirtual?: boolean,
+    channelNumber?: number
   ): Promise<ConfiguredAudioDevice | null> {
     return invoke<ConfiguredAudioDevice | null>('safe_switch_input_device', {
       oldDeviceId,
       newDeviceId,
       isVirtual,
+      channelNumber,
     });
   },
 

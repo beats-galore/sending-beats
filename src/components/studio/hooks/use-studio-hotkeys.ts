@@ -19,7 +19,6 @@ const FOCUS_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 /** Transport and channel shortcuts, as listed in SETUP. */
 export const useStudioHotkeys = () => {
   const { channels } = useChannelsData();
-  const addChannel = useMixerStore((state) => state.addChannel);
   const select = useStudioStore((state) => state.select);
 
   // Mute and solo act on the focused channel, so they no-op while a destination
@@ -36,7 +35,6 @@ export const useStudioHotkeys = () => {
     ['s', () => patch.setSolo()],
     ['mod+R', () => void tape.toggle()],
     ['mod+L', () => void stream.toggle()],
-    ['mod+N', () => void addChannel()],
     ...FOCUS_KEYS.map((key, index): [string, () => void] => [
       `alt+${key}`,
       () => {

@@ -129,6 +129,8 @@ impl FilePlayerManager {
                     supported_sample_rates: crate::types::SUPPORTED_SAMPLE_RATES_HZ.to_vec(), // Common rates
                     supported_channels: vec![2], // Stereo
                     host_api: "file_player".to_string(),
+                    // A queue of files is software through and through.
+                    transport: crate::audio::devices::transport::DeviceTransport::Virtual,
                 }
             })
             .collect()

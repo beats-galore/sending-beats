@@ -196,12 +196,18 @@ pub async fn report_device_error(
 }
 
 // Device switching commands
+//
+// `channel_number` is which strip the source is for. Without it the backend can
+// only guess — it takes the next number after the devices already configured —
+// and a patch with empty strips guesses wrong: patching the third one would put
+// the device on the first.
 #[tauri::command]
 pub async fn safe_switch_input_device(
     audio_state: State<'_, AudioState>,
     old_device_id: Option<String>,
     new_device_id: String,
     is_virtual: Option<bool>,
+    channel_number: Option<i32>,
 ) -> Result<Option<crate::entities::configured_audio_device::Model>, String> {
     log_command!(
         "safe_switch_input_device",
@@ -303,7 +309,10 @@ pub async fn safe_switch_input_device(
         &audio_state,
         &new_device_id,
         is_app_audio,
-        old_channel_number, // Preserve channel assignment from old device
+        // What the caller asked for wins. The old device's number is the
+        // fallback for a switch that did not say, which keeps a re-pointed
+        // strip where it was.
+        channel_number.or(old_channel_number),
     )
     .await
 }

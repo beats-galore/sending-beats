@@ -209,6 +209,10 @@ impl CoreAudioIntegration {
             }
         };
 
+        // Read once for the device, not once per entry: an interface that does
+        // both is one piece of hardware, attached one way.
+        let transport = crate::audio::devices::transport::transport_of(device_id);
+
         // For devices that support both input and output, we need to create separate entries
         let mut device_infos = Vec::new();
 
@@ -233,6 +237,7 @@ impl CoreAudioIntegration {
                 supported_sample_rates: crate::types::SUPPORTED_SAMPLE_RATES_HZ.to_vec(), // Prioritize 48kHz to match system default
                 supported_channels: vec![input_channels], // Use detected channel count
                 host_api: "CoreAudio (Direct)".to_string(),
+                transport,
             });
         }
 
@@ -257,6 +262,7 @@ impl CoreAudioIntegration {
                 supported_sample_rates: crate::types::SUPPORTED_SAMPLE_RATES_HZ.to_vec(), // Prioritize 48kHz to match system default
                 supported_channels: vec![output_channels], // Use detected channel count
                 host_api: "CoreAudio (Direct)".to_string(),
+                transport,
             });
         }
 

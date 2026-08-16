@@ -1,6 +1,6 @@
-import { Box, Group, NativeSelect, Stack, Text } from '@mantine/core';
+import { Box, Group, Select, Stack, Text } from '@mantine/core';
 
-import { color } from '../../../theme/tokens';
+import { border, color } from '../../../theme/tokens';
 import type { AudioChannel } from '../../../types';
 import { asGain, meterPosition } from '../format';
 import type { useChannelSource } from '../hooks/use-channel-source';
@@ -54,18 +54,32 @@ export const ChannelBody = ({
           tone={patch.muted && !unavailable ? 'inert' : tone}
           title={source.unavailableReason ?? undefined}
         />
-        <NativeSelect
-          value={source.configuredDevice?.deviceIdentifier ?? ''}
-          onChange={(event) => void source.setSource(event.currentTarget.value)}
+        {/* Searchable rather than the platform's own menu: a machine with a
+            dozen virtual devices turns a native menu into a scrolling wall
+            with no way to type at it. */}
+        <Select
+          value={source.configuredDevice?.deviceIdentifier ?? null}
+          onChange={(value) => value && void source.setSource(value)}
           onClick={(event) => event.stopPropagation()}
-          data={[{ value: '', label: 'No input' }, ...source.options]}
+          data={source.options}
+          placeholder="No input"
+          searchable
+          comboboxProps={{ withinPortal: true }}
+          maxDropdownHeight={280}
+          nothingFoundMessage="Nothing matches"
           variant="unstyled"
+          size="xs"
           style={{ flex: 1, minWidth: 0 }}
           styles={{
             input: {
               color: unavailable ? color.hotText : color.textDim,
               fontSize: 'var(--mantine-font-size-xs)',
             },
+            // The dropdown opens over the canvas, which is nearly black — left
+            // to inherit it reads as a smudge rather than a list.
+            dropdown: { background: color.panel, border: border('lineStrong') },
+            option: { color: color.text },
+            groupLabel: { color: color.textFaint },
           }}
         />
         {unavailable ? (

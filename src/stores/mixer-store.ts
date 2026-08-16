@@ -57,7 +57,13 @@ type MixerStore = {
 
   // Actions
   initializeMixer: () => Promise<void>;
-  addChannel: () => Promise<void>;
+  /**
+   * Re-read the channel strips from the session.
+   *
+   * A strip exists because something is patched into it, so the list follows
+   * the session's inputs rather than being edited here.
+   */
+  refreshChannels: () => Promise<void>;
   /**
    * Drop a channel from the mix, unpatching whatever it was fed by.
    *
@@ -166,36 +172,16 @@ export const useMixerStore = create<MixerStore>()(
       }
     },
 
-    addChannel: async () => {
-      const { config } = get();
-      if (!config) {
-        throw new Error('Mixer not initialized');
-      }
-
+    refreshChannels: async () => {
       try {
-        // Counting is not enough once a channel can be removed: deleting from
-        // the middle would make the next add collide with an existing id.
-        const newChannelId = config.channels.reduce((highest, c) => Math.max(highest, c.id), 0) + 1;
-        const newChannel: AudioChannel = {
-          ...DEFAULT_CHANNEL,
-          id: newChannelId,
-          name: `Channel ${newChannelId}`,
-        };
-
-        await mixerService.addMixerChannel(newChannel);
-
+        const refreshed = await mixerService.getDjMixerConfig();
         set((state) => ({
           config: state.config
-            ? {
-                ...state.config,
-                channels: [...state.config.channels, newChannel],
-              }
-            : null,
+            ? { ...state.config, channels: refreshed.channels }
+            : refreshed,
         }));
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        set({ error: `Failed to add channel: ${errorMessage}` });
-        throw error;
+        set({ error: `Failed to read the channels: ${describeError(error)}` });
       }
     },
 
@@ -219,24 +205,17 @@ export const useMixerStore = create<MixerStore>()(
         get().removeConfiguredDevice(patched.deviceIdentifier);
       }
 
-      set((state) => {
-        if (!state.config) {
-          return state;
-        }
-
-        // Emptying beats removing when it is the only channel left: the patch
-        // canvas would otherwise have no source to route.
-        const isLast = state.config.channels.length <= 1;
-        const channels = isLast
-          ? state.config.channels.map((channel) =>
-              channel.id === channelId
-                ? { ...DEFAULT_CHANNEL, id: channel.id, name: `Channel ${channel.id}` }
-                : channel
-            )
-          : state.config.channels.filter((channel) => channel.id !== channelId);
-
-        return { config: { ...state.config, channels } };
-      });
+      // The strip was that input. With it gone there is nothing for the strip
+      // to be, so it goes too — a patch with no sources is a legitimate state
+      // under the configurations model.
+      set((state) => ({
+        config: state.config
+          ? {
+              ...state.config,
+              channels: state.config.channels.filter((channel) => channel.id !== channelId),
+            }
+          : null,
+      }));
     },
 
     // Update channel (with input stream management like original)

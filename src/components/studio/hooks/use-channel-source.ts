@@ -4,6 +4,7 @@ import { useApplicationAudio, useAudioDevices } from '../../../hooks';
 import { audioService } from '../../../services';
 import { useMixerStore } from '../../../stores/mixer-store';
 import { asDeviceIdentifier } from '../../../types/device-identifier';
+import { isVirtualDevice } from '../../../types/audio.types';
 import { patchedPlayerId } from '../../../types/file-player.types';
 import { NEW_PLAYER_VALUE, usePlayerSources } from './use-player-sources';
 
@@ -34,36 +35,53 @@ export const useChannelSource = (channelId: number) => {
   const playerSources = usePlayerSources(configuredDevice?.deviceIdentifier ?? null);
   const playerId = patchedPlayerId(configuredDevice?.deviceIdentifier, playerSources.players);
 
+  /**
+   * What this channel could be fed by, in groups.
+   *
+   * Grouped rather than one flat list for the same reason the dock has one
+   * button per kind: a machine with a dozen loopback drivers turns a single
+   * list into something you read rather than scan.
+   */
   const options = useMemo(() => {
-    const hardware = inputDevices.map((device) => ({ value: device.id, label: device.name }));
+    const asOption = (device: { id: string; name: string }) => ({
+      value: device.id,
+      label: device.name,
+    });
 
     // Keyed by bundle identifier, not PID: a PID is only valid for one launch,
     // so a source saved against it can never be restored on the next startup.
     const applications = applicationAudio.knownApps
       .filter((app) => app.bundle_id)
-      .map((app) => ({
-        value: `app-${app.bundle_id}`,
-        label: `App: ${app.name}`,
-      }));
+      .map((app) => ({ value: `app-${app.bundle_id}`, label: app.name }));
 
-    const available = [...hardware, ...applications, ...playerSources.options];
+    const groups = [
+      { group: 'Physical inputs', items: inputDevices.filter((d) => !isVirtualDevice(d)).map(asOption) },
+      { group: 'Virtual inputs', items: inputDevices.filter(isVirtualDevice).map(asOption) },
+      { group: 'Applications', items: applications },
+      { group: 'File players', items: playerSources.options },
+    ].filter((entry) => entry.items.length > 0);
 
     // A source that has gone away — unplugged device, or an application that is
     // not running — still needs an entry, or the select would silently show the
     // wrong source as patched.
-    if (configuredDevice) {
-      const present = available.some(
-        (option) => option.value === configuredDevice.deviceIdentifier
-      );
-      if (!present) {
-        available.unshift({
-          value: configuredDevice.deviceIdentifier,
-          label: `${configuredDevice.deviceName ?? configuredDevice.deviceIdentifier} (unavailable)`,
-        });
-      }
+    const identifier = configuredDevice?.deviceIdentifier;
+    const present =
+      identifier !== undefined &&
+      groups.some((entry) => entry.items.some((item) => item.value === identifier));
+
+    if (identifier !== undefined && !present) {
+      groups.unshift({
+        group: 'Unavailable',
+        items: [
+          {
+            value: String(identifier),
+            label: `${configuredDevice?.deviceName ?? String(identifier)} (unavailable)`,
+          },
+        ],
+      });
     }
 
-    return available;
+    return groups;
   }, [inputDevices, applicationAudio.knownApps, configuredDevice, playerSources.options]);
 
   // The channel still holds this source, but nothing is feeding it: either the
@@ -146,7 +164,8 @@ export const useChannelSource = (channelId: number) => {
         const updated = await audioService.switchInputStream(
           current,
           asDeviceIdentifier(identifier),
-          isApplicationTap
+          isApplicationTap,
+          channelId
         );
         if (updated) {
           updateConfiguredDevice(updated);

@@ -8,6 +8,7 @@ import { useStreamTransport } from '../hooks/use-stream-transport';
 import { OnAirDrawer } from '../shell/OnAirDrawer';
 import { OnAirRail } from '../shell/OnAirRail';
 import { PatchCanvas } from './PatchCanvas';
+import { PatchDock } from './PatchDock';
 import { PatchTidy } from './PatchTidy';
 
 type PatchViewProps = {
@@ -36,9 +37,13 @@ export const PatchView = ({ ready }: PatchViewProps) => {
     // viewport came back as the canvas's own width, the scale stayed at 1, and
     // the destination column was pushed past the right edge of the window.
     <Box style={{ display: 'flex', flex: 1, minWidth: 0, minHeight: 0, alignItems: 'stretch' }}>
-      <Box ref={viewportRef} style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+      <Box
+        ref={viewportRef}
+        style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}
+      >
         {ready ? (
           <>
+            <Box style={{ flex: 1, minHeight: 0, position: 'relative' }}>
             <ScrollArea h="100%">
               <Box
                 style={{
@@ -61,6 +66,11 @@ export const PatchView = ({ ready }: PatchViewProps) => {
             </ScrollArea>
             {/* Outside the scroller so it stays put while the canvas moves */}
             <PatchTidy />
+            </Box>
+
+            {/* Below the scroller rather than on the canvas: a target that
+                lives in a column goes wherever that column was dragged. */}
+            <PatchDock />
           </>
         ) : (
           <Center h="100%">

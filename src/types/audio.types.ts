@@ -1,6 +1,29 @@
 import { DEFAULT_SAMPLE_RATE_HZ } from '../utils';
 
 // Core audio types for the Sweet Beats Studio application
+/**
+ * How a device reaches the machine, as CoreAudio reports it.
+ *
+ * The one thing that separates hardware from software pretending to be
+ * hardware, and read from the device rather than guessed from its name.
+ */
+export const DeviceTransport = [
+  'builtIn',
+  'usb',
+  'bluetooth',
+  'thunderbolt',
+  'fireWire',
+  'pci',
+  'hdmi',
+  'displayPort',
+  'airPlay',
+  'avb',
+  'virtual',
+  'aggregate',
+  'unknown',
+] as const;
+export type DeviceTransport = (typeof DeviceTransport)[number];
+
 export type AudioDeviceInfo = {
   id: string;
   name: string;
@@ -11,6 +34,39 @@ export type AudioDeviceInfo = {
   supported_sample_rates: number[];
   supported_channels: number[];
   host_api: string;
+  transport: DeviceTransport;
+};
+
+/**
+ * Whether a device is software rather than something plugged in.
+ *
+ * An aggregate counts: it is a wrapper the user made, not hardware. A device
+ * whose transport could not be read counts as physical — a real input left out
+ * of the list cannot be patched at all, where a virtual one appearing among
+ * them is only untidy.
+ */
+export const isVirtualDevice = (device: AudioDeviceInfo): boolean =>
+  device.transport === 'virtual' || device.transport === 'aggregate';
+
+/** How a device is attached, for the line under its name in a picker. */
+export const transportLabel = (transport: DeviceTransport): string => {
+  const labels: Record<DeviceTransport, string> = {
+    builtIn: 'built in',
+    usb: 'USB',
+    bluetooth: 'Bluetooth',
+    thunderbolt: 'Thunderbolt',
+    fireWire: 'FireWire',
+    pci: 'PCI',
+    hdmi: 'HDMI',
+    displayPort: 'DisplayPort',
+    airPlay: 'AirPlay',
+    avb: 'AVB',
+    virtual: 'virtual',
+    aggregate: 'aggregate',
+    unknown: '',
+  };
+
+  return labels[transport];
 };
 
 export type DeviceStatus = 'Connected' | 'Disconnected' | { Error: string };

@@ -6,10 +6,17 @@ use std::sync::Arc;
 use tauri::State;
 use tracing::{error, info};
 
-/// The mixer layout, with whatever names the active session has given its channels
+/// The mixer layout for the active session
+///
+/// One channel per input the session has patched, in channel order. A channel
+/// exists because something is patched into it — there is no fixed number of
+/// strips waiting to be filled, which is what the configurations model replaced.
+/// `mixer_channels` holds only the names, since a channel's device is deleted
+/// and recreated every time its source is switched.
 #[tauri::command]
 pub async fn get_dj_mixer_config(state: State<'_, AudioState>) -> Result<MixerConfig, String> {
     let mut config = AudioConfigFactory::create_dj_config();
+    config.channels.clear();
 
     let Some(session) =
         AudioMixerConfigurationService::get_active_session(state.database.sea_orm())
@@ -19,21 +26,33 @@ pub async fn get_dj_mixer_config(state: State<'_, AudioState>) -> Result<MixerCo
         return Ok(config);
     };
 
+    let mut patched = crate::entities::configured_audio_device::Entity::find()
+        .filter(crate::entities::configured_audio_device::Column::ConfigurationId.eq(&session.id))
+        .filter(crate::entities::configured_audio_device::Column::IsInput.eq(true))
+        .all(state.database.sea_orm())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    patched.sort_by_key(|device| device.channel_number);
+
     let named = crate::entities::mixer_channel::Entity::find()
         .filter(crate::entities::mixer_channel::Column::ConfigurationId.eq(&session.id))
         .all(state.database.sea_orm())
         .await
         .map_err(|e| e.to_string())?;
 
-    for stored in named {
-        if let Some(channel) = config
-            .channels
-            .iter_mut()
-            .find(|channel| channel.id as i32 == stored.channel_number)
-        {
-            channel.name = stored.name;
-        }
-    }
+    config.channels = patched
+        .into_iter()
+        .map(|device| crate::audio::types::AudioChannel {
+            id: device.channel_number as u32,
+            name: named
+                .iter()
+                .find(|stored| stored.channel_number == device.channel_number)
+                .map(|stored| stored.name.clone())
+                .unwrap_or_default(),
+            ..Default::default()
+        })
+        .collect();
 
     Ok(config)
 }

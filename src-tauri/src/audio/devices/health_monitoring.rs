@@ -181,6 +181,7 @@ mod tests {
             supported_sample_rates: vec![48000],
             supported_channels: vec![2],
             host_api: "CoreAudio".to_string(),
+            transport: crate::audio::devices::transport::DeviceTransport::Usb,
         }
     }
 

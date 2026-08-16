@@ -5,22 +5,19 @@ import { useChannelsData } from '../../../hooks';
 import type { PatchTargetKey } from '../../../services/patch-color-service';
 import { useMixerStore } from '../../../stores';
 import { orderedBuses, useBusStore } from '../../../stores/bus-store';
-import { useCastConfigurationStore } from '../../../stores/cast-configuration-store';
 import { usePatchColorStore } from '../../../stores/patch-color-store';
 import { usePatchLayoutStore } from '../../../stores/patch-layout-store';
 import { useStudioStore } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
-import { useAvailableCastTargets, useCastDestination } from '../hooks/use-cast-destination';
+import { useCastDestination } from '../hooks/use-cast-destination';
 import { useChannelCardVariants } from '../hooks/use-channel-card-variants';
 import { useChannelDevices } from '../hooks/use-channel-devices';
 import { useFilePlayers } from '../hooks/use-file-player';
 import { useFocusedNode } from '../hooks/use-focused-node';
 import { patchColorOf } from '../hooks/use-patch-color';
 import { usePatchOutputs } from '../hooks/use-patch-outputs';
-import { DashedTarget } from '../primitives/DashedTarget';
 import { SectionLabel } from '../primitives/SectionLabel';
-import { AddDestination } from './AddDestination';
 import { BusNode } from './BusNode';
 import { CableLayer } from './CableLayer';
 import { CastDestination } from './CastDestination';
@@ -39,10 +36,7 @@ const { source, bus, destination, canvas } = layout;
 /** The wiring diagram: sources on the left, the sum in the middle, destinations on the right. */
 export const PatchCanvas = () => {
   const { channels } = useChannelsData();
-  const addChannel = useMixerStore((state) => state.addChannel);
   const cast = useCastDestination();
-  const castOptions = useAvailableCastTargets();
-  const addCastTarget = useCastConfigurationStore((state) => state.addTarget);
   const {
     outputs,
     available,
@@ -182,19 +176,6 @@ export const PatchCanvas = () => {
         />
       ))}
 
-      <DashedTarget
-        label="+ PATCH A SOURCE"
-        hint="device · application · virtual input"
-        onClick={() => void addChannel()}
-        height={source.addNodeHeight}
-        style={{
-          position: 'absolute',
-          left: source.x,
-          top: rects.addSourceTop,
-          width: source.addNodeWidth,
-        }}
-      />
-
       {buses.length === 0 ? (
         <Box style={{ position: 'absolute', left: bus.x, top: bus.top, width: bus.width }}>
           <Text size="xs" c={color.textFaint} ta="center">
@@ -235,14 +216,6 @@ export const PatchCanvas = () => {
           onRemove={(deviceId) => void removeOutput(deviceId)}
         />
       ))}
-
-      <AddDestination
-        top={rects.addDestinationTop}
-        available={available}
-        castOptions={castOptions}
-        onPickCast={(id) => void addCastTarget(id)}
-        onPick={selectOutput}
-      />
 
       <PinSeams rects={rects} />
       <PinIndicator rects={rects} />
