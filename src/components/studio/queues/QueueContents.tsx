@@ -1,11 +1,13 @@
 import { Group, ScrollArea, Stack, Text } from '@mantine/core';
 
 import { selectedQueue, useQueueStore } from '../../../stores/queue-store';
+import type { QueueTrack } from '../../../types/file-player.types';
 import { color } from '../../../theme/tokens';
-import { queueTrackTitle } from '../../../types/file-player.types';
+import { useDragReorder, withDragApplied } from '../hooks/use-drag-reorder';
 import { asTrackTime } from '../format';
 import { ActionButton } from '../primitives/ActionButton';
 import { Panel } from '../primitives/Panel';
+import { QueueTrackRow } from './QueueTrackRow';
 
 /** How long everything in the list runs, ignoring files that declare no length. */
 const totalOf = (durations: (number | null)[]): number =>
@@ -14,11 +16,24 @@ const totalOf = (durations: (number | null)[]): number =>
 /** What is in the selected queue, in the order it plays. */
 export const QueueContents = () => {
   const selected = useQueueStore(selectedQueue);
+  const selectedId = selected?.id ?? null;
   const tracks = useQueueStore((state) => state.tracks);
   const targetIds = useQueueStore((state) => state.targetIds);
   const browse = useQueueStore((state) => state.browseForTracks);
   const addTarget = useQueueStore((state) => state.addTarget);
   const removeTarget = useQueueStore((state) => state.removeTarget);
+  const moveTrack = useQueueStore((state) => state.moveTrack);
+  const removeTrack = useQueueStore((state) => state.removeTrack);
+
+  // Hooks before the early return: a queue not being picked yet is a thing to
+  // draw, not a reason to have a different set of hooks.
+  const { drag, start } = useDragReorder<QueueTrack['id']>({
+    onMove: (trackId, toIndex) => {
+      if (selectedId) {
+        void moveTrack(selectedId, trackId, toIndex);
+      }
+    },
+  });
 
   if (!selected) {
     return (
@@ -32,6 +47,7 @@ export const QueueContents = () => {
 
   const onPatch = targetIds.includes(selected.id);
   const total = totalOf(tracks.map((track) => track.durationMs));
+  const shown = withDragApplied(tracks, drag);
 
   return (
     <Panel
@@ -61,24 +77,18 @@ export const QueueContents = () => {
         </Text>
       ) : (
         <ScrollArea style={{ flex: 1, minHeight: 0 }}>
+          {/* Drawn in the order the drag would leave it, so the rows move under
+              the pointer rather than the dragged one merely lighting up. */}
           <Stack gap="3xs">
-            {tracks.map((track, index) => (
-              <Group key={track.id} gap="md" wrap="nowrap" px="sm" py="xs">
-                <Text size="2xs" c={color.textFaintest} w={20} style={{ flex: 'none' }}>
-                  {String(index + 1).padStart(2, '0')}
-                </Text>
-                <Stack gap={0} style={{ flex: 1, minWidth: 0 }}>
-                  <Text size="sm" truncate>
-                    {queueTrackTitle(track)}
-                  </Text>
-                  <Text size="2xs" c={color.textFaintest} truncate>
-                    {track.artist ?? 'unknown artist'}
-                  </Text>
-                </Stack>
-                <Text size="2xs" c={color.textFaint} style={{ flex: 'none' }}>
-                  {track.durationMs === null ? '--:--' : asTrackTime(track.durationMs / 1000)}
-                </Text>
-              </Group>
+            {shown.map((track, index) => (
+              <QueueTrackRow
+                key={track.id}
+                track={track}
+                index={index}
+                dragging={drag?.id === track.id}
+                onGrab={(event) => start(event, track.id, index, shown.length)}
+                onRemove={() => selectedId && void removeTrack(selectedId, track.id)}
+              />
             ))}
           </Stack>
         </ScrollArea>

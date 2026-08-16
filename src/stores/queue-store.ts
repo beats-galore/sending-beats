@@ -3,7 +3,13 @@ import { persist } from 'zustand/middleware';
 
 import { filePlayerService } from '../services/file-player-service';
 import { queueService } from '../services/queue-service';
-import type { FilePlayer, Queue, QueuePlay, QueueTrack } from '../types/file-player.types';
+import type {
+  FilePlayer,
+  Queue,
+  QueuePlay,
+  QueuedTrack,
+  QueueTrack,
+} from '../types/file-player.types';
 import type { FilePath, Uuid } from '../types/util.types';
 
 type QueueId = Uuid<FilePlayer>;
@@ -31,6 +37,8 @@ type QueueStore = {
   remove: (id: QueueId) => Promise<void>;
 
   addTracks: (id: QueueId, filePaths: FilePath[]) => Promise<void>;
+  moveTrack: (id: QueueId, trackId: Uuid<QueuedTrack>, toIndex: number) => Promise<void>;
+  removeTrack: (id: QueueId, trackId: Uuid<QueuedTrack>) => Promise<void>;
   browseForTracks: (id: QueueId) => Promise<void>;
   clearPlays: (id: QueueId) => Promise<void>;
 
@@ -163,6 +171,41 @@ export const useQueueStore = create<QueueStore>()(
         }
 
         await get().refreshSelected();
+      },
+
+      moveTrack: async (id, trackId, toIndex) => {
+        const previous = get().tracks;
+        const from = previous.findIndex((track) => track.id === trackId);
+        if (from === -1 || toIndex < 0 || toIndex >= previous.length) {
+          return;
+        }
+
+        // Applied here first so the list settles where it was dropped rather
+        // than snapping back while the write goes round.
+        const reordered = [...previous];
+        const [moved] = reordered.splice(from, 1);
+        reordered.splice(toIndex, 0, moved);
+        set({ tracks: reordered });
+
+        try {
+          await filePlayerService.moveTrack(id, trackId, toIndex);
+        } catch (error) {
+          console.error('Failed to reorder the queue:', error);
+          set({ tracks: previous });
+        }
+      },
+
+      removeTrack: async (id, trackId) => {
+        const previous = get().tracks;
+        set({ tracks: previous.filter((track) => track.id !== trackId) });
+
+        try {
+          await filePlayerService.removeTrack(id, trackId);
+          await get().refreshSelected();
+        } catch (error) {
+          console.error('Failed to remove the track:', error);
+          set({ tracks: previous });
+        }
       },
 
       browseForTracks: async (id) => {

@@ -248,9 +248,13 @@ pub async fn remove_track_from_player(
 
     let manager = file_player_state.service.get_manager();
 
-    manager
-        .remove_track_from_player(&player_id, &track_id)
-        .map_err(|e| e.to_string())?;
+    // Only when it is patched in somewhere. A queue being edited from the queues
+    // screen has no running player, and that is not a reason to refuse.
+    if manager.get_player(&player_id).is_some() {
+        manager
+            .remove_track_from_player(&player_id, &track_id)
+            .map_err(|e| e.to_string())?;
+    }
 
     FilePlayerStore::remove_track(audio_state.database.sea_orm(), &track_id)
         .await
@@ -281,10 +285,12 @@ async fn persist_breakpoint(
     .map_err(|e| e.to_string())
 }
 
-/// Move a queued track to a new place in the queue
+/// Move a track to a new place in a queue
 ///
-/// The player moves it, then says what order it is now in and that is what gets
-/// written down — one answer rather than the same move made twice.
+/// Works whether or not the queue is patched into anything. A queue that is
+/// running is moved in memory first and then asked what order it is in, so the
+/// audio and the record cannot disagree; one that is not has only the stored
+/// list, and that is reordered directly.
 #[tauri::command]
 pub async fn move_track_in_player(
     file_player_state: State<'_, FilePlayerState>,
@@ -293,26 +299,60 @@ pub async fn move_track_in_player(
     track_id: String,
     to_index: usize,
 ) -> Result<(), String> {
-    let device = file_player_state
+    let db = audio_state.database.sea_orm();
+
+    let order = match file_player_state
         .service
         .get_manager()
         .get_player(&player_id)
-        .ok_or_else(|| format!("No file player '{}'", player_id))?;
+    {
+        Some(device) => {
+            let player = device.get_player();
+            player
+                .move_track(&track_id, to_index)
+                .map_err(|e| e.to_string())?;
 
-    let player = device.get_player();
-    player
-        .move_track(&track_id, to_index)
-        .map_err(|e| e.to_string())?;
+            player
+                .get_queue()
+                .into_iter()
+                .map(|track| track.id)
+                .collect()
+        }
+        None => {
+            let stored = FilePlayerStore::tracks(db, &player_id)
+                .await
+                .map_err(|e| e.to_string())?;
 
-    let order: Vec<String> = player
-        .get_queue()
-        .into_iter()
-        .map(|track| track.id)
-        .collect();
+            reordered_ids(
+                stored.into_iter().map(|track| track.id).collect(),
+                &track_id,
+                to_index,
+            )
+        }
+    };
 
-    FilePlayerStore::reorder_queue(audio_state.database.sea_orm(), &player_id, &order)
+    FilePlayerStore::reorder_queue(db, &player_id, &order)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// The order a list is in once one of its entries has moved
+///
+/// Positions past the end land at the end rather than failing: a list being
+/// dragged about should not be able to produce an error to explain.
+fn reordered_ids(mut ids: Vec<String>, moving: &str, to: usize) -> Vec<String> {
+    let Some(from) = ids.iter().position(|id| id == moving) else {
+        return ids;
+    };
+
+    let to = to.min(ids.len().saturating_sub(1));
+    if from == to {
+        return ids;
+    }
+
+    let id = ids.remove(from);
+    ids.insert(to, id);
+    ids
 }
 
 /// Pause after a given track, or stop pausing anywhere
@@ -503,4 +543,51 @@ pub async fn validate_audio_file(file_path: String) -> Result<bool, String> {
     }
 
     Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reordered_ids;
+
+    fn ids(list: &[&str]) -> Vec<String> {
+        list.iter().map(|id| id.to_string()).collect()
+    }
+
+    #[test]
+    fn moving_later_shifts_the_rest_up() {
+        assert_eq!(
+            reordered_ids(ids(&["a", "b", "c", "d"]), "a", 2),
+            ids(&["b", "c", "a", "d"])
+        );
+    }
+
+    #[test]
+    fn moving_earlier_shifts_the_rest_down() {
+        assert_eq!(
+            reordered_ids(ids(&["a", "b", "c", "d"]), "d", 1),
+            ids(&["a", "d", "b", "c"])
+        );
+    }
+
+    #[test]
+    fn moving_past_the_end_lands_at_the_end() {
+        assert_eq!(
+            reordered_ids(ids(&["a", "b", "c"]), "a", 99),
+            ids(&["b", "c", "a"])
+        );
+    }
+
+    #[test]
+    fn moving_nowhere_changes_nothing() {
+        assert_eq!(
+            reordered_ids(ids(&["a", "b", "c"]), "b", 1),
+            ids(&["a", "b", "c"])
+        );
+    }
+
+    /// A track that is not in the list leaves it alone rather than failing
+    #[test]
+    fn an_unknown_track_is_ignored() {
+        assert_eq!(reordered_ids(ids(&["a", "b"]), "z", 0), ids(&["a", "b"]));
+    }
 }
