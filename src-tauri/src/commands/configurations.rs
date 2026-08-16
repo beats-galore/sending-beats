@@ -417,7 +417,10 @@ pub async fn create_device_configuration(
                 device_model.id
             );
 
-            // Create corresponding audio_effects_default entry
+            // Create corresponding audio_effects_default entry. The chain
+            // settings start at the DSP constructors' own defaults, so a fresh
+            // row and a fresh chain agree.
+            let chain = crate::audio::effects::ChainSettings::default();
             let effects_entry = crate::entities::audio_effects_default::ActiveModel {
                 id: sea_orm::Set(uuid::Uuid::new_v4().to_string()),
                 device_id: sea_orm::Set(device_model.id.clone()),
@@ -426,6 +429,16 @@ pub async fn create_device_configuration(
                 pan: sea_orm::Set(0.0),  // Center pan
                 muted: sea_orm::Set(false),
                 solo: sea_orm::Set(false),
+                eq_low_gain: sea_orm::Set(chain.eq_low_gain_db),
+                eq_mid_gain: sea_orm::Set(chain.eq_mid_gain_db),
+                eq_high_gain: sea_orm::Set(chain.eq_high_gain_db),
+                comp_threshold: sea_orm::Set(chain.comp_threshold_db),
+                comp_ratio: sea_orm::Set(chain.comp_ratio),
+                comp_attack: sea_orm::Set(chain.comp_attack_ms),
+                comp_release: sea_orm::Set(chain.comp_release_ms),
+                comp_enabled: sea_orm::Set(chain.comp_enabled),
+                limiter_threshold: sea_orm::Set(chain.limiter_threshold_db),
+                limiter_enabled: sea_orm::Set(chain.limiter_enabled),
                 created_at: sea_orm::Set(now),
                 updated_at: sea_orm::Set(now),
             };

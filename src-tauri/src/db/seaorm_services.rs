@@ -8,6 +8,39 @@ use sea_orm::{prelude::Expr, Set};
 use uuid::Uuid;
 
 /// SeaORM-based service for audio mixer configurations
+
+/// A copy of one device's effects row, re-keyed onto another configuration.
+///
+/// Every column lives here once, so a new chain setting survives session
+/// copies by being added in one place rather than three.
+fn copied_effects_default(
+    original: audio_effects_default::Model,
+    configuration_id: String,
+    now: chrono::DateTime<chrono::Utc>,
+) -> audio_effects_default::ActiveModel {
+    audio_effects_default::ActiveModel {
+        id: Set(Uuid::new_v4().to_string()),
+        device_id: Set(original.device_id),
+        configuration_id: Set(configuration_id),
+        gain: Set(original.gain),
+        pan: Set(original.pan),
+        muted: Set(original.muted),
+        solo: Set(original.solo),
+        eq_low_gain: Set(original.eq_low_gain),
+        eq_mid_gain: Set(original.eq_mid_gain),
+        eq_high_gain: Set(original.eq_high_gain),
+        comp_threshold: Set(original.comp_threshold),
+        comp_ratio: Set(original.comp_ratio),
+        comp_attack: Set(original.comp_attack),
+        comp_release: Set(original.comp_release),
+        comp_enabled: Set(original.comp_enabled),
+        limiter_threshold: Set(original.limiter_threshold),
+        limiter_enabled: Set(original.limiter_enabled),
+        created_at: Set(now),
+        updated_at: Set(now),
+    }
+}
+
 pub struct AudioMixerConfigurationService;
 
 impl AudioMixerConfigurationService {
@@ -205,23 +238,11 @@ impl AudioMixerConfigurationService {
             .await?;
 
         for original_default in audio_defaults {
-            let new_default = audio_effects_default::ActiveModel {
-                id: Set(Uuid::new_v4().to_string()),
-                device_id: Set(original_default.device_id),
-                configuration_id: Set(session_id.to_string()), // Link to new session
-                gain: Set(original_default.gain),
-                pan: Set(original_default.pan),
-                muted: Set(original_default.muted),
-                solo: Set(original_default.solo),
-                created_at: Set(now),
-                updated_at: Set(now),
-            };
+            let original_id = original_default.id.clone();
+            let new_default = copied_effects_default(original_default, session_id.to_string(), now);
 
             new_default.insert(&txn).await?;
-            tracing::debug!(
-                "✅ Copied audio default: {} -> new default",
-                original_default.id
-            );
+            tracing::debug!("✅ Copied audio default: {} -> new default", original_id);
         }
 
         // Copy related AudioEffectsCustom
@@ -350,22 +371,13 @@ impl AudioMixerConfigurationService {
             .await?;
 
         for original_default in session_defaults {
-            let new_default = audio_effects_default::ActiveModel {
-                id: Set(Uuid::new_v4().to_string()),
-                device_id: Set(original_default.device_id),
-                configuration_id: Set(reusable_id.clone()), // Link to reusable config
-                gain: Set(original_default.gain),
-                pan: Set(original_default.pan),
-                muted: Set(original_default.muted),
-                solo: Set(original_default.solo),
-                created_at: Set(now),
-                updated_at: Set(now),
-            };
+            let original_id = original_default.id.clone();
+            let new_default = copied_effects_default(original_default, reusable_id.clone(), now);
 
             new_default.insert(&txn).await?;
             tracing::debug!(
                 "✅ Copied audio default: {} -> reusable config",
-                original_default.id
+                original_id
             );
         }
 
@@ -486,22 +498,14 @@ impl AudioMixerConfigurationService {
             .await?;
 
         for original_default in session_defaults {
-            let new_default = audio_effects_default::ActiveModel {
-                id: Set(Uuid::new_v4().to_string()),
-                device_id: Set(original_default.device_id),
-                configuration_id: Set(new_reusable_id.to_string()), // Link to new reusable config
-                gain: Set(original_default.gain),
-                pan: Set(original_default.pan),
-                muted: Set(original_default.muted),
-                solo: Set(original_default.solo),
-                created_at: Set(now),
-                updated_at: Set(now),
-            };
+            let original_id = original_default.id.clone();
+            let new_default =
+                copied_effects_default(original_default, new_reusable_id.to_string(), now);
 
             new_default.insert(&txn).await?;
             tracing::debug!(
                 "✅ Copied audio default: {} -> new reusable config",
-                original_default.id
+                original_id
             );
         }
 
@@ -774,6 +778,97 @@ impl AudioEffectsDefaultService {
         let updated = active.update(&txn).await?;
 
         txn.commit().await?;
+        Ok(updated)
+    }
+
+    /// Update whichever EQ band gains were provided, in dB.
+    pub async fn update_eq(
+        db: &DatabaseConnection,
+        effects_id: &str,
+        low_gain: Option<f32>,
+        mid_gain: Option<f32>,
+        high_gain: Option<f32>,
+    ) -> Result<audio_effects_default::Model> {
+        let effect = audio_effects_default::Entity::find_by_id(effects_id)
+            .one(db)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Audio effects default not found"))?;
+
+        let mut active: audio_effects_default::ActiveModel = effect.into();
+        if let Some(gain) = low_gain {
+            active.eq_low_gain = Set(gain);
+        }
+        if let Some(gain) = mid_gain {
+            active.eq_mid_gain = Set(gain);
+        }
+        if let Some(gain) = high_gain {
+            active.eq_high_gain = Set(gain);
+        }
+        active.updated_at = Set(chrono::Utc::now());
+
+        let updated = active.update(db).await?;
+        Ok(updated)
+    }
+
+    /// Update whichever compressor settings were provided.
+    pub async fn update_compressor(
+        db: &DatabaseConnection,
+        effects_id: &str,
+        threshold: Option<f32>,
+        ratio: Option<f32>,
+        attack: Option<f32>,
+        release: Option<f32>,
+        enabled: Option<bool>,
+    ) -> Result<audio_effects_default::Model> {
+        let effect = audio_effects_default::Entity::find_by_id(effects_id)
+            .one(db)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Audio effects default not found"))?;
+
+        let mut active: audio_effects_default::ActiveModel = effect.into();
+        if let Some(threshold) = threshold {
+            active.comp_threshold = Set(threshold);
+        }
+        if let Some(ratio) = ratio {
+            active.comp_ratio = Set(ratio);
+        }
+        if let Some(attack) = attack {
+            active.comp_attack = Set(attack);
+        }
+        if let Some(release) = release {
+            active.comp_release = Set(release);
+        }
+        if let Some(enabled) = enabled {
+            active.comp_enabled = Set(enabled);
+        }
+        active.updated_at = Set(chrono::Utc::now());
+
+        let updated = active.update(db).await?;
+        Ok(updated)
+    }
+
+    /// Update whichever limiter settings were provided.
+    pub async fn update_limiter(
+        db: &DatabaseConnection,
+        effects_id: &str,
+        threshold: Option<f32>,
+        enabled: Option<bool>,
+    ) -> Result<audio_effects_default::Model> {
+        let effect = audio_effects_default::Entity::find_by_id(effects_id)
+            .one(db)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Audio effects default not found"))?;
+
+        let mut active: audio_effects_default::ActiveModel = effect.into();
+        if let Some(threshold) = threshold {
+            active.limiter_threshold = Set(threshold);
+        }
+        if let Some(enabled) = enabled {
+            active.limiter_enabled = Set(enabled);
+        }
+        active.updated_at = Set(chrono::Utc::now());
+
+        let updated = active.update(db).await?;
         Ok(updated)
     }
 }
