@@ -282,6 +282,45 @@ impl StreamingService {
         Ok(())
     }
 
+    /// Current and peak listeners, from the server's own admin endpoint
+    ///
+    /// Asked of the station this service is actually broadcasting to. The old
+    /// implementation hung off a manager Tauri never managed, so the command
+    /// resolved unmanaged state and every poll errored — listener counts could
+    /// not display at all.
+    pub async fn listener_stats(&self) -> Result<(u32, u32)> {
+        let config = self
+            .config
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Not broadcasting"))?;
+
+        let stats_url = format!(
+            "http://{}:{}/admin/stats",
+            config.server_host, config.server_port
+        );
+
+        let response = reqwest::Client::new()
+            .get(&stats_url)
+            // Icecast's admin endpoint is reached as the admin user. The
+            // source password is what stations are configured with, and on a
+            // default install the two are the same.
+            .basic_auth("admin", Some(&config.password))
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("Could not reach the server's admin endpoint: {}", e))?;
+
+        if !response.status().is_success() {
+            return Err(anyhow::anyhow!(
+                "The server refused the stats request: {}",
+                response.status()
+            ));
+        }
+
+        Ok(parse_listener_stats(&response.text().await?))
+    }
+
     /// Update stream metadata
     pub async fn update_metadata(&self, title: String, artist: String) -> Result<()> {
         info!("📝 Updating stream metadata: {} - {}", artist, title);
@@ -668,5 +707,61 @@ impl StreamingService {
         // with the encoding pipeline
 
         info!("🎵 Audio encoder task stopped");
+    }
+}
+
+/// Pull the listener counts out of Icecast's admin XML
+///
+/// Read by tag name rather than parsed as a document: the response carries a
+/// mount point per source and a great deal else, and a missing count is a
+/// server that does not publish one rather than a failure worth reporting.
+fn parse_listener_stats(xml: &str) -> (u32, u32) {
+    fn tag(xml: &str, name: &str) -> Option<u32> {
+        let open = format!("<{}>", name);
+        let close = format!("</{}>", name);
+
+        let start = xml.find(open.as_str())? + open.len();
+        let end = xml[start..].find(close.as_str())? + start;
+
+        xml[start..end].trim().parse().ok()
+    }
+
+    (
+        tag(xml, "listeners")
+            .or_else(|| tag(xml, "currentlisteners"))
+            .unwrap_or(0),
+        tag(xml, "listener_peak")
+            .or_else(|| tag(xml, "peaklisteners"))
+            .unwrap_or(0),
+    )
+}
+
+#[cfg(test)]
+mod listener_stats_tests {
+    use super::parse_listener_stats;
+
+    /// What Icecast 2.4 actually returns
+    #[test]
+    fn reads_the_modern_tag_names() {
+        let xml = "<icestats><listeners>7</listeners><listener_peak>23</listener_peak></icestats>";
+        assert_eq!(parse_listener_stats(xml), (7, 23));
+    }
+
+    /// Older servers, and what the previous implementation looked for
+    #[test]
+    fn reads_the_older_tag_names() {
+        let xml = "<icestats><currentlisteners>4</currentlisteners>\n<peaklisteners>9</peaklisteners></icestats>";
+        assert_eq!(parse_listener_stats(xml), (4, 9));
+    }
+
+    /// A server that publishes no counts reads as none, not as a failure
+    #[test]
+    fn a_response_without_counts_reads_as_zero() {
+        assert_eq!(parse_listener_stats("<icestats></icestats>"), (0, 0));
+    }
+
+    #[test]
+    fn nonsense_does_not_panic() {
+        assert_eq!(parse_listener_stats("<listeners>lots</listeners>"), (0, 0));
     }
 }

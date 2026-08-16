@@ -8,6 +8,7 @@
 
 pub mod bridge;
 pub mod icecast_source;
+pub mod send_loop;
 pub mod service;
 pub mod streaming;
 

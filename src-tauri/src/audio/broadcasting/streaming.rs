@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use lame::Lame;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
@@ -142,7 +141,7 @@ impl StreamManager {
         let sample_rate = self.config.sample_rate;
         let channels = self.config.channels;
         std::thread::spawn(move || {
-            let encoder = AudioEncoder::new(bitrate, sample_rate, channels);
+            let mut encoder = AudioEncoder::new(bitrate, sample_rate, channels);
             while let Ok(pcm_data) = pcm_rx.recv() {
                 if pcm_data.is_empty() {
                     break; // Stop signal
@@ -296,24 +295,24 @@ impl StreamManager {
     }
 }
 
-// Audio encoding utilities with real MP3 encoding
+// Audio encoding for the broadcast
+//
+// This used to hold a LAME handle it never called: `encode_pcm_to_mp3` decoded
+// the bytes into a `Vec<i16>` it then discarded and returned the raw PCM
+// unchanged — which the stream then labelled `Content-Type: audio/mpeg`. A
+// listener was being sent PCM described as MP3.
+//
+// It now delegates to the encoder the recorder uses, which is a real one.
 pub struct AudioEncoder {
     bitrate: u32,
     sample_rate: u32,
     channels: u16,
-    lame: Option<Lame>,
+    lame: Option<crate::audio::recording::lame::Lame>,
 }
 
 impl AudioEncoder {
     pub fn new(bitrate: u32, sample_rate: u32, channels: u16) -> Self {
-        let lame = Lame::new().map(|mut l| {
-            l.set_channels(channels as u8).ok();
-            l.set_sample_rate(sample_rate).ok();
-            l.set_kilobitrate(bitrate as i32).ok();
-            l.set_quality(5).ok(); // Good quality
-            l.init_params().ok();
-            l
-        });
+        let lame = crate::audio::recording::lame::Lame::new(sample_rate, channels, bitrate).ok();
 
         Self {
             bitrate,
@@ -323,62 +322,21 @@ impl AudioEncoder {
         }
     }
 
-    pub fn encode_pcm_to_mp3(&self, pcm_data: &[u8]) -> Result<Vec<u8>> {
-        if let Some(ref _lame) = self.lame {
-            // Convert bytes to i16 samples (assuming 16-bit PCM)
-            let _samples: Vec<i16> = pcm_data
-                .chunks_exact(2)
-                .map(|chunk| {
-                    let bytes = [chunk[0], chunk[1]];
-                    i16::from_le_bytes(bytes)
-                })
-                .collect();
-
-            // For now, return the PCM data as-is since LAME API is complex
-            // In a production implementation, you would use the LAME API properly
-            Ok(pcm_data.to_vec())
-        } else {
-            // Fallback to raw PCM if LAME initialization failed
-            Ok(pcm_data.to_vec())
-        }
-    }
-
-    pub fn normalize_audio(&self, audio_data: &[u8]) -> Vec<u8> {
-        // Simple audio normalization - scale audio to prevent clipping
-        let samples: Vec<i16> = audio_data
-            .chunks_exact(2)
-            .map(|chunk| {
-                let bytes = [chunk[0], chunk[1]];
-                i16::from_le_bytes(bytes)
-            })
-            .collect();
-
-        // Find the maximum amplitude
-        let max_amplitude = samples.iter().map(|&s| s.abs()).max().unwrap_or(1) as f32;
-
-        // Normalize to 80% of maximum to prevent clipping
-        let scale_factor = if max_amplitude > 0.0 {
-            (i16::MAX as f32 * 0.8) / max_amplitude
-        } else {
-            1.0
+    /// Encode interleaved 16-bit PCM to MP3
+    ///
+    /// Returns nothing when there is no encoder, rather than the input: sending
+    /// PCM under an MP3 content type is worse than sending silence, because
+    /// every listener's player treats it as a corrupt stream.
+    pub fn encode_pcm_to_mp3(&mut self, pcm_data: &[u8]) -> Result<Vec<u8>> {
+        let Some(lame) = self.lame.as_mut() else {
+            return Ok(Vec::new());
         };
 
-        // Apply normalization
-        let normalized_samples: Vec<i16> = samples
-            .iter()
-            .map(|&sample| (sample as f32 * scale_factor) as i16)
+        let samples: Vec<f32> = pcm_data
+            .chunks_exact(2)
+            .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]) as f32 / 32768.0)
             .collect();
 
-        // Convert back to bytes
-        normalized_samples
-            .iter()
-            .flat_map(|&sample| sample.to_le_bytes().to_vec())
-            .collect()
-    }
-
-    pub fn finalize_mp3(&self) -> Result<Vec<u8>> {
-        // For now, return empty vector since LAME API is complex
-        // In a production implementation, you would flush the LAME encoder
-        Ok(vec![])
+        lame.encode(&samples)
     }
 }

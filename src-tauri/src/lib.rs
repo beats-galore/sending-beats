@@ -55,7 +55,6 @@ use commands::vu_channels::*;
 use commands::file_player::FilePlayerState;
 
 // Global state management
-struct StreamState(Mutex<Option<StreamManager>>);
 struct AudioState {
     device_manager: Arc<AsyncMutex<AudioDeviceManager>>,
     mixer: Arc<AsyncMutex<Option<VirtualMixer>>>,
@@ -378,7 +377,6 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(StreamState(Mutex::new(None)))
         .manage(audio_state)
         .manage(recording_state)
         .manage(file_player_state)
@@ -450,12 +448,6 @@ pub fn run() {
             // Application lifecycle commands
             commands::app::quit_application,
             // Streaming commands
-            connect_to_stream,
-            disconnect_from_stream,
-            start_streaming,
-            stop_streaming,
-            update_metadata,
-            get_stream_status,
             get_listener_stats,
             // Audio device commands
             enumerate_audio_devices,

@@ -206,6 +206,26 @@ impl IcecastSourceClient {
         Ok(())
     }
 
+    /// What this client is set up to send
+    pub fn audio_format(&self) -> AudioFormat {
+        self.audio_format.clone()
+    }
+
+    /// The same station, not yet connected
+    ///
+    /// A live connection cannot be cloned, and the send loop needs a client of
+    /// its own to own for the length of a broadcast. This copies what the
+    /// station is, leaving the socket behind.
+    pub fn clone_disconnected(&self) -> Self {
+        Self::new(
+            self.server_host.clone(),
+            self.server_port,
+            self.mount_point.clone(),
+            self.password.clone(),
+            self.audio_format.clone(),
+        )
+    }
+
     /// Check if client is connected
     pub fn is_connected(&self) -> bool {
         self.is_connected
@@ -285,6 +305,8 @@ pub struct IcecastStreamManager {
     control_tx: Option<mpsc::Sender<StreamControl>>,
     control_rx: Option<mpsc::Receiver<StreamControl>>,
     is_streaming: bool,
+    /// The task putting audio on the wire, while there is one
+    send_loop: Option<super::send_loop::SendLoop>,
 }
 
 #[derive(Debug)]
@@ -319,6 +341,7 @@ impl IcecastStreamManager {
             control_tx: Some(control_tx),
             control_rx: Some(control_rx),
             is_streaming: false,
+            send_loop: None,
         }
     }
 
@@ -339,90 +362,50 @@ impl IcecastStreamManager {
         Ok(())
     }
 
-    /// Stop streaming
+    /// Come off air
+    ///
+    /// Waits for the send loop rather than dropping it: the encoder has frames
+    /// still inside it and the server is owed a clean disconnect.
     pub async fn stop_streaming(&mut self) -> Result<()> {
-        if let Some(control_tx) = &self.control_tx {
-            control_tx
-                .send(StreamControl::Stop)
-                .await
-                .context("Failed to send stop command")?;
+        if let Some(send_loop) = self.send_loop.take() {
+            send_loop.stop().await;
         }
+
+        self.is_streaming = false;
         Ok(())
     }
 
-    /// Start streaming with an RTRB consumer from the audio pipeline
+    /// Open the connection and start sending the mix
+    ///
+    /// This used to spawn a task that read the ring, counted the samples and
+    /// dropped them behind a `TODO` — no connection was opened and no audio was
+    /// ever sent. The connection is made here, before anything is spawned, so
+    /// that a server that refuses us is an error the caller is told about
+    /// rather than a failure inside a task nobody is waiting on.
     pub async fn start_streaming_with_consumer(
         &mut self,
         rtrb_consumer: rtrb::Consumer<f32>,
     ) -> Result<()> {
-        info!("🎯 Starting Icecast streaming with RTRB consumer");
-
-        // TODO: Implement the actual RTRB consumer reading and audio encoding
-        // This is where we need to:
-        // 1. Spawn a task to continuously read from rtrb_consumer
-        // 2. Encode the audio samples to MP3/AAC
-        // 3. Send encoded data to the Icecast server
-
-        // For now, just start the normal streaming to establish the connection
-        if let Some(control_tx) = &self.control_tx {
-            control_tx
-                .send(StreamControl::Start)
-                .await
-                .context("Failed to send start command")?;
+        if self.send_loop.is_some() {
+            return Err(anyhow::anyhow!("This stream is already on air"));
         }
 
-        // Spawn the RTRB consumer task
-        let mut consumer = rtrb_consumer;
-        tokio::spawn(async move {
-            info!(
-                "🎵 {}: Starting RTRB consumer loop for Icecast streaming",
-                "ICECAST_RTRB_CONSUMER".blue()
-            );
-            let mut sample_count = 0u64;
-            let mut batch_count = 0u64;
-            let mut sample_buffer = Vec::with_capacity(4096);
+        let format = self.client.audio_format();
+        let mut client = self.client.clone_disconnected();
+        client.connect().await?;
 
-            loop {
-                sample_buffer.clear();
+        let send_loop = super::send_loop::SendLoop::start(
+            client,
+            rtrb_consumer,
+            format.sample_rate,
+            format.channels,
+            format.bitrate,
+        )?;
 
-                // Collect available samples from RTRB queue
-                loop {
-                    match consumer.pop() {
-                        Ok(sample) => {
-                            sample_buffer.push(sample);
-                            if sample_buffer.len() >= 4096 {
-                                break;
-                            }
-                        }
-                        Err(_) => break, // No more samples available
-                    }
-                }
+        self.send_loop = Some(send_loop);
+        self.is_streaming = true;
 
-                if !sample_buffer.is_empty() {
-                    batch_count += 1;
-                    sample_count += sample_buffer.len() as u64;
-
-                    // Log first few batches to see if we're getting audio
-                    if batch_count <= 5 || batch_count % 100 == 0 {
-                        info!(
-                            "🎵 {}: Processing batch #{}, samples received: {}, total samples: {}",
-                            "ICECAST_RTRB_BATCH".blue(),
-                            batch_count,
-                            sample_buffer.len(),
-                            sample_count
-                        );
-                    }
-
-                    // TODO: Encode samples to MP3/AAC and send to Icecast
-                    // For now, just acknowledge we're receiving audio
-                } else {
-                    // No samples available, yield CPU briefly
-                    tokio::time::sleep(std::time::Duration::from_micros(100)).await;
-                }
-            }
-        });
-
-        info!("✅ Started Icecast streaming with RTRB consumer");
+        info!("✅ On air: sending the mix to Icecast");
         Ok(())
     }
 

@@ -39,7 +39,6 @@ chrono = { version = "0.4", features = ["serde"] }
 urlencoding = "2"
 
 # Audio processing and streaming
-lame = "0.1"               # MP3 encoding for recording
 cpal = "0.15"              # Cross-platform audio I/O
 rtrb = "0.2"               # Real-time ring buffer
 spmcq = "0.1"              # Single Producer Multiple Consumer queue for output distribution
