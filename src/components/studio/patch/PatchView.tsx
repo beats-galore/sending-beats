@@ -43,7 +43,11 @@ export const PatchView = ({ ready }: PatchViewProps) => {
               <Box
                 style={{
                   width: '100%',
-                  height: canvasNaturalHeight * scale,
+                  // Left to its content until the canvas has actually been
+                  // measured. The observer's first pass can report zero, and
+                  // zero here is a clip over `overflow: hidden` that hides the
+                  // entire patchbay — laid out correctly, painted not at all.
+                  height: canvasNaturalHeight > 0 ? canvasNaturalHeight * scale : undefined,
                   overflow: 'hidden',
                 }}
               >

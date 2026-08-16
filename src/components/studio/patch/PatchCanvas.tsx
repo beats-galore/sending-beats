@@ -248,7 +248,13 @@ export const PatchCanvas = () => {
       <PinIndicator rects={rects} />
 
       {/* Last, so the queue floats over the mix column rather than under it. */}
-      <QueueOverlay channelIds={channels.map((channel) => channel.id)} rects={rects} />
+      <QueueOverlay
+        channels={channels.map((channel) => ({
+          id: channel.id,
+          variant: variants[channel.id] ?? 'device',
+        }))}
+        rects={rects}
+      />
     </Box>
     </PatchRectsProvider>
   );

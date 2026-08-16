@@ -66,7 +66,10 @@ impl FilePlayerManager {
         player_id: String,
         config: FilePlayerConfig,
     ) -> Result<String> {
-        let device_name = format!("{} (File Player)", config.name);
+        // The player's own name, with nothing appended. The card shows this as
+        // what the channel is patched to, and "(File Player)" said twice over
+        // is noise: a card with a transport on it is evidently a player.
+        let device_name = config.name.clone();
         let device = Arc::new(FilePlayerDevice::new(
             device_name,
             config.sample_rate,

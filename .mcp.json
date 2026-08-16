@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "tauri-automation": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "/Users/aaron/.local/share/mcp-tauri-automation/dist/index.js"
+      ],
+      "env": {}
+    }
+  }
+}

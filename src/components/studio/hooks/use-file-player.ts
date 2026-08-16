@@ -120,6 +120,8 @@ export const useFilePlayer = (playerId: Uuid<FilePlayer> | null) => {
     };
   }, [playerId, control, addTracks, removeTrack, moveTrack, clearQueue, setBreakpoint]);
 
+  const currentIndex = currentIndexOf(status, queue);
+
   const toggle = useCallback(() => {
     if (playing) {
       actions.pause();
@@ -136,7 +138,14 @@ export const useFilePlayer = (playerId: Uuid<FilePlayer> | null) => {
     actions,
     toggle,
     /** Where the queue is, for the row that is marked as playing. */
-    currentIndex: currentIndexOf(status, queue),
+    currentIndex,
+    /**
+     * The track playing, or the one pressing play would start.
+     *
+     * A player with a queue but nothing open yet is about to play its first
+     * track, and saying "queue empty" over four queued tracks is simply false.
+     */
+    cuedIndex: currentIndex ?? (queue.length > 0 ? 0 : null),
     /** Total run time of everything queued, in milliseconds. */
     total: queueDuration(queue),
   };

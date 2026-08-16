@@ -72,15 +72,17 @@ export const rungOf = (expansion: ChannelExpansion): NodeExpansion =>
 export const ChannelCardVariant = ['device', 'app', 'player'] as const;
 export type ChannelCardVariant = (typeof ChannelCardVariant)[number];
 
-/** What a card's variant adds to every size it can be. */
-const variantHeight = (variant: ChannelCardVariant): number => {
+/** What a card's variant adds to the size it would otherwise be. */
+const variantHeight = (variant: ChannelCardVariant, expansion: ChannelExpansion): number => {
   switch (variant) {
     case 'device':
       return 0;
     case 'app':
       return source.trackReadoutHeight;
+    // The transport sits inside the card, below what the source is — which a
+    // card shrunk to its meters does not draw, so at that rung it costs nothing.
     case 'player':
-      return source.playerTransportHeight;
+      return expansion === 'compact' ? 0 : source.playerTransportHeight;
   }
 };
 
@@ -126,7 +128,7 @@ export const channelSize = (variant: ChannelCardVariant, expansion: ChannelExpan
   width: channelWidth(expansion),
   // A card that carries a readout the hardware card has no use for needs that
   // much more room to show the same amount of itself.
-  height: expansionHeight(expansion) + variantHeight(variant),
+  height: expansionHeight(expansion) + variantHeight(variant, expansion),
 });
 
 /**

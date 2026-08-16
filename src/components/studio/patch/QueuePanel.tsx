@@ -1,11 +1,13 @@
 import { Box, Group, Stack, Text } from '@mantine/core';
 
+import { channelTargetKey } from '../../../services/patch-color-service';
 import { layout } from '../../../theme/layout';
 import { border, color } from '../../../theme/tokens';
 import type { FilePlayer } from '../../../types/file-player.types';
 import type { Uuid } from '../../../types/util.types';
 import { asTrackTime } from '../format';
 import { useFilePlayer } from '../hooks/use-file-player';
+import { usePatchColor } from '../hooks/use-patch-color';
 import type { NodeRect } from './patch-layout';
 import { QueueBreakNote } from './QueueBreakNote';
 import { QueueDrop } from './QueueDrop';
@@ -14,16 +16,24 @@ import { QueueNowPlaying } from './QueueNowPlaying';
 
 type QueuePanelProps = {
   playerId: Uuid<FilePlayer>;
-  /** Box of the source node this belongs to: the panel stands beside it. */
+  /** The source this belongs to, whose colour the queue is marked in. */
+  channelId: number;
+  /** Where that source sits in the column, for the colour it falls back to. */
+  position: number;
+  /** Box of the source node: the panel stands beside it. */
   anchor: NodeRect;
-  /** The player's colour, taken from the source it is patched into. */
-  tint: string;
 };
 
 const PANEL_WIDTH = 316;
 /** Between the source card and the panel. */
 const PANEL_GAP = 16;
-/** Shortest the panel gets, so a shrunk source still leaves a usable queue. */
+/**
+ * Shortest the panel gets.
+ *
+ * It otherwise stands exactly as tall as the card it belongs to, so the two
+ * read as one thing. The floor is for a card shut down small, where matching it
+ * would leave a queue too short to be worth looking at.
+ */
 const MIN_HEIGHT = 420;
 
 /**
@@ -34,11 +44,15 @@ const MIN_HEIGHT = 420;
  * canvas every time you looked at what was coming up. It floats over the mix
  * column instead, and closes when the player is deselected.
  */
-export const QueuePanel = ({ playerId, anchor, tint }: QueuePanelProps) => {
+export const QueuePanel = ({ playerId, channelId, position, anchor }: QueuePanelProps) => {
   const player = useFilePlayer(playerId);
-  const { queue, status, playing, currentIndex, actions, toggle, total } = player;
+  const { queue, status, playing, currentIndex, cuedIndex, actions, toggle, total } = player;
 
-  const track = currentIndex === null ? null : (queue[currentIndex] ?? null);
+  // Read from the source it belongs to rather than passed in, so the queue and
+  // the card it stands beside can never be wearing different colours.
+  const tint = usePatchColor(channelTargetKey(channelId), position).value;
+
+  const track = cuedIndex === null ? null : (queue[cuedIndex] ?? null);
 
   return (
     <Box

@@ -1,45 +1,64 @@
-import { channelTargetKey } from '../../../services/patch-color-service';
 import { useFilePlayerStore } from '../../../stores/file-player-store';
 import { useConfigurationStore } from '../../../stores/mixer-store';
 import { patchedPlayerId } from '../../../types/file-player.types';
-import { useFocusedNode } from '../hooks/use-focused-node';
-import { usePatchColor } from '../hooks/use-patch-color';
+import { expansionFor } from './patch-geometry';
+import type { ChannelCardVariant } from './patch-geometry';
 import type { PatchRects } from './patch-rects';
 import { QueuePanel } from './QueuePanel';
 
 type QueueOverlayProps = {
   /** In column order, matching `rects.channels`. */
-  channelIds: number[];
+  channels: { id: number; variant: ChannelCardVariant }[];
   rects: PatchRects;
 };
 
 /**
- * The queue for whichever player is selected, if one is.
+ * The queue beside every player that has room to show one.
  *
- * Selecting a source is how you say you are working on it, and for a player
- * that means the queue. Nothing else on the canvas has anything this size to
- * reveal, so it is a panel beside the node rather than part of the card.
+ * A companion to the card rather than something you go and open: a queue is
+ * what a player is for, so it stands next to the card for as long as the card
+ * is showing. Shrinking the card to its meters is what puts the queue away,
+ * which is the same gesture that puts the rest of the card away.
  */
-export const QueueOverlay = ({ channelIds, rects }: QueueOverlayProps) => {
-  const focused = useFocusedNode();
+export const QueueOverlay = ({ channels, rects }: QueueOverlayProps) => {
   const players = useFilePlayerStore((state) => state.players);
   const { activeSession } = useConfigurationStore();
 
-  const channelId = focused?.kind === 'channel' ? focused.channelId : null;
-  const index = channelId === null ? -1 : channelIds.indexOf(channelId);
+  const panels = channels
+    .map((channel, index) => ({ channel, index, anchor: rects.channels[index] }))
+    .filter(({ channel, anchor }) => {
+      if (channel.variant !== 'player' || !anchor) {
+        return false;
+      }
+      return expansionFor(channel.variant, anchor) !== 'compact';
+    })
+    .map(({ channel, index, anchor }) => {
+      const device = (activeSession?.configuredDevices ?? []).find(
+        (entry) => entry.isInput && entry.channelNumber === channel.id
+      );
 
-  const device = (activeSession?.configuredDevices ?? []).find(
-    (entry) => entry.isInput && entry.channelNumber === channelId
+      return {
+        channelId: channel.id,
+        index,
+        anchor,
+        playerId: patchedPlayerId(device?.deviceIdentifier, players),
+      };
+    });
+
+  return (
+    <>
+      {panels.map(
+        (panel) =>
+          panel.playerId && (
+            <QueuePanel
+              key={panel.channelId}
+              playerId={panel.playerId}
+              channelId={panel.channelId}
+              position={panel.index}
+              anchor={panel.anchor}
+            />
+          )
+      )}
+    </>
   );
-  const playerId = patchedPlayerId(device?.deviceIdentifier, players);
-
-  // Called unconditionally: the selected node's colour is what the panel reads
-  // in, and hooks cannot be skipped for the case where it is not a player.
-  const swatch = usePatchColor(channelTargetKey(channelId ?? 0), Math.max(index, 0));
-
-  if (!playerId || index === -1) {
-    return null;
-  }
-
-  return <QueuePanel playerId={playerId} anchor={rects.channels[index]} tint={swatch.value} />;
 };

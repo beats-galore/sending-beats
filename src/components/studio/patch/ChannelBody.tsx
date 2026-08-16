@@ -13,6 +13,7 @@ import { ChannelInspector } from './ChannelInspector';
 import { DestinationTiles } from './DestinationTiles';
 import { MuteSoloPills } from './MuteSoloPills';
 import type { ChannelExpansion } from './patch-geometry';
+import { PlayerTransport } from './PlayerTransport';
 
 const GAIN_MIN = -60;
 const GAIN_MAX = 12;
@@ -77,6 +78,10 @@ export const ChannelBody = ({
           </Text>
         )}
       </Group>
+
+      {/* Below what the source is, above its levels — the card reads top to
+          bottom as what is patched, what it is doing, and how loud. */}
+      {source.playerId && <PlayerTransport playerId={source.playerId} tint={meterBase} />}
 
       <Stack gap="3xs">
         <LevelMeter
