@@ -105,8 +105,8 @@ export const useAddSource = () => {
     () =>
       playerSources.options.map((option) =>
         option.value === NEW_PLAYER_VALUE
-          ? { value: option.value, label: 'New queue player', detail: 'creates one' }
-          : asOption(option.value, option.label, 'queue player')
+          ? { value: option.value, label: 'New queue', detail: 'creates one' }
+          : asOption(option.value, option.label, 'queue')
       ),
     [playerSources.options, asOption]
   );
@@ -123,6 +123,12 @@ export const useAddSource = () => {
       const identifier = value === NEW_PLAYER_VALUE ? await playerSources.create() : value;
       if (!identifier) {
         return;
+      }
+
+      // Patching a channel to a queue is not enough on its own: the patch has
+      // to record that it wants the queue, or nothing brings it back next time.
+      if (value !== NEW_PLAYER_VALUE) {
+        await playerSources.ensureOnPatch(identifier);
       }
 
       try {

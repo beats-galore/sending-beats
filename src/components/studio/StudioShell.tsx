@@ -7,6 +7,7 @@ import { useStudioStore } from '../../stores/studio-store';
 import { color } from '../../theme/tokens';
 
 import { CastView } from './cast/CastView';
+import { QueuesView } from './queues/QueuesView';
 import { DevicesView } from './devices/DevicesView';
 import { useStudioHotkeys } from './hooks/use-studio-hotkeys';
 import { PatchView } from './patch/PatchView';
@@ -50,6 +51,8 @@ export const StudioShell = () => {
         return <TapeView />;
       case 'cast':
         return <CastView />;
+      case 'queues':
+        return <QueuesView />;
       case 'devices':
         return <DevicesView />;
       case 'setup':

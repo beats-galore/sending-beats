@@ -76,7 +76,7 @@ export type FilePlayerConfig = {
 };
 
 /**
- * A player and the name it was created under.
+ * A named queue of audio files, belonging to the studio rather than a patch.
  *
  * Its id is both the row's key and the identifier a channel is patched to it by
  * — the backend keys its running players by the same string it stored them
@@ -85,6 +85,66 @@ export type FilePlayerConfig = {
 export type FilePlayer = {
   id: Uuid<FilePlayer>;
   name: string;
+};
+
+/** A queue as the studio knows it, apart from whichever patch is loaded. */
+export type Queue = {
+  id: Uuid<FilePlayer>;
+  name: string;
+  sampleRate: number;
+  channels: number;
+  volume: number;
+  repeatMode: RepeatMode;
+  shuffle: boolean;
+  breakpointTrackId: Uuid<QueuedTrack> | null;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+};
+
+/**
+ * One time a queue played something.
+ *
+ * A log rather than a second copy of the list: a track played three times reads
+ * as three entries. What the track was is carried here, so the log still reads
+ * after the track has been taken out of the queue it came from.
+ */
+export type QueuePlay = {
+  id: Uuid<QueuePlay>;
+  filePlayerId: Uuid<FilePlayer>;
+  trackId: Uuid<QueuedTrack> | null;
+  filePath: FilePath;
+  title: string | null;
+  artist: string | null;
+  durationMs: number | null;
+  playedAt: Timestamp;
+};
+
+/**
+ * One track as it is stored, which is what the queue screen reads.
+ *
+ * The running player's `QueuedTrack` is the same file seen from the audio side;
+ * this is the row, so a queue can be looked at without being patched in.
+ */
+export type QueueTrack = {
+  id: Uuid<QueuedTrack>;
+  filePlayerId: Uuid<FilePlayer>;
+  filePath: FilePath;
+  title: string | null;
+  artist: string | null;
+  album: string | null;
+  durationMs: number | null;
+  fileSize: number;
+  position: number;
+};
+
+/** What to call a stored track, falling back to its file name. */
+export const queueTrackTitle = (track: QueueTrack | QueuePlay): string => {
+  if (track.title) {
+    return track.title;
+  }
+
+  const name = track.filePath.split('/').pop() ?? track.filePath;
+  return name.replace(/\.[a-z0-9]+$/i, '');
 };
 
 /**

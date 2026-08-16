@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo } from 'react';
 
 import { useFilePlayerStore } from '../../../stores/file-player-store';
+import { useQueueStore } from '../../../stores/queue-store';
 import type {
   FilePlayer,
   PlaybackAction,
@@ -33,10 +34,14 @@ export const useFilePlayers = (): void => {
   const load = useFilePlayerStore((state) => state.load);
   const poll = useFilePlayerStore((state) => state.poll);
   const players = useFilePlayerStore((state) => state.players);
+  const loadQueues = useQueueStore((state) => state.load);
 
   useEffect(() => {
     void load();
-  }, [load]);
+    // The catalogue as well as what is running: the dock offers every queue in
+    // the studio, not only the ones this patch already has.
+    void loadQueues();
+  }, [load, loadQueues]);
 
   useEffect(() => {
     if (players.length === 0) {

@@ -6,7 +6,7 @@
 import { create } from 'zustand';
 import { persist, subscribeWithSelector } from 'zustand/middleware';
 
-export const StudioView = ['patch', 'tape', 'cast', 'devices', 'setup'] as const;
+export const StudioView = ['patch', 'tape', 'cast', 'queues', 'devices', 'setup'] as const;
 export type StudioView = (typeof StudioView)[number];
 
 export const DestinationRole = ['MAIN', 'CUE', 'SEND'] as const;

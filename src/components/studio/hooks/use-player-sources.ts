@@ -1,31 +1,33 @@
 import { useCallback, useMemo } from 'react';
 
-import { useFilePlayerStore } from '../../../stores/file-player-store';
 import { useMixerStore } from '../../../stores/mixer-store';
+import { useQueueStore } from '../../../stores/queue-store';
+import type { FilePlayer } from '../../../types/file-player.types';
+import type { Uuid } from '../../../types/util.types';
 
 /**
  * The value the source select uses to mean "make me one".
  *
- * A player has to exist before a channel can be patched to it, and the place
- * you decide you want one is the same place you say what feeds the channel. So
- * the select carries an entry that creates one, rather than there being a
- * separate button somewhere else that adds a source you then have to find.
+ * A queue has to exist before a channel can be patched to it, and the place you
+ * decide you want one is the same place you say what feeds the channel. So the
+ * select carries an entry that creates one, rather than there being a separate
+ * button somewhere else that adds a source you then have to find.
  */
 export const NEW_PLAYER_VALUE = 'new-queue-player';
 
-/** What the first player is called, before there is anything to number it against. */
-const FIRST_PLAYER_NAME = 'Sweet Beats Player';
-
 /**
- * The players a channel could be fed by, and the means of making another.
+ * The queues a channel could be fed by, and the means of making another.
  *
- * A player already feeding another channel is left off: two channels reading one
- * queue would each take half its audio, which is not a thing anyone wants and
- * reads as a broken player rather than a routing mistake.
+ * Read from the studio's catalogue rather than from what happens to be running:
+ * a queue built on the queues screen is available to patch straight away, and
+ * one already feeding another channel is left off — two channels reading one
+ * queue would each take half its audio, which reads as a broken player rather
+ * than a routing mistake.
  */
 export const usePlayerSources = (patchedIdentifier: string | null) => {
-  const players = useFilePlayerStore((state) => state.players);
-  const createPlayer = useFilePlayerStore((state) => state.create);
+  const queues = useQueueStore((state) => state.queues);
+  const createQueue = useQueueStore((state) => state.add);
+  const addTarget = useQueueStore((state) => state.addTarget);
   const activeSession = useMixerStore((state) => state.activeSession);
 
   const takenElsewhere = useMemo(() => {
@@ -36,23 +38,47 @@ export const usePlayerSources = (patchedIdentifier: string | null) => {
     return patched.filter((identifier) => identifier !== patchedIdentifier);
   }, [activeSession, patchedIdentifier]);
 
+  const players = useMemo(
+    (): FilePlayer[] => queues.map((queue) => ({ id: queue.id, name: queue.name })),
+    [queues]
+  );
+
   const options = useMemo(
     () => [
       ...players
-        .filter((player) => !takenElsewhere.includes(player.id))
-        .map((player) => ({ value: player.id, label: player.name })),
-      { value: NEW_PLAYER_VALUE, label: '+ New queue player' },
+        .filter((player) => !takenElsewhere.includes(String(player.id)))
+        .map((player) => ({ value: String(player.id), label: player.name })),
+      { value: NEW_PLAYER_VALUE, label: '+ New queue' },
     ],
     [players, takenElsewhere]
   );
 
-  /** Make a player and hand back the identifier a channel is patched to it by. */
+  /** Make a queue and hand back the identifier a channel is patched to it by. */
   const create = useCallback(async (): Promise<string | null> => {
-    const name =
-      players.length === 0 ? FIRST_PLAYER_NAME : `${FIRST_PLAYER_NAME} ${players.length + 1}`;
+    const id = await createQueue();
+    if (!id) {
+      return null;
+    }
 
-    return createPlayer(name);
-  }, [createPlayer, players.length]);
+    await addTarget(id);
+    return String(id);
+  }, [createQueue, addTarget]);
 
-  return { players, options, create };
+  /**
+   * Say that this patch is using a queue.
+   *
+   * Patching a channel to it is not enough on its own — the patch has to record
+   * that it wants the queue, or nothing brings it back on the next launch.
+   */
+  const ensureOnPatch = useCallback(
+    async (identifier: string) => {
+      const queue = queues.find((entry) => String(entry.id) === identifier);
+      if (queue) {
+        await addTarget(queue.id as Uuid<FilePlayer>);
+      }
+    },
+    [queues, addTarget]
+  );
+
+  return { players, options, create, ensureOnPatch };
 };

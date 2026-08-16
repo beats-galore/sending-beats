@@ -149,6 +149,12 @@ export const useChannelSource = (channelId: number) => {
         return;
       }
 
+      // A queue picked here has to be recorded on the patch as well as attached,
+      // or nothing brings it back on the next launch.
+      if (deviceId !== NEW_PLAYER_VALUE) {
+        await playerSources.ensureOnPatch(identifier);
+      }
+
       const isApplicationTap = identifier.startsWith('app-');
       const isPlayer =
         identifier !== deviceId || playerSources.players.some((player) => player.id === identifier);

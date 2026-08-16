@@ -8,11 +8,12 @@ const TAB_LABELS: Record<StudioView, string> = {
   patch: 'PATCH',
   tape: 'TAPE',
   cast: 'CAST',
+  queues: 'QUEUES',
   devices: 'DEVICES',
   setup: 'SETUP',
 };
 
-/** The five top-level destinations, as a single segmented control in the nav well. */
+/** The top-level destinations, as a single segmented control in the nav well. */
 export const ViewTabs = () => {
   const view = useStudioStore((state) => state.view);
   const setView = useStudioStore((state) => state.setView);

@@ -80,9 +80,9 @@ export const PatchDock = () => {
           onPick={(value) => void add(value)}
         />
         <AddTile
-          label="+ FILE PLAYER"
+          label="+ QUEUE"
           options={players}
-          emptyHint="No players available"
+          emptyHint="No queues available"
           onPick={(value) => void add(value)}
         />
 
