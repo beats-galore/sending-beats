@@ -468,76 +468,107 @@ pub async fn create_device_configuration(
     }
 }
 
-/// Get the channel number for a configured device
+/// Get the channel number for a configured device in the active session.
+///
+/// Scoped to the session: the same device can sit in saved configurations at
+/// a different channel, and an arbitrary row would place it on the wrong strip.
 pub async fn get_device_channel_number(state: &AudioState, device_id: &str) -> Result<i32, String> {
-    let device = crate::entities::configured_audio_device::Entity::find()
-        .filter(crate::entities::configured_audio_device::Column::DeviceIdentifier.eq(device_id))
-        .one(state.database.sea_orm())
-        .await
-        .map_err(|e| e.to_string())?;
+    let channel = crate::db::ConfiguredAudioDeviceService::get_channel_number_for_active_device(
+        state.database.sea_orm(),
+        device_id,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
 
-    match device {
-        Some(d) => Ok(d.channel_number),
-        None => Err(format!("Device '{}' not found in database", device_id)),
+    match channel {
+        Some(channel) => Ok(channel as i32),
+        None => Err(format!(
+            "Device '{}' not found in the active session",
+            device_id
+        )),
     }
 }
 
-/// Remove a configured_audio_device and its related entries
+/// Remove a device from the active session's configuration, with everything
+/// that hangs off it.
+///
+/// Scoped to the active session on purpose: the same device can also sit in
+/// saved reusable configurations, and unpatching it from today's session must
+/// not strip it out of every layout the user ever saved. Runs in one
+/// transaction, child rows first — custom effects and the effects row both
+/// hold foreign keys to the device, so leaving either behind makes the device
+/// delete fail the moment those rows exist.
 pub async fn remove_device_configuration(
     state: &AudioState,
     device_id: &str,
 ) -> Result<(), String> {
+    use sea_orm::TransactionTrait;
+
     tracing::info!("🗑️ Removing device configuration for: {}", device_id);
 
-    // First, find all device config IDs to delete their effects
+    let active_config =
+        crate::db::AudioMixerConfigurationService::get_active_session(state.database.sea_orm())
+            .await
+            .map_err(|e| format!("Failed to look up the active session: {}", e))?
+            .ok_or_else(|| "No active session to remove the device from".to_string())?;
+
     let device_configs = crate::entities::configured_audio_device::Entity::find()
         .filter(crate::entities::configured_audio_device::Column::DeviceIdentifier.eq(device_id))
+        .filter(
+            crate::entities::configured_audio_device::Column::ConfigurationId.eq(&active_config.id),
+        )
         .all(state.database.sea_orm())
         .await
         .map_err(|e| format!("Failed to find device configurations: {}", e))?;
 
-    // Delete audio_effects_default entries for these devices
-    for device_config in &device_configs {
-        match crate::entities::audio_effects_default::Entity::delete_many()
-            .filter(crate::entities::audio_effects_default::Column::DeviceId.eq(&device_config.id))
-            .exec(state.database.sea_orm())
-            .await
-        {
-            Ok(result) => {
-                tracing::info!(
-                    "✅ Deleted {} audio_effects_default entries for device {}",
-                    result.rows_affected,
-                    device_config.id
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "⚠️ Failed to delete effects for device {}: {}",
-                    device_config.id,
-                    e
-                );
-            }
-        }
+    if device_configs.is_empty() {
+        tracing::info!(
+            "📋 Device '{}' has no rows in the active session, nothing to remove",
+            device_id
+        );
+        return Ok(());
     }
 
-    // Delete configured_audio_device entries
-    match crate::entities::configured_audio_device::Entity::delete_many()
-        .filter(crate::entities::configured_audio_device::Column::DeviceIdentifier.eq(device_id))
-        .exec(state.database.sea_orm())
+    let txn = state
+        .database
+        .sea_orm()
+        .begin()
         .await
-    {
-        Ok(result) => {
-            tracing::info!(
-                "✅ Deleted {} configured_audio_device entries",
-                result.rows_affected
-            );
-            Ok(())
-        }
-        Err(e) => {
-            tracing::error!("❌ Failed to delete configured_audio_device: {}", e);
-            Err(format!("Failed to remove device configuration: {}", e))
-        }
+        .map_err(|e| format!("Failed to start removal transaction: {}", e))?;
+
+    for device_config in &device_configs {
+        crate::entities::audio_effects_custom::Entity::delete_many()
+            .filter(crate::entities::audio_effects_custom::Column::DeviceId.eq(&device_config.id))
+            .exec(&txn)
+            .await
+            .map_err(|e| format!("Failed to delete custom effects: {}", e))?;
+
+        crate::entities::audio_effects_default::Entity::delete_many()
+            .filter(crate::entities::audio_effects_default::Column::DeviceId.eq(&device_config.id))
+            .exec(&txn)
+            .await
+            .map_err(|e| format!("Failed to delete effects row: {}", e))?;
     }
+
+    let result = crate::entities::configured_audio_device::Entity::delete_many()
+        .filter(crate::entities::configured_audio_device::Column::DeviceIdentifier.eq(device_id))
+        .filter(
+            crate::entities::configured_audio_device::Column::ConfigurationId.eq(&active_config.id),
+        )
+        .exec(&txn)
+        .await
+        .map_err(|e| format!("Failed to remove device configuration: {}", e))?;
+
+    txn.commit()
+        .await
+        .map_err(|e| format!("Failed to commit device removal: {}", e))?;
+
+    tracing::info!(
+        "✅ Removed {} configured_audio_device entries from session {}",
+        result.rows_affected,
+        active_config.id
+    );
+    Ok(())
 }
 
 /// Information about a loaded configuration for UI synchronization

@@ -626,6 +626,32 @@ impl ConfiguredAudioDeviceService {
             None => Ok(None),
         }
     }
+
+    /// The device's row in the active session, or None outside it.
+    ///
+    /// Scoped on purpose: the same identifier can appear in saved
+    /// configurations, and an unscoped lookup would hand back an arbitrary one.
+    pub async fn get_active_device_by_identifier(
+        db: &DatabaseConnection,
+        device_identifier: &str,
+    ) -> Result<Option<configured_audio_device::Model>> {
+        let active_config = audio_mixer_configuration::Entity::find()
+            .filter(audio_mixer_configuration::Column::SessionActive.eq(true))
+            .one(db)
+            .await?;
+
+        let Some(active_config) = active_config else {
+            return Ok(None);
+        };
+
+        let device = configured_audio_device::Entity::find()
+            .filter(configured_audio_device::Column::ConfigurationId.eq(&active_config.id))
+            .filter(configured_audio_device::Column::DeviceIdentifier.eq(device_identifier))
+            .one(db)
+            .await?;
+
+        Ok(device)
+    }
 }
 
 pub struct AudioEffectsDefaultService;

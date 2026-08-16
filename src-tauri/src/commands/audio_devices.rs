@@ -231,13 +231,13 @@ pub async fn safe_switch_input_device(
                 "📋 Device switch no-op: already using device {}",
                 new_device_id
             );
-            // Return the existing device configuration
-            let existing_device = crate::entities::configured_audio_device::Entity::find()
-                .filter(
-                    crate::entities::configured_audio_device::Column::DeviceIdentifier
-                        .eq(&new_device_id),
+            // Return the existing device configuration, scoped to the active
+            // session — the identifier can also live in saved configurations.
+            let existing_device =
+                crate::db::ConfiguredAudioDeviceService::get_active_device_by_identifier(
+                    audio_state.database.sea_orm(),
+                    &new_device_id,
                 )
-                .one(audio_state.database.sea_orm())
                 .await
                 .map_err(|e| format!("Failed to query existing device: {}", e))?;
             return Ok(existing_device);
