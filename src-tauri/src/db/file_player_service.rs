@@ -1,61 +1,50 @@
-// Reading and writing file players and what they have queued
+// Reading and writing queues, what is in them, and what they have played
 //
-// A player is stored against a configuration, and its tracks against the player.
-// The identifier the mixer routes by is built from the row's own key, so a
-// channel patched to a player still resolves after a restart — which is the
-// whole reason any of this is on disk rather than in memory.
+// A queue belongs to the studio rather than to a patch, the way a station does.
+// What is in it is durable: playing a track does not take it out, it writes a
+// row in the play log beside it. So an ad break built once is still there
+// tomorrow, and "what went out last night" is a question the log answers.
 
 use anyhow::Result;
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set,
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
+    QuerySelect, Set,
 };
 
-use crate::entities::{file_player, file_player_track};
+use crate::entities::{
+    configuration_file_player, file_player, file_player_play, file_player_track,
+};
 
-/// Whether a track is waiting to play or has already played
-pub const TRACK_PENDING: &str = "pending";
-pub const TRACK_PLAYED: &str = "played";
-
-/// The identifier the mixing layer routes a player by
-///
-/// Built from the row key rather than minted separately, so there is one
-/// identity per player and it is the one that survives a restart.
-pub fn device_identifier_for(player_id: &str) -> String {
-    format!("file_player_{}", player_id)
-}
-
-/// Persistence for file players. Named apart from `audio::FilePlayerService`,
-/// which is the running player itself rather than what is remembered of it.
+/// Persistence for queues. Named apart from `audio::FilePlayerService`, which is
+/// the running player itself rather than what is remembered of it.
 pub struct FilePlayerStore;
 
 impl FilePlayerStore {
-    /// Every player in a configuration, oldest first
-    pub async fn list_for_configuration(
-        db: &DatabaseConnection,
-        configuration_id: &str,
-    ) -> Result<Vec<file_player::Model>> {
+    /// Every queue in the studio, by name
+    pub async fn list(db: &DatabaseConnection) -> Result<Vec<file_player::Model>> {
         Ok(file_player::Entity::find()
-            .filter(file_player::Column::ConfigurationId.eq(configuration_id))
-            .order_by_asc(file_player::Column::CreatedAt)
+            .order_by_asc(file_player::Column::Name)
             .all(db)
             .await?)
     }
 
-    /// Store a new player and return it, with the identifier already derived
+    pub async fn get(db: &DatabaseConnection, id: &str) -> Result<Option<file_player::Model>> {
+        Ok(file_player::Entity::find_by_id(id.to_string())
+            .one(db)
+            .await?)
+    }
+
+    /// Store a new queue
     pub async fn create(
         db: &DatabaseConnection,
-        configuration_id: &str,
         name: &str,
         sample_rate: u32,
         channels: u16,
     ) -> Result<file_player::Model> {
         let now = chrono::Utc::now();
-        let id = uuid::Uuid::new_v4().to_string();
 
         Ok(file_player::ActiveModel {
-            id: Set(id.clone()),
-            configuration_id: Set(configuration_id.to_string()),
-            device_identifier: Set(device_identifier_for(&id)),
+            id: Set(uuid::Uuid::new_v4().to_string()),
             name: Set(name.to_string()),
             sample_rate: Set(sample_rate as i32),
             channels: Set(channels as i32),
@@ -70,15 +59,31 @@ impl FilePlayerStore {
         .await?)
     }
 
-    /// Forget a player. Its tracks go with it, by the cascade on the table.
-    pub async fn remove(db: &DatabaseConnection, player_id: &str) -> Result<()> {
-        file_player::Entity::delete_by_id(player_id.to_string())
+    pub async fn rename(db: &DatabaseConnection, id: &str, name: &str) -> Result<()> {
+        let Some(row) = file_player::Entity::find_by_id(id.to_string())
+            .one(db)
+            .await?
+        else {
+            return Ok(());
+        };
+
+        let mut active: file_player::ActiveModel = row.into();
+        active.name = Set(name.to_string());
+        active.updated_at = Set(chrono::Utc::now());
+        active.update(db).await?;
+
+        Ok(())
+    }
+
+    /// Forget a queue. Its tracks and its play log go with it, by the cascade.
+    pub async fn remove(db: &DatabaseConnection, id: &str) -> Result<()> {
+        file_player::Entity::delete_by_id(id.to_string())
             .exec(db)
             .await?;
         Ok(())
     }
 
-    /// Remember how a player is set up, so it comes back the same way
+    /// Remember how a queue is set up, so it comes back the same way
     pub async fn update_playback(
         db: &DatabaseConnection,
         player_id: &str,
@@ -103,7 +108,7 @@ impl FilePlayerStore {
         Ok(())
     }
 
-    /// Remember where a player stops on its own, or that it no longer does
+    /// Remember where a queue stops on its own, or that it no longer does
     pub async fn set_breakpoint(
         db: &DatabaseConnection,
         player_id: &str,
@@ -124,24 +129,19 @@ impl FilePlayerStore {
         Ok(())
     }
 
-    /// A player's tracks in one status, in order
-    ///
-    /// `TRACK_PENDING` is the queue as it will play; `TRACK_PLAYED` is the
-    /// history in the order it happened.
+    /// What is in a queue, in the order it plays
     pub async fn tracks(
         db: &DatabaseConnection,
         player_id: &str,
-        status: &str,
     ) -> Result<Vec<file_player_track::Model>> {
         Ok(file_player_track::Entity::find()
             .filter(file_player_track::Column::FilePlayerId.eq(player_id))
-            .filter(file_player_track::Column::Status.eq(status))
             .order_by_asc(file_player_track::Column::Position)
             .all(db)
             .await?)
     }
 
-    /// Add a file to the end of a player's queue
+    /// Add a file to the end of a queue
     pub async fn queue_track(
         db: &DatabaseConnection,
         player_id: &str,
@@ -149,9 +149,7 @@ impl FilePlayerStore {
     ) -> Result<file_player_track::Model> {
         let now = chrono::Utc::now();
 
-        // Appended after whatever is already waiting, so adding a file while one
-        // is playing puts it behind the rest rather than next.
-        let position = Self::tracks(db, player_id, TRACK_PENDING)
+        let position = Self::tracks(db, player_id)
             .await?
             .last()
             .map_or(0, |last| last.position + 1);
@@ -165,9 +163,7 @@ impl FilePlayerStore {
             album: Set(track.album.map(str::to_string)),
             duration_ms: Set(track.duration_ms),
             file_size: Set(track.file_size),
-            status: Set(TRACK_PENDING.to_string()),
             position: Set(position),
-            played_at: Set(None),
             created_at: Set(now),
             updated_at: Set(now),
         }
@@ -175,12 +171,10 @@ impl FilePlayerStore {
         .await?)
     }
 
-    /// Write down the order a player's queue is now in
+    /// Write down the order a queue is now in
     ///
     /// Takes the whole list rather than one move, because by the time this is
-    /// called the player has already done the move and knows the answer. Writing
-    /// what it says is one pass and cannot drift from it, where replaying the
-    /// move against stored positions could.
+    /// called the player has already done the move and knows the answer.
     pub async fn reorder_queue(
         db: &DatabaseConnection,
         player_id: &str,
@@ -196,8 +190,6 @@ impl FilePlayerStore {
                 continue;
             };
 
-            // A track from another player, or one already at this position, is
-            // nothing to write.
             if row.file_player_id != player_id || row.position == position as i32 {
                 continue;
             }
@@ -218,40 +210,66 @@ impl FilePlayerStore {
         Ok(())
     }
 
-    /// Move a track into the history, stamped with when it finished
+    /// Empty a queue, leaving what it has played
+    pub async fn clear_queue(db: &DatabaseConnection, player_id: &str) -> Result<()> {
+        file_player_track::Entity::delete_many()
+            .filter(file_player_track::Column::FilePlayerId.eq(player_id))
+            .exec(db)
+            .await?;
+        Ok(())
+    }
+
+    /// Write down that a queue played something
     ///
-    /// Its position is re-taken from the end of the played list rather than kept
-    /// from the queue, so history reads in the order things actually happened —
-    /// which shuffle and repeat make different from the order they were queued.
-    pub async fn mark_played(db: &DatabaseConnection, track_id: &str) -> Result<()> {
-        let Some(row) = file_player_track::Entity::find_by_id(track_id.to_string())
+    /// What the track was is copied in rather than only pointed at: the log has
+    /// to still read as a list of what went out after the track is taken out of
+    /// the queue it came from.
+    pub async fn record_play(db: &DatabaseConnection, track_id: &str) -> Result<()> {
+        let Some(track) = file_player_track::Entity::find_by_id(track_id.to_string())
             .one(db)
             .await?
         else {
             return Ok(());
         };
 
-        let played_position = Self::tracks(db, &row.file_player_id, TRACK_PLAYED)
-            .await?
-            .last()
-            .map_or(0, |last| last.position + 1);
-
         let now = chrono::Utc::now();
-        let mut active: file_player_track::ActiveModel = row.into();
-        active.status = Set(TRACK_PLAYED.to_string());
-        active.position = Set(played_position);
-        active.played_at = Set(Some(now));
-        active.updated_at = Set(now);
-        active.update(db).await?;
+
+        file_player_play::ActiveModel {
+            id: Set(uuid::Uuid::new_v4().to_string()),
+            file_player_id: Set(track.file_player_id),
+            track_id: Set(Some(track.id)),
+            file_path: Set(track.file_path),
+            title: Set(track.title),
+            artist: Set(track.artist),
+            duration_ms: Set(track.duration_ms),
+            played_at: Set(now),
+            created_at: Set(now),
+            updated_at: Set(now),
+        }
+        .insert(db)
+        .await?;
 
         Ok(())
     }
 
-    /// Empty a player's queue, leaving its history alone
-    pub async fn clear_queue(db: &DatabaseConnection, player_id: &str) -> Result<()> {
-        file_player_track::Entity::delete_many()
-            .filter(file_player_track::Column::FilePlayerId.eq(player_id))
-            .filter(file_player_track::Column::Status.eq(TRACK_PENDING))
+    /// What a queue has played, most recent first
+    pub async fn plays(
+        db: &DatabaseConnection,
+        player_id: &str,
+        limit: u64,
+    ) -> Result<Vec<file_player_play::Model>> {
+        Ok(file_player_play::Entity::find()
+            .filter(file_player_play::Column::FilePlayerId.eq(player_id))
+            .order_by_desc(file_player_play::Column::PlayedAt)
+            .limit(limit)
+            .all(db)
+            .await?)
+    }
+
+    /// Forget what a queue has played, leaving the queue itself alone
+    pub async fn clear_plays(db: &DatabaseConnection, player_id: &str) -> Result<()> {
+        file_player_play::Entity::delete_many()
+            .filter(file_player_play::Column::FilePlayerId.eq(player_id))
             .exec(db)
             .await?;
         Ok(())
@@ -269,4 +287,71 @@ pub struct QueuedTrackRow<'a> {
     pub album: Option<&'a str>,
     pub duration_ms: Option<i64>,
     pub file_size: i64,
+}
+
+/// Which queues a patch has on its canvas
+///
+/// The queue is global; this is the patch's side of the relationship, so one can
+/// be put on a canvas and taken off it like any other source.
+pub struct FilePlayerTargetService;
+
+impl FilePlayerTargetService {
+    /// The queues on a patch, oldest first
+    pub async fn list_for_configuration(
+        db: &DatabaseConnection,
+        configuration_id: &str,
+    ) -> Result<Vec<String>> {
+        let rows = configuration_file_player::Entity::find()
+            .filter(configuration_file_player::Column::ConfigurationId.eq(configuration_id))
+            .order_by_asc(configuration_file_player::Column::CreatedAt)
+            .all(db)
+            .await?;
+
+        Ok(rows.into_iter().map(|row| row.file_player_id).collect())
+    }
+
+    /// Put a queue on a patch. Adding one already there changes nothing.
+    pub async fn add(
+        db: &DatabaseConnection,
+        configuration_id: &str,
+        file_player_id: &str,
+    ) -> Result<()> {
+        let existing = configuration_file_player::Entity::find()
+            .filter(configuration_file_player::Column::ConfigurationId.eq(configuration_id))
+            .filter(configuration_file_player::Column::FilePlayerId.eq(file_player_id))
+            .one(db)
+            .await?;
+
+        if existing.is_some() {
+            return Ok(());
+        }
+
+        let now = chrono::Utc::now();
+        configuration_file_player::ActiveModel {
+            id: Set(uuid::Uuid::new_v4().to_string()),
+            configuration_id: Set(configuration_id.to_string()),
+            file_player_id: Set(file_player_id.to_string()),
+            created_at: Set(now),
+            updated_at: Set(now),
+        }
+        .insert(db)
+        .await?;
+
+        Ok(())
+    }
+
+    /// Take a queue off a patch. The queue itself is left alone.
+    pub async fn remove(
+        db: &DatabaseConnection,
+        configuration_id: &str,
+        file_player_id: &str,
+    ) -> Result<()> {
+        configuration_file_player::Entity::delete_many()
+            .filter(configuration_file_player::Column::ConfigurationId.eq(configuration_id))
+            .filter(configuration_file_player::Column::FilePlayerId.eq(file_player_id))
+            .exec(db)
+            .await?;
+
+        Ok(())
+    }
 }

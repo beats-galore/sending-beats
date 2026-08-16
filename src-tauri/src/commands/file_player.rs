@@ -1,13 +1,17 @@
 use crate::{
     audio::{FilePlayerConfig, PlaybackAction, PlaybackStatus, PlayerEvent, QueuedTrack},
-    db::{AudioMixerConfigurationService, FilePlayerStore, QueuedTrackRow, TRACK_PENDING},
+    db::{
+        AudioMixerConfigurationService, FilePlayerStore, FilePlayerTargetService, QueuedTrackRow,
+    },
     AudioState,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
 
+mod catalogue;
 mod persistence;
+pub use catalogue::*;
 use persistence::{queued_track_from_row, spawn_history_writer};
 
 // State for file player service
@@ -15,9 +19,8 @@ pub struct FilePlayerState {
     pub service: crate::audio::FilePlayerService,
 }
 
-/// The session a player belongs to, or an error saying there is nothing to
-/// store it against
-async fn active_configuration(state: &State<'_, AudioState>) -> Result<String, String> {
+/// The patch a queue is being put on, or an error saying there is none
+pub(crate) async fn active_configuration(state: &State<'_, AudioState>) -> Result<String, String> {
     AudioMixerConfigurationService::get_active_session(state.database.sea_orm())
         .await
         .map_err(|e| e.to_string())?
@@ -32,16 +35,16 @@ pub async fn create_file_player(
     audio_state: State<'_, AudioState>,
     config: FilePlayerConfig,
 ) -> Result<String, String> {
-    println!("🎵 Creating file player: {}", config.name);
-
-    let configuration_id = active_configuration(&audio_state).await?;
+    println!("🎵 Creating queue: {}", config.name);
 
     // Stored first, because its row key is the identity the running player is
     // created under — the other way round would mint one id and then store a
     // different one.
+    //
+    // No patch is involved: a queue belongs to the studio, and putting one on a
+    // canvas is a separate thing to say.
     let stored = FilePlayerStore::create(
         audio_state.database.sea_orm(),
-        &configuration_id,
         &config.name,
         config.sample_rate,
         config.channels,
@@ -85,11 +88,11 @@ pub async fn remove_file_player(
         .map_err(|e| e.to_string())
 }
 
-/// Rebuild the session's file players and their queues
+/// Bring back the queues this patch has on it
 ///
 /// Called once the session's devices are in place, the way bus routing is
-/// restored: a player has to exist before a channel patched to it can be
-/// attached, and its queue has to be back before it is played.
+/// restored: a queue has to be running before a channel patched to it can be
+/// attached, and its tracks have to be back before it is played.
 #[tauri::command]
 pub async fn restore_file_players(
     file_player_state: State<'_, FilePlayerState>,
@@ -98,14 +101,20 @@ pub async fn restore_file_players(
     let configuration_id = active_configuration(&audio_state).await?;
     let db = audio_state.database.sea_orm();
 
-    let stored = FilePlayerStore::list_for_configuration(db, &configuration_id)
+    let on_patch = FilePlayerTargetService::list_for_configuration(db, &configuration_id)
         .await
         .map_err(|e| e.to_string())?;
 
     let manager = file_player_state.service.get_manager();
     let mut restored = Vec::new();
 
-    for row in stored {
+    for player_id in on_patch {
+        let Some(row) = FilePlayerStore::get(db, &player_id)
+            .await
+            .map_err(|e| e.to_string())?
+        else {
+            continue;
+        };
         // Already running, so its queue is whatever it has played down to
         // rather than what was saved.
         if manager.get_player(&row.id).is_some() {
@@ -133,16 +142,16 @@ pub async fn restore_file_players(
         player.set_mode(persistence::repeat_mode_from(&row.repeat_mode), row.shuffle);
         spawn_history_writer(&player, Arc::clone(&audio_state.database));
 
-        let pending = FilePlayerStore::tracks(db, &row.id, TRACK_PENDING)
+        let tracks = FilePlayerStore::tracks(db, &row.id)
             .await
             .map_err(|e| e.to_string())?;
 
-        for track in pending {
+        for track in tracks {
             player.enqueue(queued_track_from_row(track));
         }
 
         // After the queue, so the break lands on a track the player has. One
-        // pointing at a track that is no longer pending would never fire.
+        // pointing at a track that is no longer in the list would never fire.
         if let Some(track_id) = row.breakpoint_track_id.clone() {
             if player.get_queue().iter().any(|track| track.id == track_id) {
                 player.set_breakpoint(Some(track_id));
@@ -152,7 +161,7 @@ pub async fn restore_file_players(
         restored.push(row.id);
     }
 
-    println!("🎵 Restored {} file player(s)", restored.len());
+    println!("🎵 Restored {} queue(s) on this patch", restored.len());
     Ok(restored)
 }
 
@@ -360,8 +369,8 @@ pub async fn clear_player_queue(
         .clear_player_queue(&player_id)
         .map_err(|e| e.to_string())?;
 
-    // Only what was waiting. What the player already played stays, because that
-    // is the history rather than the queue.
+    // The list, not the log. What the queue has played is written down beside
+    // it and survives the list being emptied.
     FilePlayerStore::clear_queue(audio_state.database.sea_orm(), &player_id)
         .await
         .map_err(|e| e.to_string())?;

@@ -54,12 +54,16 @@ pub fn repeat_mode_name(mode: RepeatMode) -> &'static str {
     }
 }
 
-/// Listen for tracks finishing and move them into the history
+/// Listen for tracks finishing and write them into the play log
 ///
 /// The decoding thread reports a finished track down a channel and carries on;
-/// this drains it on the runtime, so writing history never happens on the thread
+/// this drains it on the runtime, so writing the log never happens on the thread
 /// that has audio to produce. It ends when the player is dropped and its sender
 /// goes with it.
+///
+/// The track stays in its queue. A queue is a list that was built on purpose,
+/// not something that empties as it is used, so playing writes a row beside it
+/// rather than taking it out.
 pub fn spawn_history_writer(player: &Arc<AudioFilePlayer>, database: Arc<crate::AudioDatabase>) {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<PlayerEvent>();
     player.set_event_sender(tx);
@@ -69,7 +73,7 @@ pub fn spawn_history_writer(player: &Arc<AudioFilePlayer>, database: Arc<crate::
             match event {
                 PlayerEvent::TrackFinished { track_id } => {
                     if let Err(e) =
-                        FilePlayerStore::mark_played(database.sea_orm(), &track_id).await
+                        FilePlayerStore::record_play(database.sea_orm(), &track_id).await
                     {
                         tracing::warn!("Could not record that track '{}' played: {}", track_id, e);
                     }

@@ -23,9 +23,7 @@ pub use broadcasts::*;
 pub use cast_configuration_service::{
     CastConfigurationDraft, CastConfigurationService, CastTargetService,
 };
-pub use file_player_service::{
-    device_identifier_for, FilePlayerStore, QueuedTrackRow, TRACK_PENDING, TRACK_PLAYED,
-};
+pub use file_player_service::{FilePlayerStore, FilePlayerTargetService, QueuedTrackRow};
 pub use patch_color_service::PatchColorService;
 pub use patch_layout_service::{PatchLayoutService, Placement};
 pub use recordings::*;
