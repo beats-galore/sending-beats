@@ -480,8 +480,6 @@ impl CoreAudioOutputStream {
             return Err(anyhow::anyhow!("Failed to set stream format: {}", status));
         }
 
-        // self.set_dynamic_buffer_size(1920);
-
         // Step 6: Set up render callback with new AudioCallbackContext
         let context = AudioCallbackContext {
             buffer: self.input_buffer.clone(),
@@ -647,28 +645,6 @@ impl CoreAudioOutputStream {
 
     pub fn is_running(&self) -> bool {
         *self.is_running.lock().unwrap()
-    }
-
-    /// Set dynamic buffer size to match OutputWorker's adaptive chunk sizing
-    /// This enables hardware-software pipeline synchronization
-    pub fn set_dynamic_buffer_size(&self, target_frames: u32) -> Result<()> {
-        // For stereo output, we want frames (not samples)
-        // 512 samples = 256 frames for stereo
-        let buffer_frames = target_frames / self.channels as u32;
-
-        info!(
-            "🔄 {}: Updating {} to {} frames ({} samples, {} channels)",
-            "DYNAMIC_HARDWARE_BUFFER".green(),
-            self.device_name,
-            buffer_frames,
-            target_frames,
-            self.channels
-        );
-
-        // Set the hardware buffer size to match our pipeline
-        set_device_buffer_frame_size(self.device_id, buffer_frames, true)?;
-
-        Ok(())
     }
 }
 

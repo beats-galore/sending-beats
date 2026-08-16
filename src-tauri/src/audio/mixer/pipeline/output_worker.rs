@@ -23,9 +23,6 @@ use rtrb::Producer;
 pub struct OutputWorker {
     state: AudioWorkerState,
 
-    #[cfg(target_os = "macos")]
-    hardware_update_tx: Option<mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>>,
-
     chunks_processed: u64,
     samples_output: u64,
 }
@@ -77,58 +74,6 @@ impl OutputWorker {
 
         Self {
             state,
-            #[cfg(target_os = "macos")]
-            hardware_update_tx: None,
-            chunks_processed: 0,
-            samples_output: 0,
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    pub fn new_with_hardware_updates(
-        device_id: String,
-        device_sample_rate: u32,
-        target_sample_rate: u32,
-        target_chunk_size: usize,
-        channels: u16,
-        rtrb_consumer: rtrb::Consumer<f32>,
-        hardware_rtrb_producer: Option<rtrb::Producer<f32>>,
-        hardware_update_tx: mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>,
-        hardware_queue_tracker: AtomicQueueTracker,
-        mixing_queue_tracker: AtomicQueueTracker,
-        latency_probe: &LatencyProbe,
-    ) -> Self {
-        let has_hardware_output = hardware_rtrb_producer.is_some();
-        info!(
-            "🔊 {}: Creating worker with hardware updates for device '{}' ({} Hz → {} Hz, {} sample chunks, hardware: {})",
-            "OUTPUT_WORKER".on_blue().yellow(),
-            device_id, target_sample_rate, device_sample_rate, target_chunk_size, has_hardware_output
-        );
-
-        let rtrb_producer_raw = if let Some(hw_prod) = hardware_rtrb_producer {
-            hw_prod
-        } else {
-            let (prod, _) = rtrb::RingBuffer::<f32>::new(1);
-            prod
-        };
-
-        // OutputWorker receives samples at target_sample_rate (mixing) and outputs at device_sample_rate (hardware)
-        // So we swap the rates when initializing AudioWorkerState
-        let state = AudioWorkerState::new(
-            device_id.clone(),
-            target_sample_rate, // Input: mixing rate (e.g., 48kHz)
-            device_sample_rate, // Output: hardware rate (e.g., 44.1kHz)
-            channels,
-            target_chunk_size,
-            rtrb_consumer,
-            rtrb_producer_raw,
-            hardware_queue_tracker,
-            WorkerLatencyGauges::for_output(latency_probe, &device_id),
-        );
-
-        Self {
-            state,
-            hardware_update_tx: Some(hardware_update_tx),
             chunks_processed: 0,
             samples_output: 0,
         }

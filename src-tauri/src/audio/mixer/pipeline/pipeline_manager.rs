@@ -46,10 +46,6 @@ pub struct AudioPipeline {
     mixing_layer: MixingLayer,
     output_workers: HashMap<String, OutputWorker>,
 
-    #[cfg(target_os = "macos")]
-    hardware_update_tx:
-        Option<tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>>,
-
     /// Shared with every VU service, so a channel registered by a reloaded
     /// webview replaces the dead one for workers that are already running
     vu_channel: crate::audio::SharedVUChannel,
@@ -84,8 +80,6 @@ impl AudioPipeline {
             input_workers: HashMap::new(),
             mixing_layer: MixingLayer::new(latency_probe.clone()),
             output_workers: HashMap::new(),
-            #[cfg(target_os = "macos")]
-            hardware_update_tx: None,
             vu_channel: crate::audio::new_shared_vu_channel(),
             latency_probe,
             latency_reporter: None,
@@ -93,47 +87,6 @@ impl AudioPipeline {
             devices_registered: 0,
             any_channel_solo: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
-    }
-
-    /// Create a new audio pipeline with hardware update channel
-    #[cfg(target_os = "macos")]
-    pub fn new_with_hardware_updates(
-        hardware_update_tx: Option<
-            tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>,
-        >,
-    ) -> Self {
-        info!(
-            "🏗️ {}: Creating new 4-layer audio pipeline with hardware updates (sample rate will be determined from first device)",
-            "AUDIO_PIPELINE".on_purple().blue()
-        );
-
-        let latency_probe = LatencyProbe::new();
-
-        Self {
-            max_sample_rate: None,
-            input_workers: HashMap::new(),
-            mixing_layer: MixingLayer::new(latency_probe.clone()),
-            output_workers: HashMap::new(),
-            hardware_update_tx,
-            vu_channel: crate::audio::new_shared_vu_channel(),
-            latency_probe,
-            latency_reporter: None,
-            is_running: false,
-            devices_registered: 0,
-            any_channel_solo: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        }
-    }
-
-    /// Set hardware update channel for dynamic CoreAudio buffer management
-    #[cfg(target_os = "macos")]
-    pub fn set_hardware_update_channel(
-        &mut self,
-        tx: tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>,
-    ) {
-        self.hardware_update_tx = Some(tx);
-        tracing::info!(
-            "🔗 AudioPipeline: Hardware update channel connected for dynamic buffer management"
-        );
     }
 
     pub fn set_vu_channel(&mut self, channel: tauri::ipc::Channel<crate::audio::VUChannelData>) {
@@ -412,48 +365,6 @@ impl AudioPipeline {
         let target_sample_rate = self.get_sample_rate();
 
         let mut output_worker = if let Some(hardware_producer) = rtrb_producer {
-            // **HARDWARE SYNC**: Use new constructor with hardware update channel on macOS
-            #[cfg(target_os = "macos")]
-            if let Some(ref hardware_tx) = self.hardware_update_tx {
-                tracing::info!(
-                    "🔗 {}: Creating OutputWorker with HARDWARE UPDATES for {}",
-                    "PIPELINE".on_purple().blue(),
-                    device_id
-                );
-                OutputWorker::new_with_hardware_updates(
-                    device_id.clone(),
-                    device_sample_rate,
-                    target_sample_rate,
-                    chunk_size,
-                    channels,
-                    rtrb_consumer_for_worker,
-                    Some(hardware_producer),
-                    hardware_tx.clone(),
-                    queue_tracker,
-                    mixing_to_output_tracker,
-                    &self.latency_probe,
-                )
-            } else {
-                tracing::info!(
-                    "⚠️ {}: Creating OutputWorker WITHOUT hardware updates for {}",
-                    "PIPELINE".on_purple().blue(),
-                    device_id
-                );
-                OutputWorker::new_with_rtrb_producer_and_tracker(
-                    device_id.clone(),
-                    device_sample_rate,
-                    target_sample_rate,
-                    chunk_size,
-                    channels,
-                    rtrb_consumer_for_worker,
-                    Some(hardware_producer),
-                    queue_tracker,
-                    mixing_to_output_tracker,
-                    &self.latency_probe,
-                )
-            }
-
-            #[cfg(not(target_os = "macos"))]
             OutputWorker::new_with_rtrb_producer_and_tracker(
                 device_id.clone(),
                 device_sample_rate,
