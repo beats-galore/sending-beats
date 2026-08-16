@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex};
 use tracing::warn;
 
 use super::bus_routing::{BusRegistry, MAIN_BUS_ID};
+use super::mix_utils;
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
-use crate::audio::mixer::stream_management::virtual_mixer::VirtualMixer;
 use crate::audio::VUChannelService;
 use colored::*;
 
@@ -103,7 +103,7 @@ impl BusMixer {
                 silence_block(silence, block_samples)
             } else {
                 mixed = apply_gain(
-                    VirtualMixer::mix_input_samples_ref(&routed),
+                    mix_utils::mix_input_samples_ref(&routed),
                     bus.gain * master_gain,
                 );
                 &mixed

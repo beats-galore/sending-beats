@@ -35,8 +35,6 @@ pub use effects::{
     PeakDetector, RmsDetector, SpectrumAnalyzer, ThreeBandEqualizer,
 };
 
-pub use mixer::stream_management::VirtualMixer;
-
 pub use crate::db::AudioDatabase;
 
 pub use broadcasting::StreamManager;

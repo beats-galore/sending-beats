@@ -6,7 +6,6 @@ use super::config::StreamingServiceConfig;
 use super::icecast_source::AudioCodec;
 use super::manager::StreamingService;
 use super::types::StreamingServiceStatus;
-use crate::audio::VirtualMixer;
 
 /// Global streaming service instance
 static STREAMING_SERVICE: OnceCell<Arc<StreamingService>> = OnceCell::const_new();

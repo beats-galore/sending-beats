@@ -13,11 +13,11 @@ use tokio::sync::{mpsc, Notify};
 use tracing::{error, info, warn};
 
 use super::audio_worker::{AudioWorker, AudioWorkerState};
+use super::mix_utils;
 use crate::audio::effects::{CustomAudioEffectsChain, DefaultAudioEffectsChain};
 use crate::audio::mixer::latency_probe::{LatencyProbe, WorkerLatencyGauges};
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::mixer::resampling::RubatoSRC;
-use crate::audio::mixer::stream_management::virtual_mixer::VirtualMixer;
 use crate::audio::VUChannelService;
 
 /// Input processing worker for a specific device
@@ -264,7 +264,7 @@ impl InputWorker {
             // Mono-to-stereo conversion (always convert for mixing layer compatibility)
             if channels == 1 {
                 let original_count = samples.len();
-                *samples = VirtualMixer::convert_mono_to_stereo(samples);
+                *samples = mix_utils::convert_mono_to_stereo(samples);
                 let converted_count = samples.len();
 
                 // **DIAGNOSTIC**: Log mono-to-stereo conversion to verify correct sample doubling
