@@ -22,8 +22,6 @@ pub use audio::{
     DeviceMonitorStats, EQBand, FilePlayerService, Limiter, MasterVULevelEvent, MixerConfig,
     PeakDetector, RmsDetector, ThreeBandEqualizer, VULevelEvent, VirtualMixer,
 };
-// Re-export application audio types
-pub use audio::tap::{ApplicationAudioError, ProcessInfo, TapStats};
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, State};
 use tokio::sync::Mutex as AsyncMutex;

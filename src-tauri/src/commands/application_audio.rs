@@ -1,4 +1,4 @@
-use crate::audio::tap::{ApplicationAudioError, ProcessInfo, TapStats};
+use crate::audio::tap::{ProcessInfo, TapStats};
 use crate::ApplicationAudioState;
 use serde::{Deserialize, Serialize};
 use tauri::State;

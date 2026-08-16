@@ -55,10 +55,7 @@ pub use recording::{
     RecordingService, RecordingSession, RecordingStatus, RecordingWriter,
 };
 
-pub use tap::{
-    get_virtual_input_registry, ApplicationAudioError, ApplicationAudioInputBridge,
-    ApplicationAudioManager, ApplicationDiscovery, ProcessInfo, TapStats, VirtualAudioInputStream,
-};
+pub use tap::{ApplicationAudioManager, ApplicationDiscovery, ProcessInfo, TapStats};
 
 pub use file_player::{
     read_metadata, AudioFilePlayer, FilePlayerConfig, FilePlayerDevice, FilePlayerManager,

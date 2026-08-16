@@ -6,31 +6,11 @@
 pub mod manager;
 pub mod process_discovery;
 pub mod types;
-pub mod virtual_stream;
-
-// Platform-specific modules
-#[cfg(target_os = "macos")]
-// FFI bindings for Core Audio Taps API
-#[cfg(target_os = "macos")]
-pub mod core_audio_bindings;
 
 // Re-export commonly used types
-pub use types::{ApplicationAudioError, AudioFormatInfo, ProcessInfo, TapStats};
+pub use types::{ProcessInfo, TapStats};
 
 // Re-export process discovery
 pub use process_discovery::ApplicationDiscovery;
 
-// Re-export virtual stream components
-pub use virtual_stream::{
-    get_virtual_input_registry, ApplicationAudioInputBridge, VirtualAudioInputStream,
-};
-
-// Platform-specific re-exports
-
-#[cfg(target_os = "macos")]
-pub use types::CoreAudioTapCallbackContext;
-
 pub use manager::ApplicationAudioManager;
-
-// Convenience type aliases
-pub type Result<T> = std::result::Result<T, ApplicationAudioError>;

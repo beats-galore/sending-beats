@@ -72,9 +72,6 @@ libc = "0.2"               # System calls for thread priority
 core-foundation = "0.9"   # Core Foundation framework
 core-foundation-sys = "0.8" # Core Foundation C APIs
 coreaudio-sys = "0.2"     # Low-level Core Audio bindings
-objc2-core-audio = { version = "0.3", features = ["AudioHardware", "objc2", "objc2-foundation"] }  # Modern Core Audio process taps
-objc2-foundation = "0.3"  # Foundation types for NSArray, NSNumber
-objc2 = "0.6"  # Core Objective-C 2.0 runtime
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.52", features = ["Win32_Media_Audio"] }  # WASAPI integration

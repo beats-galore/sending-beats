@@ -1,13 +1,13 @@
 use crate::audio::devices::virtual_driver::VirtualDriverManager;
-use crate::audio::tap::core_audio_bindings::{
-    kAudioObjectSystemObject, AudioObjectGetPropertyData, AudioObjectID,
-    AudioObjectPropertyAddress, AudioObjectSetPropertyData, OSStatus,
-};
 use crate::db::SystemAudioStateService;
 use crate::entities::system_audio_state;
 use anyhow::{Context, Result};
 use colored::Colorize;
 use core_foundation::string::CFString;
+use coreaudio_sys::{
+    kAudioObjectSystemObject, AudioObjectGetPropertyData, AudioObjectID,
+    AudioObjectPropertyAddress, AudioObjectSetPropertyData, OSStatus,
+};
 use sea_orm::DatabaseConnection;
 use std::ffi::c_void;
 use std::ptr;
