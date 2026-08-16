@@ -160,8 +160,8 @@ function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
                         {ours.join('\n')}
                       </Code>
                       <Text size="xs" c="dimmed">
-                        Line numbers are from the transpiled module, so they can sit a few
-                        lines off the source.
+                        Line numbers are from the transpiled module, so they can sit a few lines off
+                        the source.
                       </Text>
                     </Stack>
                   )}
@@ -265,6 +265,3 @@ export function ErrorBoundary({ children }: { children: React.ReactNode }) {
     </ReactErrorBoundary>
   );
 }
-
-// Legacy export for backward compatibility
-export { ErrorBoundary as default };

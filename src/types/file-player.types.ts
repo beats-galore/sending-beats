@@ -8,12 +8,12 @@ import type { ConfiguredAudioDevice } from './db/configured-audio-devices.types'
 import type { FilePath, Identifier, Timestamp, Uuid } from './util.types';
 
 /** What the player is doing right now. */
-export const PlaybackState = ['stopped', 'playing', 'paused'] as const;
-export type PlaybackState = (typeof PlaybackState)[number];
+const PlaybackState = ['stopped', 'playing', 'paused'] as const;
+type PlaybackState = (typeof PlaybackState)[number];
 
 /** What happens when the queue runs out, or a track does. */
-export const RepeatMode = ['none', 'track', 'queue'] as const;
-export type RepeatMode = (typeof RepeatMode)[number];
+const RepeatMode = ['none', 'track', 'queue'] as const;
+type RepeatMode = (typeof RepeatMode)[number];
 
 /** One file waiting to play. */
 export type QueuedTrack = {
@@ -34,7 +34,7 @@ export type QueuedTrack = {
   addedAt: Timestamp;
 };
 
-export type PlaybackMode = {
+type PlaybackMode = {
   repeatMode: RepeatMode;
   shuffle: boolean;
   crossfadeDuration: number;
@@ -167,14 +167,7 @@ export const PLAYER_CHANNELS = 2;
  * decoded would otherwise sit in the queue looking playable until it was
  * reached, which during an ad break is the worst moment to find out.
  */
-export const SUPPORTED_AUDIO_EXTENSIONS = [
-  'mp3',
-  'flac',
-  'wav',
-  'ogg',
-  'm4a',
-  'aac',
-] as const;
+const SUPPORTED_AUDIO_EXTENSIONS = ['mp3', 'flac', 'wav', 'ogg', 'm4a', 'aac'] as const;
 
 export const isSupportedAudioFile = (path: string): boolean => {
   const extension = path.split('.').pop()?.toLowerCase();

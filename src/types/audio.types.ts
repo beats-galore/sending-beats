@@ -69,7 +69,7 @@ export const transportLabel = (transport: DeviceTransport): string => {
   return labels[transport];
 };
 
-export type DeviceStatus = 'Connected' | 'Disconnected' | { Error: string };
+type DeviceStatus = 'Connected' | 'Disconnected' | { Error: string };
 
 export type DeviceHealth = {
   device_id: string;
@@ -90,7 +90,7 @@ export type AudioMetrics = {
 };
 
 // Audio level data types
-export type AudioLevels = {
+type AudioLevels = {
   peak_level: number;
   rms_level: number;
 };
@@ -171,14 +171,14 @@ export type RecordingMetadata = {
   custom_tags?: Record<string, string>;
 };
 
-export type AlbumArtwork = {
+type AlbumArtwork = {
   mime_type: string;
   description: string;
   image_data: number[]; // Vec<u8> from Rust
   picture_type: ArtworkType;
 };
 
-export type ArtworkType =
+type ArtworkType =
   | 'Other'
   | 'FileIcon'
   | 'OtherFileIcon'
@@ -231,7 +231,7 @@ export type RecordingConfig = {
   bit_depth: number;
 };
 
-export type RecordingSession = {
+type RecordingSession = {
   id: string;
   config: RecordingConfig;
   start_time: string;

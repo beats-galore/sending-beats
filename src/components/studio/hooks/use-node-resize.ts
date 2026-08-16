@@ -38,30 +38,6 @@ const sizedWith = (targetKey: PatchTargetKey, rects: PatchRects | null): PatchTa
 };
 
 /**
- * Sets a node's size outright, and its group with it.
- *
- * For the controls that change how much a node has to show rather than how much
- * of it to show: switching a channel's effects on needs room for the chain, and
- * switching them off gives that room back rather than leaving the card standing
- * over an empty half of itself.
- */
-export const useNodeSize = (targetKey: PatchTargetKey) => {
-  const place = usePatchLayoutStore((state) => state.place);
-  const save = usePatchLayoutStore((state) => state.save);
-  const rects = usePatchRectsContext();
-
-  return useCallback(
-    (size: Size) => {
-      for (const key of sizedWith(targetKey, rects)) {
-        place(key, size);
-        void save(key);
-      }
-    },
-    [targetKey, rects, place, save]
-  );
-};
-
-/**
  * Steps a node to one of its three rungs, and its group with it.
  *
  * A group takes the size its hungriest member needs for that rung, not the size

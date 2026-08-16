@@ -22,14 +22,7 @@ import {
 } from '../../../services/patch-color-service';
 import type { PatchPlacement } from '../../../services/patch-layout-service';
 import { layout } from '../../../theme/layout';
-import {
-  busSize,
-  castSize,
-  channelSize,
-  outputSize,
-  stackTops,
-  tapeSize,
-} from './patch-geometry';
+import { busSize, castSize, channelSize, outputSize, stackTops, tapeSize } from './patch-geometry';
 import type { ChannelCardVariant, NodeExpansion } from './patch-geometry';
 import { canvasHeightOf, resolveRect } from './patch-layout';
 import type { NodeRect, Size } from './patch-layout';
@@ -62,7 +55,7 @@ type PatchRectsInput = {
  * a mix open is. Something has to be able to ask what a node it knows nothing
  * about would be at a given rung, and this is that.
  */
-export type NodeLadder = Record<NodeExpansion, Size>;
+type NodeLadder = Record<NodeExpansion, Size>;
 
 export type PatchRects = {
   /** Every node on the canvas, in the order they are drawn. */

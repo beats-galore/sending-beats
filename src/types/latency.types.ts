@@ -3,7 +3,7 @@
 // Mirrors `LatencyStage` / `LatencySnapshot` in
 // src-tauri/src/audio/mixer/latency_probe.rs.
 
-export const LatencyStage = [
+const LatencyStage = [
   'input_hardware',
   'input_capture_queue',
   'input_accumulator',
@@ -16,9 +16,9 @@ export const LatencyStage = [
   'output_hardware_queue',
   'output_hardware',
 ] as const;
-export type LatencyStage = (typeof LatencyStage)[number];
+type LatencyStage = (typeof LatencyStage)[number];
 
-export type StageLatency = {
+type StageLatency = {
   stage: LatencyStage;
   /** Time-weighted mean over the last window — the figure that sums along a path */
   mean_micros: number;
@@ -26,7 +26,7 @@ export type StageLatency = {
   peak_micros: number;
 };
 
-export type ChainLatency = {
+type ChainLatency = {
   device_id: string;
   stages: StageLatency[];
   /** Sum of the stage means */
@@ -43,19 +43,4 @@ export type LatencySnapshot = {
    * microphone takes. Zero until both an input and an output are running.
    */
   monitor_micros: number;
-};
-
-/** Human-readable stage names, in the order audio passes through them */
-export const LATENCY_STAGE_LABELS: Record<LatencyStage, string> = {
-  input_hardware: 'Input hardware',
-  input_capture_queue: 'Capture queue',
-  input_accumulator: 'Input accumulator',
-  input_resampler: 'Input resampler',
-  input_mix_queue: 'Mix queue',
-  input_backlog: 'Mixer backlog',
-  output_mix_queue: 'Output queue',
-  output_accumulator: 'Output accumulator',
-  output_resampler: 'Output resampler',
-  output_hardware_queue: 'Hardware queue',
-  output_hardware: 'Output hardware',
 };

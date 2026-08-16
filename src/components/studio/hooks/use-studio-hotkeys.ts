@@ -1,7 +1,6 @@
 import { useHotkeys } from '@mantine/hooks';
 
 import { useChannelsData } from '../../../hooks';
-import { useMixerStore } from '../../../stores';
 import { useStudioStore } from '../../../stores/studio-store';
 import { DEFAULT_CHANNEL } from '../../../types';
 import type { AudioChannel } from '../../../types';

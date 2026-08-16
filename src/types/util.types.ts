@@ -15,7 +15,3 @@ export type Timestamp = string & {
 export type FilePath = string & {
   _brand: 'filepath';
 };
-
-export type FileName = string & {
-  _brand: 'filename';
-};

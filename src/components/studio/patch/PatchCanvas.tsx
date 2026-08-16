@@ -39,7 +39,6 @@ export const PatchCanvas = () => {
   const cast = useCastDestination();
   const {
     outputs,
-    available,
     optionsFor,
     selectOutput,
     changeOutput,
@@ -140,95 +139,95 @@ export const PatchCanvas = () => {
     // A dragged node has to hit-test itself against every other to know whether
     // it is being dropped against an edge, and a node knows only its own box.
     <PatchRectsProvider value={rects}>
-    <Box
-      // Nodes stop their own clicks, so anything arriving here landed on bare
-      // canvas and means "close whatever is open".
-      onClick={clearSelection}
-      style={{
-        position: 'relative',
-        width: canvas.width,
-        height: rects.height,
-        transformOrigin: 'top left',
-        backgroundImage: `radial-gradient(${color.canvasDot} 1px, transparent 1px)`,
-        backgroundSize: `${canvas.dotGridSize}px ${canvas.dotGridSize}px`,
-      }}
-    >
-      <CableLayer cables={cables} width={canvas.width} height={rects.height} />
+      <Box
+        // Nodes stop their own clicks, so anything arriving here landed on bare
+        // canvas and means "close whatever is open".
+        onClick={clearSelection}
+        style={{
+          position: 'relative',
+          width: canvas.width,
+          height: rects.height,
+          transformOrigin: 'top left',
+          backgroundImage: `radial-gradient(${color.canvasDot} 1px, transparent 1px)`,
+          backgroundSize: `${canvas.dotGridSize}px ${canvas.dotGridSize}px`,
+        }}
+      >
+        <CableLayer cables={cables} width={canvas.width} height={rects.height} />
 
-      <Box style={{ position: 'absolute', left: source.x, top: 4 }}>
-        <SectionLabel tracking="widest">SOURCES</SectionLabel>
-      </Box>
-      <Box style={{ position: 'absolute', left: bus.x, top: 4 }}>
-        <SectionLabel tracking="widest">MIX BUS</SectionLabel>
-      </Box>
-      <Box style={{ position: 'absolute', left: destination.x, top: 4 }}>
-        <SectionLabel tracking="widest">DESTINATIONS</SectionLabel>
-      </Box>
-
-      {channels.map((channel, index) => (
-        <ChannelNode
-          key={channel.id}
-          channel={channel}
-          index={index}
-          rect={rects.channels[index]}
-          variant={variants[channel.id] ?? 'device'}
-          selected={channel.id === selectedId}
-        />
-      ))}
-
-      {buses.length === 0 ? (
-        <Box style={{ position: 'absolute', left: bus.x, top: bus.top, width: bus.width }}>
-          <Text size="xs" c={color.textFaint} ta="center">
-            No mixes yet. Route a source to a destination and one appears here.
-          </Text>
+        <Box style={{ position: 'absolute', left: source.x, top: 4 }}>
+          <SectionLabel tracking="widest">SOURCES</SectionLabel>
         </Box>
-      ) : (
-        buses.map((busEntry, busIndex) => (
-          <BusNode
-            key={busEntry.id}
-            bus={busEntry}
-            rect={rects.buses[busIndex]}
-            selected={focused?.kind === 'bus' && focused.busId === busEntry.id}
-            onGainChange={(busId, gainDb) => void setBusGain(busId, gainDb)}
+        <Box style={{ position: 'absolute', left: bus.x, top: 4 }}>
+          <SectionLabel tracking="widest">MIX BUS</SectionLabel>
+        </Box>
+        <Box style={{ position: 'absolute', left: destination.x, top: 4 }}>
+          <SectionLabel tracking="widest">DESTINATIONS</SectionLabel>
+        </Box>
+
+        {channels.map((channel, index) => (
+          <ChannelNode
+            key={channel.id}
+            channel={channel}
+            index={index}
+            rect={rects.channels[index]}
+            variant={variants[channel.id] ?? 'device'}
+            selected={channel.id === selectedId}
           />
-        ))
-      )}
+        ))}
 
-      {/* Only when a station has been put on this patch. Nothing to broadcast
+        {buses.length === 0 ? (
+          <Box style={{ position: 'absolute', left: bus.x, top: bus.top, width: bus.width }}>
+            <Text size="xs" c={color.textFaint} ta="center">
+              No mixes yet. Route a source to a destination and one appears here.
+            </Text>
+          </Box>
+        ) : (
+          buses.map((busEntry, busIndex) => (
+            <BusNode
+              key={busEntry.id}
+              bus={busEntry}
+              rect={rects.buses[busIndex]}
+              selected={focused?.kind === 'bus' && focused.busId === busEntry.id}
+              onGainChange={(busId, gainDb) => void setBusGain(busId, gainDb)}
+            />
+          ))
+        )}
+
+        {/* Only when a station has been put on this patch. Nothing to broadcast
           to is nothing to draw, and the column closes up around it. */}
-      {cast && <CastDestination rect={rects.cast} selected={focused?.kind === 'cast'} />}
-      <TapeDestination rect={rects.tape} selected={focused?.kind === 'tape'} />
+        {cast && <CastDestination rect={rects.cast} selected={focused?.kind === 'cast'} />}
+        <TapeDestination rect={rects.tape} selected={focused?.kind === 'tape'} />
 
-      {outputs.map((output, index) => (
-        <OutputDestination
-          key={output.id}
-          output={output}
-          rect={rects.outputs[index]}
-          // Counts the hardware outputs only. The stream and the tape sit above
-          // these but carry no number, so counting them would start this at 03.
-          position={index}
-          options={optionsFor(output.id)}
-          switchError={outputErrors[output.id] ?? null}
-          onSelect={selectOutput}
-          onChangeDevice={handleChangeOutput}
-          onCycleRole={cycleOutputRole}
-          onGainChange={setOutputGain}
-          onRemove={(deviceId) => void removeOutput(deviceId)}
+        {outputs.map((output, index) => (
+          <OutputDestination
+            key={output.id}
+            output={output}
+            rect={rects.outputs[index]}
+            // Counts the hardware outputs only. The stream and the tape sit above
+            // these but carry no number, so counting them would start this at 03.
+            position={index}
+            options={optionsFor(output.id)}
+            switchError={outputErrors[output.id] ?? null}
+            onSelect={selectOutput}
+            onChangeDevice={handleChangeOutput}
+            onCycleRole={cycleOutputRole}
+            onGainChange={setOutputGain}
+            onRemove={(deviceId) => void removeOutput(deviceId)}
+          />
+        ))}
+
+        <PinSeams rects={rects} />
+        <PinIndicator rects={rects} />
+
+        {/* Last, so the queue floats over the mix column rather than under it. */}
+        <QueueOverlay
+          channels={channels.map((channel) => ({
+            id: channel.id,
+            variant: variants[channel.id] ?? 'device',
+          }))}
+          rects={rects}
         />
-      ))}
-
-      <PinSeams rects={rects} />
-      <PinIndicator rects={rects} />
-
-      {/* Last, so the queue floats over the mix column rather than under it. */}
-      <QueueOverlay
-        channels={channels.map((channel) => ({
-          id: channel.id,
-          variant: variants[channel.id] ?? 'device',
-        }))}
-        rects={rects}
-      />
-    </Box>
+      </Box>
     </PatchRectsProvider>
   );
 };

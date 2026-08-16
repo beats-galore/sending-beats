@@ -32,7 +32,7 @@ const RESERVED: Partial<Record<PatchTargetKey, string>> = {
 };
 
 /** The colour of a reserved destination, or null when the thing picks its own. */
-export const reservedPatchColor = (targetKey: PatchTargetKey): string | null =>
+const reservedPatchColor = (targetKey: PatchTargetKey): string | null =>
   RESERVED[targetKey] ?? null;
 
 /**

@@ -5,11 +5,10 @@ import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 
 import { mixerService, audioService } from '../services';
-import { MixerState, DEFAULT_CHANNEL } from '../types';
+import { MixerState } from '../types';
 
 import type {
   MixerConfig,
-  AudioChannel,
   AudioMetrics,
   MasterLevels,
   ChannelLevels,
@@ -176,9 +175,7 @@ export const useMixerStore = create<MixerStore>()(
       try {
         const refreshed = await mixerService.getDjMixerConfig();
         set((state) => ({
-          config: state.config
-            ? { ...state.config, channels: refreshed.channels }
-            : refreshed,
+          config: state.config ? { ...state.config, channels: refreshed.channels } : refreshed,
         }));
       } catch (error) {
         set({ error: `Failed to read the channels: ${describeError(error)}` });
@@ -858,4 +855,3 @@ export const useMixerStore = create<MixerStore>()(
     },
   }))
 );
-

@@ -1,7 +1,3 @@
-/** Audio formats a broadcast can be encoded as. */
-export const CastFormat = ['mp3'] as const;
-export type CastFormat = (typeof CastFormat)[number];
-
 export const CAST_BITRATES = [96, 128, 192, 256, 320] as const;
 
 /**

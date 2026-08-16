@@ -75,11 +75,6 @@ export enum MixerState {
 // Channel operation types
 export type ChannelUpdate = Partial<Omit<AudioChannel, 'id' | 'name' | 'peak_level' | 'rms_level'>>;
 
-export type MixerOperationResult = {
-  success: boolean;
-  error?: string;
-};
-
 // Complete configuration data types for backend integration
 
 import type { AudioEffectsDefault, AudioEffectsCustom } from './db/audio-effects.types';

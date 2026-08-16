@@ -26,10 +26,7 @@ export type Pin = {
  * be pinned to itself reads as no pin — there would be no anchor to derive a
  * position from, and every guard downstream would have to know that.
  */
-export const pinOf = (
-  placement: PatchPlacement | undefined,
-  self?: PatchTargetKey
-): Pin | null =>
+export const pinOf = (placement: PatchPlacement | undefined, self?: PatchTargetKey): Pin | null =>
   placement?.pinnedTo && placement.pinEdge && placement.pinnedTo !== self
     ? { anchor: placement.pinnedTo, edge: placement.pinEdge }
     : null;
@@ -47,7 +44,7 @@ export const pinOf = (
  * room than it wants is not clipped — it falls back to showing whatever fits,
  * the same as at any other size.
  */
-export const pinnedSize = (anchor: NodeRect, edge: PinEdge, size: Size): Size =>
+const pinnedSize = (anchor: NodeRect, edge: PinEdge, size: Size): Size =>
   edge === 'bottom'
     ? { width: anchor.width, height: size.height }
     : { width: size.width, height: anchor.height };

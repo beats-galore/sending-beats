@@ -48,7 +48,10 @@ const pinCandidate = (
       // dropped under the one already there, which pins it to that node
       // instead and builds a chain.
       const at = pinnedAt(anchor, edge, dragged, 0);
-      if (Math.abs(at.left - dragged.left) <= PIN_SNAP && Math.abs(at.top - dragged.top) <= PIN_SNAP) {
+      if (
+        Math.abs(at.left - dragged.left) <= PIN_SNAP &&
+        Math.abs(at.top - dragged.top) <= PIN_SNAP
+      ) {
         return { pin: { anchor: anchorKey, edge }, at };
       }
     }
@@ -190,7 +193,3 @@ export const useNodeFront = (targetKey: PatchTargetKey) => {
     bringToFront: useCallback(() => bringToFront(targetKey), [bringToFront, targetKey]),
   };
 };
-
-/** Whether this node is pinned, and to what. */
-export const useNodePin = (targetKey: PatchTargetKey): Pin | null =>
-  usePatchLayoutStore((state) => pinOf(state.placements[targetKey], targetKey));

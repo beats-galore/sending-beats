@@ -3,8 +3,8 @@
 // Application audio capture carries PCM only, so the backend reads track
 // details separately over AppleScript and pushes them across as events.
 
-export const PlayerState = ['playing', 'paused', 'stopped'] as const;
-export type PlayerState = (typeof PlayerState)[number];
+const PlayerState = ['playing', 'paused', 'stopped'] as const;
+type PlayerState = (typeof PlayerState)[number];
 
 export type NowPlayingTrack = {
   bundleId: string;
