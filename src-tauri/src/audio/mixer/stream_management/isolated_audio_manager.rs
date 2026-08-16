@@ -1,23 +1,20 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use colored::*;
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
-use crate::audio::effects::{CustomAudioEffectsChain, EQBand};
+use crate::audio::effects::CustomAudioEffectsChain;
 use crate::audio::mixer::AudioPipeline;
-use crate::audio::types::AudioChannel;
-use tokio::sync::{mpsc, oneshot, Mutex, Notify};
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 // Internal stream_management module imports
 use super::stream_manager::{AudioMetrics, StreamManager};
-use crate::audio::devices::coreaudio_stream::CoreAudioInputStream;
 
 // Lock-free audio buffer imports
 use crate::audio::mixer::latency_probe::{LatencySnapshot, LatencyStage};
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
-use rtrb::{Consumer, Producer, RingBuffer};
+use rtrb::Producer;
 
 // Command channel for isolated audio thread communication
 // Cannot derive Debug because Device doesn't implement Debug
@@ -476,7 +473,7 @@ impl IsolatedAudioManager {
         coreaudio_device_id: coreaudio_sys::AudioDeviceID,
         device_name: String,
         channels: u16,
-        producer: Producer<f32>,
+        _producer: Producer<f32>,
     ) -> Result<()> {
         info!(
             "🔍 HANDLE_ADD_INPUT: device_id='{}', coreaudio_device_id={}, device_name='{}', channels={}",
@@ -708,7 +705,7 @@ impl IsolatedAudioManager {
 
         // Calculate buffer capacity based on detected sample rate
         let buffer_capacity = (native_sample_rate as usize * channels as usize) / 10;
-        let buffer_capacity = buffer_capacity.max(4096).min(96000);
+        let _buffer_capacity = buffer_capacity.max(4096).min(96000);
 
         // Use 512 frames as chunk size (will be multiplied by channels in pipeline)
         let chunk_size = 512 * channels as usize;
@@ -1230,8 +1227,8 @@ impl IsolatedAudioManager {
 
     fn handle_update_effects(
         &mut self,
-        device_id: String,
-        effects: CustomAudioEffectsChain,
+        _device_id: String,
+        _effects: CustomAudioEffectsChain,
     ) -> Result<()> {
         Ok(())
     }

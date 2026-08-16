@@ -21,7 +21,7 @@ pub use audio::{
     FilePlayerService, MixerConfig,
 };
 use std::sync::{Arc, Mutex};
-use tauri::{Manager, State};
+use tauri::Manager;
 use tokio::sync::Mutex as AsyncMutex;
 use tracing_subscriber::prelude::*;
 // Removed unused import

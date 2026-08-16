@@ -566,8 +566,7 @@ impl CoreAudioIntegration {
         use coreaudio_sys::{
             kAudioDevicePropertyStreamFormat, kAudioObjectPropertyElementMaster,
             kAudioObjectPropertyScopeInput, kAudioObjectPropertyScopeOutput,
-            AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize, AudioObjectPropertyAddress,
-            AudioStreamBasicDescription,
+            AudioObjectGetPropertyData, AudioObjectPropertyAddress, AudioStreamBasicDescription,
         };
         use std::mem;
         use std::os::raw::c_void;

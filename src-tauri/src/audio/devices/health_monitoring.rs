@@ -9,7 +9,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{info, warn};
+use tracing::warn;
 
 use super::types::{DeviceHealth, DeviceStatus};
 use crate::audio::types::AudioDeviceInfo;

@@ -1,5 +1,5 @@
 use crate::{
-    audio::{FilePlayerConfig, PlaybackAction, PlaybackStatus, PlayerEvent, QueuedTrack},
+    audio::{FilePlayerConfig, PlaybackAction, PlaybackStatus, QueuedTrack},
     db::{
         AudioMixerConfigurationService, FilePlayerStore, FilePlayerTargetService, QueuedTrackRow,
     },

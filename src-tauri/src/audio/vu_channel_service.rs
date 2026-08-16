@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use tauri::ipc::Channel;
 use tokio::task::JoinHandle;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::audio::events::{BusVULevelEvent, MasterVULevelEvent, VUChannelData, VULevelEvent};
 
@@ -149,7 +149,7 @@ impl VUChannelService {
     async fn processing_thread(
         sample_rx: Receiver<VUSample>,
         channel: SharedVUChannel,
-        sample_rate: u32,
+        _sample_rate: u32,
         max_channels: usize,
         emit_rate_hz: u32,
         shutdown: Arc<AtomicBool>,

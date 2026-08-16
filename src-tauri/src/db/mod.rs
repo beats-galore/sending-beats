@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
-use serde::{Deserialize, Serialize};
 use sqlx::sqlite::SqlitePoolOptions;
 use std::error::Error;
 use std::path::Path;

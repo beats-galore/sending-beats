@@ -70,10 +70,10 @@ impl TccPermissionManager {
         // This is a heuristic approach - try to actually create an input stream
         // If we can create one, permissions are granted
 
-        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+        use cpal::traits::{DeviceTrait, HostTrait};
 
         // First check if we can enumerate devices
-        let devices = match cpal::default_host().input_devices() {
+        let _devices = match cpal::default_host().input_devices() {
             Ok(devices) => devices,
             Err(e) => {
                 error!(

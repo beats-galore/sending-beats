@@ -1,5 +1,4 @@
 use std::ffi::{c_char, c_void, CStr};
-use std::os::raw::c_int;
 
 // C-compatible callback types matching Swift side
 pub type AudioSampleCallback = extern "C" fn(

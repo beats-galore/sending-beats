@@ -1,5 +1,5 @@
 use colored::*;
-use tauri::{ipc::Channel, AppHandle, State};
+use tauri::{ipc::Channel, State};
 use tokio::sync::oneshot;
 
 use crate::{audio::VUChannelData, AudioState};

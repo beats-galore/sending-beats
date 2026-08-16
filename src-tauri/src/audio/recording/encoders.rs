@@ -7,7 +7,7 @@
 use anyhow::Result;
 use tracing::{error, info, warn};
 
-use super::types::{FlacSettings, Mp3Settings, RecordingConfig};
+use super::types::{Mp3Settings, RecordingConfig};
 
 /// Common interface for audio encoders
 pub trait AudioEncoder: Send {

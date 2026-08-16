@@ -1,5 +1,4 @@
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
-use crate::types::{COMMON_SAMPLE_RATES_HZ, DEFAULT_SAMPLE_RATE};
 #[cfg(target_os = "macos")]
 use anyhow::Result;
 use colored::*;
@@ -22,7 +21,7 @@ use coreaudio_sys::{
 };
 use std::os::raw::c_void;
 use std::ptr;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 /// Get the native sample rate of a CoreAudio device
 pub fn get_device_native_sample_rate(device_id: AudioDeviceID, device_name: &str) -> Result<u32> {
@@ -1444,9 +1443,9 @@ extern "C" fn coreaudio_input_callback(
     in_ref_con: *mut c_void,
     _io_action_flags: *mut AudioUnitRenderActionFlags,
     in_time_stamp: *const AudioTimeStamp,
-    in_bus_number: u32,
+    _in_bus_number: u32,
     in_number_frames: u32,
-    io_data: *mut AudioBufferList, // USED for render callbacks - AudioUnit provides data here
+    _io_data: *mut AudioBufferList, // USED for render callbacks - AudioUnit provides data here
 ) -> OSStatus {
     // Comprehensive safety checks to prevent crashes
     if in_ref_con.is_null() || in_number_frames == 0 {
@@ -1526,7 +1525,7 @@ extern "C" fn coreaudio_input_callback(
         let mut samples_written = 0;
         let mut samples_dropped = 0;
 
-        let buffer_slots_before = context.rtrb_producer.slots();
+        let _buffer_slots_before = context.rtrb_producer.slots();
 
         for &sample in samples.iter() {
             match context.rtrb_producer.push(sample) {

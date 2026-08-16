@@ -736,7 +736,7 @@ pub trait AudioWorker {
         _input_samples: &[f32],
         accumulation_buffer: &mut Vec<f32>,
         target_output_samples: usize,
-        device_id: String,
+        _device_id: String,
     ) -> Option<Vec<f32>> {
         // Check if we have enough input to produce target output
         let input_frames_needed = if needs_resampling {

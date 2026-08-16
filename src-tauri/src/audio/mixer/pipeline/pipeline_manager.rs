@@ -10,7 +10,6 @@ use anyhow::Result;
 use colored::*;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
 use crate::audio::mixer::latency_probe::{self, LatencyProbe, LatencySnapshot};
@@ -165,7 +164,7 @@ impl AudioPipeline {
             }
         };
 
-        for (device_id, worker) in &mut self.input_workers {
+        for (_device_id, worker) in &mut self.input_workers {
             worker.update_target_mix_rate(target_rate);
         }
 
@@ -251,7 +250,7 @@ impl AudioPipeline {
         );
 
         // Create input worker with RTRB consumer (from hardware) and producer (to mixing layer)
-        let mut input_worker = InputWorker::new_with_rtrb(
+        let input_worker = InputWorker::new_with_rtrb(
             device_id.clone(),
             device_sample_rate,
             target_sample_rate,

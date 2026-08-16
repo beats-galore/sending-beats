@@ -243,7 +243,7 @@ pub async fn remove_audio_application(
 
 #[tauri::command]
 pub async fn get_known_audio_applications(
-    app_audio_state: State<'_, ApplicationAudioState>,
+    _app_audio_state: State<'_, ApplicationAudioState>,
     audio_state: State<'_, crate::AudioState>,
 ) -> Result<Vec<ProcessInfo>, String> {
     println!("🎵 Getting known audio applications (ScreenCaptureKit)...");

@@ -24,7 +24,7 @@ pub async fn get_audio_effects_defaults(
 pub async fn update_audio_effects_default_gain(
     effects_id: String,
     device_id: String,
-    configuration_id: String,
+    _configuration_id: String,
     gain: f32,
     state: State<'_, AudioState>,
 ) -> Result<(), String> {
@@ -70,7 +70,7 @@ pub async fn update_audio_effects_default_gain(
 pub async fn update_audio_effects_default_pan(
     effects_id: String,
     device_id: String,
-    configuration_id: String,
+    _configuration_id: String,
     pan: f32,
     state: State<'_, AudioState>,
 ) -> Result<(), String> {
@@ -160,7 +160,7 @@ pub async fn update_audio_effects_default_effects_enabled(
 pub async fn update_audio_effects_default_mute(
     effects_id: String,
     device_id: String,
-    configuration_id: String,
+    _configuration_id: String,
     muted: bool,
     state: State<'_, AudioState>,
 ) -> Result<(), String> {

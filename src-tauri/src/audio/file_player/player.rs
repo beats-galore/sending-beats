@@ -854,7 +854,7 @@ impl AudioFilePlayer {
             .context("Unsupported format")?;
 
         // Get the instantiated format reader
-        let mut format = probed.format;
+        let format = probed.format;
 
         // Find the first audio track with a known (decodeable) codec
         let track_info = format

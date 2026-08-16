@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use super::player::{AudioFilePlayer, FilePlayerDevice, PlaybackStatus, QueuedTrack};
+use super::player::{FilePlayerDevice, PlaybackStatus, QueuedTrack};
 use crate::audio::types::AudioDeviceInfo;
 
 /// Configuration for a file player instance

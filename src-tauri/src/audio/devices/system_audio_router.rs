@@ -1,12 +1,12 @@
 use crate::audio::devices::virtual_driver::VirtualDriverManager;
 use crate::db::SystemAudioStateService;
 use crate::entities::system_audio_state;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use colored::Colorize;
 use core_foundation::string::CFString;
 use coreaudio_sys::{
     kAudioObjectSystemObject, AudioObjectGetPropertyData, AudioObjectID,
-    AudioObjectPropertyAddress, AudioObjectSetPropertyData, OSStatus,
+    AudioObjectPropertyAddress, AudioObjectSetPropertyData,
 };
 use sea_orm::DatabaseConnection;
 use std::ffi::c_void;
@@ -234,8 +234,6 @@ impl SystemAudioRouter {
 
     /// Translate device UID to AudioObjectID
     fn translate_uid_to_device_id(&self, uid: &str) -> Result<AudioObjectID> {
-        use core_foundation::base::TCFType;
-
         unsafe {
             let translate_address = AudioObjectPropertyAddress {
                 mSelector: KAUDIO_HARDWARE_PROPERTY_TRANSLATE_UID_TO_DEVICE,

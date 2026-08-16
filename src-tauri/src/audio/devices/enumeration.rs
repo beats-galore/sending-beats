@@ -6,12 +6,11 @@
 
 use super::coreaudio_integration::CoreAudioIntegration;
 use crate::audio::types::AudioDeviceInfo;
-use crate::types::SUPPORTED_INPUT_SAMPLE_RATES_HZ;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{error, info, warn};
+use tracing::error;
 
 /// Device enumeration system with crash protection
 pub struct DeviceEnumerator {

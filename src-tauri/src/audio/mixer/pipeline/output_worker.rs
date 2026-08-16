@@ -8,16 +8,13 @@
 
 use anyhow::Result;
 use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc;
-use tracing::{error, info, trace, warn};
+use tracing::info;
 
 use super::audio_worker::{AudioWorker, AudioWorkerState};
 use crate::audio::mixer::latency_probe::{LatencyProbe, WorkerLatencyGauges};
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::mixer::resampling::RubatoSRC;
 use colored::*;
-
-use rtrb::Producer;
 
 /// Output processing worker for a specific device
 pub struct OutputWorker {
@@ -34,7 +31,7 @@ impl OutputWorker {
         rtrb_consumer: rtrb::Consumer<f32>,
         hardware_rtrb_producer: Option<rtrb::Producer<f32>>,
         hardware_queue_tracker: AtomicQueueTracker,
-        mixing_queue_tracker: AtomicQueueTracker,
+        _mixing_queue_tracker: AtomicQueueTracker,
         latency_probe: &LatencyProbe,
     ) -> Self {
         let has_hardware_output = hardware_rtrb_producer.is_some();

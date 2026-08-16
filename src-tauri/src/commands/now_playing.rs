@@ -4,7 +4,6 @@ use crate::audio::now_playing::{
 use crate::log_command;
 use crate::AudioState;
 use colored::Colorize;
-use serde::Serialize;
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 use tokio::sync::Mutex as AsyncMutex;

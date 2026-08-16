@@ -9,8 +9,7 @@
 use anyhow::Result;
 use colored::*;
 use std::sync::{Arc, Mutex};
-use tokio::sync::{mpsc, Notify};
-use tracing::{error, info, warn};
+use tracing::info;
 
 use super::audio_worker::{AudioWorker, AudioWorkerState};
 use super::mix_utils;
@@ -42,7 +41,7 @@ impl InputWorker {
         rtrb_producer: rtrb::Producer<f32>,
         channel_number: u32,
         any_channel_solo: Arc<std::sync::atomic::AtomicBool>,
-        hardware_queue_tracker: AtomicQueueTracker,
+        _hardware_queue_tracker: AtomicQueueTracker,
         mixing_queue_tracker: AtomicQueueTracker,
         initial_gain: Option<f32>,
         initial_pan: Option<f32>,

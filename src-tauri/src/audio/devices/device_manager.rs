@@ -7,7 +7,7 @@
 
 use anyhow::Result;
 use std::collections::HashMap;
-use tracing::{error, info, warn};
+use tracing::info;
 
 use super::enumeration::DeviceEnumerator;
 use super::health_monitoring::DeviceHealthMonitor;

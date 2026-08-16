@@ -2,9 +2,8 @@ use crate::audio::mixer::latency_probe::LatencySnapshot;
 use crate::db::seaorm_services::AudioMixerConfigurationService;
 use crate::{AudioConfigFactory, AudioState, MixerConfig};
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, ModelTrait, QueryFilter, Set};
-use std::sync::Arc;
 use tauri::State;
-use tracing::{error, info};
+use tracing::info;
 
 /// The mixer layout for the active session
 ///

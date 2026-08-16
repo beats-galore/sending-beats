@@ -4,7 +4,7 @@ use crate::{log_command, AudioState};
 use anyhow::Result;
 use colored::*;
 use sea_orm::prelude::*;
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter};
 use tauri::State;
 use uuid::Uuid;
 
@@ -557,7 +557,7 @@ async fn get_complete_configuration_data(
         config.name,
         config.id
     );
-    let config_uuid = Uuid::parse_str(&config.id).map_err(|e| e.to_string())?;
+    let _config_uuid = Uuid::parse_str(&config.id).map_err(|e| e.to_string())?;
 
     // Get configured devices
     tracing::info!(

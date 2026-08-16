@@ -1,10 +1,8 @@
 use anyhow::Result;
 use std::collections::HashMap;
-use std::sync::Arc;
 use tracing::info;
 
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
-use tokio::sync::Notify;
 
 // Lock-free audio buffer imports
 use rtrb::Producer;

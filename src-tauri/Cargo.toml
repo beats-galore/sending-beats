@@ -25,15 +25,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.11", features = ["json", "stream"] }
 tokio = { version = "1", features = ["full"] }
-futures = "0.3"
-async-trait = "0.1"
 anyhow = "1"
 thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 colored = "2.0"
 base64 = "0.21"
-url = "2"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 urlencoding = "2"
@@ -42,49 +39,34 @@ urlencoding = "2"
 lame = "0.1"               # MP3 encoding for recording
 cpal = "0.15"              # Cross-platform audio I/O
 rtrb = "0.2"               # Real-time ring buffer
-spmcq = "0.1"              # Single Producer Multiple Consumer queue for output distribution
 rubato = "0.16.2"            # High-quality sample rate conversion
 rustfft = "6.2"            # Fast Fourier Transform for spectrum analysis
 sysinfo = "0.30"           # System process enumeration for application audio capture
 
 # Recording and file management
 dirs = "5.0"               # Platform-specific directory paths
-flac-bound = "0.3"         # FLAC encoding for high-quality recording
 regex = "1.10"             # Regular expressions for filename template processing
 
 # Audio file decoding for media player
 symphonia = { version = "0.5", features = ["aac", "mp3", "isomp4", "ogg", "flac", "wav"] }
-symphonia-format-ogg = "0.5"
+# NOTE: depending on the codec crate directly does not register it with
+# symphonia's default codec registry — .ogg/vorbis decode needs the `vorbis`
+# feature enabled on `symphonia` itself. Kept pending that decision.
 symphonia-codec-vorbis = "0.5"
 
 # Database and storage
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "chrono", "migrate", "uuid"] }
 sea-orm = { version = "1.0", features = ["sqlx-sqlite", "runtime-tokio-rustls", "macros", "with-chrono"] }
-crossbeam = "0.8"          # Lock-free data structures for audio threading
 crossbeam-channel = "0.5"  # Lock-free channels for VU processing
 tauri-plugin-webdriver-automation = "0.1.3"
 
 # Platform-specific audio system integration
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "2.11" # Keychain, for stream passwords that have no business in the database
-coreaudio-rs = "0.13"     # macOS Core Audio integration
 libc = "0.2"               # System calls for thread priority
 core-foundation = "0.9"   # Core Foundation framework
-core-foundation-sys = "0.8" # Core Foundation C APIs
 coreaudio-sys = "0.2"     # Low-level Core Audio bindings
 
-[target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.52", features = ["Win32_Media_Audio"] }  # WASAPI integration
-
-[target.'cfg(target_os = "linux")'.dependencies]
-alsa = "0.7"              # ALSA integration for Linux
-pulse = "0.5"             # PulseAudio integration
-
 [dev-dependencies]
-# Testing framework and utilities
-tokio-test = "0.4"        # Utilities for testing async code
-mockall = "0.12"          # Mock generation framework
-proptest = "1.0"          # Property-based testing
-serial_test = "3.0"       # Run tests serially when needed
 tempfile = "3.0"          # Temporary files for testing
 

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use colored::Colorize;
-use std::ffi::{c_char, c_void, CString};
+use std::ffi::{c_char, c_void};
 use std::sync::{Arc, Mutex as StdMutex};
 use tracing::{error, info, warn};
 
