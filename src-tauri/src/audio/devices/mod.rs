@@ -15,6 +15,7 @@ pub mod coreaudio_integration;
 pub mod device_manager;
 pub mod enumeration;
 pub mod health_monitoring;
+pub mod output_health;
 pub mod transport;
 pub mod types;
 

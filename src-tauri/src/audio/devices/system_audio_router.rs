@@ -232,6 +232,33 @@ impl SystemAudioRouter {
         }
     }
 
+    /// Take the devices being diverted from off mute
+    ///
+    /// Not restored on undiversion. Handing a device back muted is exactly how
+    /// this went wrong to begin with: the machine is left silent with nothing
+    /// anywhere to explain it, where unmuted is the state a person can hear and
+    /// undo for themselves.
+    fn unmute_diverted_devices(&self, previous: &PreviousDefaults) {
+        let uids = [
+            previous.default_output.as_deref(),
+            previous.system_output.as_deref(),
+        ];
+
+        for uid in uids.into_iter().flatten() {
+            let Ok(device_id) = self.translate_uid_to_device_id(uid) else {
+                continue;
+            };
+
+            if crate::audio::devices::output_health::clear_mute(device_id) {
+                info!(
+                    "{} Took '{}' off mute before diverting away from it",
+                    "SYS_AUDIO_DIVERT".bright_cyan(),
+                    uid
+                );
+            }
+        }
+    }
+
     /// Translate device UID to AudioObjectID
     fn translate_uid_to_device_id(&self, uid: &str) -> Result<AudioObjectID> {
         use core_foundation::base::TCFType;
@@ -390,6 +417,13 @@ impl SystemAudioRouter {
             "SYS_AUDIO_DIVERT".bright_cyan(),
             virtual_device_uid
         );
+
+        // Before the selectors move: whatever the volume keys did to these
+        // devices is about to become unreachable, because the keys will be
+        // acting on the virtual driver instead. A mute left behind here is one
+        // nothing can clear by hand, and it silences the mixer's own stream if
+        // that device is later patched in as a destination.
+        self.unmute_diverted_devices(&previous);
 
         self.set_both_output_devices(&virtual_device_uid);
 

@@ -521,6 +521,7 @@ pub fn run() {
             get_process_metrics,
             set_debug_log_config,
             get_debug_log_config,
+            get_output_health,
             // Icecast commands
             start_icecast_streaming,
             stop_icecast_streaming,

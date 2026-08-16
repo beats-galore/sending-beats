@@ -452,6 +452,24 @@ impl CoreAudioOutputStream {
             return Err(anyhow::anyhow!("Failed to set current device: {}", status));
         }
 
+        // Step 4b: Take the device off mute.
+        //
+        // A device mute sits underneath every stream playing through it, so a
+        // muted destination is silent with the pipeline running perfectly and
+        // nothing anywhere to say why. It is set by the volume keys, which act
+        // on whichever device is the system output — and once system audio is
+        // diverted to the virtual driver those keys point somewhere else, so a
+        // mute left on a physical device can no longer even be cleared by hand.
+        //
+        // Patching a device as a destination is saying to play through it, so
+        // the studio takes it: this is not a setting to honour.
+        if crate::audio::devices::output_health::clear_mute(self.device_id) {
+            info!(
+                "🔊 Took {} off mute — a device mute would silence this stream",
+                self.device_name
+            );
+        }
+
         // Step 5: Configure the audio format (INTERLEAVED for compatibility)
         let format = AudioStreamBasicDescription {
             mSampleRate: self.sample_rate as f64,
