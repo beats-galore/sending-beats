@@ -148,7 +148,9 @@ export type ArtworkType =
 export type RecordingFormat = {
   mp3?: { bitrate: number };
   flac?: { compression_level: number };
-  wav?: {};
+  // Rust's `WavSettings` is an empty struct, so this carries no options. A bare
+  // `{}` would widen to "any non-nullish value" rather than "no properties".
+  wav?: Record<string, never>;
 };
 
 export type RecordingConfig = {

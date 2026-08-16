@@ -27,7 +27,7 @@ export const useStartupPermissionCheck = () => {
     try {
       // Try to open System Preferences directly to Privacy settings
       await invoke('open_system_preferences_privacy');
-    } catch (error) {
+    } catch {
       console.warn('Could not open System Preferences directly, user will need to open manually');
     }
   }, []);

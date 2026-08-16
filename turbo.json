@@ -40,7 +40,8 @@
       "inputs": [
         "src/**/*.{js,jsx,ts,tsx}",
         "*.{js,jsx,ts,tsx}",
-        "eslint.config.{js,mjs}",
+        "oxlint.config.mts",
+        "lint-rules/**",
         "tsconfig.json",
         "tsconfig.node.json",
         "!node_modules/**",
@@ -56,7 +57,8 @@
       "inputs": [
         "src/**/*.{js,jsx,ts,tsx}",
         "*.{js,jsx,ts,tsx}",
-        "eslint.config.{js,mjs}",
+        "oxlint.config.mts",
+        "lint-rules/**",
         "tsconfig.json",
         "tsconfig.node.json",
         "!node_modules/**",

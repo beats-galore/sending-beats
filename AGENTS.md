@@ -2,12 +2,12 @@
 
 ## Project Structure & Module Organization
 
-Sweet Beats Studio pairs a React UI (`src/`) with a Tauri Rust core (`src-tauri/`).
-Components and hooks live under `src/components` and `src/hooks`, Zustand stores
-in `src/stores`, and shared types in `src/types`. Backend audio sits in
-`src-tauri/src/audio/`, persistence in `src-tauri/src/db/`, and migrations in
-`src-tauri/migrations/`. Auxiliary pieces include Swift capture helpers in
-`src-swift/` and logs in `logs/`.
+Sweet Beats Studio pairs a React UI (`src/`) with a Tauri Rust core
+(`src-tauri/`). Components and hooks live under `src/components` and
+`src/hooks`, Zustand stores in `src/stores`, and shared types in `src/types`.
+Backend audio sits in `src-tauri/src/audio/`, persistence in
+`src-tauri/src/db/`, and migrations in `src-tauri/migrations/`. Auxiliary pieces
+include Swift capture helpers in `src-swift/` and logs in `logs/`.
 
 ## Build & Development Commands
 
@@ -23,16 +23,16 @@ in `src/stores`, and shared types in `src/types`. Backend audio sits in
 
 ## Coding Style & Frontend Practices
 
-TypeScript uses Prettier (2-space, 100-col, single quotes) and the flat ESLint
-stack; run `pnpm lint:fix -- <paths to changed files>` and `pnpm format` before
-review. Prefer named exports, type aliases, and descriptive hook names; avoid
-interfaces, default exports, and any casting—lean on type guards or generics
-instead. Import modules directly by path rather than through barrel `index`
-files. Zustand stores expose ID-driven selectors; components fetch data locally.
-Keep functions <150 lines, modules <800 lines, and comment only when logic is
-non-obvious. Stick with the established libraries: `@mantine/*` for UI,
-`zustand` for state, `zod` for validation, `react-hook-form` for inputs, and
-`@tanstack/react-query` for async caching.
+TypeScript uses Prettier (2-space, 100-col, single quotes) and Oxlint
+(`oxlint.config.mts`); run `pnpm lint:fix -- <paths to changed files>` and
+`pnpm format` before review. Prefer named exports, type aliases, and descriptive
+hook names; avoid interfaces, default exports, and any casting—lean on type
+guards or generics instead. Import modules directly by path rather than through
+barrel `index` files. Zustand stores expose ID-driven selectors; components
+fetch data locally. Keep functions <150 lines, modules <800 lines, and comment
+only when logic is non-obvious. Stick with the established libraries:
+`@mantine/*` for UI, `zustand` for state, `zod` for validation,
+`react-hook-form` for inputs, and `@tanstack/react-query` for async caching.
 
 ## Backend & Database Conventions
 

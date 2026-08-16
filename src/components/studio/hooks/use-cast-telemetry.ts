@@ -66,7 +66,7 @@ export const useCastTelemetry = ({
     }
     // `bitrate` and `variableBitrate` are read for the message only; a change to
     // either should not re-log a connection that never dropped.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [isLive]);
 
   useEffect(() => {

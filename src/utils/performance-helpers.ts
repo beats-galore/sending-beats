@@ -36,6 +36,9 @@ export const useThrottle = <T extends (...args: any[]) => void>(callback: T, del
 
 // Memoized comparison for shallow objects
 export const useShallowMemo = <T>(factory: () => T, deps: React.DependencyList): T => {
+  // The deps array is the caller's contract and is forwarded verbatim, so the
+  // rule cannot statically resolve it.
+  // oxlint-disable-next-line react-hooks/exhaustive-deps
   return useMemo(factory, deps);
 };
 
