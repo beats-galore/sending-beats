@@ -32,7 +32,6 @@ use super::{
     mixing_layer::{MixingLayer, MixingLayerStats},
     output_worker::{OutputWorker, OutputWorkerStats},
     pacing,
-    queue_types::{MixedAudioSamples, PipelineQueues, RawAudioSamples},
 };
 
 mod buses;
@@ -43,7 +42,6 @@ pub struct AudioPipeline {
     max_sample_rate: Option<u32>,
 
     // Pipeline components
-    queues: PipelineQueues,
     input_workers: HashMap<String, InputWorker>,
     mixing_layer: MixingLayer,
     output_workers: HashMap<String, OutputWorker>,
@@ -83,7 +81,6 @@ impl AudioPipeline {
 
         Self {
             max_sample_rate: None,
-            queues: PipelineQueues::new(),
             input_workers: HashMap::new(),
             mixing_layer: MixingLayer::new(latency_probe.clone()),
             output_workers: HashMap::new(),
@@ -114,7 +111,6 @@ impl AudioPipeline {
 
         Self {
             max_sample_rate: None,
-            queues: PipelineQueues::new(),
             input_workers: HashMap::new(),
             mixing_layer: MixingLayer::new(latency_probe.clone()),
             output_workers: HashMap::new(),
@@ -638,34 +634,6 @@ impl AudioPipeline {
         Ok(())
     }
 
-    /// Send raw audio from Layer 1 to Layer 2
-    pub fn send_input_audio(
-        &self,
-        device_id: &str,
-        samples: Vec<f32>,
-        sample_rate: u32,
-        channels: u16,
-    ) -> Result<()> {
-        let sender = self
-            .queues
-            .get_raw_input_sender(device_id)
-            .ok_or_else(|| anyhow::anyhow!("No input sender for device '{}'", device_id))?;
-
-        let raw_audio = RawAudioSamples {
-            device_id: device_id.to_string(),
-            samples,
-            sample_rate,
-            channels,
-            timestamp: std::time::Instant::now(),
-        };
-
-        sender.send(raw_audio).map_err(|_| {
-            anyhow::anyhow!("Failed to send audio to input worker for '{}'", device_id)
-        })?;
-
-        Ok(())
-    }
-
     /// Device IDs of every registered input worker
     pub fn input_device_ids(&self) -> Vec<String> {
         self.input_workers.keys().cloned().collect()
@@ -716,11 +684,6 @@ impl AudioPipeline {
         // Remove from mixing layer (this also removes from temporal buffer)
         self.mixing_layer
             .remove_input_consumer(device_id.to_string());
-
-        // Remove from queue system
-        self.queues
-            .remove_input_device(device_id.to_string())
-            .map_err(|e| anyhow::anyhow!("Failed to remove input device from queues: {}", e))?;
 
         self.latency_probe.remove_device(device_id);
 

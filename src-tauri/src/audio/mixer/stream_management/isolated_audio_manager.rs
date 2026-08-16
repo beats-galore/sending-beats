@@ -7,7 +7,6 @@ use tracing::{debug, error, info, warn};
 
 use super::virtual_mixer::VirtualMixer;
 use crate::audio::effects::{CustomAudioEffectsChain, EQBand};
-use crate::audio::mixer::pipeline::queue_types::RawAudioSamples;
 use crate::audio::mixer::AudioPipeline;
 use crate::audio::types::AudioChannel;
 use tokio::sync::{mpsc, oneshot, Mutex, Notify};

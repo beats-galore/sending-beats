@@ -18,8 +18,6 @@ pub mod mixing_layer;
 pub mod output_worker;
 pub mod pacing;
 pub mod pipeline_manager;
-pub mod queue_types;
 pub mod realtime_thread;
 
 pub use pipeline_manager::AudioPipeline;
-pub use queue_types::*;

@@ -12,7 +12,6 @@ use tokio::sync::mpsc;
 use tracing::{error, info, trace, warn};
 
 use super::audio_worker::{AudioWorker, AudioWorkerState};
-use super::queue_types::MixedAudioSamples;
 use crate::audio::mixer::latency_probe::{LatencyProbe, WorkerLatencyGauges};
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::mixer::resampling::RubatoSRC;
