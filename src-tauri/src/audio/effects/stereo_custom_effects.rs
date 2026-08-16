@@ -35,6 +35,49 @@ pub struct ChainSettings {
     pub limiter_enabled: bool,
 }
 
+impl From<&crate::entities::audio_effects_default::Model> for ChainSettings {
+    fn from(row: &crate::entities::audio_effects_default::Model) -> Self {
+        Self {
+            eq_low_gain_db: row.eq_low_gain,
+            eq_mid_gain_db: row.eq_mid_gain,
+            eq_high_gain_db: row.eq_high_gain,
+            comp_threshold_db: row.comp_threshold,
+            comp_ratio: row.comp_ratio,
+            comp_attack_ms: row.comp_attack,
+            comp_release_ms: row.comp_release,
+            comp_enabled: row.comp_enabled,
+            limiter_threshold_db: row.limiter_threshold,
+            limiter_enabled: row.limiter_enabled,
+        }
+    }
+}
+
+/// How a channel strip was last left: the fader state the default chain
+/// applies, and the settings the custom chain runs with.
+///
+/// This is what a persisted effects row becomes on its way into a worker, so
+/// the pipeline doesn't handle database models directly.
+#[derive(Debug, Clone, Copy)]
+pub struct ChannelStripState {
+    pub gain: f32,
+    pub pan: f32,
+    pub muted: bool,
+    pub solo: bool,
+    pub chain: ChainSettings,
+}
+
+impl From<&crate::entities::audio_effects_default::Model> for ChannelStripState {
+    fn from(row: &crate::entities::audio_effects_default::Model) -> Self {
+        Self {
+            gain: row.gain,
+            pan: row.pan,
+            muted: row.muted,
+            solo: row.solo,
+            chain: ChainSettings::from(row),
+        }
+    }
+}
+
 impl Default for ChainSettings {
     fn default() -> Self {
         // Matches what a freshly constructed chain does: EQ flat, dynamics

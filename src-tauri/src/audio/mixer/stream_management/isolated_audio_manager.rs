@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 use super::virtual_mixer::VirtualMixer;
-use crate::audio::effects::{CustomAudioEffectsChain, EQBand};
+use crate::audio::effects::ChannelStripState;
 use crate::audio::mixer::pipeline::queue_types::RawAudioSamples;
 use crate::audio::mixer::AudioPipeline;
 use crate::audio::types::AudioChannel;
@@ -82,9 +82,26 @@ pub enum AudioCommand {
         channels: u16,
         response_tx: oneshot::Sender<Result<()>>,
     },
-    UpdateEffects {
+    UpdateChannelEq {
         device_id: String,
-        effects: CustomAudioEffectsChain,
+        low_db: Option<f32>,
+        mid_db: Option<f32>,
+        high_db: Option<f32>,
+        response_tx: oneshot::Sender<Result<()>>,
+    },
+    UpdateChannelCompressor {
+        device_id: String,
+        threshold_db: Option<f32>,
+        ratio: Option<f32>,
+        attack_ms: Option<f32>,
+        release_ms: Option<f32>,
+        enabled: Option<bool>,
+        response_tx: oneshot::Sender<Result<()>>,
+    },
+    UpdateChannelLimiter {
+        device_id: String,
+        threshold_db: Option<f32>,
+        enabled: Option<bool>,
         response_tx: oneshot::Sender<Result<()>>,
     },
     GetAudioMetrics {
@@ -414,12 +431,46 @@ impl IsolatedAudioManager {
                     .await;
                 let _ = response_tx.send(result);
             }
-            AudioCommand::UpdateEffects {
+            AudioCommand::UpdateChannelEq {
                 device_id,
-                effects,
+                low_db,
+                mid_db,
+                high_db,
                 response_tx,
             } => {
-                let result = self.handle_update_effects(device_id, effects);
+                let result = self
+                    .audio_pipeline
+                    .update_input_eq(&device_id, low_db, mid_db, high_db);
+                let _ = response_tx.send(result);
+            }
+            AudioCommand::UpdateChannelCompressor {
+                device_id,
+                threshold_db,
+                ratio,
+                attack_ms,
+                release_ms,
+                enabled,
+                response_tx,
+            } => {
+                let result = self.audio_pipeline.update_input_compressor(
+                    &device_id,
+                    threshold_db,
+                    ratio,
+                    attack_ms,
+                    release_ms,
+                    enabled,
+                );
+                let _ = response_tx.send(result);
+            }
+            AudioCommand::UpdateChannelLimiter {
+                device_id,
+                threshold_db,
+                enabled,
+                response_tx,
+            } => {
+                let result =
+                    self.audio_pipeline
+                        .update_input_limiter(&device_id, threshold_db, enabled);
                 let _ = response_tx.send(result);
             }
             AudioCommand::GetAudioMetrics { response_tx } => {
@@ -606,91 +657,7 @@ impl IsolatedAudioManager {
             channels
         );
 
-        let channel_number = if let Some(ref db) = self.database {
-            match crate::db::ConfiguredAudioDeviceService::get_channel_number_for_active_device(
-                db.sea_orm(),
-                &device_id,
-            )
-            .await
-            {
-                Ok(Some(channel)) => {
-                    info!(
-                        "🎯 {}: Found channel number {} for device '{}'",
-                        "CHANNEL_LOOKUP".on_yellow().red(),
-                        channel,
-                        device_id
-                    );
-                    channel
-                }
-                Ok(None) => {
-                    return Err(anyhow::anyhow!(
-                        "No channel configuration found for device '{}' in active session",
-                        device_id
-                    ));
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "Database error getting channel number for device '{}': {}",
-                        device_id,
-                        e
-                    ));
-                }
-            }
-        } else {
-            return Err(anyhow::anyhow!(
-                "No database available to lookup channel number for device '{}'",
-                device_id
-            ));
-        };
-
-        // Load initial audio effects from database
-        let (initial_gain, initial_pan, initial_muted, initial_solo) = if let Some(ref db) =
-            self.database
-        {
-            match crate::db::AudioEffectsDefaultService::find_by_device_identifier_in_active_config(
-                db.sea_orm(),
-                &device_id,
-            )
-            .await
-            {
-                Ok(Some(effects)) => {
-                    info!(
-                        "🎛️ {}: Loaded initial effects for '{}': gain={}, pan={}, muted={}, solo={}",
-                        "EFFECTS_LOAD".on_yellow().red(),
-                        device_id,
-                        effects.gain,
-                        effects.pan,
-                        effects.muted,
-                        effects.solo
-                    );
-                    (
-                        Some(effects.gain),
-                        Some(effects.pan),
-                        Some(effects.muted),
-                        Some(effects.solo),
-                    )
-                }
-                Ok(None) => {
-                    info!(
-                        "ℹ️ {}: No saved effects found for '{}', using defaults",
-                        "EFFECTS_LOAD".on_yellow().red(),
-                        device_id
-                    );
-                    (None, None, None, None)
-                }
-                Err(e) => {
-                    warn!(
-                        "⚠️ {}: Failed to load effects for '{}': {}, using defaults",
-                        "EFFECTS_LOAD".on_yellow().red(),
-                        device_id,
-                        e
-                    );
-                    (None, None, None, None)
-                }
-            }
-        } else {
-            (None, None, None, None)
-        };
+        let (channel_number, initial_state) = self.channel_placement_for(&device_id).await?;
 
         // **PIPELINE INTEGRATION**: Create input worker FIRST to consume RTRB data
         self.audio_pipeline
@@ -701,10 +668,7 @@ impl IsolatedAudioManager {
                 chunk_size,
                 audio_input_consumer,
                 channel_number,
-                initial_gain,
-                initial_pan,
-                initial_muted,
-                initial_solo,
+                initial_state,
             )?;
 
         self.record_hardware_latency(
@@ -786,83 +750,7 @@ impl IsolatedAudioManager {
         // Use 512 frames as chunk size (will be multiplied by channels in pipeline)
         let chunk_size = 512 * channels as usize;
 
-        let channel_number = if let Some(ref db) = self.database {
-            match crate::db::ConfiguredAudioDeviceService::get_channel_number_for_active_device(
-                db.sea_orm(),
-                &device_id,
-            )
-            .await
-            {
-                Ok(Some(channel)) => {
-                    info!(
-                        "🎯 {}: Found channel number {} for application audio device '{}'",
-                        "CHANNEL_LOOKUP".on_yellow().red(),
-                        channel,
-                        device_id
-                    );
-                    channel
-                }
-                Ok(None) => {
-                    return Err(anyhow::anyhow!(
-                        "No channel configuration found for device '{}' in active session",
-                        device_id
-                    ));
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "Database error getting channel number for device '{}': {}",
-                        device_id,
-                        e
-                    ));
-                }
-            }
-        } else {
-            return Err(anyhow::anyhow!(
-                "No database available to lookup channel number for device '{}'",
-                device_id
-            ));
-        };
-
-        let (initial_gain, initial_pan, initial_muted, initial_solo) = if let Some(ref db) =
-            self.database
-        {
-            match crate::db::AudioEffectsDefaultService::find_by_device_identifier_in_active_config(
-                db.sea_orm(),
-                &device_id,
-            )
-            .await
-            {
-                Ok(Some(effects)) => {
-                    info!(
-                        "🎛️ {}: Loaded initial effects for '{}': gain={}, pan={}, muted={}, solo={}",
-                        "EFFECTS_LOAD".on_yellow().red(),
-                        device_id,
-                        effects.gain,
-                        effects.pan,
-                        effects.muted,
-                        effects.solo
-                    );
-                    (
-                        Some(effects.gain),
-                        Some(effects.pan),
-                        Some(effects.muted),
-                        Some(effects.solo),
-                    )
-                }
-                Ok(None) => (None, None, None, None),
-                Err(e) => {
-                    warn!(
-                        "⚠️ {}: Failed to load effects for '{}': {}, using defaults",
-                        "EFFECTS_LOAD".on_yellow().red(),
-                        device_id,
-                        e
-                    );
-                    (None, None, None, None)
-                }
-            }
-        } else {
-            (None, None, None, None)
-        };
+        let (channel_number, initial_state) = self.channel_placement_for(&device_id).await?;
 
         self.audio_pipeline
             .add_input_device_with_consumer_and_producer(
@@ -872,10 +760,7 @@ impl IsolatedAudioManager {
                 chunk_size,
                 audio_input_consumer,
                 channel_number,
-                initial_gain,
-                initial_pan,
-                initial_muted,
-                initial_solo,
+                initial_state,
             )?;
 
         info!(
@@ -925,8 +810,7 @@ impl IsolatedAudioManager {
         let buffer_capacity = chunk_size * 16;
         let (producer, consumer) = rtrb::RingBuffer::<f32>::new(buffer_capacity);
 
-        let (channel_number, initial_gain, initial_pan, initial_muted, initial_solo) =
-            self.channel_placement_for(&device_id).await?;
+        let (channel_number, initial_state) = self.channel_placement_for(&device_id).await?;
 
         // Started before registering, so the queue already has audio in it by
         // the time the input worker's first read comes round.
@@ -943,10 +827,7 @@ impl IsolatedAudioManager {
                 chunk_size,
                 consumer,
                 channel_number,
-                initial_gain,
-                initial_pan,
-                initial_muted,
-                initial_solo,
+                initial_state,
             )
         {
             // The thread is stopped rather than left decoding into a queue
@@ -964,14 +845,14 @@ impl IsolatedAudioManager {
         Ok(())
     }
 
-    /// Where a device sits in the session, and how it was last left
+    /// Where a device sits in the session, and how its strip was last left
     ///
     /// The pipeline needs the channel number while building the device, so this
     /// has to be read before the stream is registered rather than after.
     async fn channel_placement_for(
         &self,
         device_id: &str,
-    ) -> Result<(u32, Option<f32>, Option<f32>, Option<bool>, Option<bool>)> {
+    ) -> Result<(u32, Option<ChannelStripState>)> {
         let Some(ref db) = self.database else {
             return Err(anyhow::anyhow!(
                 "No database available to look up the channel for '{}'",
@@ -1004,14 +885,8 @@ impl IsolatedAudioManager {
             .flatten();
 
         Ok(match effects {
-            Some(effects) => (
-                channel_number,
-                Some(effects.gain),
-                Some(effects.pan),
-                Some(effects.muted),
-                Some(effects.solo),
-            ),
-            None => (channel_number, None, None, None, None),
+            Some(effects) => (channel_number, Some(ChannelStripState::from(&effects))),
+            None => (channel_number, None),
         })
     }
 
@@ -1321,14 +1196,6 @@ impl IsolatedAudioManager {
             "ISOLATED_AUDIO_MANAGER_CORE_AUDIO_OUTPUT".on_yellow().red(),
             device_id
         );
-        Ok(())
-    }
-
-    fn handle_update_effects(
-        &mut self,
-        device_id: String,
-        effects: CustomAudioEffectsChain,
-    ) -> Result<()> {
         Ok(())
     }
 

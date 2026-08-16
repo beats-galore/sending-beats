@@ -256,10 +256,7 @@ impl AudioPipeline {
         chunk_size: usize, // Input device chunk size from hardware
         rtrb_consumer: rtrb::Consumer<f32>,
         channel_number: u32,
-        initial_gain: Option<f32>,
-        initial_pan: Option<f32>,
-        initial_muted: Option<bool>,
-        initial_solo: Option<bool>,
+        initial_state: Option<crate::audio::effects::ChannelStripState>,
     ) -> Result<()> {
         if self.input_workers.contains_key(&device_id) {
             return Err(anyhow::anyhow!(
@@ -317,10 +314,7 @@ impl AudioPipeline {
             self.any_channel_solo.clone(),
             hardware_queue_tracker,
             mixing_queue_tracker,
-            initial_gain,
-            initial_pan,
-            initial_muted,
-            initial_solo,
+            initial_state,
             &self.latency_probe,
         );
 
@@ -830,6 +824,73 @@ impl AudioPipeline {
             "AUDIO_PIPELINE".on_purple().blue(),
             device_id,
             pan
+        );
+        Ok(())
+    }
+
+    pub fn update_input_eq(
+        &mut self,
+        device_id: &str,
+        low_db: Option<f32>,
+        mid_db: Option<f32>,
+        high_db: Option<f32>,
+    ) -> Result<()> {
+        let worker = self
+            .input_workers
+            .get_mut(device_id)
+            .ok_or_else(|| anyhow::anyhow!("Input device '{}' not found", device_id))?;
+
+        worker.update_eq(low_db, mid_db, high_db);
+        info!(
+            "✅ {}: Updated EQ for input device '{}' (low: {:?}, mid: {:?}, high: {:?})",
+            "AUDIO_PIPELINE".on_purple().blue(),
+            device_id,
+            low_db,
+            mid_db,
+            high_db
+        );
+        Ok(())
+    }
+
+    pub fn update_input_compressor(
+        &mut self,
+        device_id: &str,
+        threshold_db: Option<f32>,
+        ratio: Option<f32>,
+        attack_ms: Option<f32>,
+        release_ms: Option<f32>,
+        enabled: Option<bool>,
+    ) -> Result<()> {
+        let worker = self
+            .input_workers
+            .get_mut(device_id)
+            .ok_or_else(|| anyhow::anyhow!("Input device '{}' not found", device_id))?;
+
+        worker.update_compressor(threshold_db, ratio, attack_ms, release_ms, enabled);
+        info!(
+            "✅ {}: Updated compressor for input device '{}'",
+            "AUDIO_PIPELINE".on_purple().blue(),
+            device_id
+        );
+        Ok(())
+    }
+
+    pub fn update_input_limiter(
+        &mut self,
+        device_id: &str,
+        threshold_db: Option<f32>,
+        enabled: Option<bool>,
+    ) -> Result<()> {
+        let worker = self
+            .input_workers
+            .get_mut(device_id)
+            .ok_or_else(|| anyhow::anyhow!("Input device '{}' not found", device_id))?;
+
+        worker.update_limiter(threshold_db, enabled);
+        info!(
+            "✅ {}: Updated limiter for input device '{}'",
+            "AUDIO_PIPELINE".on_purple().blue(),
+            device_id
         );
         Ok(())
     }

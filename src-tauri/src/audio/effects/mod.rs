@@ -14,7 +14,7 @@ pub use default_effects_chain::DefaultAudioEffectsChain;
 pub use equalizer::{EQBand, ThreeBandEqualizer};
 pub use filter::BiquadFilter;
 pub use limiter::Limiter;
-pub use stereo_custom_effects::{ChainSettings, StereoCustomEffects};
+pub use stereo_custom_effects::{ChainSettings, ChannelStripState, StereoCustomEffects};
 
 /// Audio stability constants for denormal protection
 const DENORMAL_THRESHOLD: f32 = 1e-15;

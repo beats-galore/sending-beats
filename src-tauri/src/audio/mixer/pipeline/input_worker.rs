@@ -8,12 +8,15 @@
 
 use anyhow::Result;
 use colored::*;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, Notify};
 use tracing::{error, info, warn};
 
 use super::audio_worker::{AudioWorker, AudioWorkerState};
-use crate::audio::effects::{CustomAudioEffectsChain, DefaultAudioEffectsChain};
+use crate::audio::effects::{
+    ChannelStripState, DefaultAudioEffectsChain, EQBand, StereoCustomEffects,
+};
 use crate::audio::mixer::latency_probe::{LatencyProbe, WorkerLatencyGauges};
 use crate::audio::mixer::queue_manager::AtomicQueueTracker;
 use crate::audio::mixer::resampling::RubatoSRC;
@@ -29,8 +32,13 @@ pub struct InputWorker {
     processing_time_total: std::time::Duration,
 
     default_effects: Arc<Mutex<DefaultAudioEffectsChain>>,
-    custom_effects: CustomAudioEffectsChain,
-    any_channel_solo: Arc<std::sync::atomic::AtomicBool>,
+    custom_effects: Arc<Mutex<StereoCustomEffects>>,
+    /// Mirrors the chain's on/off switch so the processing thread can skip a
+    /// disabled chain without taking the lock. A channel with effects off must
+    /// cost nothing — the chain was originally left disconnected because it
+    /// dragged the whole pipeline down.
+    custom_effects_active: Arc<AtomicBool>,
+    any_channel_solo: Arc<AtomicBool>,
 }
 
 impl InputWorker {
@@ -43,13 +51,10 @@ impl InputWorker {
         rtrb_consumer: rtrb::Consumer<f32>,
         rtrb_producer: rtrb::Producer<f32>,
         channel_number: u32,
-        any_channel_solo: Arc<std::sync::atomic::AtomicBool>,
+        any_channel_solo: Arc<AtomicBool>,
         hardware_queue_tracker: AtomicQueueTracker,
         mixing_queue_tracker: AtomicQueueTracker,
-        initial_gain: Option<f32>,
-        initial_pan: Option<f32>,
-        initial_muted: Option<bool>,
-        initial_solo: Option<bool>,
+        initial_state: Option<ChannelStripState>,
         latency_probe: &LatencyProbe,
     ) -> Self {
         info!(
@@ -64,42 +69,24 @@ impl InputWorker {
 
         let mut default_effects = DefaultAudioEffectsChain::new(device_id.clone());
 
-        if let Some(gain) = initial_gain {
-            default_effects.set_gain(gain);
+        let custom_effects = if let Some(strip) = initial_state {
+            default_effects.set_gain(strip.gain);
+            default_effects.set_pan(strip.pan);
+            default_effects.set_muted(strip.muted);
+            default_effects.set_solo(strip.solo);
             info!(
-                "🔊 {}: Initialized gain for '{}' to {}",
+                "🎛️ {}: Restored strip for '{}': gain={}, pan={}, muted={}, solo={}",
                 "INPUT_WORKER".on_cyan().white(),
                 device_id,
-                gain
+                strip.gain,
+                strip.pan,
+                strip.muted,
+                strip.solo
             );
-        }
-        if let Some(pan) = initial_pan {
-            default_effects.set_pan(pan);
-            info!(
-                "🎚️ {}: Initialized pan for '{}' to {}",
-                "INPUT_WORKER".on_cyan().white(),
-                device_id,
-                pan
-            );
-        }
-        if let Some(muted) = initial_muted {
-            default_effects.set_muted(muted);
-            info!(
-                "🔇 {}: Initialized muted for '{}' to {}",
-                "INPUT_WORKER".on_cyan().white(),
-                device_id,
-                muted
-            );
-        }
-        if let Some(solo) = initial_solo {
-            default_effects.set_solo(solo);
-            info!(
-                "🎯 {}: Initialized solo for '{}' to {}",
-                "INPUT_WORKER".on_cyan().white(),
-                device_id,
-                solo
-            );
-        }
+            StereoCustomEffects::with_settings(target_sample_rate, strip.chain)
+        } else {
+            StereoCustomEffects::new(target_sample_rate)
+        };
 
         let state = AudioWorkerState::new(
             device_id.clone(),
@@ -117,7 +104,8 @@ impl InputWorker {
             state,
             channel_number,
             default_effects: Arc::new(Mutex::new(default_effects)),
-            custom_effects: CustomAudioEffectsChain::new(target_sample_rate),
+            custom_effects: Arc::new(Mutex::new(custom_effects)),
+            custom_effects_active: Arc::new(AtomicBool::new(false)),
             any_channel_solo,
             samples_processed: 0,
             processing_time_total: std::time::Duration::ZERO,
@@ -140,10 +128,6 @@ impl InputWorker {
 
     pub fn get_default_effects(&self) -> Arc<Mutex<DefaultAudioEffectsChain>> {
         self.default_effects.clone()
-    }
-
-    pub fn get_custom_effects_mut(&mut self) -> &mut CustomAudioEffectsChain {
-        &mut self.custom_effects
     }
 }
 
@@ -242,6 +226,8 @@ impl InputWorker {
         // Clone state for the post-processing closure
         let default_effects = self.default_effects.clone();
         let any_channel_solo = self.any_channel_solo.clone();
+        let custom_effects = self.custom_effects.clone();
+        let custom_effects_active = self.custom_effects_active.clone();
         let channel_number = self.channel_number;
         let channels = self.state.channels();
 
@@ -285,9 +271,18 @@ impl InputWorker {
             }
 
             // Apply default effects (always stereo after conversion above)
-            let any_solo = any_channel_solo.load(std::sync::atomic::Ordering::Relaxed);
+            let any_solo = any_channel_solo.load(Ordering::Relaxed);
             if let Ok(effects) = default_effects.lock() {
                 effects.process_stereo_interleaved(samples, any_solo);
+            }
+
+            // Custom chain (EQ, compressor, limiter), after the fader so the
+            // limiter protects what actually leaves the channel. The atomic is
+            // the cheap gate: a channel with effects off skips even the lock.
+            if custom_effects_active.load(Ordering::Relaxed) {
+                if let Ok(mut chain) = custom_effects.lock() {
+                    chain.process_stereo_interleaved(samples);
+                }
             }
 
             // VU metering
@@ -306,17 +301,45 @@ impl InputWorker {
     }
 
     pub fn update_target_mix_rate(&mut self, target_mix_rate: u32) -> Result<()> {
-        self.update_custom_effects(CustomAudioEffectsChain::new(target_mix_rate));
+        // The chain's filter coefficients and envelope timings are derived
+        // from the rate; the wrapper rebuilds them without losing the knobs.
+        if let Ok(mut chain) = self.custom_effects.lock() {
+            chain.set_sample_rate(target_mix_rate);
+        }
         AudioWorker::update_target_mix_rate(self, target_mix_rate)
     }
 
-    pub fn update_custom_effects(&mut self, new_effects_chain: CustomAudioEffectsChain) {
-        self.custom_effects = new_effects_chain;
-        info!(
-            "🎛️ {}: Updated custom effects chain for device '{}'",
-            "INPUT_WORKER".on_cyan().white(),
-            self.state.device_id()
-        );
+    pub fn update_eq(&mut self, low_db: Option<f32>, mid_db: Option<f32>, high_db: Option<f32>) {
+        if let Ok(mut chain) = self.custom_effects.lock() {
+            if let Some(gain) = low_db {
+                chain.set_eq_gain(EQBand::Low, gain);
+            }
+            if let Some(gain) = mid_db {
+                chain.set_eq_gain(EQBand::Mid, gain);
+            }
+            if let Some(gain) = high_db {
+                chain.set_eq_gain(EQBand::High, gain);
+            }
+        }
+    }
+
+    pub fn update_compressor(
+        &mut self,
+        threshold_db: Option<f32>,
+        ratio: Option<f32>,
+        attack_ms: Option<f32>,
+        release_ms: Option<f32>,
+        enabled: Option<bool>,
+    ) {
+        if let Ok(mut chain) = self.custom_effects.lock() {
+            chain.update_compressor(threshold_db, ratio, attack_ms, release_ms, enabled);
+        }
+    }
+
+    pub fn update_limiter(&mut self, threshold_db: Option<f32>, enabled: Option<bool>) {
+        if let Ok(mut chain) = self.custom_effects.lock() {
+            chain.update_limiter(threshold_db, enabled);
+        }
     }
 
     pub fn update_gain(&mut self, gain: f32) {
@@ -335,6 +358,13 @@ impl InputWorker {
         if let Ok(mut effects) = self.default_effects.lock() {
             effects.set_effects_enabled(enabled);
         }
+        // One switch drives the whole strip: pan in the default chain, and the
+        // custom chain as a unit. The atomic is written last so the processing
+        // thread never sees the gate open before the chain is set.
+        if let Ok(mut chain) = self.custom_effects.lock() {
+            chain.set_enabled(enabled);
+        }
+        self.custom_effects_active.store(enabled, Ordering::Relaxed);
     }
 
     pub fn update_muted(&mut self, muted: bool) {
