@@ -13,6 +13,7 @@ export type AudioEffectsDefault = {
   pan: number; // -1.0 (left) to 1.0 (right)
   muted: boolean;
   solo: boolean;
+  effectsEnabled: boolean;
   eqLowGain: number; // dB
   eqMidGain: number; // dB
   eqHighGain: number; // dB

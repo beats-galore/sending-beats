@@ -63,6 +63,7 @@ pub struct ChannelStripState {
     pub pan: f32,
     pub muted: bool,
     pub solo: bool,
+    pub effects_enabled: bool,
     pub chain: ChainSettings,
 }
 
@@ -73,6 +74,7 @@ impl From<&crate::entities::audio_effects_default::Model> for ChannelStripState 
             pan: row.pan,
             muted: row.muted,
             solo: row.solo,
+            effects_enabled: row.effects_enabled,
             chain: ChainSettings::from(row),
         }
     }

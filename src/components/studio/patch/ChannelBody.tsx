@@ -1,7 +1,6 @@
 import { Box, Group, Select, Stack, Text } from '@mantine/core';
 
 import { border, color } from '../../../theme/tokens';
-import type { AudioChannel } from '../../../types';
 import { asGain, meterPosition } from '../format';
 import type { useChannelSource } from '../hooks/use-channel-source';
 import type { usePatchChannel } from '../hooks/use-patch-channel';
@@ -19,7 +18,6 @@ const GAIN_MIN = -60;
 const GAIN_MAX = 12;
 
 type ChannelBodyProps = {
-  channel: AudioChannel;
   /** Where this sits in the source column, for the port number on the inspector. */
   index: number;
   expansion: ChannelExpansion;
@@ -33,7 +31,6 @@ type ChannelBodyProps = {
 
 /** A source at its ordinary size: what it is patched to, how loud, and where it goes. */
 export const ChannelBody = ({
-  channel,
   index,
   expansion,
   patch,
@@ -143,7 +140,6 @@ export const ChannelBody = ({
 
       {opened && (
         <ChannelInspector
-          channel={channel}
           chain={patch.chain}
           pan={patch.pan}
           onPanChange={patch.setPan}

@@ -30,13 +30,13 @@ type AudioEffectsDefaultStore = {
     configurationId: Uuid<AudioMixerConfiguration>,
     pan: number
   ) => Promise<void>;
-  /**
-   * Switch a channel's effects chain on or off in the engine.
-   *
-   * Not part of the effects row — the flag lives on the mixer channel and is not
-   * persisted, so this only tells the engine which way the interface is set.
-   */
-  setEffectsEnabled: (deviceId: Uuid<ConfiguredAudioDevice>, enabled: boolean) => Promise<void>;
+  /** Switch a channel's effects chain on or off, in the engine and on its row. */
+  updateEffectsEnabled: (
+    effectsId: Uuid<AudioEffectsDefault>,
+    deviceId: Uuid<ConfiguredAudioDevice>,
+    configurationId: Uuid<AudioMixerConfiguration>,
+    enabled: boolean
+  ) => Promise<void>;
   toggleMute: (
     effectsId: Uuid<AudioEffectsDefault>,
     deviceId: Uuid<ConfiguredAudioDevice>,
@@ -172,16 +172,33 @@ const store = create<AudioEffectsDefaultStore>()(
       }
     },
 
-    setEffectsEnabled: async (deviceId: Uuid<ConfiguredAudioDevice>, enabled: boolean) => {
+    updateEffectsEnabled: async (
+      effectsId: Uuid<AudioEffectsDefault>,
+      deviceId: Uuid<ConfiguredAudioDevice>,
+      configurationId: Uuid<AudioMixerConfiguration>,
+      enabled: boolean
+    ) => {
       try {
-        await invoke('update_audio_effects_default_effects_enabled', { deviceId, enabled });
+        await invoke('update_audio_effects_default_effects_enabled', {
+          effectsId,
+          deviceId,
+          configurationId,
+          enabled,
+        });
+
+        set((state) => ({
+          effectsById: {
+            ...state.effectsById,
+            [effectsId]: {
+              ...state.effectsById[effectsId],
+              effectsEnabled: enabled,
+            },
+          },
+        }));
       } catch (error) {
-        // A device with no worker yet — one that failed to connect, or that the
-        // pipeline has not attached — has nothing to switch. This is a sync the
-        // interface repeats whenever the device changes, so a failure is logged
-        // rather than raised into `error`, which would replace the mixer with an
-        // error page over a channel that is not running.
-        console.warn(`Could not switch effects on device ${deviceId}:`, error);
+        const errorMessage = error instanceof Error ? error.message : 'Failed to switch effects';
+        set({ error: errorMessage });
+        throw error;
       }
     },
 
@@ -399,8 +416,12 @@ export const audioEffectsDefaultActions = {
     configurationId: Uuid<AudioMixerConfiguration>,
     pan: number
   ) => store.getState().updatePan(effectsId, deviceId, configurationId, pan),
-  setEffectsEnabled: (deviceId: Uuid<ConfiguredAudioDevice>, enabled: boolean) =>
-    store.getState().setEffectsEnabled(deviceId, enabled),
+  updateEffectsEnabled: (
+    effectsId: Uuid<AudioEffectsDefault>,
+    deviceId: Uuid<ConfiguredAudioDevice>,
+    configurationId: Uuid<AudioMixerConfiguration>,
+    enabled: boolean
+  ) => store.getState().updateEffectsEnabled(effectsId, deviceId, configurationId, enabled),
   toggleMute: (
     effectsId: Uuid<AudioEffectsDefault>,
     deviceId: Uuid<ConfiguredAudioDevice>,

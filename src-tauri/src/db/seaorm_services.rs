@@ -26,6 +26,7 @@ fn copied_effects_default(
         pan: Set(original.pan),
         muted: Set(original.muted),
         solo: Set(original.solo),
+        effects_enabled: Set(original.effects_enabled),
         eq_low_gain: Set(original.eq_low_gain),
         eq_mid_gain: Set(original.eq_mid_gain),
         eq_high_gain: Set(original.eq_high_gain),
@@ -866,6 +867,25 @@ impl AudioEffectsDefaultService {
         if let Some(enabled) = enabled {
             active.limiter_enabled = Set(enabled);
         }
+        active.updated_at = Set(chrono::Utc::now());
+
+        let updated = active.update(db).await?;
+        Ok(updated)
+    }
+
+    /// Persist the channel's effects switch.
+    pub async fn update_effects_enabled(
+        db: &DatabaseConnection,
+        effects_id: &str,
+        enabled: bool,
+    ) -> Result<audio_effects_default::Model> {
+        let effect = audio_effects_default::Entity::find_by_id(effects_id)
+            .one(db)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Audio effects default not found"))?;
+
+        let mut active: audio_effects_default::ActiveModel = effect.into();
+        active.effects_enabled = Set(enabled);
         active.updated_at = Set(chrono::Utc::now());
 
         let updated = active.update(db).await?;

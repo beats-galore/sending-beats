@@ -13,6 +13,7 @@ pub struct Model {
     pub pan: f32,
     pub muted: bool,
     pub solo: bool,
+    pub effects_enabled: bool,
     pub eq_low_gain: f32,
     pub eq_mid_gain: f32,
     pub eq_high_gain: f32,

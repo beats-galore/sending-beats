@@ -112,14 +112,16 @@ pub async fn update_audio_effects_default_pan(
     Ok(())
 }
 
-/// Switch a channel's effects chain on or off in the engine.
+/// Switch a channel's effects chain on or off, in the engine and on its row.
 ///
-/// Only pan answers to this today, and the flag is not persisted — the
-/// interface owns it and pushes its state whenever a channel loads, so the two
-/// cannot disagree about whether a stored pan is being applied.
+/// The switch persists with the settings it gates, so a relaunched channel
+/// comes back with its chain the way it was left — on and processing, or off
+/// and free.
 #[tauri::command]
 pub async fn update_audio_effects_default_effects_enabled(
+    effects_id: String,
     device_id: String,
+    configuration_id: String,
     enabled: bool,
     state: State<'_, AudioState>,
 ) -> Result<(), String> {
@@ -152,6 +154,14 @@ pub async fn update_audio_effects_default_effects_enabled(
     rx.await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
+
+    AudioEffectsDefaultService::update_effects_enabled(
+        state.database.sea_orm(),
+        &effects_id,
+        enabled,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
 
     Ok(())
 }

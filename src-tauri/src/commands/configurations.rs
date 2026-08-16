@@ -429,6 +429,7 @@ pub async fn create_device_configuration(
                 pan: sea_orm::Set(0.0),  // Center pan
                 muted: sea_orm::Set(false),
                 solo: sea_orm::Set(false),
+                effects_enabled: sea_orm::Set(false),
                 eq_low_gain: sea_orm::Set(chain.eq_low_gain_db),
                 eq_mid_gain: sea_orm::Set(chain.eq_mid_gain_db),
                 eq_high_gain: sea_orm::Set(chain.eq_high_gain_db),

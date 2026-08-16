@@ -1,7 +1,6 @@
 import { Group, Stack, Text } from '@mantine/core';
 
 import { border, color } from '../../../theme/tokens';
-import type { AudioChannel } from '../../../types';
 import { asPan } from '../format';
 import type { PatchChannelChain } from '../hooks/use-patch-channel';
 import { ActionButton } from '../primitives/ActionButton';
@@ -12,7 +11,6 @@ import { ChannelCompressor } from './ChannelCompressor';
 import { ChannelEqualizer } from './ChannelEqualizer';
 
 type ChannelInspectorProps = {
-  channel: AudioChannel;
   chain: PatchChannelChain;
   pan: number;
   onPanChange: (pan: number) => void;
@@ -33,7 +31,6 @@ type ChannelInspectorProps = {
 
 /** The processing chain for a channel, revealed inside its node. */
 export const ChannelInspector = ({
-  channel,
   chain,
   pan,
   onPanChange,
@@ -42,7 +39,7 @@ export const ChannelInspector = ({
   showChain,
   onToggleEffects,
 }: ChannelInspectorProps) => {
-  const showProcessing = channel.effects_enabled && showChain;
+  const showProcessing = chain.effectsEnabled && showChain;
 
   return (
     <Stack
@@ -54,11 +51,11 @@ export const ChannelInspector = ({
     >
       <Group gap="sm" wrap="nowrap">
         <ActionButton
-          tone={channel.effects_enabled ? 'accent' : 'ghost'}
+          tone={chain.effectsEnabled ? 'accent' : 'ghost'}
           padding="6px 12px"
           onClick={onToggleEffects}
         >
-          {channel.effects_enabled ? 'FX ON' : 'FX OFF'}
+          {chain.effectsEnabled ? 'FX ON' : 'FX OFF'}
         </ActionButton>
         {showProcessing && (
           <>

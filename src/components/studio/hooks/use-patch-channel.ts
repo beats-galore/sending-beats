@@ -26,7 +26,7 @@ export const usePatchChannel = (channel: AudioChannel) => {
     loadEffects,
     updateGain,
     updatePan,
-    setEffectsEnabled,
+    updateEffectsEnabled,
     toggleMute,
     toggleSolo,
     updateEq,
@@ -63,12 +63,18 @@ export const usePatchChannel = (channel: AudioChannel) => {
   const configurationId = activeSession?.configuration.id;
   const canEdit = Boolean(effects && device && configurationId);
 
-  useEffect(() => {
-    if (!device) {
-      return;
-    }
-    void setEffectsEnabled(device.id, channel.effects_enabled);
-  }, [device, channel.effects_enabled, setEffectsEnabled]);
+  // No engine sync here: the switch lives on the effects row now, and the
+  // worker reads it — with everything else on the strip — when the device is
+  // attached. The interface only has to change it, not repeat it.
+  const setEffectsEnabled = useCallback(
+    (enabled: boolean) => {
+      if (!effects || !device || !configurationId) {
+        return;
+      }
+      void updateEffectsEnabled(effects.id, device.id, configurationId, enabled);
+    },
+    [effects, device, configurationId, updateEffectsEnabled]
+  );
 
   const setGain = useCallback(
     (gainDb: number) => {
@@ -157,6 +163,8 @@ export const usePatchChannel = (channel: AudioChannel) => {
     // The custom chain, read from the same effects row that carries the fader.
     // Defaults mirror the DSP constructors so an unpatched channel still draws.
     chain: {
+      effectsEnabled: effects?.effectsEnabled ?? false,
+      setEffectsEnabled,
       eqLowGain: effects?.eqLowGain ?? 0,
       eqMidGain: effects?.eqMidGain ?? 0,
       eqHighGain: effects?.eqHighGain ?? 0,

@@ -69,21 +69,28 @@ impl InputWorker {
 
         let mut default_effects = DefaultAudioEffectsChain::new(device_id.clone());
 
+        let effects_enabled = initial_state
+            .map(|strip| strip.effects_enabled)
+            .unwrap_or(false);
         let custom_effects = if let Some(strip) = initial_state {
             default_effects.set_gain(strip.gain);
             default_effects.set_pan(strip.pan);
             default_effects.set_muted(strip.muted);
             default_effects.set_solo(strip.solo);
+            default_effects.set_effects_enabled(strip.effects_enabled);
             info!(
-                "🎛️ {}: Restored strip for '{}': gain={}, pan={}, muted={}, solo={}",
+                "🎛️ {}: Restored strip for '{}': gain={}, pan={}, muted={}, solo={}, fx={}",
                 "INPUT_WORKER".on_cyan().white(),
                 device_id,
                 strip.gain,
                 strip.pan,
                 strip.muted,
-                strip.solo
+                strip.solo,
+                strip.effects_enabled
             );
-            StereoCustomEffects::with_settings(target_sample_rate, strip.chain)
+            let mut chain = StereoCustomEffects::with_settings(target_sample_rate, strip.chain);
+            chain.set_enabled(strip.effects_enabled);
+            chain
         } else {
             StereoCustomEffects::new(target_sample_rate)
         };
@@ -105,7 +112,7 @@ impl InputWorker {
             channel_number,
             default_effects: Arc::new(Mutex::new(default_effects)),
             custom_effects: Arc::new(Mutex::new(custom_effects)),
-            custom_effects_active: Arc::new(AtomicBool::new(false)),
+            custom_effects_active: Arc::new(AtomicBool::new(effects_enabled)),
             any_channel_solo,
             samples_processed: 0,
             processing_time_total: std::time::Duration::ZERO,

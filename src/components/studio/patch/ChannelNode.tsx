@@ -45,7 +45,6 @@ type ChannelNodeProps = {
 export const ChannelNode = ({ channel, index, rect, variant, selected }: ChannelNodeProps) => {
   const select = useStudioStore((state) => state.select);
   const removeChannel = useMixerStore((state) => state.removeChannel);
-  const updateChannel = useMixerStore((state) => state.updateChannel);
   const patch = usePatchChannel(channel);
   const source = useChannelSource(channel.id);
   const track = useChannelNowPlaying(source.configuredDevice?.deviceIdentifier);
@@ -63,8 +62,8 @@ export const ChannelNode = ({ channel, index, rect, variant, selected }: Channel
   // suit: on makes room for the chain, off gives that room back rather than
   // leaving the card standing over an empty half of itself.
   const toggleEffects = () => {
-    const enabling = !channel.effects_enabled;
-    void updateChannel(channel.id, { effects_enabled: enabling });
+    const enabling = !patch.chain.effectsEnabled;
+    patch.chain.setEffectsEnabled(enabling);
     setRung(enabling ? 'expanded' : 'collapsed');
   };
 
@@ -133,7 +132,6 @@ export const ChannelNode = ({ channel, index, rect, variant, selected }: Channel
       <ChannelCompact patch={patch} meterBase={swatch.value} />
     ) : (
       <ChannelBody
-        channel={channel}
         index={index}
         expansion={expansion}
         patch={patch}
