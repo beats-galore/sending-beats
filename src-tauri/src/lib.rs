@@ -33,7 +33,6 @@ use tracing_subscriber::prelude::*;
 // Import all command modules
 use commands::application_audio::*;
 use commands::audio_devices::*;
-use commands::audio_effects::*;
 use commands::audio_effects_default::*;
 use commands::buses::*;
 use commands::cast_configurations::*;
@@ -481,13 +480,6 @@ pub fn run() {
             enable_system_audio_capture,
             disable_system_audio_capture,
             get_system_audio_status,
-            // Audio effects commands
-            update_channel_eq,
-            update_channel_compressor,
-            update_channel_limiter,
-            add_channel_effect,
-            remove_channel_effect,
-            get_channel_effects,
             get_dj_mixer_config,
             rename_mixer_channel,
             update_master_gain,
@@ -611,6 +603,9 @@ pub fn run() {
             update_audio_effects_default_effects_enabled,
             update_audio_effects_default_mute,
             update_audio_effects_default_solo,
+            update_audio_effects_default_eq,
+            update_audio_effects_default_compressor,
+            update_audio_effects_default_limiter,
             // VU Events commands
             initialize_vu_channels
         ])

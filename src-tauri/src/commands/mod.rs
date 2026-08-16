@@ -1,7 +1,6 @@
 pub mod app;
 pub mod application_audio;
 pub mod audio_devices;
-pub mod audio_effects;
 pub mod audio_effects_default;
 pub mod buses;
 pub mod cast_configurations;
@@ -23,7 +22,6 @@ pub mod vu_channels;
 pub use app::*;
 pub use application_audio::*;
 pub use audio_devices::*;
-pub use audio_effects::*;
 pub use audio_effects_default::*;
 pub use buses::*;
 pub use configurations::*;
