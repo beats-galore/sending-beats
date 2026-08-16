@@ -65,9 +65,24 @@ export const rungOf = (expansion: ChannelExpansion): NodeExpansion =>
  * card carries a track readout the hardware card has no use for. The variant
  * follows the patched source rather than whether something is playing, so a
  * node keeps its size when playback stops.
+ *
+ * A player stands taller again: its readout is a transport rather than a
+ * reading, since this is the one source the studio is itself playing.
  */
-export const ChannelCardVariant = ['device', 'app'] as const;
+export const ChannelCardVariant = ['device', 'app', 'player'] as const;
 export type ChannelCardVariant = (typeof ChannelCardVariant)[number];
+
+/** What a card's variant adds to every size it can be. */
+const variantHeight = (variant: ChannelCardVariant): number => {
+  switch (variant) {
+    case 'device':
+      return 0;
+    case 'app':
+      return source.trackReadoutHeight;
+    case 'player':
+      return source.playerTransportHeight;
+  }
+};
 
 /**
  * A run of sizes a node can be at, smallest first.
@@ -109,9 +124,9 @@ const expansionHeight = (expansion: ChannelExpansion): number => {
 /** How big a source node has to be to show a given amount of itself. */
 export const channelSize = (variant: ChannelCardVariant, expansion: ChannelExpansion): Size => ({
   width: channelWidth(expansion),
-  // An application card carries a track readout the hardware card has no use
-  // for, so it needs that much more room to show the same amount of itself.
-  height: expansionHeight(expansion) + (variant === 'app' ? source.trackReadoutHeight : 0),
+  // A card that carries a readout the hardware card has no use for needs that
+  // much more room to show the same amount of itself.
+  height: expansionHeight(expansion) + variantHeight(variant),
 });
 
 /**

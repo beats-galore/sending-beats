@@ -7,6 +7,7 @@ import { color } from '../../../theme/tokens';
 import type { AudioChannel } from '../../../types';
 import { useChannelNowPlaying } from '../hooks/use-channel-now-playing';
 import { useChannelSource } from '../hooks/use-channel-source';
+import { useFilePlayer } from '../hooks/use-file-player';
 import { useNodeDrag, useNodeFront } from '../hooks/use-node-drag';
 import { useNodeResize, useNodeRung, useUnshrink } from '../hooks/use-node-resize';
 import { usePatchChannel } from '../hooks/use-patch-channel';
@@ -19,6 +20,7 @@ import { ChannelBody } from './ChannelBody';
 import { ChannelCompact } from './ChannelCompact';
 import { ChannelName } from './ChannelName';
 import { DeviceCard } from './DeviceCard';
+import { PlayerCard } from './PlayerCard';
 import {
   channelPortOffset,
   channelSize,
@@ -49,6 +51,7 @@ export const ChannelNode = ({ channel, index, rect, variant, selected }: Channel
   const patch = usePatchChannel(channel);
   const source = useChannelSource(channel.id);
   const track = useChannelNowPlaying(source.configuredDevice?.deviceIdentifier);
+  const player = useFilePlayer(source.playerId);
 
   const targetKey = channelTargetKey(channel.id);
   // The strip's own colour, which its meters read in — a glance across the
@@ -142,6 +145,14 @@ export const ChannelNode = ({ channel, index, rect, variant, selected }: Channel
         onToggleEffects={toggleEffects}
       />
     );
+
+  if (variant === 'player') {
+    return (
+      <PlayerCard {...card} player={player} tint={swatch.value}>
+        {body}
+      </PlayerCard>
+    );
+  }
 
   if (variant === 'app') {
     return (

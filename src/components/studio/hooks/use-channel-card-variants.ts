@@ -1,7 +1,9 @@
 import { useEffect, useMemo } from 'react';
 
+import { useFilePlayerStore } from '../../../stores/file-player-store';
 import { useConfigurationStore } from '../../../stores/mixer-store';
 import { useNowPlayingStore } from '../../../stores/now-playing-store';
+import { patchedPlayerId } from '../../../types/file-player.types';
 import { bundleIdFromDeviceIdentifier } from '../../../types/now-playing.types';
 import type { ChannelCardVariant } from '../patch/patch-geometry';
 
@@ -23,6 +25,7 @@ import type { ChannelCardVariant } from '../patch/patch-geometry';
 export const useChannelCardVariants = (): Record<number, ChannelCardVariant> => {
   const subscribe = useNowPlayingStore((state) => state.subscribe);
   const reportedBundleIds = useNowPlayingStore((state) => state.reportedBundleIds);
+  const players = useFilePlayerStore((state) => state.players);
   const { activeSession } = useConfigurationStore();
 
   useEffect(() => {
@@ -36,11 +39,19 @@ export const useChannelCardVariants = (): Record<number, ChannelCardVariant> => 
       if (!device.isInput) {
         continue;
       }
-      const bundleId = bundleIdFromDeviceIdentifier(device.deviceIdentifier);
-      variants[device.channelNumber] =
-        bundleId && reportedBundleIds.includes(bundleId) ? 'app' : 'device';
+
+      variants[device.channelNumber] = ((): ChannelCardVariant => {
+        // A player earns its card by being one, unlike an application, which
+        // earns its readout by having produced a track to read.
+        if (patchedPlayerId(device.deviceIdentifier, players)) {
+          return 'player';
+        }
+
+        const bundleId = bundleIdFromDeviceIdentifier(device.deviceIdentifier);
+        return bundleId && reportedBundleIds.includes(bundleId) ? 'app' : 'device';
+      })();
     }
 
     return variants;
-  }, [activeSession, reportedBundleIds]);
+  }, [activeSession, reportedBundleIds, players]);
 };

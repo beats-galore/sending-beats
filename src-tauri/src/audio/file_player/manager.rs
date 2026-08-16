@@ -177,6 +177,7 @@ impl FilePlayerManager {
             PlaybackAction::SkipNext => player.skip_next()?,
             PlaybackAction::SkipPrevious => player.skip_previous()?,
             PlaybackAction::RestartTrack => player.restart_track()?,
+            PlaybackAction::PlayTrack { track_id } => player.play_track(&track_id)?,
             PlaybackAction::Seek { seconds } => {
                 player.seek(std::time::Duration::from_secs_f64(seconds.max(0.0)))?
             }
@@ -242,6 +243,11 @@ pub enum PlaybackAction {
     SkipPrevious,
     /// This track again from the beginning, whatever the playhead says
     RestartTrack,
+    /// Jump to a given track and play it, wherever it sits in the queue
+    #[serde(rename_all = "camelCase")]
+    PlayTrack {
+        track_id: String,
+    },
     /// Move the playhead within the current track
     Seek {
         seconds: f64,

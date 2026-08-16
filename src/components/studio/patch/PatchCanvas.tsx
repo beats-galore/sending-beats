@@ -14,6 +14,7 @@ import { color } from '../../../theme/tokens';
 import { useAvailableCastTargets, useCastDestination } from '../hooks/use-cast-destination';
 import { useChannelCardVariants } from '../hooks/use-channel-card-variants';
 import { useChannelDevices } from '../hooks/use-channel-devices';
+import { useFilePlayers } from '../hooks/use-file-player';
 import { useFocusedNode } from '../hooks/use-focused-node';
 import { patchColorOf } from '../hooks/use-patch-color';
 import { usePatchOutputs } from '../hooks/use-patch-outputs';
@@ -30,6 +31,7 @@ import { resolvePatchRects } from './patch-rects';
 import { PatchRectsProvider } from './patch-rects-context';
 import { PinIndicator } from './PinIndicator';
 import { PinSeams } from './PinSeams';
+import { QueueOverlay } from './QueueOverlay';
 import { TapeDestination } from './TapeDestination';
 
 const { source, bus, destination, canvas } = layout;
@@ -64,6 +66,10 @@ export const PatchCanvas = () => {
     void loadBuses();
     void loadPatchLayout();
   }, [loadPatchColors, loadBuses, loadPatchLayout, activeConfigurationId]);
+
+  // Players are restored and their playheads kept current for the whole canvas:
+  // the poll is per player, and two cards watching one would double it.
+  useFilePlayers();
 
   const storedBuses = useBusStore((state) => state.buses);
   const buses = useMemo(() => orderedBuses(storedBuses), [storedBuses]);
@@ -240,6 +246,9 @@ export const PatchCanvas = () => {
 
       <PinSeams rects={rects} />
       <PinIndicator rects={rects} />
+
+      {/* Last, so the queue floats over the mix column rather than under it. */}
+      <QueueOverlay channelIds={channels.map((channel) => channel.id)} rects={rects} />
     </Box>
     </PatchRectsProvider>
   );

@@ -69,6 +69,13 @@ export const layout = {
      * bar and its gap, then the gap to the row below.
      */
     trackReadoutHeight: Math.ceil(10 * 1.5 + 9 * 1.5) + 4 + 3 + 8,
+    /**
+     * Extra room a player card takes for its transport: the play button and the
+     * track it is on, the scrub bar under them, and the gap to the row below.
+     */
+    playerTransportHeight: 32 + 4 + 3 + 8,
+    /** The round play button that leads the transport row. */
+    playerButtonSize: 32,
     gap: 20,
     /** Distance from a node's top edge to its output port centre. */
     portOffset: 59.5,

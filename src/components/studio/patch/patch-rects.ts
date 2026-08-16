@@ -167,14 +167,19 @@ export const resolvePatchRects = (
 
   // Pins are applied last, over the finished positions: a pinned node's box is
   // its own in every respect but where it sits, which comes from its anchor.
-  const keys = [...channelKeys, ...busKeys, STREAM_TARGET_KEY, TAPE_TARGET_KEY, ...outputKeys];
+  //
+  // A patch with no station has no cast node, so its key is left out of both
+  // lists together. They have to agree: a key with no box behind it is a hole
+  // everything downstream reads as a node.
+  const castKeys: PatchTargetKey[] = hasCast ? [STREAM_TARGET_KEY] : [];
+  const keys = [...channelKeys, ...busKeys, ...castKeys, TAPE_TARGET_KEY, ...outputKeys];
   const byKey = applyPins({
     keys,
     rects: Object.fromEntries([
       ...channelKeys.map((key, index): [PatchTargetKey, NodeRect] => [key, channelRects[index]]),
       ...busKeys.map((key, index): [PatchTargetKey, NodeRect] => [key, busRects[index]]),
       ...outputKeys.map((key, index): [PatchTargetKey, NodeRect] => [key, outputRects[index]]),
-      ...(hasCast ? [[STREAM_TARGET_KEY, castRect] as const] : []),
+      ...castKeys.map((key): [PatchTargetKey, NodeRect] => [key, castRect]),
       [TAPE_TARGET_KEY, tapeRect],
     ]),
     placements,
@@ -236,7 +241,9 @@ export const resolvePatchRects = (
     channels: channelKeys.map((key) => byKey[key]),
     buses: busKeys.map((key) => byKey[key]),
     outputs: outputKeys.map((key) => byKey[key]),
-    cast: byKey[STREAM_TARGET_KEY],
+    // Falls back to the unpinned box, which with no station on the patch is the
+    // closed slot. Nothing draws it then, but it still has to be a box.
+    cast: byKey[STREAM_TARGET_KEY] ?? castRect,
     tape: byKey[TAPE_TARGET_KEY],
     addSourceTop,
     addDestinationTop,

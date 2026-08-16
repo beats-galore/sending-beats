@@ -35,6 +35,7 @@ pub struct QueuedTrack {
 
 /// Current playback state
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum PlaybackState {
     Stopped,
     Playing,
@@ -52,6 +53,7 @@ pub struct PlaybackMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum RepeatMode {
     None,
     Track,
@@ -651,7 +653,7 @@ impl AudioFilePlayer {
     /// Finishing here means leaving the track, which includes being skipped past
     /// it. What was played rather than merely reached is a finer question than
     /// the queue can answer on its own.
-    fn report_finished(&self) {
+    pub(super) fn report_finished(&self) {
         let Some(index) = *self.current_track_index.lock().unwrap() else {
             return;
         };
@@ -736,7 +738,7 @@ impl AudioFilePlayer {
     /// `remember` records the track being left, which is what "previous" walks
     /// back through. Stepping back and restarting both pass false: neither is
     /// somewhere new to come back from.
-    fn load_index(&self, index: usize, remember: bool) -> Result<()> {
+    pub(super) fn load_index(&self, index: usize, remember: bool) -> Result<()> {
         let track = {
             let queue = self.queue.lock().unwrap();
             queue

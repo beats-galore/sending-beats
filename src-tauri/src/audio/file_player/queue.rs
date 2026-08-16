@@ -68,6 +68,28 @@ impl AudioFilePlayer {
         Ok(())
     }
 
+    /// Play a given track now, wherever it sits in the queue
+    ///
+    /// The track being left is reported as finished, the same as being skipped
+    /// past it, and recorded as somewhere to come back to — so stepping back
+    /// from here returns to what was playing rather than to the row above.
+    pub fn play_track(&self, track_id: &str) -> Result<()> {
+        let index = self
+            .queue
+            .lock()
+            .unwrap()
+            .iter()
+            .position(|track| track.id == track_id)
+            .ok_or_else(|| anyhow::anyhow!("Track not found in queue"))?;
+
+        if *self.current_track_index.lock().unwrap() != Some(index) {
+            self.report_finished();
+            self.load_index(index, true)?;
+        }
+
+        self.play()
+    }
+
     /// Pause after this track, or stop pausing anywhere
     ///
     /// One instruction rather than a mode: it fires once and clears itself, so

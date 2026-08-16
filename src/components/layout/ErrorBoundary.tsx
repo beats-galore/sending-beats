@@ -24,10 +24,34 @@ import type { ErrorInfo } from 'react';
 import { ErrorBoundary as ReactErrorBoundary } from 'react-error-boundary';
 
 import type { FallbackProps } from 'react-error-boundary';
+import { componentTrail, splitStack } from './error-stack';
+
+/**
+ * Where the last error's component stack is kept.
+ *
+ * React hands it to `onError` rather than to the fallback, and it is the most
+ * useful part of the report — which components were rendering when this blew
+ * up. A module-level slot rather than state, because the only writer is the
+ * handler for the very error the fallback is about to draw.
+ */
+let lastComponentStack: string | null = null;
 
 // Error fallback component with  Mantine styling
+const traceStyle = {
+  background: '#1a1b23',
+  color: '#c1c2c5',
+  fontSize: '12px',
+  lineHeight: 1.3,
+  maxHeight: '300px',
+  overflowY: 'auto' as const,
+};
+
 function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
   const [showDetails, setShowDetails] = useState(true); // Auto-expanded as requested
+  const [showFrames, setShowFrames] = useState(false);
+
+  const { ours, theirs } = splitStack(error.stack);
+  const trail = componentTrail(lastComponentStack);
 
   const handleReload = () => {
     window.location.reload();
@@ -114,26 +138,52 @@ function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
                     </Code>
                   </Stack>
 
-                  {/* Stack Trace */}
-                  {error.stack && (
+                  {/* Which components were rendering — usually the answer */}
+                  {trail.length > 0 && (
+                    <Stack gap="xs">
+                      <Text size="sm" fw={500} c="red.7">
+                        Rendering:
+                      </Text>
+                      <Code block p="md" style={traceStyle}>
+                        {trail.join('\n  in ')}
+                      </Code>
+                    </Stack>
+                  )}
+
+                  {/* Our own frames, ahead of the renderer's */}
+                  {ours.length > 0 && (
                     <Stack gap="xs">
                       <Text size="sm" fw={500} c="red.7">
                         Stack Trace:
                       </Text>
-                      <Code
-                        block
-                        p="md"
-                        style={{
-                          background: '#1a1b23',
-                          color: '#c1c2c5',
-                          fontSize: '12px',
-                          lineHeight: 1.3,
-                          maxHeight: '300px',
-                          overflowY: 'auto',
-                        }}
-                      >
-                        {error.stack}
+                      <Code block p="md" style={traceStyle}>
+                        {ours.join('\n')}
                       </Code>
+                      <Text size="xs" c="dimmed">
+                        Line numbers are from the transpiled module, so they can sit a few
+                        lines off the source.
+                      </Text>
+                    </Stack>
+                  )}
+
+                  {/* Everything downstream, folded away but not thrown out */}
+                  {theirs.length > 0 && (
+                    <Stack gap="xs">
+                      <Group
+                        justify="space-between"
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => setShowFrames(!showFrames)}
+                      >
+                        <Text size="sm" fw={500} c="red.7">
+                          {theirs.length} frames in dependencies
+                        </Text>
+                        {showFrames ? <IconChevronUp size={16} /> : <IconChevronDown size={16} />}
+                      </Group>
+                      <Collapse expanded={showFrames}>
+                        <Code block p="md" style={traceStyle}>
+                          {theirs.join('\n')}
+                        </Code>
+                      </Collapse>
                     </Stack>
                   )}
 
@@ -189,6 +239,8 @@ function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
 
 // Error logging function
 function logError(error: Error, errorInfo: ErrorInfo) {
+  lastComponentStack = errorInfo.componentStack ?? null;
+
   console.group('🚨 ErrorBoundary caught an error:');
   console.error('Error:', error);
   console.error('Error Info:', errorInfo);
