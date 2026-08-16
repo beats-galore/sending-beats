@@ -4,6 +4,10 @@ use super::filter::BiquadFilter;
 use super::limiter::Limiter;
 
 /// Custom audio effects chain (EQ, compressor, limiter)
+///
+/// Processes a **mono** stream: every stage keeps per-sample state (filter
+/// memory, envelopes, a lookahead delay line), so interleaved stereo must go
+/// through two chains — see `StereoCustomEffects`.
 #[derive(Debug)]
 pub struct CustomAudioEffectsChain {
     dc_blocker: BiquadFilter,
@@ -11,6 +15,8 @@ pub struct CustomAudioEffectsChain {
     compressor: Compressor,
     limiter: Limiter,
     enabled: bool,
+    compressor_enabled: bool,
+    limiter_enabled: bool,
 }
 
 impl CustomAudioEffectsChain {
@@ -21,6 +27,8 @@ impl CustomAudioEffectsChain {
             compressor: Compressor::new(sample_rate),
             limiter: Limiter::new(sample_rate),
             enabled: false,
+            compressor_enabled: false,
+            limiter_enabled: false,
         }
     }
 
@@ -34,12 +42,38 @@ impl CustomAudioEffectsChain {
             *sample = self.dc_blocker.process(*sample);
         }
         self.equalizer.process(samples);
-        self.compressor.process(samples);
-        self.limiter.process(samples);
+        if self.compressor_enabled {
+            self.compressor.process(samples);
+        }
+        if self.limiter_enabled {
+            self.limiter.process(samples);
+        }
     }
 
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
+    }
+
+    /// Bypass the compressor without losing its settings.
+    ///
+    /// Re-enabling resets its envelope so the first block after the switch is
+    /// judged on its own level rather than whatever the detector last saw.
+    pub fn set_compressor_enabled(&mut self, enabled: bool) {
+        if enabled && !self.compressor_enabled {
+            self.compressor.reset();
+        }
+        self.compressor_enabled = enabled;
+    }
+
+    /// Bypass the limiter without losing its settings.
+    ///
+    /// Re-enabling resets it: the lookahead delay line would otherwise replay
+    /// audio from whenever it was last engaged.
+    pub fn set_limiter_enabled(&mut self, enabled: bool) {
+        if enabled && !self.limiter_enabled {
+            self.limiter.reset();
+        }
+        self.limiter_enabled = enabled;
     }
 
     pub fn set_eq_gain(&mut self, band: EQBand, gain_db: f32) {
