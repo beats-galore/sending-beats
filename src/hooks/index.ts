@@ -1,7 +1,6 @@
 // Barrel exports for all custom hooks
 export { useAudioDevices } from './use-audio-devices';
 export { useMixerState } from './use-mixer-state';
-export { useChannelEffects } from './use-channel-effects';
 
 // New focused hooks for performance optimization
 export { useChannelsData } from './use-channels-data';

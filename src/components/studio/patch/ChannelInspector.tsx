@@ -1,9 +1,9 @@
 import { Group, Stack, Text } from '@mantine/core';
 
-import { useChannelEffects } from '../../../hooks';
 import { border, color } from '../../../theme/tokens';
 import type { AudioChannel } from '../../../types';
 import { asPan } from '../format';
+import type { PatchChannelChain } from '../hooks/use-patch-channel';
 import { ActionButton } from '../primitives/ActionButton';
 import { DragBar } from '../primitives/DragBar';
 import { Pill } from '../primitives/Pill';
@@ -13,6 +13,7 @@ import { ChannelEqualizer } from './ChannelEqualizer';
 
 type ChannelInspectorProps = {
   channel: AudioChannel;
+  chain: PatchChannelChain;
   pan: number;
   onPanChange: (pan: number) => void;
   sourceName: string;
@@ -33,6 +34,7 @@ type ChannelInspectorProps = {
 /** The processing chain for a channel, revealed inside its node. */
 export const ChannelInspector = ({
   channel,
+  chain,
   pan,
   onPanChange,
   sourceName,
@@ -40,8 +42,7 @@ export const ChannelInspector = ({
   showChain,
   onToggleEffects,
 }: ChannelInspectorProps) => {
-  const { setLimiterThreshold, toggleLimiter } = useChannelEffects(channel.id);
-  const chain = channel.effects_enabled && showChain;
+  const showProcessing = channel.effects_enabled && showChain;
 
   return (
     <Stack
@@ -59,7 +60,7 @@ export const ChannelInspector = ({
         >
           {channel.effects_enabled ? 'FX ON' : 'FX OFF'}
         </ActionButton>
-        {chain && (
+        {showProcessing && (
           <>
             <SectionLabel tracking="wide">PAN</SectionLabel>
             <DragBar
@@ -77,29 +78,29 @@ export const ChannelInspector = ({
         )}
       </Group>
 
-      {chain && (
+      {showProcessing && (
         <>
           <Group gap="xl" align="flex-start" wrap="nowrap">
-            <ChannelEqualizer channel={channel} />
-            <ChannelCompressor channel={channel} />
+            <ChannelEqualizer chain={chain} />
+            <ChannelCompressor chain={chain} />
           </Group>
 
           <Group gap="sm" wrap="nowrap" pt="md" style={{ borderTop: border() }}>
             <SectionLabel tracking="wider">LIMITER</SectionLabel>
             <Pill
-              tone={channel.limiter_enabled ? 'accent' : 'muted'}
-              onClick={() => void toggleLimiter()}
+              tone={chain.limiterEnabled ? 'accent' : 'muted'}
+              onClick={() => chain.setLimiter({ enabled: !chain.limiterEnabled })}
             >
-              {channel.limiter_enabled ? 'ON' : 'OFF'}
+              {chain.limiterEnabled ? 'ON' : 'OFF'}
             </Pill>
             <DragBar
-              value={channel.limiter_threshold}
+              value={chain.limiterThreshold}
               min={-12}
               max={0}
-              onChange={(value) => void setLimiterThreshold(Math.round(value * 10) / 10)}
+              onChange={(value) => chain.setLimiter({ threshold: Math.round(value * 10) / 10 })}
             />
             <Text size="2xs" c={color.textDim} w={52} ta="right">
-              {channel.limiter_threshold.toFixed(1)} dB
+              {chain.limiterThreshold.toFixed(1)} dB
             </Text>
           </Group>
         </>

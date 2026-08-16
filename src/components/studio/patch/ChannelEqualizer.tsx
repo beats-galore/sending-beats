@@ -1,9 +1,8 @@
 import { Group, Stack } from '@mantine/core';
 
-import { useChannelEffects } from '../../../hooks';
 import { color } from '../../../theme/tokens';
-import type { AudioChannel } from '../../../types';
 import { asGain } from '../format';
+import type { PatchChannelChain } from '../hooks/use-patch-channel';
 import { DragColumn } from '../primitives/DragColumn';
 import { SectionLabel } from '../primitives/SectionLabel';
 
@@ -11,17 +10,15 @@ const EQ_MIN = -12;
 const EQ_MAX = 12;
 
 type ChannelEqualizerProps = {
-  channel: AudioChannel;
+  chain: PatchChannelChain;
 };
 
 /** Three-band tone control for one channel. */
-export const ChannelEqualizer = ({ channel }: ChannelEqualizerProps) => {
-  const { setEQLowGain, setEQMidGain, setEQHighGain } = useChannelEffects(channel.id);
-
+export const ChannelEqualizer = ({ chain }: ChannelEqualizerProps) => {
   const bands = [
-    { label: 'LOW', value: channel.eq_low_gain, apply: setEQLowGain },
-    { label: 'MID', value: channel.eq_mid_gain, apply: setEQMidGain },
-    { label: 'HIGH', value: channel.eq_high_gain, apply: setEQHighGain },
+    { label: 'LOW', value: chain.eqLowGain, apply: (v: number) => chain.setEq({ lowGain: v }) },
+    { label: 'MID', value: chain.eqMidGain, apply: (v: number) => chain.setEq({ midGain: v }) },
+    { label: 'HIGH', value: chain.eqHighGain, apply: (v: number) => chain.setEq({ highGain: v }) },
   ];
 
   const readingTone = (value: number) =>

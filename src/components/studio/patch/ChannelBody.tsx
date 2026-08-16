@@ -144,6 +144,7 @@ export const ChannelBody = ({
       {opened && (
         <ChannelInspector
           channel={channel}
+          chain={patch.chain}
           pan={patch.pan}
           onPanChange={patch.setPan}
           sourceName={patch.sourceName}

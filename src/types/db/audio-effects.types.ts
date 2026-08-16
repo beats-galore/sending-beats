@@ -13,8 +13,40 @@ export type AudioEffectsDefault = {
   pan: number; // -1.0 (left) to 1.0 (right)
   muted: boolean;
   solo: boolean;
+  eqLowGain: number; // dB
+  eqMidGain: number; // dB
+  eqHighGain: number; // dB
+  compThreshold: number; // dB
+  compRatio: number; // 1.0 and up
+  compAttack: number; // ms
+  compRelease: number; // ms
+  compEnabled: boolean;
+  limiterThreshold: number; // dB
+  limiterEnabled: boolean;
   createdAt: Timestamp; // ISO timestamp
   updatedAt: Timestamp; // ISO timestamp
+};
+
+/** The EQ bands a single update may carry; omitted bands keep their value. */
+export type EqBandUpdate = {
+  lowGain?: number;
+  midGain?: number;
+  highGain?: number;
+};
+
+/** Compressor settings a single update may carry. */
+export type CompressorUpdate = {
+  threshold?: number;
+  ratio?: number;
+  attack?: number;
+  release?: number;
+  enabled?: boolean;
+};
+
+/** Limiter settings a single update may carry. */
+export type LimiterUpdate = {
+  threshold?: number;
+  enabled?: boolean;
 };
 
 export const AudioEffectType = ['equalizer', 'limiter', 'compressor'] as const;

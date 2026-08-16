@@ -1,62 +1,53 @@
 import { Box, Group, SimpleGrid, Stack, Text } from '@mantine/core';
 
-import { useChannelEffects } from '../../../hooks';
 import { border, color } from '../../../theme/tokens';
-import type { AudioChannel } from '../../../types';
+import type { PatchChannelChain } from '../hooks/use-patch-channel';
 import { ParamTile } from '../primitives/ParamTile';
 import { Pill } from '../primitives/Pill';
 import { SectionLabel } from '../primitives/SectionLabel';
 
 type ChannelCompressorProps = {
-  channel: AudioChannel;
+  chain: PatchChannelChain;
 };
 
 /** Dynamics for one channel: the four parameters and the engage switch. */
-export const ChannelCompressor = ({ channel }: ChannelCompressorProps) => {
-  const {
-    setCompressorThreshold,
-    setCompressorRatio,
-    setCompressorAttack,
-    setCompressorRelease,
-    toggleCompressor,
-  } = useChannelEffects(channel.id);
-
+export const ChannelCompressor = ({ chain }: ChannelCompressorProps) => {
   const params = [
     {
       label: 'THRESHOLD',
       unit: 'dB',
-      value: channel.comp_threshold,
+      value: chain.compThreshold,
       min: -40,
       max: 0,
       precision: 1,
-      apply: setCompressorThreshold,
+      apply: (value: number) => chain.setCompressor({ threshold: value }),
     },
     {
       label: 'RATIO',
       unit: ': 1',
-      value: channel.comp_ratio,
+      value: chain.compRatio,
       min: 1,
       max: 10,
       precision: 1,
-      apply: setCompressorRatio,
+      apply: (value: number) => chain.setCompressor({ ratio: value }),
     },
     {
       label: 'ATTACK',
       unit: 'ms',
-      value: channel.comp_attack,
+      value: chain.compAttack,
       min: 0.1,
       max: 100,
       precision: 0,
-      apply: setCompressorAttack,
+      apply: (value: number) => chain.setCompressor({ attack: value }),
     },
     {
       label: 'RELEASE',
       unit: 'ms',
-      value: channel.comp_release,
+      value: chain.compRelease,
       min: 10,
       max: 1000,
       precision: 0,
-      apply: setCompressorRelease,
+      apply: (value: number) => chain.setCompressor({ release: value }),
     },
   ];
 
@@ -65,10 +56,10 @@ export const ChannelCompressor = ({ channel }: ChannelCompressorProps) => {
       <Group gap="sm" wrap="nowrap">
         <SectionLabel>COMPRESSOR</SectionLabel>
         <Pill
-          tone={channel.comp_enabled ? 'accent' : 'muted'}
-          onClick={() => void toggleCompressor()}
+          tone={chain.compEnabled ? 'accent' : 'muted'}
+          onClick={() => chain.setCompressor({ enabled: !chain.compEnabled })}
         >
-          {channel.comp_enabled ? 'ON' : 'OFF'}
+          {chain.compEnabled ? 'ON' : 'OFF'}
         </Pill>
         <Box style={{ flex: 1, height: 1, background: color.line }} />
         <SectionLabel tracking="caps">GAIN REDUCTION</SectionLabel>

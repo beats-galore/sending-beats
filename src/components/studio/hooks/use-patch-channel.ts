@@ -22,8 +22,17 @@ export const usePatchChannel = (channel: AudioChannel) => {
   const effectsById = useAudioEffectsDefaultStore((state) => state.effectsById);
   const levels = useChannelLevels(channel.id);
 
-  const { loadEffects, updateGain, updatePan, setEffectsEnabled, toggleMute, toggleSolo } =
-    audioEffectsDefaultActions;
+  const {
+    loadEffects,
+    updateGain,
+    updatePan,
+    setEffectsEnabled,
+    toggleMute,
+    toggleSolo,
+    updateEq,
+    updateCompressor,
+    updateLimiter,
+  } = audioEffectsDefaultActions;
 
   const device = useMemo(
     () =>
@@ -95,6 +104,42 @@ export const usePatchChannel = (channel: AudioChannel) => {
     void toggleSolo(effects.id, device.id, configurationId);
   }, [effects, device, configurationId, toggleSolo]);
 
+  const setEq = useCallback(
+    (bands: { lowGain?: number; midGain?: number; highGain?: number }) => {
+      if (!effects || !device || !configurationId) {
+        return;
+      }
+      void updateEq(effects.id, device.id, configurationId, bands);
+    },
+    [effects, device, configurationId, updateEq]
+  );
+
+  const setCompressor = useCallback(
+    (settings: {
+      threshold?: number;
+      ratio?: number;
+      attack?: number;
+      release?: number;
+      enabled?: boolean;
+    }) => {
+      if (!effects || !device || !configurationId) {
+        return;
+      }
+      void updateCompressor(effects.id, device.id, configurationId, settings);
+    },
+    [effects, device, configurationId, updateCompressor]
+  );
+
+  const setLimiter = useCallback(
+    (settings: { threshold?: number; enabled?: boolean }) => {
+      if (!effects || !device || !configurationId) {
+        return;
+      }
+      void updateLimiter(effects.id, device.id, configurationId, settings);
+    },
+    [effects, device, configurationId, updateLimiter]
+  );
+
   return {
     device,
     levels,
@@ -109,5 +154,25 @@ export const usePatchChannel = (channel: AudioChannel) => {
     setPan,
     setMuted,
     setSolo,
+    // The custom chain, read from the same effects row that carries the fader.
+    // Defaults mirror the DSP constructors so an unpatched channel still draws.
+    chain: {
+      eqLowGain: effects?.eqLowGain ?? 0,
+      eqMidGain: effects?.eqMidGain ?? 0,
+      eqHighGain: effects?.eqHighGain ?? 0,
+      compThreshold: effects?.compThreshold ?? -12,
+      compRatio: effects?.compRatio ?? 4,
+      compAttack: effects?.compAttack ?? 10,
+      compRelease: effects?.compRelease ?? 200,
+      compEnabled: effects?.compEnabled ?? false,
+      limiterThreshold: effects?.limiterThreshold ?? -0.1,
+      limiterEnabled: effects?.limiterEnabled ?? false,
+      setEq,
+      setCompressor,
+      setLimiter,
+    },
   };
 };
+
+/** The chain slice of a patch channel, as the inspector components take it. */
+export type PatchChannelChain = ReturnType<typeof usePatchChannel>['chain'];

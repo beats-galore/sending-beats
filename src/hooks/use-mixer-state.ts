@@ -42,52 +42,6 @@ export const useMixerState = () => {
     [updateChannel]
   );
 
-  // EQ controls
-  const updateChannelEQ = useCallback(
-    async (
-      channelId: number,
-      eq: {
-        eq_low_gain?: number;
-        eq_mid_gain?: number;
-        eq_high_gain?: number;
-      }
-    ) => {
-      await updateChannel(channelId, eq);
-    },
-    [updateChannel]
-  );
-
-  // Compressor controls
-  const updateChannelCompressor = useCallback(
-    async (
-      channelId: number,
-      comp: {
-        comp_threshold?: number;
-        comp_ratio?: number;
-        comp_attack?: number;
-        comp_release?: number;
-        comp_enabled?: boolean;
-      }
-    ) => {
-      await updateChannel(channelId, comp);
-    },
-    [updateChannel]
-  );
-
-  // Limiter controls
-  const updateChannelLimiter = useCallback(
-    async (
-      channelId: number,
-      limiter: {
-        limiter_threshold?: number;
-        limiter_enabled?: boolean;
-      }
-    ) => {
-      await updateChannel(channelId, limiter);
-    },
-    [updateChannel]
-  );
-
   // Master controls
   const setMasterGain = useCallback(
     async (gain: number) => {
@@ -134,11 +88,6 @@ export const useMixerState = () => {
       getChannelById,
       setChannelInputDevice,
 
-      // Effects
-      updateChannelEQ,
-      updateChannelCompressor,
-      updateChannelLimiter,
-
       // Master controls
       setMasterGain,
 
@@ -161,9 +110,6 @@ export const useMixerState = () => {
       initialize,
       getChannelById,
       setChannelInputDevice,
-      updateChannelEQ,
-      updateChannelCompressor,
-      updateChannelLimiter,
       setMasterGain,
       clearError,
       setError,
