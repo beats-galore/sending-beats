@@ -9,6 +9,7 @@ use crate::audio::types::AudioDeviceInfo;
 
 /// Configuration for a file player instance
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FilePlayerConfig {
     pub name: String,
     pub sample_rate: u32,
