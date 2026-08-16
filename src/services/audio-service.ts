@@ -15,11 +15,6 @@ export const audioService = {
     return invoke<AudioDeviceInfo[]>('refresh_audio_devices');
   },
 
-  // Real-time data
-  async getChannelLevels(): Promise<Record<number, [number, number, number, number]>> {
-    return invoke<Record<number, [number, number, number, number]>>('get_channel_levels');
-  },
-
   async removeInputStream(deviceId: Identifier<ConfiguredAudioDevice>): Promise<void> {
     return invoke('remove_input_stream', { deviceId });
   },
@@ -152,15 +147,5 @@ export const audioService = {
 
   async reportDeviceError(deviceId: string, error: string): Promise<void> {
     return invoke('report_device_error', { deviceId, error });
-  },
-
-  // VU Level Events
-  async initializeVuEvents(): Promise<void> {
-    return invoke('initialize_vu_channels');
-  },
-
-  // VU Level Channels (high-performance streaming)
-  async initializeVuChannels(): Promise<void> {
-    return invoke('initialize_vu_channels');
   },
 } as const;

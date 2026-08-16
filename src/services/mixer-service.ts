@@ -14,11 +14,6 @@ export const mixerService = {
     return invoke('rename_mixer_channel', { channelNumber, name });
   },
 
-  // Channel management
-  //
-  // NOTE: `add_mixer_channel` is not registered in the Rust invoke_handler, so
-  // this call currently rejects. Adding a channel still updates the interface
-  // and the session, but the pipeline never learns about it.
   async requestAudioCapturePermissions(): Promise<string> {
     return invoke<string>('request_audio_capture_permissions');
   },

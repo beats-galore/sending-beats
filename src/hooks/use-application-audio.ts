@@ -14,8 +14,6 @@ export const useApplicationAudio = () => {
   const requestPermissions = useApplicationAudioStore((state) => state.requestPermissions);
   const startCapturing = useApplicationAudioStore((state) => state.startCapturing);
   const stopCapturing = useApplicationAudioStore((state) => state.stopCapturing);
-  const createMixerInput = useApplicationAudioStore((state) => state.createMixerInput);
-  const stopAllCaptures = useApplicationAudioStore((state) => state.stopAllCaptures);
   const clearError = useApplicationAudioStore((state) => state.clearError);
 
   useEffect(() => {
@@ -38,8 +36,6 @@ export const useApplicationAudio = () => {
         requestPermissions,
         startCapturing,
         stopCapturing,
-        createMixerInput,
-        stopAllCaptures,
         clearError,
       },
     }),
@@ -54,8 +50,6 @@ export const useApplicationAudio = () => {
       requestPermissions,
       startCapturing,
       stopCapturing,
-      createMixerInput,
-      stopAllCaptures,
       clearError,
     ]
   );

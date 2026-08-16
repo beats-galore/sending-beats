@@ -26,8 +26,6 @@ type ApplicationAudioStore = {
   requestPermissions: () => Promise<{ granted: boolean; message: string }>;
   startCapturing: (pid: number) => Promise<string | null>;
   stopCapturing: (pid: number) => Promise<boolean>;
-  createMixerInput: (pid: number) => Promise<string | null>;
-  stopAllCaptures: () => Promise<boolean>;
   clearError: () => void;
 };
 
@@ -213,53 +211,6 @@ export const useApplicationAudioStore = create<ApplicationAudioStore>()(
         return true;
       } catch (error) {
         console.error(`❌ Failed to stop capturing from PID ${pid}:`, error);
-        set({
-          isLoading: false,
-          error: error as string,
-        });
-        return false;
-      }
-    },
-
-    createMixerInput: async (pid: number) => {
-      set({ isLoading: true, error: null });
-
-      try {
-        const channelName = await invoke<string>('create_mixer_input_for_application', { pid });
-
-        const activeCaptures = await invoke<ProcessInfo[]>('get_active_audio_captures');
-        set({
-          activeCaptures,
-          isLoading: false,
-        });
-
-        console.log(`✅ Created mixer input for PID ${pid}: ${channelName}`);
-        return channelName;
-      } catch (error) {
-        console.error(`❌ Failed to create mixer input for PID ${pid}:`, error);
-        set({
-          isLoading: false,
-          error: error as string,
-        });
-        return null;
-      }
-    },
-
-    stopAllCaptures: async () => {
-      set({ isLoading: true, error: null });
-
-      try {
-        await invoke<string>('stop_all_audio_captures');
-
-        set({
-          activeCaptures: [],
-          isLoading: false,
-        });
-
-        console.log('✅ Stopped all audio captures');
-        return true;
-      } catch (error) {
-        console.error('❌ Failed to stop all captures:', error);
         set({
           isLoading: false,
           error: error as string,
