@@ -1,32 +1,28 @@
 use anyhow::{Context, Result};
 use sea_orm::{ConnectOptions, Database, DatabaseConnection};
 use serde::{Deserialize, Serialize};
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use sqlx::sqlite::SqlitePoolOptions;
 use std::error::Error;
 use std::path::Path;
 use std::time::Duration;
 
 pub mod audio_bus_service;
-pub mod broadcasts;
 pub mod cast_configuration_service;
 pub mod cast_secrets;
 pub mod file_player_service;
 pub mod patch_color_service;
 pub mod patch_layout_service;
-pub mod recordings;
 
 // SeaORM services
 pub mod seaorm_services;
 
 pub use audio_bus_service::AudioBusService;
-pub use broadcasts::*;
 pub use cast_configuration_service::{
     CastConfigurationDraft, CastConfigurationService, CastTargetService,
 };
 pub use file_player_service::{FilePlayerStore, FilePlayerTargetService, QueuedTrackRow};
 pub use patch_color_service::PatchColorService;
 pub use patch_layout_service::{PatchLayoutService, Placement};
-pub use recordings::*;
 pub use seaorm_services::{
     AudioEffectsDefaultService, AudioMixerConfigurationService, ConfiguredAudioDeviceService,
     SystemAudioStateService,
@@ -34,7 +30,6 @@ pub use seaorm_services::{
 
 /// SQLite-based database manager for audio system
 pub struct AudioDatabase {
-    pool: SqlitePool,
     sea_orm_db: DatabaseConnection,
 }
 
@@ -57,16 +52,12 @@ impl AudioDatabase {
         let database_url = format!("sqlite:{}?mode=rwc", database_path.display());
         println!("🗄️  Database URL: {}", database_url);
 
+        // One connection is all migrations need; the pool is closed once they run.
         let pool = SqlitePoolOptions::new()
-            .max_connections(10)
+            .max_connections(1)
             .connect(&database_url)
             .await
             .context("Failed to connect to SQLite database")?;
-
-        println!(
-            "✅ SQLite connection pool created with {} max connections",
-            10
-        );
 
         // Run migrations with detailed error reporting
         println!("🔄 Running database migrations...");
@@ -129,12 +120,11 @@ impl AudioDatabase {
 
         println!("✅ SeaORM connection established");
 
-        Ok(Self { pool, sea_orm_db })
-    }
+        // The sqlx pool exists only to run migrations; every live query goes
+        // through sea-orm, so it is closed rather than kept idling.
+        pool.close().await;
 
-    /// Get database connection pool for advanced queries
-    pub fn pool(&self) -> &SqlitePool {
-        &self.pool
+        Ok(Self { sea_orm_db })
     }
 
     /// Get SeaORM database connection
