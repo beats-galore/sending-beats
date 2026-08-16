@@ -39,11 +39,7 @@ pub use mixer::stream_management::VirtualMixer;
 
 pub use crate::db::AudioDatabase;
 
-pub use broadcasting::{
-    create_streaming_bridge, AudioEncoder, AudioStreamingBridge, IcecastSourceClient, IcecastStats,
-    IcecastStreamManager, StreamConfig, StreamManager, StreamingCommand, StreamingService,
-    StreamingStats, StreamingStatus,
-};
+pub use broadcasting::StreamManager;
 
 pub use devices::AudioDeviceManager;
 

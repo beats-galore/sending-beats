@@ -5,13 +5,11 @@ use tokio::time::{sleep, Duration, Instant};
 use tracing::{error, info, warn};
 
 use super::config::StreamingServiceConfig;
-use super::icecast_source::{AudioCodec, AudioFormat, IcecastStreamManager};
-use super::streaming::{AudioEncoder, StreamConfig};
+use super::icecast_source::{AudioCodec, IcecastStreamManager};
 use super::types::{
     AudioStreamingStats, BitrateInfo, ConnectionDiagnostics, ConnectionHealth,
     IcecastStreamingStats, ServiceState, StreamingServiceStatus,
 };
-use crate::audio::{create_streaming_bridge, AudioStreamingBridge, VirtualMixer};
 
 /// Integrated streaming service that connects the mixer to Icecast
 ///
@@ -23,17 +21,8 @@ use crate::audio::{create_streaming_bridge, AudioStreamingBridge, VirtualMixer};
 /// 5. Provides streaming statistics and status
 #[derive(Debug)]
 pub struct StreamingService {
-    /// Audio mixer reference
-    mixer: Arc<RwLock<Option<Arc<VirtualMixer>>>>,
-
     /// Icecast stream manager
     icecast_manager: Arc<Mutex<Option<IcecastStreamManager>>>,
-
-    /// Audio streaming bridge
-    streaming_bridge: Arc<Mutex<Option<AudioStreamingBridge>>>,
-
-    /// Direct reference to streaming stats for efficient access
-    streaming_stats: Arc<Mutex<Option<Arc<Mutex<super::bridge::StreamingStats>>>>>,
 
     /// Service state
     state: Arc<Mutex<ServiceState>>,
@@ -49,10 +38,7 @@ impl StreamingService {
     /// Create a new streaming service
     pub fn new() -> Self {
         Self {
-            mixer: Arc::new(RwLock::new(None)),
             icecast_manager: Arc::new(Mutex::new(None)),
-            streaming_bridge: Arc::new(Mutex::new(None)),
-            streaming_stats: Arc::new(Mutex::new(None)),
             state: Arc::new(Mutex::new(ServiceState::default())),
             config: Arc::new(RwLock::new(None)),
             monitor_handle: Arc::new(Mutex::new(None)),
@@ -78,94 +64,6 @@ impl StreamingService {
         *self.icecast_manager.lock().await = Some(icecast_manager);
 
         info!("✅ Streaming service initialized");
-        Ok(())
-    }
-
-    /// Connect to the audio mixer
-    pub async fn connect_mixer(&self, mixer: Arc<VirtualMixer>) -> Result<()> {
-        info!("🔗 Connecting streaming service to audio mixer...");
-        // // Store mixer reference
-        // *self.mixer.write().await = Some(mixer.clone());
-
-        // // Get audio output from mixer
-        // let audio_rx = mixer.create_streaming_audio_receiver().await;
-
-        // // Create audio streaming bridge
-        // let config = self.config.read().await;
-        // if let Some(ref cfg) = *config {
-        //     let stream_config = StreamConfig {
-        //         icecast_url: format!("http://{}:{}", cfg.server_host, cfg.server_port),
-        //         mount_point: cfg.mount_point.clone(),
-        //         username: "source".to_string(),
-        //         password: cfg.password.clone(),
-        //         bitrate: cfg.audio_format.bitrate,
-        //         sample_rate: cfg.audio_format.sample_rate,
-        //         channels: cfg.audio_format.channels,
-        //     };
-
-        //     let bridge = create_streaming_bridge(stream_config, audio_rx).await?;
-
-        //     // Store stats reference for efficient access
-        //     *self.streaming_stats.lock().await = Some(bridge.stats.clone());
-
-        //     // Connect audio input to Icecast manager
-        //     if let Some(ref mut icecast_manager) = *self.icecast_manager.lock().await {
-        //         // Create a channel to connect bridge to Icecast manager
-        //         let (encoder_tx, encoder_rx) = tokio::sync::mpsc::channel(512);
-        //         icecast_manager.connect_audio_input(encoder_rx);
-
-        //         // Spawn encoding task to convert f32 audio to encoded format
-        //         let audio_format = cfg.audio_format.clone();
-        //         tokio::spawn(async move {
-        //             Self::run_audio_encoder(bridge, encoder_tx, audio_format).await;
-        //         });
-        //     }
-
-        //     info!("✅ Streaming service connected to mixer");
-        // } else {
-        //     return Err(anyhow::anyhow!("Streaming service not initialized"));
-        // }
-
-        Ok(())
-    }
-
-    /// Connect to the audio mixer using a reference
-    pub async fn connect_mixer_ref(&self, mixer: &VirtualMixer) -> Result<()> {
-        info!("🔗 Connecting streaming service to audio mixer (ref)...");
-
-        // // Get audio output from mixer
-        // let audio_rx = mixer.create_streaming_audio_receiver().await;
-
-        // // Create audio streaming bridge
-        // let config = self.config.read().await;
-        // if let Some(ref cfg) = *config {
-        //     let stream_config = StreamConfig {
-        //         icecast_url: format!("http://{}:{}", cfg.server_host, cfg.server_port),
-        //         mount_point: cfg.mount_point.clone(),
-        //         username: "source".to_string(),
-        //         password: cfg.password.clone(),
-        //         bitrate: cfg.audio_format.bitrate,
-        //         sample_rate: cfg.audio_format.sample_rate,
-        //         channels: cfg.audio_format.channels,
-        //     };
-
-        //     let _bridge = create_streaming_bridge(stream_config, audio_rx).await?;
-
-        //     // Connect audio input to Icecast manager
-        //     if let Some(ref mut icecast_manager) = *self.icecast_manager.lock().await {
-        //         // Create a channel to connect bridge to Icecast manager
-        //         let (_encoder_tx, encoder_rx) = tokio::sync::mpsc::channel(512);
-        //         icecast_manager.connect_audio_input(encoder_rx);
-
-        //         // Note: In a full implementation, we'd spawn the audio encoder task here
-        //         // For now, this creates the connection but doesn't start the encoding pipeline
-        //     }
-
-        //     info!("✅ Streaming service connected to mixer (ref)");
-        // } else {
-        //     return Err(anyhow::anyhow!("Streaming service not initialized"));
-        // }
-
         Ok(())
     }
 
@@ -301,18 +199,9 @@ impl StreamingService {
             .map(|start| start.elapsed().as_secs())
             .unwrap_or(0);
 
-        // Get audio streaming stats from stored stats reference
-        let audio_stats = if let Some(ref stats_ref) = *self.streaming_stats.lock().await {
-            let bridge_stats = stats_ref.lock().await;
-            Some(AudioStreamingStats {
-                samples_processed: bridge_stats.total_samples_processed,
-                samples_per_second: bridge_stats.samples_per_second,
-                buffer_overruns: bridge_stats.buffer_overruns,
-                encoding_errors: bridge_stats.encoding_errors,
-            })
-        } else {
-            None
-        };
+        // The bridge that fed these stats never ran; the field is kept in the
+        // status shape for the frontend but is always empty.
+        let audio_stats: Option<AudioStreamingStats> = None;
 
         // Get Icecast stats
         let icecast_stats = if let Some(ref icecast_manager) = *self.icecast_manager.lock().await {
@@ -643,30 +532,5 @@ impl StreamingService {
 
         // Stability decreases with failures and packet loss
         (1.0 - failure_penalty - packet_loss_penalty).max(0.0)
-    }
-
-    /// Audio encoder task - converts f32 audio to encoded format
-    async fn run_audio_encoder(
-        bridge: AudioStreamingBridge,
-        encoder_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
-        audio_format: AudioFormat,
-    ) {
-        info!("🎵 Starting audio encoder task...");
-
-        // Create audio encoder
-        let encoder = AudioEncoder::new(
-            audio_format.bitrate,
-            audio_format.sample_rate,
-            audio_format.channels,
-        );
-
-        // Get audio from streaming bridge
-        let audio_rx = bridge.subscribe_status(); // This should be audio data receiver
-
-        // Note: This is a simplified implementation
-        // In practice, we'd need to properly integrate the AudioStreamingBridge
-        // with the encoding pipeline
-
-        info!("🎵 Audio encoder task stopped");
     }
 }

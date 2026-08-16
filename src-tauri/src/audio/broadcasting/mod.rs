@@ -4,9 +4,7 @@
 // - streaming: Core streaming functionality and protocols
 // - service: Broadcasting service management and coordination
 // - icecast_source: Icecast-specific source implementation
-// - bridge: Audio streaming bridge connecting mixer to broadcast
 
-pub mod bridge;
 pub mod icecast_source;
 pub mod service;
 pub mod streaming;
@@ -29,13 +27,5 @@ pub use service::{
     IcecastStreamingStats, ServiceState, StreamingService, StreamingServiceConfig,
     StreamingServiceStatus,
 };
-pub use streaming::AudioEncoder;
-
 // Re-export icecast types
 pub use icecast_source::{IcecastSourceClient, IcecastStats, IcecastStreamManager};
-
-// Re-export bridge types
-pub use bridge::{
-    create_streaming_bridge, AudioStreamingBridge, StreamingCommand, StreamingStats,
-    StreamingStatus,
-};
