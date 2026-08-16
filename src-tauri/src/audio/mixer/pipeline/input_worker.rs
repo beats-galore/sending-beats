@@ -380,12 +380,23 @@ impl InputWorker {
         }
     }
 
+    /// Set this channel's own solo state.
+    ///
+    /// The shared any-channel-solo flag is deliberately not written here — it
+    /// is an OR across every channel, so only the pipeline, which can see all
+    /// of them, recomputes it. A worker writing its own state there turned
+    /// un-soloing one channel into un-soloing the room.
     pub fn update_solo(&mut self, solo: bool) {
         if let Ok(mut effects) = self.default_effects.lock() {
             effects.set_solo(solo);
         }
-        self.any_channel_solo
-            .store(solo, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn is_solo(&self) -> bool {
+        self.default_effects
+            .lock()
+            .map(|effects| effects.is_solo())
+            .unwrap_or(false)
     }
 
     /// Get processing statistics

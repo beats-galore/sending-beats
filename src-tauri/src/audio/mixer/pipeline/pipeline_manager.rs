@@ -321,6 +321,9 @@ impl AudioPipeline {
         // Add worker to collection BEFORE recalculating (needed for sample rate detection)
         self.input_workers.insert(device_id.clone(), input_worker);
 
+        // A restored strip may arrive already soloed, which mutes everyone else
+        self.recompute_any_channel_solo();
+
         // Now recalculate target mix rate with the new worker included
         self.calculate_target_mix_rate()?;
         self.update_target_sample_rates()?;
@@ -707,6 +710,10 @@ impl AudioPipeline {
             }
         }
 
+        // A soloed device leaving has to release the room rather than keep
+        // every other channel muted by a flag nobody holds anymore
+        self.recompute_any_channel_solo();
+
         // Remove from mixing layer (this also removes from temporal buffer)
         self.mixing_layer
             .remove_input_consumer(device_id.to_string());
@@ -927,13 +934,26 @@ impl AudioPipeline {
         Ok(())
     }
 
+    /// Set a channel's solo, keeping solo exclusive across the mix.
+    ///
+    /// The database enforces one solo per configuration, so the engine follows
+    /// the same rule: soloing a channel un-solos every other one, and the
+    /// shared flag the muting logic reads is recomputed from what the workers
+    /// actually hold rather than trusted to the last writer.
     pub fn update_input_solo(&mut self, device_id: &str, solo: bool) -> Result<()> {
-        let worker = self
-            .input_workers
-            .get_mut(device_id)
-            .ok_or_else(|| anyhow::anyhow!("Input device '{}' not found", device_id))?;
+        if !self.input_workers.contains_key(device_id) {
+            return Err(anyhow::anyhow!("Input device '{}' not found", device_id));
+        }
 
-        worker.update_solo(solo);
+        for (id, worker) in self.input_workers.iter_mut() {
+            if id == device_id {
+                worker.update_solo(solo);
+            } else if solo {
+                worker.update_solo(false);
+            }
+        }
+
+        self.recompute_any_channel_solo();
         info!(
             "✅ {}: Updated solo for input device '{}' to {}",
             "AUDIO_PIPELINE".on_purple().blue(),
@@ -941,6 +961,17 @@ impl AudioPipeline {
             solo
         );
         Ok(())
+    }
+
+    /// Refresh the shared any-channel-solo flag from the workers' own states.
+    ///
+    /// Called whenever solo changes and whenever a channel joins or leaves —
+    /// a soloed device being unplugged has to release the room, not leave
+    /// every other channel muted by a flag nobody holds anymore.
+    fn recompute_any_channel_solo(&self) {
+        let any_solo = self.input_workers.values().any(|worker| worker.is_solo());
+        self.any_channel_solo
+            .store(any_solo, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn update_master_gain(&mut self, gain: f32) -> Result<()> {

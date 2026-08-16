@@ -258,14 +258,21 @@ const store = create<AudioEffectsDefaultStore>()(
           solo: newSolo,
         });
 
+        // Solo is exclusive — the backend un-solos every other channel in the
+        // configuration, so the rows here have to follow or their pills stay
+        // lit until the next full load.
         set((state) => ({
-          effectsById: {
-            ...state.effectsById,
-            [effectsId]: {
-              ...state.effectsById[effectsId],
-              solo: newSolo,
-            },
-          },
+          effectsById: Object.fromEntries(
+            Object.entries(state.effectsById).map(([id, effect]) => {
+              if (id === effectsId) {
+                return [id, { ...effect, solo: newSolo }];
+              }
+              if (newSolo && effect.configurationId === configurationId && effect.solo) {
+                return [id, { ...effect, solo: false }];
+              }
+              return [id, effect];
+            })
+          ),
         }));
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Failed to toggle solo';
