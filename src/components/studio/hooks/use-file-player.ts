@@ -71,6 +71,7 @@ export const useFilePlayer = (playerId: Uuid<FilePlayer> | null) => {
   const removeTrack = useFilePlayerStore((state) => state.removeTrack);
   const moveTrack = useFilePlayerStore((state) => state.moveTrack);
   const clearQueue = useFilePlayerStore((state) => state.clearQueue);
+  const browseForTracks = useFilePlayerStore((state) => state.browseForTracks);
   const setBreakpoint = useFilePlayerStore((state) => state.setBreakpoint);
 
   const playing = status?.state === 'playing';
@@ -112,13 +113,18 @@ export const useFilePlayer = (playerId: Uuid<FilePlayer> | null) => {
           void clearQueue(playerId);
         }
       },
+      browse: () => {
+        if (playerId) {
+          void browseForTracks(playerId);
+        }
+      },
       breakAfter: (trackId: Uuid<QueuedTrack> | null) => {
         if (playerId) {
           void setBreakpoint(playerId, trackId);
         }
       },
     };
-  }, [playerId, control, addTracks, removeTrack, moveTrack, clearQueue, setBreakpoint]);
+  }, [playerId, control, addTracks, removeTrack, moveTrack, clearQueue, browseForTracks, setBreakpoint]);
 
   const currentIndex = currentIndexOf(status, queue);
 

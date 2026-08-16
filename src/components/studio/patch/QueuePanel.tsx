@@ -8,6 +8,7 @@ import type { Uuid } from '../../../types/util.types';
 import { asTrackTime } from '../format';
 import { useFileDrop } from '../hooks/use-file-drop';
 import { useFilePlayer } from '../hooks/use-file-player';
+import { ActionButton } from '../primitives/ActionButton';
 import { usePatchColor } from '../hooks/use-patch-color';
 import type { NodeRect } from './patch-layout';
 import { QueueBreakNote } from './QueueBreakNote';
@@ -102,6 +103,11 @@ export const QueuePanel = ({ playerId, channelId, position, anchor }: QueuePanel
         <Text size="3xs" c={color.textFaint} style={{ letterSpacing: layout.tracking.wide }}>
           {queue.length} {queue.length === 1 ? 'TRACK' : 'TRACKS'} · {asTrackTime(total / 1000)}
         </Text>
+        {/* Also in the header, because the target at the foot of the panel is
+            below the fold whenever the card it belongs to sits low down. */}
+        <ActionButton onClick={actions.browse} padding="2px 7px" size="3xs">
+          + FILES
+        </ActionButton>
       </Group>
 
       <Stack gap="sm" p="md" style={{ flex: 'none', borderBottom: border() }}>
@@ -138,7 +144,7 @@ export const QueuePanel = ({ playerId, channelId, position, anchor }: QueuePanel
         onBreakAfter={actions.breakAfter}
       />
 
-      <QueueDrop tint={tint} over={over} />
+      <QueueDrop tint={tint} over={over} onBrowse={actions.browse} />
     </Box>
   );
 };

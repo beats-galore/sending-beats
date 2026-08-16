@@ -85,6 +85,16 @@ export const filePlayerService = {
     return invoke('set_player_breakpoint', { playerId, trackId });
   },
 
+  /**
+   * Ask the system for files to queue.
+   *
+   * Resolves to an empty list when the dialog is dismissed — a choice, not a
+   * failure.
+   */
+  async browse(): Promise<FilePath[]> {
+    return invoke<FilePath[]>('browse_audio_files');
+  },
+
   async control(playerId: Uuid<FilePlayer>, action: PlaybackAction): Promise<void> {
     return invoke('control_file_player', { playerId, action });
   },

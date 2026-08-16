@@ -32,6 +32,8 @@ type FilePlayerStore = {
   poll: () => Promise<void>;
 
   addTracks: (playerId: PlayerId, filePaths: FilePath[]) => Promise<void>;
+  /** Open the system file browser and queue whatever comes back */
+  browseForTracks: (playerId: PlayerId) => Promise<void>;
   removeTrack: (playerId: PlayerId, trackId: TrackId) => Promise<void>;
   moveTrack: (playerId: PlayerId, trackId: TrackId, toIndex: number) => Promise<void>;
   clearQueue: (playerId: PlayerId) => Promise<void>;
@@ -157,6 +159,17 @@ export const useFilePlayerStore = create<FilePlayerStore>((set, get) => ({
     }
 
     await get().refresh(playerId);
+  },
+
+  browseForTracks: async (playerId) => {
+    try {
+      const picked = await filePlayerService.browse();
+      if (picked.length > 0) {
+        await get().addTracks(playerId, picked);
+      }
+    } catch (error) {
+      console.error('Failed to browse for tracks:', error);
+    }
   },
 
   removeTrack: async (playerId, trackId) => {

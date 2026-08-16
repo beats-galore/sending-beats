@@ -419,30 +419,56 @@ pub async fn get_player_status(
         .map_err(|e| e.to_string())
 }
 
-// File system commands
+/// Ask the system for audio files to queue
+///
+/// The dialog is the reliable way in. Dragging from Finder gives paths too, but
+/// only while the window can be reached with a full hand of files — this works
+/// from anywhere, and is the one route that cannot be missed.
+///
+/// Returns an empty list when the dialog is dismissed, which is a choice rather
+/// than a failure and reads better as nothing to add.
 #[tauri::command]
-pub async fn browse_audio_files() -> Result<Vec<String>, String> {
-    use std::sync::{Arc, Mutex};
+pub async fn browse_audio_files(app: tauri::AppHandle) -> Result<Vec<String>, String> {
     use tauri_plugin_dialog::DialogExt;
-    use tokio::time::Duration;
 
     println!("🔍 Opening audio file browser dialog");
 
-    // For now, return error since we need to implement proper file dialog
-    // TODO: Implement multi-file selection dialog
-    Err("File browser not yet implemented".to_string())
+    let (tx, rx) = tokio::sync::oneshot::channel();
+
+    // Callback rather than blocking: the dialog runs on the main thread, and a
+    // command awaiting it there would hold up the very thread drawing it.
+    app.dialog()
+        .file()
+        .add_filter("Audio", &SUPPORTED_AUDIO_EXTENSIONS)
+        .set_title("Add to the queue")
+        .pick_files(move |picked| {
+            let _ = tx.send(picked);
+        });
+
+    let picked = rx
+        .await
+        .map_err(|_| "The file browser closed without answering".to_string())?;
+
+    Ok(picked
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|path| path.into_path().ok())
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect())
 }
+
+/// What the decoder can open
+///
+/// One list, used by the browser's filter and by the answer given to the
+/// interface, so the dialog cannot offer a file the queue would then refuse.
+const SUPPORTED_AUDIO_EXTENSIONS: [&str; 6] = ["mp3", "flac", "wav", "ogg", "m4a", "aac"];
 
 #[tauri::command]
 pub async fn get_supported_audio_formats() -> Result<Vec<String>, String> {
-    Ok(vec![
-        "mp3".to_string(),
-        "flac".to_string(),
-        "wav".to_string(),
-        "ogg".to_string(),
-        "m4a".to_string(),
-        "aac".to_string(),
-    ])
+    Ok(SUPPORTED_AUDIO_EXTENSIONS
+        .iter()
+        .map(|extension| extension.to_string())
+        .collect())
 }
 
 #[tauri::command]
