@@ -1,9 +1,10 @@
-import { useConfigurationStore } from '../../../stores/mixer-store';
+import { useMixerStore } from '../../../stores/mixer-store';
 import { ActionButton } from '../primitives/ActionButton';
 
 /** Writes the running session back over the saved patch it was loaded from. */
 export const PatchSaveButton = () => {
-  const { saveSessionToReusable, activeSession } = useConfigurationStore();
+  const saveSessionToReusable = useMixerStore((state) => state.saveSessionToReusable);
+  const activeSession = useMixerStore((state) => state.activeSession);
   const linked = Boolean(activeSession?.configuration.reusableConfigurationId);
 
   return (

@@ -14,15 +14,9 @@ const isTurboRun =
 export default defineConfig(() => ({
   plugins: [
     react({
-      // Enhanced React plugin configuration for development
-      babel: isDev
-        ? {
-            plugins: [
-              // Add React performance optimizations in development
-              ...(isTurboRun ? [] : []),
-            ],
-          }
-        : undefined,
+      babel: {
+        plugins: [['babel-plugin-react-compiler', { target: '19' }]],
+      },
     }),
     ...(isDev
       ? [

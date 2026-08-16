@@ -5,7 +5,7 @@ import {
   audioEffectsDefaultActions,
   useAudioEffectsDefaultStore,
 } from '../../../stores/audio-effects-default-store';
-import { useConfigurationStore } from '../../../stores/mixer-store';
+import { useMixerStore } from '../../../stores/mixer-store';
 import type { AudioChannel } from '../../../types';
 import { dbToLinear, linearToDb } from '../format';
 
@@ -18,7 +18,7 @@ import { dbToLinear, linearToDb } from '../format';
  * into it — so a channel with no device yet has controls that cannot be driven.
  */
 export const usePatchChannel = (channel: AudioChannel) => {
-  const { activeSession } = useConfigurationStore();
+  const activeSession = useMixerStore((state) => state.activeSession);
   const effectsById = useAudioEffectsDefaultStore((state) => state.effectsById);
   const levels = useChannelLevels(channel.id);
 

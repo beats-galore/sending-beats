@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from 'react';
 
 import { useFilePlayerStore } from '../../../stores/file-player-store';
-import { useConfigurationStore } from '../../../stores/mixer-store';
+import { useMixerStore } from '../../../stores/mixer-store';
 
 /**
  * The value the source select uses to mean "make me one".
@@ -26,7 +26,7 @@ const FIRST_PLAYER_NAME = 'Sweet Beats Player';
 export const usePlayerSources = (patchedIdentifier: string | null) => {
   const players = useFilePlayerStore((state) => state.players);
   const createPlayer = useFilePlayerStore((state) => state.create);
-  const { activeSession } = useConfigurationStore();
+  const activeSession = useMixerStore((state) => state.activeSession);
 
   const takenElsewhere = useMemo(() => {
     const patched = (activeSession?.configuredDevices ?? [])

@@ -6,23 +6,21 @@ import { useAudioDeviceStore } from '../stores';
 import type { AudioDeviceInfo } from '../types';
 
 export const useAudioDevices = () => {
-  const {
-    devices,
-    isLoading,
-    error,
-    inputDevices,
-    outputDevices,
-    defaultInputDevice,
-    defaultOutputDevice,
-    disconnectedDeviceIds,
-    loadDevices,
-    refreshDevices,
-    subscribeToHotplug,
-    findDevice,
-    isValidInput,
-    isValidOutput,
-    clearError,
-  } = useAudioDeviceStore();
+  const devices = useAudioDeviceStore((state) => state.devices);
+  const isLoading = useAudioDeviceStore((state) => state.isLoading);
+  const error = useAudioDeviceStore((state) => state.error);
+  const inputDevices = useAudioDeviceStore((state) => state.inputDevices);
+  const outputDevices = useAudioDeviceStore((state) => state.outputDevices);
+  const defaultInputDevice = useAudioDeviceStore((state) => state.defaultInputDevice);
+  const defaultOutputDevice = useAudioDeviceStore((state) => state.defaultOutputDevice);
+  const disconnectedDeviceIds = useAudioDeviceStore((state) => state.disconnectedDeviceIds);
+  const loadDevices = useAudioDeviceStore((state) => state.loadDevices);
+  const refreshDevices = useAudioDeviceStore((state) => state.refreshDevices);
+  const subscribeToHotplug = useAudioDeviceStore((state) => state.subscribeToHotplug);
+  const findDevice = useAudioDeviceStore((state) => state.findDevice);
+  const isValidInput = useAudioDeviceStore((state) => state.isValidInput);
+  const isValidOutput = useAudioDeviceStore((state) => state.isValidOutput);
+  const clearError = useAudioDeviceStore((state) => state.clearError);
 
   // Load devices on mount
   useEffect(() => {

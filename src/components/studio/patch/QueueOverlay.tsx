@@ -1,5 +1,5 @@
 import { useFilePlayerStore } from '../../../stores/file-player-store';
-import { useConfigurationStore } from '../../../stores/mixer-store';
+import { useMixerStore } from '../../../stores/mixer-store';
 import { patchedPlayerId } from '../../../types/file-player.types';
 import { expansionFor } from './patch-geometry';
 import type { ChannelCardVariant } from './patch-geometry';
@@ -22,7 +22,7 @@ type QueueOverlayProps = {
  */
 export const QueueOverlay = ({ channels, rects }: QueueOverlayProps) => {
   const players = useFilePlayerStore((state) => state.players);
-  const { activeSession } = useConfigurationStore();
+  const activeSession = useMixerStore((state) => state.activeSession);
 
   const panels = channels
     .map((channel, index) => ({ channel, index, anchor: rects.channels[index] }))

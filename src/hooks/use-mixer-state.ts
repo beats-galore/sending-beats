@@ -8,19 +8,17 @@ import type { ConfiguredAudioDevice } from '../types/db';
 import type { Identifier } from '../types/util.types';
 
 export const useMixerState = () => {
-  const {
-    config,
-    state,
-    error,
-    metrics,
-    masterLevels,
-    initializeMixer,
-    addChannel,
-    updateChannel,
-    updateMasterGain,
-    setError,
-    clearError,
-  } = useMixerStore();
+  const config = useMixerStore((store) => store.config);
+  const state = useMixerStore((store) => store.state);
+  const error = useMixerStore((store) => store.error);
+  const metrics = useMixerStore((store) => store.metrics);
+  const masterLevels = useMixerStore((store) => store.masterLevels);
+  const initializeMixer = useMixerStore((store) => store.initializeMixer);
+  const addChannel = useMixerStore((store) => store.addChannel);
+  const updateChannel = useMixerStore((store) => store.updateChannel);
+  const updateMasterGain = useMixerStore((store) => store.updateMasterGain);
+  const setError = useMixerStore((store) => store.setError);
+  const clearError = useMixerStore((store) => store.clearError);
 
   // Derived state
   const isRunning = state === MixerState.RUNNING;

@@ -2,7 +2,7 @@ import { useCallback, useMemo } from 'react';
 
 import { useApplicationAudio, useAudioDevices } from '../../../hooks';
 import { audioService } from '../../../services';
-import { useConfigurationStore, useMixerStore } from '../../../stores/mixer-store';
+import { useMixerStore } from '../../../stores/mixer-store';
 import { asDeviceIdentifier } from '../../../types/device-identifier';
 import { patchedPlayerId } from '../../../types/file-player.types';
 import { NEW_PLAYER_VALUE, usePlayerSources } from './use-player-sources';
@@ -18,7 +18,9 @@ import { NEW_PLAYER_VALUE, usePlayerSources } from './use-player-sources';
 export const useChannelSource = (channelId: number) => {
   const { inputDevices, refreshDevices, disconnectedDeviceIds } = useAudioDevices();
   const applicationAudio = useApplicationAudio();
-  const { activeSession, updateConfiguredDevice, removeConfiguredDevice } = useConfigurationStore();
+  const activeSession = useMixerStore((state) => state.activeSession);
+  const updateConfiguredDevice = useMixerStore((state) => state.updateConfiguredDevice);
+  const removeConfiguredDevice = useMixerStore((state) => state.removeConfiguredDevice);
   const restoreFailures = useMixerStore((state) => state.deviceRestoreFailures);
 
   const configuredDevice = useMemo(

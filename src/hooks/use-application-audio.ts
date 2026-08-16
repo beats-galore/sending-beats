@@ -3,47 +3,60 @@ import { useEffect, useMemo } from 'react';
 import { useApplicationAudioStore } from '../stores/application-audio-store';
 
 export const useApplicationAudio = () => {
-  const store = useApplicationAudioStore();
+  const availableApps = useApplicationAudioStore((state) => state.availableApps);
+  const knownApps = useApplicationAudioStore((state) => state.knownApps);
+  const activeCaptures = useApplicationAudioStore((state) => state.activeCaptures);
+  const permissionsGranted = useApplicationAudioStore((state) => state.permissionsGranted);
+  const isLoading = useApplicationAudioStore((state) => state.isLoading);
+  const initialLoadCompleted = useApplicationAudioStore((state) => state.initialLoadCompleted);
+  const error = useApplicationAudioStore((state) => state.error);
+  const refreshApplications = useApplicationAudioStore((state) => state.refreshApplications);
+  const requestPermissions = useApplicationAudioStore((state) => state.requestPermissions);
+  const startCapturing = useApplicationAudioStore((state) => state.startCapturing);
+  const stopCapturing = useApplicationAudioStore((state) => state.stopCapturing);
+  const createMixerInput = useApplicationAudioStore((state) => state.createMixerInput);
+  const stopAllCaptures = useApplicationAudioStore((state) => state.stopAllCaptures);
+  const clearError = useApplicationAudioStore((state) => state.clearError);
 
   useEffect(() => {
-    if (store.isLoading || store.initialLoadCompleted) {
+    if (isLoading || initialLoadCompleted) {
       return;
     }
-    store.refreshApplications();
-  }, [store, store.refreshApplications]);
+    refreshApplications();
+  }, [isLoading, initialLoadCompleted, refreshApplications]);
 
   return useMemo(
     () => ({
-      availableApps: store.availableApps,
-      knownApps: store.knownApps,
-      activeCaptures: store.activeCaptures,
-      permissionsGranted: store.permissionsGranted,
-      isLoading: store.isLoading,
-      error: store.error,
+      availableApps,
+      knownApps,
+      activeCaptures,
+      permissionsGranted,
+      isLoading,
+      error,
       actions: {
-        refreshApplications: store.refreshApplications,
-        requestPermissions: store.requestPermissions,
-        startCapturing: store.startCapturing,
-        stopCapturing: store.stopCapturing,
-        createMixerInput: store.createMixerInput,
-        stopAllCaptures: store.stopAllCaptures,
-        clearError: store.clearError,
+        refreshApplications,
+        requestPermissions,
+        startCapturing,
+        stopCapturing,
+        createMixerInput,
+        stopAllCaptures,
+        clearError,
       },
     }),
     [
-      store.availableApps,
-      store.knownApps,
-      store.activeCaptures,
-      store.permissionsGranted,
-      store.isLoading,
-      store.error,
-      store.refreshApplications,
-      store.requestPermissions,
-      store.startCapturing,
-      store.stopCapturing,
-      store.createMixerInput,
-      store.stopAllCaptures,
-      store.clearError,
+      availableApps,
+      knownApps,
+      activeCaptures,
+      permissionsGranted,
+      isLoading,
+      error,
+      refreshApplications,
+      requestPermissions,
+      startCapturing,
+      stopCapturing,
+      createMixerInput,
+      stopAllCaptures,
+      clearError,
     ]
   );
 };

@@ -3,7 +3,7 @@ import { useCallback, useMemo } from 'react';
 import { useAudioDevices, useMasterSectionData } from '../../../hooks';
 import { audioService } from '../../../services';
 import { sourcesOf, useBusStore } from '../../../stores/bus-store';
-import { useConfigurationStore, useMixerStore } from '../../../stores/mixer-store';
+import { useMixerStore } from '../../../stores/mixer-store';
 import { useStudioStore } from '../../../stores/studio-store';
 import type { DestinationRole } from '../../../stores/studio-store';
 import { asDeviceIdentifier } from '../../../types/device-identifier';
@@ -38,7 +38,8 @@ export type PatchOutput = {
  * carry them.
  */
 export const usePatchOutputs = () => {
-  const { activeSession, removeConfiguredDevice } = useConfigurationStore();
+  const activeSession = useMixerStore((state) => state.activeSession);
+  const removeConfiguredDevice = useMixerStore((state) => state.removeConfiguredDevice);
   const { setMasterOutputDevice } = useMasterSectionData();
   const { outputDevices, disconnectedDeviceIds } = useAudioDevices();
   const restoreFailures = useMixerStore((state) => state.deviceRestoreFailures);

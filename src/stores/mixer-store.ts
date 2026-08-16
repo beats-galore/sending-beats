@@ -880,21 +880,3 @@ export const useMixerStore = create<MixerStore>()(
   }))
 );
 
-// Export selector hook for configuration management
-export const useConfigurationStore = () => {
-  const store = useMixerStore();
-  return {
-    reusableConfigurations: store.reusableConfigurations,
-    activeSession: store.activeSession,
-    isLoading: store.isLoadingConfigurations,
-    error: store.configurationError,
-    loadConfigurations: store.loadConfigurations,
-    selectConfiguration: store.selectConfiguration,
-    saveSessionToReusable: store.saveSessionToReusable,
-    saveSessionAsNewReusable: store.saveSessionAsNewReusable,
-    clearError: store.clearConfigurationError,
-    setError: store.setConfigurationError,
-    updateConfiguredDevice: store.updateConfiguredDevice,
-    removeConfiguredDevice: store.removeConfiguredDevice,
-  };
-};

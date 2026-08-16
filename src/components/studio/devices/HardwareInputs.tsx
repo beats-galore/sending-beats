@@ -2,7 +2,7 @@ import { Group, Stack, Text } from '@mantine/core';
 import { useMemo } from 'react';
 
 import { useAudioDevices } from '../../../hooks';
-import { useConfigurationStore } from '../../../stores/mixer-store';
+import { useMixerStore } from '../../../stores/mixer-store';
 import { border, color } from '../../../theme/tokens';
 import { Panel } from '../primitives/Panel';
 import { SectionLabel } from '../primitives/SectionLabel';
@@ -11,7 +11,7 @@ import { StatusDot } from '../primitives/StatusDot';
 /** Every input the machine offers, and whether the patch is using it. */
 export const HardwareInputs = () => {
   const { inputDevices } = useAudioDevices();
-  const { activeSession } = useConfigurationStore();
+  const activeSession = useMixerStore((state) => state.activeSession);
 
   const patched = useMemo(
     () =>

@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react';
 
 import { useFilePlayerStore } from '../../../stores/file-player-store';
-import { useConfigurationStore } from '../../../stores/mixer-store';
+import { useMixerStore } from '../../../stores/mixer-store';
 import { useNowPlayingStore } from '../../../stores/now-playing-store';
 import { patchedPlayerId } from '../../../types/file-player.types';
 import { bundleIdFromDeviceIdentifier } from '../../../types/now-playing.types';
@@ -26,7 +26,7 @@ export const useChannelCardVariants = (): Record<number, ChannelCardVariant> => 
   const subscribe = useNowPlayingStore((state) => state.subscribe);
   const reportedBundleIds = useNowPlayingStore((state) => state.reportedBundleIds);
   const players = useFilePlayerStore((state) => state.players);
-  const { activeSession } = useConfigurationStore();
+  const activeSession = useMixerStore((state) => state.activeSession);
 
   useEffect(() => {
     void subscribe();

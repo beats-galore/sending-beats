@@ -2,7 +2,7 @@ import { Box, Group, Popover, ScrollArea, Stack, Text, TextInput } from '@mantin
 import { useDisclosure } from '@mantine/hooks';
 import { useCallback, useEffect, useState } from 'react';
 
-import { useConfigurationStore } from '../../../stores/mixer-store';
+import { useMixerStore } from '../../../stores/mixer-store';
 import { border, color } from '../../../theme/tokens';
 import { ActionButton } from '../primitives/ActionButton';
 import { SectionLabel } from '../primitives/SectionLabel';
@@ -10,13 +10,11 @@ import { StatusDot } from '../primitives/StatusDot';
 
 /** The saved-patch selector in the top bar: what is loaded, and how to change it. */
 export const PatchMenu = () => {
-  const {
-    reusableConfigurations,
-    activeSession,
-    loadConfigurations,
-    selectConfiguration,
-    saveSessionAsNewReusable,
-  } = useConfigurationStore();
+  const reusableConfigurations = useMixerStore((state) => state.reusableConfigurations);
+  const activeSession = useMixerStore((state) => state.activeSession);
+  const loadConfigurations = useMixerStore((state) => state.loadConfigurations);
+  const selectConfiguration = useMixerStore((state) => state.selectConfiguration);
+  const saveSessionAsNewReusable = useMixerStore((state) => state.saveSessionAsNewReusable);
 
   const [opened, { toggle, close }] = useDisclosure(false);
   const [newName, setNewName] = useState('');
