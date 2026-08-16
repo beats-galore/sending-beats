@@ -27,11 +27,8 @@ const LATENCY_SAMPLE_INTERVAL: std::time::Duration = std::time::Duration::from_m
 const LATENCY_WINDOWS_PER_LOG: u32 = 10;
 
 use super::{
-    audio_worker::AudioWorker,
-    input_worker::{InputWorker, InputWorkerStats},
-    mixing_layer::{MixingLayer, MixingLayerStats},
-    output_worker::{OutputWorker, OutputWorkerStats},
-    pacing,
+    audio_worker::AudioWorker, input_worker::InputWorker, mixing_layer::MixingLayer,
+    output_worker::OutputWorker, pacing,
 };
 
 mod buses;
@@ -766,30 +763,6 @@ impl AudioPipeline {
         Ok(())
     }
 
-    /// Get comprehensive pipeline statistics
-    pub fn get_pipeline_stats(&self) -> PipelineStats {
-        let input_stats: HashMap<String, InputWorkerStats> = self
-            .input_workers
-            .iter()
-            .map(|(id, worker)| (id.clone(), worker.get_stats()))
-            .collect();
-
-        let output_stats: HashMap<String, OutputWorkerStats> = self
-            .output_workers
-            .iter()
-            .map(|(id, worker)| (id.clone(), worker.get_stats()))
-            .collect();
-
-        PipelineStats {
-            is_running: self.is_running,
-            max_sample_rate: self.get_sample_rate(),
-            input_workers: input_stats,
-            mixing_layer: self.mixing_layer.get_stats(),
-            output_workers: output_stats,
-            total_devices: self.devices_registered,
-        }
-    }
-
     pub fn initialize_sample_rate(&mut self, device_sample_rate: u32) -> Result<()> {
         // **DYNAMIC SAMPLE RATE**: Set pipeline sample rate from first device
         if self.max_sample_rate.is_none() {
@@ -807,14 +780,4 @@ impl AudioPipeline {
 
         Ok(())
     }
-}
-
-#[derive(Debug)]
-pub struct PipelineStats {
-    pub is_running: bool,
-    pub max_sample_rate: u32,
-    pub input_workers: HashMap<String, InputWorkerStats>,
-    pub mixing_layer: MixingLayerStats,
-    pub output_workers: HashMap<String, OutputWorkerStats>,
-    pub total_devices: usize,
 }

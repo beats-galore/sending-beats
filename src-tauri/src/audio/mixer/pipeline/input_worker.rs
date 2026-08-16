@@ -25,8 +25,6 @@ pub struct InputWorker {
     state: AudioWorkerState,
 
     channel_number: u32,
-    samples_processed: u64,
-    processing_time_total: std::time::Duration,
 
     default_effects: Arc<Mutex<DefaultAudioEffectsChain>>,
     custom_effects: CustomAudioEffectsChain,
@@ -119,18 +117,6 @@ impl InputWorker {
             default_effects: Arc::new(Mutex::new(default_effects)),
             custom_effects: CustomAudioEffectsChain::new(target_sample_rate),
             any_channel_solo,
-            samples_processed: 0,
-            processing_time_total: std::time::Duration::ZERO,
-        }
-    }
-
-    pub fn get_stats(&self) -> InputWorkerStats {
-        InputWorkerStats {
-            device_id: self.state.device_id().to_string(),
-            device_sample_rate: self.state.device_sample_rate(),
-            target_sample_rate: self.state.target_sample_rate(),
-            samples_processed: self.samples_processed,
-            is_running: true,
         }
     }
 
@@ -350,18 +336,4 @@ impl InputWorker {
         self.any_channel_solo
             .store(solo, std::sync::atomic::Ordering::Relaxed);
     }
-
-    /// Get processing statistics
-    pub fn get_queue_tracker_for_consumer(&self) -> AtomicQueueTracker {
-        self.queue_tracker().clone()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct InputWorkerStats {
-    pub device_id: String,
-    pub device_sample_rate: u32,
-    pub target_sample_rate: u32,
-    pub samples_processed: u64,
-    pub is_running: bool,
 }

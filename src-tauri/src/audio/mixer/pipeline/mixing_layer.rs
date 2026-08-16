@@ -133,10 +133,6 @@ pub struct MixingLayer {
     worker_handle: Option<std::thread::JoinHandle<()>>,
     /// Cleared to ask the mixing thread to finish its current cycle and return
     running: Arc<AtomicBool>,
-
-    // Performance tracking
-    mix_cycles: u64,
-    samples_mixed: u64,
 }
 
 impl MixingLayer {
@@ -161,8 +157,6 @@ impl MixingLayer {
             latency_probe,
             worker_handle: None,
             running: Arc::new(AtomicBool::new(true)),
-            mix_cycles: 0,
-            samples_mixed: 0,
         }
     }
 
@@ -832,10 +826,6 @@ impl MixingLayer {
 
     pub fn get_stats(&self) -> MixingLayerStats {
         MixingLayerStats {
-            mix_cycles: self.mix_cycles,
-            samples_mixed: self.samples_mixed,
-            input_streams: self.input_rtrb_consumers.len(),
-            output_streams: self.output_rtrb_producers.len(),
             is_running: self.worker_handle.is_some(),
         }
     }
@@ -843,9 +833,5 @@ impl MixingLayer {
 
 #[derive(Debug, Clone)]
 pub struct MixingLayerStats {
-    pub mix_cycles: u64,
-    pub samples_mixed: u64,
-    pub input_streams: usize,
-    pub output_streams: usize,
     pub is_running: bool,
 }

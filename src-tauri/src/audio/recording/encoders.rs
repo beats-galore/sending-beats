@@ -269,23 +269,6 @@ impl Mp3Encoder {
 
         Ok(())
     }
-
-    /// Convert interleaved f32 samples to separate left/right channels for LAME
-    fn separate_channels(&self, samples: &[f32]) -> (Vec<f32>, Vec<f32>) {
-        if self.metadata.channels == 1 {
-            (samples.to_vec(), Vec::new())
-        } else {
-            let mut left = Vec::with_capacity(samples.len() / 2);
-            let mut right = Vec::with_capacity(samples.len() / 2);
-
-            for chunk in samples.chunks_exact(2) {
-                left.push(chunk[0]);
-                right.push(chunk[1]);
-            }
-
-            (left, right)
-        }
-    }
 }
 
 impl AudioEncoder for Mp3Encoder {

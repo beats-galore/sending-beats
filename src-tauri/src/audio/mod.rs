@@ -23,9 +23,7 @@ pub mod vu_channel_service;
 pub mod screencapture;
 
 // Re-export commonly used types for easier imports
-pub use types::{
-    AudioChannel, AudioConfigFactory, AudioDeviceHandle, AudioDeviceInfo, AudioMetrics, MixerConfig,
-};
+pub use types::{AudioChannel, AudioConfigFactory, AudioDeviceInfo, MixerConfig};
 
 #[cfg(target_os = "macos")]
 pub use types::CoreAudioDevice;

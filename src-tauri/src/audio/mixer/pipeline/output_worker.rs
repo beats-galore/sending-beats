@@ -22,9 +22,6 @@ use rtrb::Producer;
 /// Output processing worker for a specific device
 pub struct OutputWorker {
     state: AudioWorkerState,
-
-    chunks_processed: u64,
-    samples_output: u64,
 }
 
 impl OutputWorker {
@@ -72,21 +69,7 @@ impl OutputWorker {
             WorkerLatencyGauges::for_output(latency_probe, &device_id),
         );
 
-        Self {
-            state,
-            chunks_processed: 0,
-            samples_output: 0,
-        }
-    }
-
-    pub fn get_stats(&self) -> OutputWorkerStats {
-        OutputWorkerStats {
-            device_id: self.state.device_id().to_string(),
-            device_sample_rate: self.state.device_sample_rate(),
-            chunks_processed: self.chunks_processed,
-            samples_output: self.samples_output,
-            is_running: true,
-        }
+        Self { state }
     }
 }
 
@@ -193,26 +176,4 @@ impl OutputWorker {
     pub async fn stop(&mut self) -> Result<()> {
         AudioWorker::stop(self).await
     }
-
-    /// Get queue tracker for sharing with CoreAudio callback
-    pub fn get_queue_tracker_for_consumer(&self) -> AtomicQueueTracker {
-        self.queue_tracker().clone()
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct QueueInfo {
-    pub occupancy: usize,
-    pub capacity: usize,
-    pub usage_percent: f32,
-    pub available: usize,
-}
-
-#[derive(Debug, Clone)]
-pub struct OutputWorkerStats {
-    pub device_id: String,
-    pub device_sample_rate: u32,
-    pub chunks_processed: u64,
-    pub samples_output: u64,
-    pub is_running: bool,
 }

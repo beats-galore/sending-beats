@@ -684,11 +684,6 @@ pub trait AudioWorker {
         Ok(())
     }
 
-    /// Get queue tracker for sharing with other components
-    fn get_queue_tracker_for_consumer(&self) -> AtomicQueueTracker {
-        self.queue_tracker().clone()
-    }
-
     /// Update target mix rate
     fn update_target_mix_rate(&mut self, target_mix_rate: u32) -> Result<()> {
         // Capture values before borrowing resampler mutably

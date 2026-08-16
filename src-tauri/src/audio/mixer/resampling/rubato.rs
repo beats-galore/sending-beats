@@ -275,24 +275,9 @@ impl RubatoSRC {
         self.ratio
     }
 
-    /// Check if conversion is needed (rates are different)
-    pub fn conversion_needed(&self) -> bool {
-        (self.ratio - 1.0).abs() > 0.001
-    }
-
     /// Get delay introduced by the resampler (for latency compensation)
     pub fn output_delay(&self) -> f32 {
         self.resampler.output_delay() as f32
-    }
-
-    /// Get the fixed input frame size (FixedInput) or max input frame size (FixedOutput)
-    pub fn get_input_frames(&self) -> usize {
-        self.input_frames
-    }
-
-    /// Get the fixed output frame size (FixedOutput) or max output frame size (FixedInput)
-    pub fn get_output_frames(&self) -> usize {
-        self.output_frames
     }
 
     /// Calculate number of input frames needed to produce desired output frames
@@ -357,10 +342,5 @@ impl RubatoSRC {
         }
 
         Ok(())
-    }
-
-    /// Get the current resample ratio for monitoring
-    pub fn get_current_ratio(&self) -> f64 {
-        self.output_rate as f64 / self.input_rate as f64
     }
 }

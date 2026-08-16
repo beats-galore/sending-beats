@@ -4,66 +4,6 @@ use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tracing::info;
 
-/// Queue state information
-#[derive(Debug, Clone)]
-pub struct QueueInfo {
-    pub queue_id: String,
-    pub capacity: usize,
-    pub estimated_occupancy: usize,
-    pub total_written: usize,
-    pub total_read: usize,
-    pub usage_percent: f32,
-    pub available: usize,
-    pub integral_error: f32,
-    pub ratio: f32,
-    pub target_fill: f32,
-}
-
-impl QueueInfo {
-    pub fn new(queue_id: String, capacity: usize) -> Self {
-        let target = capacity as f32 * 0.5; // aim for half-full
-        Self {
-            queue_id,
-            capacity,
-            estimated_occupancy: 0,
-            total_written: 0,
-            total_read: 0,
-            usage_percent: 0.0,
-            available: capacity,
-            integral_error: 0.0,
-            ratio: 1.0,
-            target_fill: target,
-        }
-    }
-
-    /// Update with new write operation
-    fn on_samples_written(&mut self, count: usize) {
-        self.total_written += count;
-        self.update_derived_fields();
-    }
-
-    /// Update with new read operation
-    fn on_samples_read(&mut self, count: usize) {
-        self.total_read += count;
-        self.update_derived_fields();
-    }
-
-    /// Calculate derived fields from write/read counters
-    fn update_derived_fields(&mut self) {
-        // Estimate occupancy as difference between written and read
-        // This can temporarily go negative if reads are reported before writes
-        let occupancy_signed = self.total_written as i64 - self.total_read as i64;
-        self.estimated_occupancy = occupancy_signed.max(0) as usize;
-
-        // Clamp to capacity (queue can't hold more than capacity)
-        self.estimated_occupancy = self.estimated_occupancy.min(self.capacity);
-
-        // Calculate derived metrics
-        self.usage_percent = (self.estimated_occupancy as f32 / self.capacity as f32) * 100.0;
-        self.available = self.capacity.saturating_sub(self.estimated_occupancy);
-    }
-}
-
 /// Thread-safe queue state tracker using atomic counters
 /// Alternative approach for real-time contexts that can't use async commands
 #[derive(Clone)]
@@ -157,30 +97,6 @@ impl AtomicQueueTracker {
         if samples_to_subtract > 0 {
             self.current_occupancy
                 .fetch_sub(samples_to_subtract, Ordering::Relaxed);
-        }
-    }
-
-    /// Get current queue info (can be called from any thread)
-    pub fn get_queue_info(&self) -> QueueInfo {
-        let current_occupancy = self.current_occupancy.load(Ordering::Relaxed);
-
-        // Clamp occupancy to capacity (can't exceed queue size)
-        let estimated_occupancy = current_occupancy.min(self.capacity);
-
-        let usage_percent = (estimated_occupancy as f32 / self.capacity as f32) * 100.0;
-        let available = self.capacity.saturating_sub(estimated_occupancy);
-
-        QueueInfo {
-            queue_id: self.queue_id.clone(),
-            capacity: self.capacity,
-            estimated_occupancy,
-            total_written: 0, // Removed to prevent overflow
-            total_read: 0,    // Removed to prevent overflow
-            usage_percent,
-            available,
-            integral_error: f32::from_bits(self.integral_error.load(Ordering::Relaxed)),
-            ratio: f32::from_bits(self.last_ratio.load(Ordering::Relaxed)),
-            target_fill: self.target_fill,
         }
     }
 

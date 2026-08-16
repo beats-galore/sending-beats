@@ -8,12 +8,6 @@ pub struct DebugLoggingConfig {
     pub device: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub enum DebugLoggingCategory {
-    Audio,
-    Device,
-}
-
 /// Global flag to control audio debug logging
 pub static AUDIO_DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
 pub static DEVICE_DEBUG_ENABLED: AtomicBool = AtomicBool::new(false);
@@ -41,24 +35,6 @@ pub fn get_debug_levels() -> DebugLoggingConfig {
         audio: AUDIO_DEBUG_ENABLED.load(Ordering::Relaxed),
         device: DEVICE_DEBUG_ENABLED.load(Ordering::Relaxed),
     }
-}
-
-/// Check if audio debug logging is enabled
-pub fn is_debug_enabled(category: DebugLoggingCategory) -> bool {
-    match category {
-        DebugLoggingCategory::Audio => AUDIO_DEBUG_ENABLED.load(Ordering::Relaxed),
-        DebugLoggingCategory::Device => DEVICE_DEBUG_ENABLED.load(Ordering::Relaxed),
-    }
-}
-
-/// Audio debug macro - only prints if audio debug is enabled
-#[macro_export]
-macro_rules! audio_debug {
-    ($($arg:tt)*) => {
-        if $crate::log::AUDIO_DEBUG_ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
-            println!($($arg)*);
-        }
-    };
 }
 
 #[macro_export]

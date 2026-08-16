@@ -294,10 +294,9 @@ use std::sync::{
 /// - Atomic pointer swapping for callback context management
 /// - Input buffer access through Arc<Mutex<Vec<f32>>> for thread safety
 
-/// Context struct for CoreAudio render callbacks - contains both buffer and RTRB consumer
+/// Context struct for CoreAudio render callbacks - carries the RTRB consumer
 #[cfg(target_os = "macos")]
 struct AudioCallbackContext {
-    buffer: Arc<Mutex<Vec<f32>>>,
     rtrb_consumer: Option<Arc<Mutex<rtrb::Consumer<f32>>>>,
     queue_tracker: Option<AtomicQueueTracker>,
     channels: u16, // Output device channel count (mono/stereo/etc)
@@ -320,7 +319,6 @@ pub struct CoreAudioOutputStream {
     pub device_name: String,
     pub sample_rate: u32,
     pub channels: u16,
-    pub input_buffer: Arc<Mutex<Vec<f32>>>,
     pub is_running: Arc<Mutex<bool>>,
     audio_unit: Option<AudioUnit>,
     // **NEW CONTEXT ARCHITECTURE**: Context with both buffer and SPMC reader
@@ -372,7 +370,6 @@ impl CoreAudioOutputStream {
             device_name, device_id, native_sample_rate, channels
         );
 
-        let input_buffer = Arc::new(Mutex::new(Vec::new()));
         let is_running = Arc::new(Mutex::new(false));
 
         Ok(Self {
@@ -380,7 +377,6 @@ impl CoreAudioOutputStream {
             device_name,
             sample_rate: native_sample_rate, // **ADAPTIVE**: Use detected native rate
             channels,
-            input_buffer,
             is_running,
             audio_unit: None,
             callback_context: Arc::new(AtomicPtr::new(ptr::null_mut())),
@@ -482,7 +478,6 @@ impl CoreAudioOutputStream {
 
         // Step 6: Set up render callback with new AudioCallbackContext
         let context = AudioCallbackContext {
-            buffer: self.input_buffer.clone(),
             rtrb_consumer: self.rtrb_consumer.clone(),
             queue_tracker: Some(self.queue_tracker.clone()),
             channels: self.channels, // Pass actual output device channel count
@@ -626,20 +621,6 @@ impl CoreAudioOutputStream {
         }
 
         info!("🔴 STOP: ✅ ALL CLEANUP COMPLETE for: {}", self.device_name);
-        Ok(())
-    }
-
-    pub fn send_audio(&self, audio_data: &[f32]) -> Result<()> {
-        if let Ok(mut buffer) = self.input_buffer.try_lock() {
-            buffer.extend_from_slice(audio_data);
-
-            // Prevent buffer from growing too large (keep max 1 second of audio)
-            let max_buffer_size = self.sample_rate as usize * self.channels as usize;
-            if buffer.len() > max_buffer_size {
-                let excess = buffer.len() - max_buffer_size;
-                buffer.drain(..excess);
-            }
-        }
         Ok(())
     }
 
@@ -1588,36 +1569,5 @@ impl Drop for CoreAudioInputStream {
     }
 }
 
-// Placeholder implementations for non-macOS platforms
-// Placeholder implementations for non-macOS platforms
-#[cfg(not(target_os = "macos"))]
-#[derive(Debug)]
-pub struct CoreAudioOutputStream;
-
-#[cfg(not(target_os = "macos"))]
-impl CoreAudioOutputStream {
-    pub fn new(
-        _device_id: u32,
-        _device_name: String,
-        _sample_rate: u32,
-        _channels: u16,
-    ) -> Result<Self> {
-        Err(anyhow::anyhow!("CoreAudio not available on this platform"))
-    }
-
-    pub fn start(&mut self) -> Result<()> {
-        Err(anyhow::anyhow!("CoreAudio not available on this platform"))
-    }
-
-    pub fn stop(&mut self) -> Result<()> {
-        Err(anyhow::anyhow!("CoreAudio not available on this platform"))
-    }
-
-    pub fn send_audio(&self, _audio_data: &[f32]) -> Result<()> {
-        Err(anyhow::anyhow!("CoreAudio not available on this platform"))
-    }
-
-    pub fn is_running(&self) -> bool {
-        false
-    }
-}
+// The module is only compiled on macOS (see devices/mod.rs), so no non-macOS
+// placeholder can ever be reached from here.

@@ -47,11 +47,6 @@ impl VULevelEvent {
                 .as_micros() as u64,
         }
     }
-
-    /// Create mono VU level event
-    pub fn new_mono(device_id: String, channel: u32, peak: f32, rms: f32) -> Self {
-        Self::new(device_id, channel, peak, 0.0, rms, 0.0, false)
-    }
 }
 
 /// Master output VU levels (separate from channel levels)

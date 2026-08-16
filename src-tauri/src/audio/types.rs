@@ -200,35 +200,6 @@ impl Default for MixerConfig {
     }
 }
 
-/// Audio metrics for monitoring
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct AudioMetrics {
-    pub cpu_usage: f32,
-    pub buffer_underruns: u64,
-    pub buffer_overruns: u64,
-    pub latency_ms: f32,
-    pub sample_rate: u32,
-    pub active_channels: u32,
-    pub samples_processed: u64,
-    #[serde(skip)]
-    pub last_process_time: std::time::Instant,
-}
-
-impl Default for AudioMetrics {
-    fn default() -> Self {
-        Self {
-            cpu_usage: 0.0,
-            buffer_underruns: 0,
-            buffer_overruns: 0,
-            latency_ms: 0.0,
-            sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
-            active_channels: 0,
-            samples_processed: 0,
-            last_process_time: std::time::Instant::now(),
-        }
-    }
-}
-
 /// Factory for creating optimized audio configurations based on use case
 pub struct AudioConfigFactory;
 
@@ -249,39 +220,6 @@ impl AudioConfigFactory {
                     ..Default::default()
                 })
                 .collect(),
-            master_gain: 1.0,
-            enable_loopback: true,
-            ..Default::default()
-        }
-    }
-
-    /// Create configuration optimized for streaming/recording
-    pub fn create_streaming_config() -> MixerConfig {
-        MixerConfig {
-            sample_rate: crate::types::DEFAULT_SAMPLE_RATE,
-            buffer_size: 1024, // ~21.3ms latency - acceptable for streaming
-            channels: vec![
-                AudioChannel {
-                    id: 1,
-                    name: "Microphone".to_string(),
-                    ..Default::default()
-                },
-                AudioChannel {
-                    id: 2,
-                    name: "Desktop Audio".to_string(),
-                    ..Default::default()
-                },
-                AudioChannel {
-                    id: 3,
-                    name: "Music".to_string(),
-                    ..Default::default()
-                },
-                AudioChannel {
-                    id: 4,
-                    name: "Game Audio".to_string(),
-                    ..Default::default()
-                },
-            ],
             master_gain: 1.0,
             enable_loopback: true,
             ..Default::default()
