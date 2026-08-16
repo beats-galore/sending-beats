@@ -45,10 +45,7 @@ pub use broadcasting::{
     StreamingStats, StreamingStatus,
 };
 
-pub use devices::{
-    get_device_monitor, get_device_monitoring_stats, AudioDeviceManager, DeviceMonitor,
-    DeviceMonitorConfig, DeviceMonitorStats,
-};
+pub use devices::AudioDeviceManager;
 
 pub use recording::{
     RecordingCommand, RecordingConfig, RecordingFormat, RecordingHistoryEntry, RecordingMetadata,

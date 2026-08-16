@@ -17,10 +17,8 @@ pub mod commands;
 
 // Re-export audio types for testing and external use
 pub use audio::{
-    get_device_monitoring_stats as get_monitoring_stats_impl, AudioChannel, AudioConfigFactory,
-    AudioDatabase, AudioDeviceInfo, AudioDeviceManager, AudioMetrics, Compressor,
-    DeviceMonitorStats, EQBand, FilePlayerService, Limiter, MasterVULevelEvent, MixerConfig,
-    PeakDetector, RmsDetector, ThreeBandEqualizer, VULevelEvent, VirtualMixer,
+    AudioConfigFactory, AudioDatabase, AudioDeviceInfo, AudioDeviceManager, EQBand,
+    FilePlayerService, MixerConfig,
 };
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, State};
@@ -56,7 +54,6 @@ use commands::file_player::FilePlayerState;
 struct StreamState(Mutex<Option<StreamManager>>);
 struct AudioState {
     device_manager: Arc<AsyncMutex<AudioDeviceManager>>,
-    mixer: Arc<AsyncMutex<Option<VirtualMixer>>>,
     database: Arc<AudioDatabase>,
     audio_command_tx:
         tokio::sync::mpsc::Sender<crate::audio::mixer::stream_management::AudioCommand>,
@@ -292,7 +289,6 @@ pub fn run() {
 
         AudioState {
             device_manager: audio_device_manager,
-            mixer: Arc::new(AsyncMutex::new(None)),
             database,
             audio_command_tx,
             app_audio_manager: app_audio_manager_shared.clone(),
@@ -468,8 +464,6 @@ pub fn run() {
             remove_output_stream,
             clear_session_devices,
             set_output_stream,
-            start_device_monitoring,
-            get_device_monitoring_stats,
             // Now-playing metadata commands
             get_now_playing,
             start_now_playing_watch,
@@ -529,15 +523,6 @@ pub fn run() {
             get_current_stream_bitrate,
             set_variable_bitrate_streaming,
             get_variable_bitrate_settings,
-            // Recording commands
-            start_recording,
-            stop_recording,
-            get_recording_status,
-            save_recording_config,
-            get_recording_configs,
-            get_recording_history,
-            create_default_recording_config,
-            select_recording_directory,
             // File player commands
             create_file_player,
             remove_file_player,

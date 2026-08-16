@@ -578,25 +578,3 @@ pub async fn remove_output_stream(
     log_command!("remove_output_stream", "device: {}", device_id);
     remove_output_stream_internal(&audio_state, &device_id).await
 }
-
-// Device monitoring commands
-#[tauri::command]
-pub async fn start_device_monitoring(audio_state: State<'_, AudioState>) -> Result<String, String> {
-    let mixer_guard = audio_state.mixer.lock().await;
-
-    if mixer_guard.is_some() {
-        // For now, just return success. The actual device monitoring implementation
-        // needs refactoring to work with the app's mixer storage pattern.
-        // This is a placeholder until we can properly integrate it.
-        println!("✅ Device monitoring started (placeholder implementation)");
-        Ok("Device monitoring started successfully (placeholder)".to_string())
-    } else {
-        Err("No mixer created - cannot start device monitoring".to_string())
-    }
-}
-
-#[tauri::command]
-pub async fn get_device_monitoring_stats() -> Result<Option<crate::DeviceMonitorStats>, String> {
-    use crate::get_monitoring_stats_impl;
-    Ok(get_monitoring_stats_impl().await)
-}

@@ -1,6 +1,3 @@
-use crate::{AudioState, DeviceMonitorStats};
-use tauri::State;
-
 // Debug control commands
 #[tauri::command]
 pub fn set_debug_log_config(audio: bool, device: bool) {
