@@ -16,14 +16,18 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
+use super::queue::Advance;
+
 /// Represents a single track in the queue
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct QueuedTrack {
     pub id: String,
     pub file_path: PathBuf,
     pub title: Option<String>,
     pub artist: Option<String>,
     pub album: Option<String>,
+    #[serde(with = "super::wire::option")]
     pub duration: Option<Duration>,
     pub file_size: u64,
     pub added_at: chrono::DateTime<chrono::Utc>,
@@ -39,9 +43,11 @@ pub enum PlaybackState {
 
 /// Playback mode settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PlaybackMode {
     pub repeat_mode: RepeatMode,
     pub shuffle: bool,
+    #[serde(with = "super::wire")]
     pub crossfade_duration: Duration,
 }
 
@@ -54,12 +60,18 @@ pub enum RepeatMode {
 
 /// Current playback status
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PlaybackStatus {
     pub state: PlaybackState,
     pub current_track: Option<QueuedTrack>,
+    /// Where in the queue the current track sits, for a list that marks a row
+    pub current_index: Option<usize>,
+    #[serde(with = "super::wire")]
     pub position: Duration,
     pub volume: f32, // 0.0 to 1.0
     pub queue_length: usize,
+    /// The track playback pauses after, when one has been asked for
+    pub breakpoint_track_id: Option<String>,
     pub mode: PlaybackMode,
 }
 
@@ -94,9 +106,17 @@ pub enum PlayerEvent {
 
 /// Audio file player that decodes files and provides audio samples
 pub struct AudioFilePlayer {
-    // Queue management
-    queue: Arc<Mutex<VecDeque<QueuedTrack>>>,
-    current_track_index: Arc<Mutex<Option<usize>>>,
+    // Queue management. Visible to the module so that editing the queue's order
+    // can live in `queue`, next to the index bookkeeping that goes with it.
+    pub(super) queue: Arc<Mutex<VecDeque<QueuedTrack>>>,
+    pub(super) current_track_index: Arc<Mutex<Option<usize>>>,
+
+    /// The track playback pauses after, when one has been asked for
+    ///
+    /// Held as an id rather than a position, because "pause after Back Room Dub"
+    /// is what was meant: a queue reordered mid-break still pauses in the right
+    /// place, and removing that track removes the instruction with it.
+    pub(super) breakpoint: Arc<Mutex<Option<String>>>,
 
     // Playback state
     state: Arc<Mutex<PlaybackState>>,
@@ -134,7 +154,7 @@ pub struct AudioFilePlayer {
     /// Stepping back has to follow what was played rather than what is next to
     /// it in the queue, or shuffle would send "previous" somewhere the listener
     /// has never been.
-    played_history: Arc<Mutex<Vec<usize>>>,
+    pub(super) played_history: Arc<Mutex<Vec<usize>>>,
 
     /// Where finished tracks are reported, so history can be written down
     ///
@@ -150,6 +170,7 @@ impl AudioFilePlayer {
         Self {
             queue: Arc::new(Mutex::new(VecDeque::new())),
             current_track_index: Arc::new(Mutex::new(None)),
+            breakpoint: Arc::new(Mutex::new(None)),
             state: Arc::new(Mutex::new(PlaybackState::Stopped)),
             volume: Arc::new(Mutex::new(1.0)),
             position: Arc::new(Mutex::new(Duration::ZERO)),
@@ -238,14 +259,21 @@ impl AudioFilePlayer {
 
     /// Remove a track from the queue
     pub fn remove_track(&self, track_id: &str) -> Result<()> {
-        let mut queue = self.queue.lock().unwrap();
-        let original_len = queue.len();
+        let removed = {
+            let mut queue = self.queue.lock().unwrap();
+            let index = queue
+                .iter()
+                .position(|track| track.id == track_id)
+                .ok_or_else(|| anyhow::anyhow!("Track not found in queue"))?;
 
-        queue.retain(|track| track.id != track_id);
+            queue.remove(index);
+            index
+        };
 
-        if queue.len() == original_len {
-            return Err(anyhow::anyhow!("Track not found in queue"));
-        }
+        // Everything else holding a position in the queue has to close the gap,
+        // or the row marked as playing is the one below the one that is.
+        self.forget_index(removed);
+        self.clear_breakpoint_if(track_id);
 
         println!("🗑️ Removed track from queue: {}", track_id);
         Ok(())
@@ -337,7 +365,7 @@ impl AudioFilePlayer {
     pub fn skip_next(&self) -> Result<()> {
         // Moves on rather than restarting, and reports the queue having played
         // out rather than treating it as a failure.
-        if !self.advance_track()? {
+        if self.advance_track(false)? == Advance::Exhausted {
             self.stop();
             println!("⏭️ Queue finished");
             return Ok(());
@@ -394,18 +422,17 @@ impl AudioFilePlayer {
         let volume = *self.volume.lock().unwrap();
         let mode = self.mode.lock().unwrap().clone();
 
-        let current_track = if let Some(index) = *self.current_track_index.lock().unwrap() {
-            queue.get(index).cloned()
-        } else {
-            None
-        };
+        let current_index = *self.current_track_index.lock().unwrap();
+        let current_track = current_index.and_then(|index| queue.get(index).cloned());
 
         PlaybackStatus {
             state,
             current_track,
+            current_index,
             position,
             volume,
             queue_length: queue.len(),
+            breakpoint_track_id: self.breakpoint.lock().unwrap().clone(),
             mode,
         }
     }
@@ -435,16 +462,22 @@ impl AudioFilePlayer {
         // forever, so one call moves on at most as many times as there are
         // tracks to move to.
         let mut advances_left = self.queue.lock().unwrap().len() + 1;
+        let mut outcome = Advance::Loaded;
 
         while self.pending.lock().unwrap().len() < wanted {
             if self.decode_one_packet()? {
                 continue;
             }
 
+            if advances_left == 0 {
+                break;
+            }
+
             // The file ran out. The next one picks up within the same block, so
             // a playlist plays as one continuous stream rather than dropping a
             // chunk of silence at every join.
-            if advances_left == 0 || !self.advance_track()? {
+            outcome = self.advance_track(true)?;
+            if outcome != Advance::Loaded {
                 break;
             }
             advances_left -= 1;
@@ -452,7 +485,13 @@ impl AudioFilePlayer {
 
         let mut pending = self.pending.lock().unwrap();
         if pending.is_empty() {
-            return Ok(None);
+            // Only a queue that actually ran out is finished. Held at a break,
+            // the player still has a track cued and reports what a paused one
+            // reports, so nothing tears the source down over a deliberate stop.
+            return Ok(match outcome {
+                Advance::Exhausted => None,
+                _ => Some(Vec::new()),
+            });
         }
 
         let take = wanted.min(pending.len());
@@ -575,19 +614,36 @@ impl AudioFilePlayer {
 
     /// Move to whatever should play after the current track
     ///
-    /// False once the queue has played out, which is what tells the decoder to
-    /// stop rather than to keep asking for packets from a finished file.
-    fn advance_track(&self) -> Result<bool> {
+    /// `honour_breakpoint` separates the queue reaching a track from someone
+    /// pressing next: a break set for the end of an ad run should stop the run,
+    /// not argue with the hand on the transport.
+    fn advance_track(&self, honour_breakpoint: bool) -> Result<Advance> {
+        let leaving = self.current_track_id();
+
         // Reported before moving on, so a queue that plays out still records its
         // last track rather than dropping the one nothing followed.
         self.report_finished();
 
+        let breaking = honour_breakpoint
+            && leaving
+                .as_deref()
+                .is_some_and(|track_id| self.take_breakpoint_at(track_id));
+
         let Some(next) = self.next_index() else {
-            return Ok(false);
+            return Ok(Advance::Exhausted);
         };
 
         self.load_index(next, true)?;
-        Ok(true)
+
+        // Cued rather than closed: what follows the break is loaded and held at
+        // its start, so play carries on from there instead of running the queue
+        // again from the top.
+        if breaking {
+            self.pause();
+            return Ok(Advance::Paused);
+        }
+
+        Ok(Advance::Loaded)
     }
 
     /// Say that the current track is done, if anyone is listening
@@ -886,7 +942,10 @@ impl AudioFilePlayer {
         Ok(())
     }
 
-    /// Extract metadata from an audio file
+    /// Read what the file says about itself
+    ///
+    /// Off the runtime, because probing opens the file and reads from it, and a
+    /// player is added to from an async command that must not block on disk.
     async fn extract_metadata(
         &self,
         path: &Path,
@@ -896,9 +955,12 @@ impl AudioFilePlayer {
         Option<String>,
         Option<Duration>,
     )> {
-        // For now, return None for all metadata
-        // TODO: Implement proper metadata extraction using symphonia
-        Ok((None, None, None, None))
+        let owned = path.to_path_buf();
+        let found = tokio::task::spawn_blocking(move || super::metadata::read_metadata(&owned))
+            .await
+            .context("Could not read this file's tags")?;
+
+        Ok((found.title, found.artist, found.album, found.duration))
     }
 }
 

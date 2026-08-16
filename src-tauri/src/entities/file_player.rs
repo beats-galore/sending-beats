@@ -21,6 +21,8 @@ pub struct Model {
     pub volume: f32,
     pub repeat_mode: String,
     pub shuffle: bool,
+    /// The track this player pauses after, when one has been asked for
+    pub breakpoint_track_id: Option<String>,
     pub created_at: ChronoDateTimeUtc,
     pub updated_at: ChronoDateTimeUtc,
 }

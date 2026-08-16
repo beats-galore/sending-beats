@@ -180,7 +180,7 @@ impl FilePlayerManager {
             PlaybackAction::Seek { seconds } => {
                 player.seek(std::time::Duration::from_secs_f64(seconds.max(0.0)))?
             }
-            PlaybackAction::SetVolume(volume) => player.set_volume(volume),
+            PlaybackAction::SetVolume { volume } => player.set_volume(volume),
         }
 
         Ok(())
@@ -227,7 +227,11 @@ impl FilePlayerManager {
 }
 
 /// Actions that can be performed on a file player
+///
+/// Tagged by `type`, so the transport on the other side sends
+/// `{ type: 'seek', seconds }` rather than serde's default shape for an enum.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub enum PlaybackAction {
     Play,
     Pause,
@@ -242,7 +246,9 @@ pub enum PlaybackAction {
     Seek {
         seconds: f64,
     },
-    SetVolume(f32),
+    SetVolume {
+        volume: f32,
+    },
 }
 
 /// File player management for the audio system

@@ -61,9 +61,9 @@ pub use tap::{
 };
 
 pub use file_player::{
-    AudioFilePlayer, FilePlayerConfig, FilePlayerDevice, FilePlayerManager, FilePlayerService,
-    PlaybackAction, PlaybackMode, PlaybackState, PlaybackStatus, PlayerEvent, QueuedTrack,
-    RepeatMode,
+    read_metadata, AudioFilePlayer, FilePlayerConfig, FilePlayerDevice, FilePlayerManager,
+    FilePlayerService, PlaybackAction, PlaybackMode, PlaybackState, PlaybackStatus, PlayerEvent,
+    QueuedTrack, RepeatMode, TrackMetadata,
 };
 
 pub use events::{MasterVULevelEvent, VUChannelData, VULevelEvent};

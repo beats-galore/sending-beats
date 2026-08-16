@@ -62,6 +62,7 @@ impl FilePlayerStore {
             volume: Set(1.0),
             repeat_mode: Set("none".to_string()),
             shuffle: Set(false),
+            breakpoint_track_id: Set(None),
             created_at: Set(now),
             updated_at: Set(now),
         }
@@ -96,6 +97,27 @@ impl FilePlayerStore {
         active.volume = Set(volume);
         active.repeat_mode = Set(repeat_mode.to_string());
         active.shuffle = Set(shuffle);
+        active.updated_at = Set(chrono::Utc::now());
+        active.update(db).await?;
+
+        Ok(())
+    }
+
+    /// Remember where a player stops on its own, or that it no longer does
+    pub async fn set_breakpoint(
+        db: &DatabaseConnection,
+        player_id: &str,
+        track_id: Option<&str>,
+    ) -> Result<()> {
+        let Some(row) = file_player::Entity::find_by_id(player_id.to_string())
+            .one(db)
+            .await?
+        else {
+            return Ok(());
+        };
+
+        let mut active: file_player::ActiveModel = row.into();
+        active.breakpoint_track_id = Set(track_id.map(str::to_string));
         active.updated_at = Set(chrono::Utc::now());
         active.update(db).await?;
 
@@ -151,6 +173,42 @@ impl FilePlayerStore {
         }
         .insert(db)
         .await?)
+    }
+
+    /// Write down the order a player's queue is now in
+    ///
+    /// Takes the whole list rather than one move, because by the time this is
+    /// called the player has already done the move and knows the answer. Writing
+    /// what it says is one pass and cannot drift from it, where replaying the
+    /// move against stored positions could.
+    pub async fn reorder_queue(
+        db: &DatabaseConnection,
+        player_id: &str,
+        ordered_track_ids: &[String],
+    ) -> Result<()> {
+        let now = chrono::Utc::now();
+
+        for (position, track_id) in ordered_track_ids.iter().enumerate() {
+            let Some(row) = file_player_track::Entity::find_by_id(track_id.clone())
+                .one(db)
+                .await?
+            else {
+                continue;
+            };
+
+            // A track from another player, or one already at this position, is
+            // nothing to write.
+            if row.file_player_id != player_id || row.position == position as i32 {
+                continue;
+            }
+
+            let mut active: file_player_track::ActiveModel = row.into();
+            active.position = Set(position as i32);
+            active.updated_at = Set(now);
+            active.update(db).await?;
+        }
+
+        Ok(())
     }
 
     pub async fn remove_track(db: &DatabaseConnection, track_id: &str) -> Result<()> {

@@ -141,6 +141,14 @@ pub async fn restore_file_players(
             player.enqueue(queued_track_from_row(track));
         }
 
+        // After the queue, so the break lands on a track the player has. One
+        // pointing at a track that is no longer pending would never fire.
+        if let Some(track_id) = row.breakpoint_track_id.clone() {
+            if player.get_queue().iter().any(|track| track.id == track_id) {
+                player.set_breakpoint(Some(track_id));
+            }
+        }
+
         restored.push(row.id);
     }
 
@@ -187,6 +195,16 @@ pub async fn add_track_to_player(
         .get_player(&player_id)
         .ok_or_else(|| format!("No file player '{}'", player_id))?;
 
+    // Read once, here, rather than when the track reaches the decoder: a queue
+    // has to show what is in it before it plays, which is the whole point of
+    // being able to look at one.
+    let probed = {
+        let path = path.clone();
+        tokio::task::spawn_blocking(move || crate::audio::read_metadata(&path))
+            .await
+            .map_err(|e| format!("Could not read '{}': {}", file_path, e))?
+    };
+
     // Written down first, so the id in the queue is the id of the row: a track
     // finishing later has to be recordable against something.
     let stored = FilePlayerStore::queue_track(
@@ -194,10 +212,10 @@ pub async fn add_track_to_player(
         &player_id,
         QueuedTrackRow {
             file_path: &file_path,
-            title: None,
-            artist: None,
-            album: None,
-            duration_ms: None,
+            title: probed.title.as_deref(),
+            artist: probed.artist.as_deref(),
+            album: probed.album.as_deref(),
+            duration_ms: probed.duration.map(|value| value.as_millis() as i64),
             file_size: metadata.len() as i64,
         },
     )
@@ -219,15 +237,101 @@ pub async fn remove_track_from_player(
 ) -> Result<(), String> {
     println!("🗑️ Removing track {} from player {}", track_id, player_id);
 
-    file_player_state
-        .service
-        .get_manager()
+    let manager = file_player_state.service.get_manager();
+
+    manager
         .remove_track_from_player(&player_id, &track_id)
         .map_err(|e| e.to_string())?;
 
     FilePlayerStore::remove_track(audio_state.database.sea_orm(), &track_id)
         .await
+        .map_err(|e| e.to_string())?;
+
+    // Removing the track a break was set after removes the break, which the
+    // player has already done in memory. Written back here rather than left to
+    // the foreign key, which SQLite does not act on unless asked to.
+    persist_breakpoint(&manager, &audio_state, &player_id).await
+}
+
+/// Write down whatever break the player is now holding
+async fn persist_breakpoint(
+    manager: &crate::audio::FilePlayerManager,
+    audio_state: &State<'_, AudioState>,
+    player_id: &str,
+) -> Result<(), String> {
+    let Some(device) = manager.get_player(player_id) else {
+        return Ok(());
+    };
+
+    FilePlayerStore::set_breakpoint(
+        audio_state.database.sea_orm(),
+        player_id,
+        device.get_player().breakpoint().as_deref(),
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Move a queued track to a new place in the queue
+///
+/// The player moves it, then says what order it is now in and that is what gets
+/// written down — one answer rather than the same move made twice.
+#[tauri::command]
+pub async fn move_track_in_player(
+    file_player_state: State<'_, FilePlayerState>,
+    audio_state: State<'_, AudioState>,
+    player_id: String,
+    track_id: String,
+    to_index: usize,
+) -> Result<(), String> {
+    let device = file_player_state
+        .service
+        .get_manager()
+        .get_player(&player_id)
+        .ok_or_else(|| format!("No file player '{}'", player_id))?;
+
+    let player = device.get_player();
+    player
+        .move_track(&track_id, to_index)
+        .map_err(|e| e.to_string())?;
+
+    let order: Vec<String> = player
+        .get_queue()
+        .into_iter()
+        .map(|track| track.id)
+        .collect();
+
+    FilePlayerStore::reorder_queue(audio_state.database.sea_orm(), &player_id, &order)
+        .await
         .map_err(|e| e.to_string())
+}
+
+/// Pause after a given track, or stop pausing anywhere
+///
+/// One instruction rather than a mode: it fires once and clears itself, so the
+/// queue never shows a break that has already been taken.
+#[tauri::command]
+pub async fn set_player_breakpoint(
+    file_player_state: State<'_, FilePlayerState>,
+    audio_state: State<'_, AudioState>,
+    player_id: String,
+    track_id: Option<String>,
+) -> Result<(), String> {
+    let device = file_player_state
+        .service
+        .get_manager()
+        .get_player(&player_id)
+        .ok_or_else(|| format!("No file player '{}'", player_id))?;
+
+    device.get_player().set_breakpoint(track_id.clone());
+
+    FilePlayerStore::set_breakpoint(
+        audio_state.database.sea_orm(),
+        &player_id,
+        track_id.as_deref(),
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -250,9 +354,9 @@ pub async fn clear_player_queue(
 ) -> Result<(), String> {
     println!("🧹 Clearing queue for player: {}", player_id);
 
-    file_player_state
-        .service
-        .get_manager()
+    let manager = file_player_state.service.get_manager();
+
+    manager
         .clear_player_queue(&player_id)
         .map_err(|e| e.to_string())?;
 
@@ -260,7 +364,9 @@ pub async fn clear_player_queue(
     // is the history rather than the queue.
     FilePlayerStore::clear_queue(audio_state.database.sea_orm(), &player_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    persist_breakpoint(&manager, &audio_state, &player_id).await
 }
 
 // Playback control commands

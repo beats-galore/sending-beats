@@ -548,6 +548,8 @@ pub fn run() {
             get_file_player_devices,
             add_track_to_player,
             remove_track_from_player,
+            move_track_in_player,
+            set_player_breakpoint,
             get_player_queue,
             clear_player_queue,
             control_file_player,
