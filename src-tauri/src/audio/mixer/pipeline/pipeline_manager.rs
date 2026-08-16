@@ -327,6 +327,10 @@ impl AudioPipeline {
         // Add worker to collection BEFORE recalculating (needed for sample rate detection)
         self.input_workers.insert(device_id.clone(), input_worker);
 
+        // A channel restored with its solo already on has to count towards the
+        // aggregate, or the mix plays as though nothing were soloed.
+        self.refresh_any_channel_solo();
+
         // Now recalculate target mix rate with the new worker included
         self.calculate_target_mix_rate()?;
         self.update_target_sample_rates()?;
@@ -713,6 +717,11 @@ impl AudioPipeline {
             }
         }
 
+        // The channel that left may have been the only soloed one. Left alone
+        // the flag stays true with nothing to solo, and every other channel
+        // stays muted for good.
+        self.refresh_any_channel_solo();
+
         // Remove from mixing layer (this also removes from temporal buffer)
         self.mixing_layer
             .remove_input_consumer(device_id.to_string());
@@ -873,13 +882,30 @@ impl AudioPipeline {
             .ok_or_else(|| anyhow::anyhow!("Input device '{}' not found", device_id))?;
 
         worker.update_solo(solo);
+
+        // Recomputed across every channel rather than taken from the one that
+        // just changed: "is anything soloed" is a question about all of them,
+        // and answering it with the last toggle un-mutes the whole mix the
+        // moment a second soloed channel is switched off.
+        self.refresh_any_channel_solo();
+
         info!(
-            "✅ {}: Updated solo for input device '{}' to {}",
+            "✅ {}: Updated solo for input device '{}' to {} (any solo: {})",
             "AUDIO_PIPELINE".on_purple().blue(),
             device_id,
-            solo
+            solo,
+            self.any_channel_solo
+                .load(std::sync::atomic::Ordering::Relaxed)
         );
         Ok(())
+    }
+
+    /// Set the shared flag from what every channel currently says
+    fn refresh_any_channel_solo(&self) {
+        let any = self.input_workers.values().any(|worker| worker.is_solo());
+
+        self.any_channel_solo
+            .store(any, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn update_master_gain(&mut self, gain: f32) -> Result<()> {

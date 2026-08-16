@@ -111,3 +111,94 @@ impl DefaultAudioEffectsChain {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::DefaultAudioEffectsChain;
+
+    fn chain(id: &str) -> DefaultAudioEffectsChain {
+        DefaultAudioEffectsChain::new(id.to_string())
+    }
+
+    /// Whether anything in the mix is soloed
+    ///
+    /// The rule the pipeline applies. Written out here because it is the rule
+    /// that was wrong: the shared flag used to be assigned whichever channel
+    /// was toggled last rather than asked of all of them.
+    fn any_solo(chains: &[&DefaultAudioEffectsChain]) -> bool {
+        chains.iter().any(|chain| chain.is_solo())
+    }
+
+    fn silenced(chain: &DefaultAudioEffectsChain, any_solo: bool) -> bool {
+        let mut samples = vec![1.0_f32; 4];
+        chain.process_stereo_interleaved(&mut samples, any_solo);
+        samples.iter().all(|sample| *sample == 0.0)
+    }
+
+    #[test]
+    fn soloing_one_channel_silences_the_others() {
+        let mut lead = chain("lead");
+        let other = chain("other");
+        lead.set_solo(true);
+
+        let any = any_solo(&[&lead, &other]);
+        assert!(any);
+        assert!(!silenced(&lead, any));
+        assert!(silenced(&other, any));
+    }
+
+    /// The bug from #120
+    ///
+    /// Solo two channels, un-solo the second: the first is still soloed, so
+    /// everything else must stay silent. The shared flag used to be set to the
+    /// second channel's new value — false — which un-muted the whole mix while
+    /// the first channel was still lit in the interface.
+    #[test]
+    fn un_soloing_one_of_two_leaves_the_other_soloed() {
+        let mut first = chain("first");
+        let mut second = chain("second");
+        let other = chain("other");
+
+        first.set_solo(true);
+        second.set_solo(true);
+        second.set_solo(false);
+
+        let any = any_solo(&[&first, &second, &other]);
+
+        assert!(any, "a channel is still soloed");
+        assert!(silenced(&other, any), "a channel with no solo stays silent");
+        assert!(
+            silenced(&second, any),
+            "the un-soloed channel is silent too"
+        );
+        assert!(
+            !silenced(&first, any),
+            "the channel still soloed is audible"
+        );
+    }
+
+    #[test]
+    fn un_soloing_the_last_one_brings_everything_back() {
+        let mut lead = chain("lead");
+        let other = chain("other");
+
+        lead.set_solo(true);
+        lead.set_solo(false);
+
+        let any = any_solo(&[&lead, &other]);
+
+        assert!(!any);
+        assert!(!silenced(&other, any));
+        assert!(!silenced(&lead, any));
+    }
+
+    /// Mute outranks solo: a soloed channel that is also muted stays silent
+    #[test]
+    fn a_muted_channel_is_silent_even_when_soloed() {
+        let mut lead = chain("lead");
+        lead.set_solo(true);
+        lead.set_muted(true);
+
+        assert!(silenced(&lead, true));
+    }
+}

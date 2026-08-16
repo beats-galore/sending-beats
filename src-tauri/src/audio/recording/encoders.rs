@@ -235,11 +235,13 @@ pub struct Mp3Encoder {
     metadata: EncoderMetadata,
     bitrate: u32,
     initialized: bool,
-    lame_encoder: Option<lame::Lame>,
+    lame_encoder: Option<crate::audio::recording::lame::Lame>,
+    /// The Xing header, once the encoder has finished and knows what to say
+    ///
+    /// Written over the frame LAME reserved at the front of the file. Held here
+    /// because `finalize_patches` is asked afterwards and cannot re-derive it.
+    tag_frame: Vec<u8>,
 }
-
-// SAFETY: LAME encoder is used single-threaded within the recording writer task
-unsafe impl Send for Mp3Encoder {}
 
 impl Mp3Encoder {
     /// Create a new MP3 encoder
@@ -249,6 +251,7 @@ impl Mp3Encoder {
             bitrate: 192,
             initialized: false,
             lame_encoder: None,
+            tag_frame: Vec::new(),
         }
     }
 
@@ -268,23 +271,6 @@ impl Mp3Encoder {
         );
 
         Ok(())
-    }
-
-    /// Convert interleaved f32 samples to separate left/right channels for LAME
-    fn separate_channels(&self, samples: &[f32]) -> (Vec<f32>, Vec<f32>) {
-        if self.metadata.channels == 1 {
-            (samples.to_vec(), Vec::new())
-        } else {
-            let mut left = Vec::with_capacity(samples.len() / 2);
-            let mut right = Vec::with_capacity(samples.len() / 2);
-
-            for chunk in samples.chunks_exact(2) {
-                left.push(chunk[0]);
-                right.push(chunk[1]);
-            }
-
-            (left, right)
-        }
     }
 }
 
@@ -321,22 +307,15 @@ impl AudioEncoder for Mp3Encoder {
             return Ok(Vec::new());
         }
 
-        // Initialize LAME encoder on first use
+        // Started on the first samples rather than at initialize: LAME fixes its
+        // parameters when it starts, and the format is not settled until audio
+        // is actually arriving.
         if self.lame_encoder.is_none() {
-            let mut lame = lame::Lame::new()
-                .ok_or_else(|| anyhow::anyhow!("Failed to create LAME encoder"))?;
-
-            lame.set_channels(self.metadata.channels as u8)
-                .map_err(|_| anyhow::anyhow!("Failed to set LAME channels"))?;
-            lame.set_sample_rate(self.metadata.sample_rate)
-                .map_err(|_| anyhow::anyhow!("Failed to set LAME sample rate"))?;
-            lame.set_kilobitrate(self.bitrate as i32)
-                .map_err(|_| anyhow::anyhow!("Failed to set LAME bitrate"))?;
-            lame.set_quality(2) // Good quality balance
-                .map_err(|_| anyhow::anyhow!("Failed to set LAME quality"))?;
-
-            lame.init_params()
-                .map_err(|_| anyhow::anyhow!("Failed to initialize LAME parameters"))?;
+            let lame = crate::audio::recording::lame::Lame::new(
+                self.metadata.sample_rate,
+                self.metadata.channels,
+                self.bitrate,
+            )?;
 
             self.lame_encoder = Some(lame);
             info!(
@@ -345,49 +324,57 @@ impl AudioEncoder for Mp3Encoder {
             );
         }
 
-        let lame = self.lame_encoder.as_mut().unwrap();
+        let lame = self
+            .lame_encoder
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("LAME encoder went away"))?;
 
-        // Convert f32 samples to i16 for LAME
-        let samples_i16: Vec<i16> = samples
-            .iter()
-            .map(|&s| (s.clamp(-1.0, 1.0) * 32767.0) as i16)
-            .collect();
-
-        // Create MP3 buffer (LAME recommended size)
-        let mut mp3_buffer = vec![0u8; samples_i16.len() * 2 + 7200];
-
-        let encoded_size = if self.metadata.channels == 1 {
-            lame.encode(&samples_i16, &[], &mut mp3_buffer)
-                .map_err(|e| anyhow::anyhow!("LAME mono encoding error: {:?}", e))?
-        } else {
-            // For stereo, split interleaved samples into left/right channels
-            let left: Vec<i16> = samples_i16.iter().step_by(2).copied().collect();
-            let right: Vec<i16> = samples_i16.iter().skip(1).step_by(2).copied().collect();
-
-            lame.encode(&left, &right, &mut mp3_buffer)
-                .map_err(|e| anyhow::anyhow!("LAME stereo encoding error: {:?}", e))?
-        };
+        // Handed the interleaved floats as they are. Converting to i16 first
+        // threw away the precision the mixer works in for no reason: LAME takes
+        // float input and does its own conversion better.
+        let encoded = lame.encode(samples)?;
 
         self.metadata.samples_encoded += samples.len() as u64;
-        self.metadata.bytes_written += encoded_size as u64;
+        self.metadata.bytes_written += encoded.len() as u64;
 
-        if encoded_size > 0 {
-            mp3_buffer.truncate(encoded_size);
-            Ok(mp3_buffer)
-        } else {
-            Ok(Vec::new())
-        }
+        Ok(encoded)
     }
 
+    /// End the file properly
+    ///
+    /// Two things the previous version did neither of. The flush emits the
+    /// samples still inside the encoder — without it the last frames of every
+    /// recording were simply lost — and the tag frame carries the frame count
+    /// and seek table a player needs to scrub or report a duration.
     fn finalize(&mut self) -> Result<Vec<u8>> {
-        if let Some(_lame) = self.lame_encoder.take() {
-            // MP3 finalization - LAME crate doesn't have flush method
-            // The working version just returned empty buffer for MP3 finalization
-            info!("MP3 encoder finalized");
-            Ok(Vec::new())
-        } else {
-            Ok(Vec::new())
+        let Some(mut lame) = self.lame_encoder.take() else {
+            return Ok(Vec::new());
+        };
+
+        let tail = lame.flush()?;
+
+        // Only meaningful after the flush: neither the frame count nor the seek
+        // table exists until the encoder has finished.
+        self.tag_frame = lame.tag_frame();
+
+        self.metadata.bytes_written += tail.len() as u64;
+
+        info!(
+            "MP3 encoder finalized: {} bytes flushed, {} byte header",
+            tail.len(),
+            self.tag_frame.len()
+        );
+
+        Ok(tail)
+    }
+
+    /// The Xing header goes over the frame LAME reserved at the front
+    fn finalize_patches(&self) -> Vec<(u64, Vec<u8>)> {
+        if self.tag_frame.is_empty() {
+            return Vec::new();
         }
+
+        vec![(0, self.tag_frame.clone())]
     }
 
     fn file_extension(&self) -> &'static str {
@@ -626,5 +613,68 @@ mod tests {
         assert!(EncoderFactory::is_format_supported("wav"));
         assert!(EncoderFactory::is_format_supported("mp3"));
         assert!(!EncoderFactory::is_format_supported("ogg"));
+    }
+}
+
+#[cfg(test)]
+mod mp3_tests {
+    use super::*;
+    use crate::audio::recording::types::{Mp3Settings, RecordingConfig, RecordingFormat};
+
+    fn config() -> RecordingConfig {
+        RecordingConfig {
+            sample_rate: 48_000,
+            channels: 2,
+            bit_depth: 16,
+            format: RecordingFormat {
+                mp3: Some(Mp3Settings { bitrate: 192 }),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    /// The bug from #123
+    ///
+    /// Finalize used to drop the encoder and return nothing, so the samples
+    /// still inside LAME never reached the file and no header was ever written.
+    #[test]
+    fn finalizing_flushes_the_encoder_and_writes_a_header() {
+        let mut encoder = Mp3Encoder::new();
+        encoder.initialize(&config()).expect("initializes");
+
+        // A second of a tone, so there is definitely something to lose.
+        let samples: Vec<f32> = (0..48_000 * 2)
+            .map(|n| ((n as f32) * 0.01).sin() * 0.25)
+            .collect();
+
+        let body = encoder.encode(&samples).expect("encodes");
+        let tail = encoder.finalize().expect("finalizes");
+        let patches = encoder.finalize_patches();
+
+        assert!(!body.is_empty(), "the audio encodes to frames");
+        assert!(!tail.is_empty(), "finalize returns the flushed remainder");
+
+        assert_eq!(patches.len(), 1, "one patch, for the header");
+        assert_eq!(patches[0].0, 0, "written at the front of the file");
+
+        let header = &patches[0].1;
+        assert_eq!(header[0], 0xFF, "the header is an MPEG frame");
+        assert!(
+            header
+                .windows(4)
+                .any(|window| window == b"Info" || window == b"Xing"),
+            "the header carries the seek table"
+        );
+    }
+
+    /// Recording nothing should still close cleanly rather than erroring
+    #[test]
+    fn finalizing_without_audio_is_not_an_error() {
+        let mut encoder = Mp3Encoder::new();
+        encoder.initialize(&config()).expect("initializes");
+
+        assert!(encoder.finalize().expect("finalizes").is_empty());
+        assert!(encoder.finalize_patches().is_empty());
     }
 }

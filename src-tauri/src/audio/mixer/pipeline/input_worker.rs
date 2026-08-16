@@ -343,12 +343,24 @@ impl InputWorker {
         }
     }
 
+    /// Set this channel's own solo
+    ///
+    /// Deliberately does not touch `any_channel_solo`. That flag is about every
+    /// channel, not this one, and writing this channel's answer into it drops
+    /// solo for the whole mix the moment a second soloed channel is turned off.
+    /// The pipeline owns it, because the pipeline is what can see them all.
     pub fn update_solo(&mut self, solo: bool) {
         if let Ok(mut effects) = self.default_effects.lock() {
             effects.set_solo(solo);
         }
-        self.any_channel_solo
-            .store(solo, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Whether this channel is soloed, for the aggregate the pipeline keeps
+    pub fn is_solo(&self) -> bool {
+        self.default_effects
+            .lock()
+            .map(|effects| effects.is_solo())
+            .unwrap_or(false)
     }
 
     /// Get processing statistics

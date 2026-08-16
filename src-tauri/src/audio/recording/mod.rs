@@ -5,6 +5,7 @@
 
 pub mod encoders;
 pub mod filename_generation;
+pub mod lame;
 pub mod recording_service;
 pub mod recording_writer;
 pub mod silence_detection;
