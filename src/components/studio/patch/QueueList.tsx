@@ -1,8 +1,10 @@
 import { Box, Text } from '@mantine/core';
+import { Fragment } from 'react';
 
 import { color } from '../../../theme/tokens';
 import type { QueuedTrack } from '../../../types/file-player.types';
 import type { Uuid } from '../../../types/util.types';
+import { reorderList, useDragReorder, withDragApplied } from '../hooks/use-drag-reorder';
 import { QueueBreakSeam } from './QueueBreakSeam';
 import { QueueTrackRow } from './QueueTrackRow';
 
@@ -32,6 +34,10 @@ export const QueueList = ({
   onRemove,
   onBreakAfter,
 }: QueueListProps) => {
+  // Before the early return: an empty queue is a thing to draw, not a reason to
+  // have a different set of hooks.
+  const { drag, start } = useDragReorder<QueuedTrack['id']>({ onMove });
+
   if (tracks.length === 0) {
     return (
       <Box style={{ flex: 1, minHeight: 0, display: 'grid', placeItems: 'center', padding: 16 }}>
@@ -42,10 +48,15 @@ export const QueueList = ({
     );
   }
 
-  const breakIndex = tracks.findIndex((track) => track.id === breakpointTrackId);
+  // Drawn in the order the drag would leave it, so the rows move under the
+  // pointer rather than the dragged one merely lighting up.
+  const shown = withDragApplied(tracks, drag);
+  const breakIndex = shown.findIndex((track) => track.id === breakpointTrackId);
+  const currentTrackId = currentIndex === null ? null : tracks[currentIndex]?.id;
 
   return (
     <Box
+      {...reorderList}
       style={{
         flex: 1,
         minHeight: 0,
@@ -56,23 +67,23 @@ export const QueueList = ({
         gap: 2,
       }}
     >
-      {tracks.map((track, index) => (
-        <Box key={track.id} style={{ display: 'contents' }}>
+      {shown.map((track, index) => (
+        <Fragment key={track.id}>
           <QueueTrackRow
             track={track}
             index={index}
-            current={index === currentIndex}
+            current={track.id === currentTrackId}
             playing={playing}
             afterBreak={breakIndex !== -1 && index > breakIndex}
             tint={tint}
+            dragging={drag?.id === track.id}
             onPlayNow={() => onPlayNow(track.id)}
-            onMoveUp={() => onMove(track.id, index - 1)}
-            onMoveDown={() => onMove(track.id, index + 1)}
+            onGrab={(event) => start(event, track.id, index, shown.length)}
             onRemove={() => onRemove(track.id)}
           />
           {/* No seam below the last track: there is nothing after it to pause
               before, and the queue running out is not a break. */}
-          {index < tracks.length - 1 && (
+          {index < shown.length - 1 && (
             <QueueBreakSeam
               index={index}
               broken={index === breakIndex}
@@ -80,7 +91,7 @@ export const QueueList = ({
               onToggle={() => onBreakAfter(index === breakIndex ? null : track.id)}
             />
           )}
-        </Box>
+        </Fragment>
       ))}
     </Box>
   );

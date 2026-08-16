@@ -3,7 +3,7 @@ import { Group, ScrollArea, Stack, Text } from '@mantine/core';
 import { selectedQueue, useQueueStore } from '../../../stores/queue-store';
 import type { QueueTrack } from '../../../types/file-player.types';
 import { color } from '../../../theme/tokens';
-import { useDragReorder, withDragApplied } from '../hooks/use-drag-reorder';
+import { reorderList, useDragReorder, withDragApplied } from '../hooks/use-drag-reorder';
 import { asTrackTime } from '../format';
 import { ActionButton } from '../primitives/ActionButton';
 import { Panel } from '../primitives/Panel';
@@ -79,7 +79,7 @@ export const QueueContents = () => {
         <ScrollArea style={{ flex: 1, minHeight: 0 }}>
           {/* Drawn in the order the drag would leave it, so the rows move under
               the pointer rather than the dragged one merely lighting up. */}
-          <Stack gap="3xs">
+          <Stack gap="3xs" {...reorderList}>
             {shown.map((track, index) => (
               <QueueTrackRow
                 key={track.id}
