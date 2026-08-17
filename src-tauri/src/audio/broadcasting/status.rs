@@ -14,13 +14,24 @@ use super::types::{
 use super::utils::get_streaming_status;
 
 /// Whatever is on air now
+///
+/// The station and its protocol are attached here rather than by either
+/// transmitter, because this is the only layer that knows which of them is
+/// running. A caller reads them back to name the broadcast it wants stopped.
 pub async fn cast_status() -> StreamingServiceStatus {
-    match on_air::current().map(|station| station.protocol) {
+    let live = on_air::current();
+
+    let mut status = match live.as_ref().map(|station| station.protocol) {
         Some(CastProtocol::Impulse) => impulse_status().await,
         // Nothing on air reads as the Icecast service's idea of nothing, which
         // is what every caller was already being given.
         _ => get_streaming_status().await,
-    }
+    };
+
+    status.station_id = live.as_ref().map(|station| station.station_id.clone());
+    status.protocol = live.map(|station| station.protocol.as_str().to_string());
+
+    status
 }
 
 async fn impulse_status() -> StreamingServiceStatus {
@@ -74,6 +85,9 @@ async fn impulse_status() -> StreamingServiceStatus {
             actual_bitrate: None,
         },
         last_error: stats.and_then(|stats| stats.last_error),
+        // Attached by `cast_status`, which owns the answer.
+        station_id: None,
+        protocol: None,
     }
 }
 

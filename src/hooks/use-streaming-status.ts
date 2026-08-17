@@ -63,6 +63,15 @@ export type StreamingServiceStatus = {
   connection_diagnostics: ConnectionDiagnostics;
   bitrate_info: BitrateInfo;
   last_error: string | null;
+  /**
+   * The station actually on air, which is not always the one selected.
+   *
+   * Pass this back to stop a broadcast. The selection moves when a station is
+   * deleted, so it cannot be trusted to name what is live.
+   */
+  station_id: string | null;
+  /** Which transmitter is carrying it, as it was when the broadcast started */
+  protocol: string | null;
 };
 
 /** Bytes put on the wire, whichever transmitter put them there. */

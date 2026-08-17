@@ -26,7 +26,17 @@ export const useStreamTransport = (pollingInterval?: number) => {
     }
 
     if (isLive) {
-      await controls.stopStreaming();
+      // The station on air, not the one selected. They are normally the same,
+      // and they come apart when the live station is deleted — at which point
+      // the selection moves and stopping the selected one would either miss or
+      // hit something else entirely.
+      const live = status?.station_id ?? station?.id;
+
+      if (!live) {
+        return;
+      }
+
+      await controls.stopStreaming(live);
     } else {
       // Nothing to go live to. The button is only reachable with a station
       // selected, so this is the case where the last one was deleted.
@@ -41,7 +51,7 @@ export const useStreamTransport = (pollingInterval?: number) => {
     }
 
     await actions.refreshStatus();
-  }, [isBusy, isLive, controls, actions, station]);
+  }, [isBusy, isLive, controls, actions, station, status]);
 
   return {
     status,

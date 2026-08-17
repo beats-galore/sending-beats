@@ -9,7 +9,7 @@ export type StreamingControlsState = {
 
 export type StreamingControlsActions = {
   startStreaming: (castConfigurationId: string) => Promise<void>;
-  stopStreaming: () => Promise<void>;
+  stopStreaming: (castConfigurationId: string) => Promise<void>;
   updateMetadata: (title: string, artist: string) => Promise<void>;
   clearError: () => void;
 };
@@ -44,14 +44,15 @@ export const useStreamingControls = () => {
     }
   }, [updateState]);
 
-  const stopStreaming = useCallback(async () => {
+  const stopStreaming = useCallback(async (castConfigurationId: string) => {
     updateState({ isStopping: true, error: null });
 
     try {
-      // No arguments: the backend knows which station is on air and by which
-      // protocol. Naming the stream here meant the interface had to remember
-      // it, and it never did — the call went out with no stream id at all.
-      await invoke<string>('stop_cast');
+      // The station is named, and it has to be the one actually on air rather
+      // than the one selected — see `useStreamTransport`. The previous call went
+      // out with no id at all against a command that required one, so cutting
+      // the feed could not have worked.
+      await invoke<string>('stop_cast', { id: castConfigurationId });
       updateState({ isStopping: false });
     } catch (err) {
       console.error('Failed to stop streaming:', err);

@@ -140,11 +140,22 @@ pub async fn update_cast_configuration(
     Ok(view(updated))
 }
 
+/// Forget a station, unless it is the one currently broadcasting
+///
+/// Refused while on air because the row is what the broadcast is named by. The
+/// transmitter would keep running with nothing left to describe it, its keychain
+/// secret would be deleted out from under it, and the interface's selection
+/// would move to some other station — so the next request to cut the feed would
+/// be pointed at a station that was never on.
 #[tauri::command]
 pub async fn delete_cast_configuration(
     state: State<'_, AudioState>,
     id: String,
 ) -> Result<(), String> {
+    if on_air::current().is_some_and(|live| live.station_id == id) {
+        return Err("That station is on air. Cut the feed before forgetting it.".to_string());
+    }
+
     CastConfigurationService::remove(state.database.sea_orm(), &id)
         .await
         .map_err(|e| e.to_string())
@@ -294,24 +305,39 @@ async fn start_over_impulse(
 
 /// Come off air, whichever transmitter is running
 ///
-/// Takes no arguments on purpose: there is one broadcast, the backend knows
-/// which station and which protocol it is, and asking the interface to remember
-/// is how a stop request ends up pointed at a stream that is not the live one.
+/// The station is named by the caller. It could be inferred — there is only one
+/// broadcast today — but inferring it means a stop request cannot say which
+/// station it meant, and the moment two stations can be on at once that is a
+/// shape which has to be undone. A stop that silently hits the wrong stream is
+/// also the failure that leaves no trace of what it thought it was doing.
+///
+/// The protocol is not taken from the caller and not re-read from the row. It
+/// comes from what was running when the broadcast started, because the row can
+/// be edited or deleted while a station is on air and a stop routed by a stale
+/// protocol reaches the wrong transmitter.
 #[tauri::command]
-pub async fn stop_cast(state: State<'_, AudioState>) -> Result<String, String> {
-    let Some(live) = on_air::current() else {
-        return Ok("Nothing is on air".to_string());
+pub async fn stop_cast(state: State<'_, AudioState>, id: String) -> Result<String, String> {
+    let protocol = match on_air::resolve_stop(on_air::current().as_ref(), &id) {
+        // Idempotent rather than an error. The button is only reachable while
+        // live, so arriving here is the status poll lagging behind a broadcast
+        // that already ended, and that is not worth reporting as a failure.
+        on_air::StopTarget::Nothing => return Ok("Nothing is on air".to_string()),
+        on_air::StopTarget::NotThisOne { live } => {
+            return Err(format!(
+                "'{}' is not on air — '{}' is. Nothing was stopped.",
+                id, live
+            ))
+        }
+        on_air::StopTarget::Stop(protocol) => protocol,
     };
 
-    let result = match live.protocol {
+    let result = match protocol {
         CastProtocol::Icecast => {
-            crate::commands::icecast::stop_icecast_streaming(state, live.station_id.clone())
+            crate::commands::icecast::stop_icecast_streaming(state, id.clone())
                 .await
                 .map(|_| ())
         }
-        CastProtocol::Impulse => {
-            crate::commands::impulse::stop_impulse(&state, &live.station_id).await
-        }
+        CastProtocol::Impulse => crate::commands::impulse::stop_impulse(&state, &id).await,
     };
 
     // Cleared either way. A transmitter that failed to shut down cleanly is

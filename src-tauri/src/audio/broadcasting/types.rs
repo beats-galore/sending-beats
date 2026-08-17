@@ -67,6 +67,15 @@ pub struct StreamingServiceStatus {
     pub connection_diagnostics: ConnectionDiagnostics,
     pub bitrate_info: BitrateInfo,
     pub last_error: Option<String>,
+    /// The station actually on air, which is not always the one selected
+    ///
+    /// Reported so a caller can name it when asking to stop. Without it the
+    /// interface can only offer whatever it has selected, and the two come apart
+    /// the moment a station is deleted or the selection moves for any other
+    /// reason — at which point a stop request is pointed at the wrong station.
+    pub station_id: Option<String>,
+    /// Which transmitter is carrying it, as it was when the broadcast started
+    pub protocol: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]

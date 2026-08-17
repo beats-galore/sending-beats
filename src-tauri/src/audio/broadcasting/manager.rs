@@ -430,6 +430,10 @@ impl StreamingService {
             connection_diagnostics,
             bitrate_info,
             last_error: state.last_error.clone(),
+            // Filled in by `cast_status`, which is the layer that knows what is
+            // on air. This service only knows about its own connection.
+            station_id: None,
+            protocol: None,
         }
     }
 
