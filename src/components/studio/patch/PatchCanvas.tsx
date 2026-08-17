@@ -39,7 +39,6 @@ export const PatchCanvas = () => {
   const cast = useCastDestination();
   const {
     outputs,
-    available,
     optionsFor,
     selectOutput,
     changeOutput,
@@ -52,14 +51,34 @@ export const PatchCanvas = () => {
   // switching patches has to fetch the new one's rather than leave the previous
   // patch's on screen.
   const activeConfigurationId = useMixerStore((state) => state.activeSession?.configuration.id);
+  const activeSession = useMixerStore((state) => state.activeSession);
   const loadPatchColors = usePatchColorStore((state) => state.load);
   const loadBuses = useBusStore((state) => state.load);
   const loadPatchLayout = usePatchLayoutStore((state) => state.load);
+
+  /**
+   * Which devices are attached, as one value the effect can watch.
+   *
+   * Routing is derived from what is attached, so it changes shape whenever a
+   * device joins or leaves — and those arrive after the session does. Watching
+   * only the configuration meant the mixes were read once, before the devices
+   * were in the engine, and never again: an output attached afterwards takes
+   * every source by default and the canvas went on saying there were no mixes
+   * while the whole mix was going to it.
+   */
+  const attached = (activeSession?.configuredDevices ?? [])
+    .map((device) => device.deviceIdentifier)
+    .sort()
+    .join('|');
+
   useEffect(() => {
     void loadPatchColors();
-    void loadBuses();
     void loadPatchLayout();
-  }, [loadPatchColors, loadBuses, loadPatchLayout, activeConfigurationId]);
+  }, [loadPatchColors, loadPatchLayout, activeConfigurationId]);
+
+  useEffect(() => {
+    void loadBuses();
+  }, [loadBuses, activeConfigurationId, attached]);
 
   // Players are restored and their playheads kept current for the whole canvas:
   // the poll is per player, and two cards watching one would double it.
