@@ -16,6 +16,8 @@ wiring was stubbed "for now", and the stubs still return `Ok(())`.
 | 4 | Removing an input device | Pipeline cleanup half-runs, always logs a failure |
 | 5 | An MP3 recording finishes | Final frames + seek header never written |
 | 6 | VU meters at 60 Hz | Meters update at ~10 Hz |
+| 7 | Listener count | `get_listener_stats` reads a `StreamState` Tauri never manages — always errors |
+| 8 | Editing recording metadata | Always `"Recording service not initialized"` — its init is never called |
 
 ## Details
 
@@ -140,7 +142,24 @@ One-line fix (`tokio::time::interval`).
     up to two pending commands (a `Stop` vanishes); no reconnect is sent.
 14. **`pick_shuffled` reseeds xorshift from `subsec_nanos()` per call**
     (`file_player/player.rs:713-734`) — correlated picks; hold a `SmallRng`.
-15. **Data-layer correctness** (details in doc 06): unscoped
+15. **Listener stats structurally cannot work** —
+    `commands/streaming.rs:7` defines its own `StreamState` while Tauri manages
+    the different `lib.rs:58` type; every command in the file resolves to the
+    unmanaged one. The frontend polls `get_listener_stats`
+    (`use-listener-stats.ts:22`) and it can never succeed.
+16. **Recording metadata updates always fail** — `RecordingService::initialize`
+    is never called, so `update_recording_metadata` (frontend-invoked) errors
+    unconditionally; the recording *command loop* and crash/temp-file recovery
+    are dead with it (recording itself works via the coordinator's RTRB path).
+17. **Five frontend `invoke()`s have no backend command** and throw at runtime:
+    `add_mixer_channel`, `create_mixer_input_for_application`,
+    `start_application_audio_capture`, `get_channel_levels`,
+    `open_system_preferences_privacy` (backend fn exists, never wired).
+18. **`.ogg` playback is likely broken** — `symphonia-codec-vorbis` is a direct
+    dependency, but the `vorbis` feature isn't enabled on the `symphonia`
+    facade, so the codec never registers with `default::get_codecs()`. Test
+    before trusting the format list.
+19. **Data-layer correctness** (details in doc 06): unscoped
     `delete_many` wipes a device from every saved configuration; channel-number
     assignment races; zero transactions in the command layer; a soft-delete
     removal migration resurrects deleted rows; the `audio_effects_custom` FK

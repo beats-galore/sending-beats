@@ -108,8 +108,11 @@ The `IsolatedAudioManager` loop serializes all audio commands. Things that block
   reads `is_running`** (see doc 08 §9).
 - `stream_manager.rs:76`: 150 ms blocking sleep replacing an existing input stream.
 - DB lookups (`sea_orm`) awaited inline during device attach
-  (`isolated_audio_manager.rs:609-693`) — reasonable, but they queue behind and
-  in front of hardware-buffer-resize commands on the same channel.
+  (`isolated_audio_manager.rs:609-693`) — reasonable in isolation, but every
+  other queued command waits behind them.
+  *(The hardware-buffer-resize commands that share this loop turn out to be a
+  fully dead chain — `hardware_update_tx` is stored but never sent on; see
+  doc 02.)*
 - `system_audio_router.rs:120-132`: up to 2 s of `std::thread::sleep` on the
   async runtime (should be `tokio::time::sleep`).
 - `screencapture::get_available_applications()`: synchronous FFI documented to

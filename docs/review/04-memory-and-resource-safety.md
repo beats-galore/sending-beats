@@ -89,7 +89,10 @@ non-functional (see doc 08).
 
 10. **Device monitor: no handle + restart race** — `devices/monitor.rs:180,189`:
     stop only stores `false`; a stop→start before the loop notices leaves two
-    monitor loops sharing one stats mutex.
+    monitor loops sharing one stats mutex. *(Mitigating context from the
+    cross-reference pass: the monitor never actually starts — `DEVICE_MONITOR`
+    is never set — so this is a latent defect in a dead module; the deletion in
+    doc 02 resolves it.)*
 
 11. **MixingLayer restart loses every stream** — `mixing_layer.rs:346-350`:
     `start()` `mem::take`s consumers/producers into the thread closure; after
