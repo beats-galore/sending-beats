@@ -18,6 +18,13 @@ pub mod manager;
 pub mod types;
 pub mod utils;
 
+// The second transmitter, and the parts both of them share
+pub mod impulse;
+pub mod metadata;
+pub mod on_air;
+pub mod protocol;
+pub mod status;
+
 // Re-export commonly used types from streaming
 pub use streaming::{StreamConfig, StreamManager};
 
@@ -40,3 +47,9 @@ pub use bridge::{
     create_streaming_bridge, AudioStreamingBridge, StreamingCommand, StreamingStats,
     StreamingStatus,
 };
+
+// Re-export the Impulse transmitter and what both transmitters share
+pub use impulse::{get_impulse_service, ImpulseConfig, ImpulseService, ImpulseStats};
+pub use protocol::CastProtocol;
+pub use status::cast_status;
+pub use types::ImpulseStreamingStats;

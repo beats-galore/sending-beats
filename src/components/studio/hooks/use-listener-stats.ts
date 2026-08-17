@@ -13,8 +13,16 @@ const EMPTY: ListenerStats = { current: null, peak: null };
  *
  * Only polled while streaming — the command errors when no stream manager is
  * connected, and a null count renders as "—" rather than a misleading zero.
+ *
+ * `countable` is false for a transmitter that has no such endpoint. Impulse does
+ * not publish listener counts: delivery happens at the edge cache, so nothing in
+ * the path a listener takes reports back to anything that could be asked.
  */
-export const useListenerStats = (isLive: boolean, pollingInterval = 15000) => {
+export const useListenerStats = (
+  isLive: boolean,
+  countable = true,
+  pollingInterval = 15000
+) => {
   const [stats, setStats] = useState<ListenerStats>(EMPTY);
 
   const fetchStats = useCallback(async () => {
@@ -28,7 +36,7 @@ export const useListenerStats = (isLive: boolean, pollingInterval = 15000) => {
   }, []);
 
   useEffect(() => {
-    if (!isLive) {
+    if (!isLive || !countable) {
       setStats(EMPTY);
       return;
     }
@@ -36,7 +44,7 @@ export const useListenerStats = (isLive: boolean, pollingInterval = 15000) => {
     void fetchStats();
     const interval = setInterval(() => void fetchStats(), pollingInterval);
     return () => clearInterval(interval);
-  }, [isLive, fetchStats, pollingInterval]);
+  }, [isLive, countable, fetchStats, pollingInterval]);
 
   return stats;
 };

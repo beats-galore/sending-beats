@@ -1,12 +1,4 @@
-import {
-  Group,
-  NativeSelect,
-  PasswordInput,
-  SimpleGrid,
-  Switch,
-  Text,
-  TextInput,
-} from '@mantine/core';
+import { Group, NativeSelect, PasswordInput, SimpleGrid, Switch, Text } from '@mantine/core';
 import { useState } from 'react';
 
 import {
@@ -15,10 +7,17 @@ import {
 } from '../../../stores/cast-configuration-store';
 import { layout } from '../../../theme/layout';
 import { color } from '../../../theme/tokens';
-import type { CastConfigurationInput } from '../../../types/cast.types';
-import { CAST_BITRATES, toInput } from '../../../types/cast.types';
+import {
+  CAST_BITRATES,
+  CAST_PROTOCOL_LABELS,
+  CastProtocol,
+  castSecretLabel,
+} from '../../../types/cast.types';
 import { ActionButton } from '../primitives/ActionButton';
 import type { ControlDensity } from '../primitives/control-density';
+import { IcecastFields } from './IcecastFields';
+import { ImpulseFields } from './ImpulseFields';
+import { useStationFields } from './use-station-fields';
 
 type TransmitterControlsProps = {
   density: ControlDensity;
@@ -33,9 +32,9 @@ type TransmitterControlsProps = {
  * Rows only — the caller supplies the surface and the gap between them, which
  * is what separates the patchbay's cast node from the CAST view.
  *
- * Going live hands the target to the engine, so the connection fields are read
- * only while on air. Bitrate and variable bitrate stay editable — they can be
- * changed without tearing the connection down.
+ * The protocol chooses which address fields are shown, because the two have none
+ * in common. Everything below that line is shared: both encode MP3 at a bitrate,
+ * and both authenticate with one secret kept in the keychain.
  */
 export const TransmitterControls = ({
   density,
@@ -43,13 +42,14 @@ export const TransmitterControls = ({
   isBusy,
   onToggle,
 }: TransmitterControlsProps) => {
-  const station = useCastConfigurationStore(selectedCastConfiguration);
-  const update = useCastConfigurationStore((state) => state.update);
+  const selected = useCastConfigurationStore(selectedCastConfiguration);
   const setPassword = useCastConfigurationStore((state) => state.setPassword);
 
-  // Held here rather than in the store: the stored password is in the keychain
+  // Held here rather than in the store: the stored secret is in the keychain
   // and never comes back, so this field is only ever what is being typed now.
-  const [passwordDraft, setPasswordDraft] = useState('');
+  const [secretDraft, setSecretDraft] = useState('');
+
+  const { station, edit, locked } = useStationFields(selected?.id ?? '', isLive);
 
   if (!station) {
     return (
@@ -59,84 +59,73 @@ export const TransmitterControls = ({
     );
   }
 
-  const edit = (changes: Partial<CastConfigurationInput>) =>
-    void update(station.id, { ...toInput(station), ...changes });
-
-  // Read-only inputs keep their layout but read as settled rather than editable,
-  // so a live target does not look like a field waiting for input.
-  const locked = {
-    readOnly: isLive,
-    styles: isLive ? { input: { color: color.textDim, cursor: 'default' } } : undefined,
-  };
+  const isImpulse = station.protocol === 'impulse';
 
   return (
     <>
-      <Group gap="sm" wrap="nowrap" align="flex-end">
-        <TextInput
-          label="SERVER"
-          value={station.serverHost}
-          onChange={(event) => edit({ serverHost: event.currentTarget.value })}
-          style={{ flex: 1, minWidth: 0 }}
-          {...locked}
-        />
-        <TextInput
-          value={String(station.serverPort)}
-          onChange={(event) => edit({ serverPort: Number(event.currentTarget.value) || 0 })}
-          w={74}
-          {...locked}
-        />
-      </Group>
+      {/* Changing this changes what the other fields mean, so it comes first
+          and is held while on air like the rest of the target. */}
+      <NativeSelect
+        label="CAST TYPE"
+        value={station.protocol}
+        onChange={(event) => edit({ protocol: event.currentTarget.value })}
+        data={CastProtocol.map((protocol) => ({
+          value: protocol,
+          label: CAST_PROTOCOL_LABELS[protocol],
+        }))}
+        disabled={isLive}
+      />
+
+      {isImpulse ? (
+        <ImpulseFields stationId={station.id} isLive={isLive} />
+      ) : (
+        <IcecastFields stationId={station.id} isLive={isLive} />
+      )}
 
       <SimpleGrid cols={2} spacing={density === 'compact' ? 'lg' : 'xl'} verticalSpacing="lg">
-        <TextInput
-          label="MOUNT"
-          value={station.mountPoint}
-          onChange={(event) => edit({ mountPoint: event.currentTarget.value })}
-          {...locked}
-        />
         <NativeSelect
           label="BITRATE"
           value={String(station.bitrateKbps)}
           onChange={(event) => edit({ bitrateKbps: Number(event.currentTarget.value) })}
           data={CAST_BITRATES.map((rate) => ({ value: String(rate), label: `${rate} kbps` }))}
         />
-        <TextInput
-          label="USER"
-          value={station.username}
-          onChange={(event) => edit({ username: event.currentTarget.value })}
-          {...locked}
-        />
         {/* Typing replaces what is in the keychain; leaving it alone keeps it.
             The placeholder is the only report of what is stored, because the
-            password itself never leaves the keychain. */}
+            secret itself never leaves the keychain. */}
         <PasswordInput
-          label="PASSWORD"
-          value={passwordDraft}
+          label={castSecretLabel(station.protocol)}
+          value={secretDraft}
           placeholder={station.hasPassword ? '••••••••  stored' : 'not set'}
-          onChange={(event) => setPasswordDraft(event.currentTarget.value)}
+          onChange={(event) => setSecretDraft(event.currentTarget.value)}
           onBlur={() => {
-            if (passwordDraft.length > 0) {
-              void setPassword(station.id, passwordDraft);
-              setPasswordDraft('');
+            if (secretDraft.length > 0) {
+              void setPassword(station.id, secretDraft);
+              setSecretDraft('');
             }
           }}
           {...locked}
         />
       </SimpleGrid>
 
-      <Group gap="md" wrap="nowrap">
-        <Switch
-          checked={station.variableBitrate}
-          onChange={(event) => edit({ variableBitrate: event.currentTarget.checked })}
-          label="Variable bitrate"
-          style={{ flex: 1 }}
-        />
-        <Text size="2xs" c={color.textFaint}>
-          {station.variableBitrate
-            ? `quality ~V${station.vbrQuality}`
-            : `constant ${station.bitrateKbps} kbps`}
-        </Text>
-      </Group>
+      {/* Variable bitrate is an Icecast-only choice. Impulse measures each
+          segment from the frames actually in it, so a varying rate would work —
+          but the encoder is not set up for one, and offering the switch would
+          promise something that does not happen. */}
+      {!isImpulse && (
+        <Group gap="md" wrap="nowrap">
+          <Switch
+            checked={station.variableBitrate}
+            onChange={(event) => edit({ variableBitrate: event.currentTarget.checked })}
+            label="Variable bitrate"
+            style={{ flex: 1 }}
+          />
+          <Text size="2xs" c={color.textFaint}>
+            {station.variableBitrate
+              ? `quality ~V${station.vbrQuality}`
+              : `constant ${station.bitrateKbps} kbps`}
+          </Text>
+        </Group>
+      )}
 
       <ActionButton
         tone={isLive ? 'hot' : 'accent'}

@@ -39,6 +39,7 @@ impl CastConfigurationService {
         Ok(cast_configuration::ActiveModel {
             id: Set(uuid::Uuid::new_v4().to_string()),
             name: Set(draft.name),
+            protocol: Set(draft.protocol),
             server_host: Set(draft.server_host),
             server_port: Set(draft.server_port),
             mount_point: Set(draft.mount_point),
@@ -52,6 +53,9 @@ impl CastConfigurationService {
             bitrate_kbps: Set(draft.bitrate_kbps),
             variable_bitrate: Set(draft.variable_bitrate),
             vbr_quality: Set(draft.vbr_quality),
+            endpoint_url: Set(draft.endpoint_url),
+            station_slug: Set(draft.station_slug),
+            segment_ms: Set(draft.segment_ms),
             created_at: Set(now),
             updated_at: Set(now),
         }
@@ -72,6 +76,7 @@ impl CastConfigurationService {
 
         let mut active: cast_configuration::ActiveModel = row.into();
         active.name = Set(draft.name);
+        active.protocol = Set(draft.protocol);
         active.server_host = Set(draft.server_host);
         active.server_port = Set(draft.server_port);
         active.mount_point = Set(draft.mount_point);
@@ -85,6 +90,9 @@ impl CastConfigurationService {
         active.bitrate_kbps = Set(draft.bitrate_kbps);
         active.variable_bitrate = Set(draft.variable_bitrate);
         active.vbr_quality = Set(draft.vbr_quality);
+        active.endpoint_url = Set(draft.endpoint_url);
+        active.station_slug = Set(draft.station_slug);
+        active.segment_ms = Set(draft.segment_ms);
         active.updated_at = Set(chrono::Utc::now());
 
         Ok(active.update(db).await?)
@@ -111,6 +119,7 @@ impl CastConfigurationService {
 /// each owned by something else.
 pub struct CastConfigurationDraft {
     pub name: String,
+    pub protocol: String,
     pub server_host: String,
     pub server_port: i32,
     pub mount_point: String,
@@ -124,6 +133,9 @@ pub struct CastConfigurationDraft {
     pub bitrate_kbps: i32,
     pub variable_bitrate: bool,
     pub vbr_quality: i32,
+    pub endpoint_url: Option<String>,
+    pub station_slug: Option<String>,
+    pub segment_ms: i32,
 }
 
 /// Which stations a patch broadcasts to

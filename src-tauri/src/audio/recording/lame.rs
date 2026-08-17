@@ -29,6 +29,7 @@ extern "C" {
     fn lame_set_brate(ptr: LamePtr, kbps: c_int) -> c_int;
     fn lame_set_quality(ptr: LamePtr, quality: c_int) -> c_int;
     fn lame_set_bWriteVbrTag(ptr: LamePtr, write: c_int) -> c_int;
+    fn lame_set_disable_reservoir(ptr: LamePtr, disable: c_int) -> c_int;
     fn lame_init_params(ptr: LamePtr) -> c_int;
 
     fn lame_encode_buffer_interleaved_ieee_float(
@@ -71,8 +72,35 @@ pub struct Lame {
 // writer is the only thing that touches an encoder, one task at a time.
 unsafe impl Send for Lame {}
 
+/// Whether the encoder is producing one file or an endless stream cut up later
+///
+/// A file wants the seek table and the bit reservoir: it is read from the start
+/// and every frame is reachable. A stream that will be cut into segments wants
+/// neither — the seek table describes a length nothing has yet, and a frame that
+/// borrows bits from the frame before it stops decoding cleanly the moment those
+/// two land in different segments.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LameOutput {
+    WholeFile,
+    Segmented,
+}
+
 impl Lame {
     pub fn new(sample_rate: u32, channels: u16, kilobitrate: u32) -> Result<Self> {
+        Self::build(sample_rate, channels, kilobitrate, LameOutput::WholeFile)
+    }
+
+    /// An encoder whose frames can be split apart at any frame boundary
+    pub fn for_segments(sample_rate: u32, channels: u16, kilobitrate: u32) -> Result<Self> {
+        Self::build(sample_rate, channels, kilobitrate, LameOutput::Segmented)
+    }
+
+    fn build(
+        sample_rate: u32,
+        channels: u16,
+        kilobitrate: u32,
+        output: LameOutput,
+    ) -> Result<Self> {
         let ptr = unsafe { lame_init() };
         if ptr.is_null() {
             return Err(anyhow::anyhow!("Could not create a LAME encoder"));
@@ -97,7 +125,18 @@ impl Lame {
         // Reserves the frame at the front of the file that `lametag_frame`
         // fills in at the end. Without the reservation there is nowhere to put
         // the seek table.
-        lame.set("vbr tag", unsafe { lame_set_bWriteVbrTag(ptr, 1) })?;
+        let whole_file = output == LameOutput::WholeFile;
+        lame.set("vbr tag", unsafe {
+            lame_set_bWriteVbrTag(ptr, whole_file as c_int)
+        })?;
+        // Layer III lets a frame keep some of its bits in the frames before it.
+        // That is free quality in a file and a defect in a segment: the first
+        // frames of every segment would be reaching for data that went out in
+        // the previous request, and a player joining mid-stream would decode
+        // them wrong.
+        lame.set("bit reservoir", unsafe {
+            lame_set_disable_reservoir(ptr, !whole_file as c_int)
+        })?;
 
         lame.set("parameters", unsafe { lame_init_params(ptr) })?;
 

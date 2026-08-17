@@ -15,6 +15,8 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: String,
     pub name: String,
+    /// Which transmitter puts this station on air: `icecast` or `impulse`
+    pub protocol: String,
     pub server_host: String,
     pub server_port: i32,
     pub mount_point: String,
@@ -28,6 +30,13 @@ pub struct Model {
     pub bitrate_kbps: i32,
     pub variable_bitrate: bool,
     pub vbr_quality: i32,
+    /// Impulse only. Where the ingest worker answers, scheme included.
+    pub endpoint_url: Option<String>,
+    /// Impulse only. Names the station on the other end, and cannot be changed
+    /// once it has been on air without pointing at a different station.
+    pub station_slug: Option<String>,
+    /// Impulse only. How much audio goes in one segment, and so the latency.
+    pub segment_ms: i32,
     pub created_at: ChronoDateTimeUtc,
     pub updated_at: ChronoDateTimeUtc,
 }

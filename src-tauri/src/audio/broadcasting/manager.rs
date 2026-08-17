@@ -424,6 +424,9 @@ impl StreamingService {
             uptime_seconds: uptime,
             audio_stats,
             icecast_stats,
+            // This service only ever holds an Icecast connection; the Impulse
+            // transmitter reports its own.
+            impulse_stats: None,
             connection_diagnostics,
             bitrate_info,
             last_error: state.last_error.clone(),

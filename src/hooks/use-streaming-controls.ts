@@ -48,7 +48,10 @@ export const useStreamingControls = () => {
     updateState({ isStopping: true, error: null });
 
     try {
-      await invoke<string>('stop_icecast_streaming');
+      // No arguments: the backend knows which station is on air and by which
+      // protocol. Naming the stream here meant the interface had to remember
+      // it, and it never did — the call went out with no stream id at all.
+      await invoke<string>('stop_cast');
       updateState({ isStopping: false });
     } catch (err) {
       console.error('Failed to stop streaming:', err);

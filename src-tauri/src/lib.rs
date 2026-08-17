@@ -494,6 +494,8 @@ pub fn run() {
             delete_cast_configuration,
             set_cast_configuration_password,
             start_cast,
+            stop_cast,
+            get_cast_status,
             list_cast_targets,
             add_cast_target,
             remove_cast_target,

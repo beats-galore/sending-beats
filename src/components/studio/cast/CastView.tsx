@@ -5,6 +5,7 @@ import {
   selectedCastConfiguration,
   useCastConfigurationStore,
 } from '../../../stores/cast-configuration-store';
+import { bytesSent } from '../../../hooks/use-streaming-status';
 import { color } from '../../../theme/tokens';
 import { asBytes, asElapsed } from '../format';
 import { useCastTelemetry } from '../hooks/use-cast-telemetry';
@@ -25,7 +26,9 @@ export const CastView = () => {
     void load();
   }, [load]);
   const { isLive, isBusy, status, uptimeSeconds, toggle } = useStreamTransport();
-  const listeners = useListenerStats(isLive);
+  // Impulse publishes no listener counts — delivery happens at the edge cache,
+  // so there is nothing to ask.
+  const listeners = useListenerStats(isLive, station?.protocol !== 'impulse');
 
   const { series, log } = useCastTelemetry({
     isLive,
@@ -35,7 +38,7 @@ export const CastView = () => {
     lastError: status?.last_error ?? null,
   });
 
-  const sent = status?.icecast_stats?.bytes_sent;
+  const sent = bytesSent(status);
 
   return (
     <Group

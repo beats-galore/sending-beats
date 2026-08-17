@@ -33,6 +33,24 @@ export type IcecastStreamingStats = {
   average_bitrate_kbps: number;
 };
 
+/**
+ * What an Impulse broadcast has done, and what the far end says about it.
+ *
+ * `on_air` is the far end's own answer to the last segment rather than anything
+ * measured here. It is the stronger claim: a connection can be open to a server
+ * that is putting nothing in front of listeners, but an acknowledged segment was
+ * genuinely delivered.
+ */
+export type ImpulseStreamingStats = {
+  segments_sent: number;
+  bytes_sent: number;
+  /** Cut because the uploader could not keep up, each one a gap in the audio */
+  segments_dropped: number;
+  send_errors: number;
+  on_air: boolean;
+  media_sequence: number;
+};
+
 export type StreamingServiceStatus = {
   is_running: boolean;
   is_connected: boolean;
@@ -40,10 +58,16 @@ export type StreamingServiceStatus = {
   uptime_seconds: number;
   audio_stats: AudioStreamingStats | null;
   icecast_stats: IcecastStreamingStats | null;
+  /** Present only while Impulse is the transmitter on air */
+  impulse_stats: ImpulseStreamingStats | null;
   connection_diagnostics: ConnectionDiagnostics;
   bitrate_info: BitrateInfo;
   last_error: string | null;
 };
+
+/** Bytes put on the wire, whichever transmitter put them there. */
+export const bytesSent = (status: StreamingServiceStatus | null): number | null =>
+  status?.impulse_stats?.bytes_sent ?? status?.icecast_stats?.bytes_sent ?? null;
 
 export type StreamingActions = {
   refreshStatus: () => Promise<void>;
@@ -61,7 +85,10 @@ export const useStreamingStatus = (pollingInterval = 2000) => {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const result = await invoke<StreamingServiceStatus>('get_icecast_streaming_status');
+      // Asked of the cast layer rather than of Icecast: the backend knows which
+      // transmitter is on air, and asking one of them directly reports a station
+      // that is off while missing the one that is on.
+      const result = await invoke<StreamingServiceStatus>('get_cast_status');
       setStatus(result);
       setError(null);
     } catch (err) {

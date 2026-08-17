@@ -103,6 +103,12 @@ pub enum AudioCommand {
         session_id: String,
         response_tx: oneshot::Sender<Result<()>>,
     },
+    /// Tap the mix for a broadcast, whichever protocol will carry it
+    ///
+    /// Named for Icecast because it got here first, and kept because the device
+    /// id it derives is what the patchbay routes to. Nothing here is
+    /// Icecast-specific: the config is read for its sample rate and channel
+    /// count and for nothing else, and Impulse uses the same command.
     StartIcecast {
         stream_id: String,
         config: crate::audio::broadcasting::StreamingServiceConfig,

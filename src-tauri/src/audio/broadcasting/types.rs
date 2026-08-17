@@ -62,6 +62,8 @@ pub struct StreamingServiceStatus {
     pub uptime_seconds: u64,
     pub audio_stats: Option<AudioStreamingStats>,
     pub icecast_stats: Option<IcecastStreamingStats>,
+    /// Present only while the Impulse transmitter is the one on air
+    pub impulse_stats: Option<ImpulseStreamingStats>,
     pub connection_diagnostics: ConnectionDiagnostics,
     pub bitrate_info: BitrateInfo,
     pub last_error: Option<String>,
@@ -101,4 +103,22 @@ pub struct IcecastStreamingStats {
     pub packets_sent: u64,
     pub connection_duration_seconds: u64,
     pub average_bitrate_kbps: f64,
+}
+
+/// What an Impulse broadcast has done, and what the far end says about it
+///
+/// `on_air` comes from the reply to the last segment rather than from anything
+/// held locally. It is the stronger claim: a socket can be open to a server
+/// nobody is listening to, but a segment acknowledged on air was put in front of
+/// listeners.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ImpulseStreamingStats {
+    pub segments_sent: u64,
+    pub bytes_sent: u64,
+    /// Cut because the uploader could not keep up, each one a gap in the audio
+    pub segments_dropped: u64,
+    pub send_errors: u64,
+    pub on_air: bool,
+    /// `#EXT-X-MEDIA-SEQUENCE` — the oldest segment still in the listener window
+    pub media_sequence: u64,
 }

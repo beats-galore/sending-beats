@@ -8,6 +8,8 @@ import {
 import { useStudioStore } from '../../../stores/studio-store';
 import { layout } from '../../../theme/layout';
 import { border, color } from '../../../theme/tokens';
+import { bytesSent } from '../../../hooks/use-streaming-status';
+import { castAddress } from '../../../types/cast.types';
 import { asBytes, asElapsed } from '../format';
 import { useCastDestination } from '../hooks/use-cast-destination';
 import { useListenerStats } from '../hooks/use-listener-stats';
@@ -44,7 +46,10 @@ export const CastDestination = ({ rect, selected }: CastDestinationProps) => {
   const cast = useCastDestination();
   const removeCastTarget = useCastConfigurationStore((state) => state.removeTarget);
   const { isLive, isBusy, toggle, status, uptimeSeconds } = useStreamTransport();
-  const listeners = useListenerStats(isLive);
+  const isImpulse = station?.protocol === 'impulse';
+  // Impulse publishes no listener counts: delivery happens at the edge cache, so
+  // nothing in the path a listener takes reports back.
+  const listeners = useListenerStats(isLive, !isImpulse);
   const grab = useNodeDrag(STREAM_TARGET_KEY, rect);
   const resize = useNodeResize(STREAM_TARGET_KEY, rect, castSize('compact'));
   const setRung = useNodeRung(STREAM_TARGET_KEY);
@@ -55,13 +60,18 @@ export const CastDestination = ({ rect, selected }: CastDestinationProps) => {
   const unshrink = useUnshrink(STREAM_TARGET_KEY, expansion === 'compact');
 
   const bitrate = status?.bitrate_info.current_bitrate ?? station?.bitrateKbps ?? 0;
-  const sent = status?.icecast_stats?.bytes_sent;
+  const sent = bytesSent(status);
   // The station the transmitter is pointed at, so the node says where the mix
   // is actually going rather than what was last typed somewhere else.
-  const target = station
-    ? `${station.serverHost}:${station.serverPort}${station.mountPoint}`
-    : 'no station';
-  const quality = station?.variableBitrate ? `VBR q${station.vbrQuality}` : 'CBR';
+  const target = station ? castAddress(station) : 'no station';
+  // Named for the transmitter, so a glance at the patchbay says which of the two
+  // this broadcast is going out over.
+  const transmitter = isImpulse ? 'IMPULSE' : 'ICECAST';
+  const quality = isImpulse
+    ? `${station.segmentMs / 1000}s segments`
+    : station?.variableBitrate
+      ? `VBR q${station.vbrQuality}`
+      : 'CBR';
 
   return (
     <NodeCard
@@ -90,7 +100,7 @@ export const CastDestination = ({ rect, selected }: CastDestinationProps) => {
             c={isLive ? color.hotText : color.textDim}
             style={{ flex: 1, letterSpacing: layout.tracking.label }}
           >
-            {isLive ? 'ICECAST · ON AIR' : 'ICECAST · OFFLINE'}
+            {transmitter} · {isLive ? 'ON AIR' : 'OFFLINE'}
           </Text>
           <Text size="2xs" c={color.textDim}>
             MP3 {bitrate}

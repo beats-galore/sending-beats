@@ -5,7 +5,7 @@ import {
   useCastConfigurationStore,
 } from '../../../stores/cast-configuration-store';
 import { border, color } from '../../../theme/tokens';
-import { toInput } from '../../../types/cast.types';
+import { castAddress, toInput } from '../../../types/cast.types';
 import { ActionButton } from '../primitives/ActionButton';
 import { DeleteButton } from '../primitives/DeleteButton';
 import { Panel } from '../primitives/Panel';
@@ -72,10 +72,12 @@ export const StationPicker = ({ isLive }: StationPickerProps) => {
                   <Text size="sm" truncate>
                     {station.name}
                   </Text>
+                  {/* The address is built per protocol: showing the Icecast
+                      fields for an Impulse station would print a host it
+                      broadcasts nowhere near. */}
                   <Text size="2xs" c={color.textFaintest} mt="3xs" truncate>
-                    {station.serverHost}:{station.serverPort}
-                    {station.mountPoint}
-                    {station.hasPassword ? '' : ' · no password'}
+                    {castAddress(station)}
+                    {station.hasPassword ? '' : ' · no credential'}
                   </Text>
                 </Box>
                 <DeleteButton

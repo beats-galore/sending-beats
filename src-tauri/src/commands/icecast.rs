@@ -154,6 +154,11 @@ pub async fn update_icecast_metadata(title: String, artist: String) -> Result<St
 
     println!("📝 Updating stream metadata: {} - {}", artist, title);
 
+    // Recorded where both transmitters can see it. Icecast pushes the change out
+    // on its own connection the moment it arrives; Impulse attaches it to the
+    // next segment it builds, so it needs to be able to ask rather than be told.
+    crate::audio::broadcasting::metadata::set(title.clone(), artist.clone());
+
     match update_stream_metadata(title.clone(), artist.clone()).await {
         Ok(()) => {
             println!("✅ Stream metadata updated successfully");

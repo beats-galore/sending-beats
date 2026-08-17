@@ -10,6 +10,7 @@ pub mod debug;
 pub mod device_attachment;
 pub mod file_player;
 pub mod icecast;
+pub mod impulse;
 pub mod mixer;
 pub mod now_playing;
 pub mod patch_colors;
