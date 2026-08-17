@@ -300,24 +300,36 @@ impl SystemAudioRouter {
     /// An already-diverted record wins over what the system currently reports:
     /// reading again while diverted would cache the virtual device and strand
     /// the real one.
-    fn devices_to_restore(&self, state: &system_audio_state::Model) -> Result<PreviousDefaults> {
+    fn devices_to_restore(
+        &self,
+        state: &system_audio_state::Model,
+        ours: &str,
+    ) -> Result<PreviousDefaults> {
+        use crate::audio::devices::fallback_output::is_worth_saving;
+
+        // Our own device is never a thing to go back to: it is what is being
+        // diverted *to*, and what the machine reports as the default for as
+        // long as diversion lasts. Saving it means undiverting points the
+        // system at a loopback with nothing feeding it.
+        let keep = |uid: Option<String>| uid.filter(|value| is_worth_saving(value, ours));
+
         let mut previous = PreviousDefaults {
-            default_output: state.previous_default_device_uid.clone(),
-            system_output: state.previous_system_output_device_uid.clone(),
+            default_output: keep(state.previous_default_device_uid.clone()),
+            system_output: keep(state.previous_system_output_device_uid.clone()),
         };
 
         if !state.is_diverted || previous.default_output.is_none() {
-            previous.default_output = Some(self.get_default_uid(
+            previous.default_output = keep(Some(self.get_default_uid(
                 KAUDIO_HARDWARE_PROPERTY_DEFAULT_OUTPUT_DEVICE,
                 DEFAULT_OUTPUT_LABEL,
-            )?);
+            )?));
         }
 
         if !state.is_diverted || previous.system_output.is_none() {
-            previous.system_output = Some(self.get_default_uid(
+            previous.system_output = keep(Some(self.get_default_uid(
                 KAUDIO_HARDWARE_PROPERTY_DEFAULT_SYSTEM_OUTPUT_DEVICE,
                 SYSTEM_OUTPUT_LABEL,
-            )?);
+            )?));
         }
 
         info!(
@@ -409,7 +421,7 @@ impl SystemAudioRouter {
             }
         };
         let state = SystemAudioStateService::get_or_create(&self.db).await?;
-        let previous = self.devices_to_restore(&state)?;
+        let previous = self.devices_to_restore(&state, &virtual_device_uid)?;
 
         // Set virtual device as system default
         info!(
@@ -474,15 +486,39 @@ impl SystemAudioRouter {
             ),
         ];
 
+        // What is on the machine right now, so a saved device that has since
+        // been unplugged is spotted rather than set and silently ignored.
+        let ours = VirtualDriverManager::get_device_uid()
+            .await
+            .unwrap_or_default();
+        let available = crate::audio::devices::fallback_output::output_candidates(|device_id| {
+            self.get_device_uid_from_id(device_id).ok()
+        });
+
         for (selector, label, previous) in restores {
-            let Some(previous_uid) = previous else {
+            let chosen = crate::audio::devices::fallback_output::choose_restore_target(
+                previous.as_deref(),
+                &ours,
+                &available,
+            );
+
+            let Some(previous_uid) = chosen.as_ref() else {
                 warn!(
-                    "{} No previous {} device saved, leaving it as it is",
+                    "{} Nothing to restore {} to — every output is ours",
                     "SYS_AUDIO_WARN".bright_yellow(),
                     label
                 );
                 continue;
             };
+
+            if Some(previous_uid) != previous.as_ref() {
+                info!(
+                    "{} No usable saved {} device, falling back to '{}'",
+                    "SYS_AUDIO_RESTORE".bright_magenta(),
+                    label,
+                    previous_uid
+                );
+            }
 
             info!(
                 "{} Restoring previous {} device: '{}'",
